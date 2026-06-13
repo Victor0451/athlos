@@ -243,7 +243,7 @@ export async function getLoginHistory(
   cursor: string | undefined,
   limit: number | undefined,
 ): Promise<LoginHistoryResult> {
-  const n = Math.min(Math.max(limit, 1), 100)
+  const n = Math.min(Math.max(limit ?? 20, 1), 100)
   // The audit_events table is INSERT-only; for PR 3b the login flow
   // does not yet emit rows (that lands when the auth-audit hook
   // ships). Returning an empty result keeps the API contract honest

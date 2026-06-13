@@ -77,6 +77,9 @@ importers:
       '@fastify/rate-limit':
         specifier: ^10.2.2
         version: 10.3.0
+      dbf-reader:
+        specifier: ^1.0.3
+        version: 1.0.3
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
@@ -2037,6 +2040,9 @@ packages:
 
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
+
+  dbf-reader@1.0.3:
+    resolution: {integrity: sha512-84gjZ/ijJ1pAmGXgBCWu457dpdGn/skCNoHZbx+ReW1debxQmMIjvltK1Z58g2OKe2Pf6PxLVMM9Ci/atq/yVw==}
 
   debug@3.2.7:
     resolution: {integrity: sha512-CFjzYYAi4ThfiQvizrFQevTTXHtnCqWfe7x1AhgEscTz6ZbLbfoLRLPugTQyBth6f8ZERVUSyWHFD/7Wu4t1XQ==}
@@ -5499,6 +5505,8 @@ snapshots:
       is-data-view: 1.0.2
 
   dateformat@4.6.3: {}
+
+  dbf-reader@1.0.3: {}
 
   debug@3.2.7:
     dependencies:
