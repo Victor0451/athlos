@@ -71,6 +71,23 @@ const DEFAULT_REAL_LEGACY_CONFIG = {
 }
 
 /**
+ * Build a no-op pool for the standin DB. The standin doesn't need a
+ * real connection — but the container's `pool` field is required by
+ * the type, so we return a stub that satisfies the shape. Tests that
+ * close the pool in afterAll won't actually disconnect anything.
+ */
+function makeStubPool(): Pool {
+  const stub = {
+    end: async () => undefined,
+    on: () => stub,
+    once: () => stub,
+    emit: () => true,
+    query: async () => ({ rows: [], rowCount: 0 }),
+  } as unknown as Pool
+  return stub
+}
+
+/**
  * Build a fully-wired container. In production, every external
  * integration is its real adapter. In test env (`NODE_ENV === 'test'`
  * and no overrides), every external is a stub and the Drizzle pool
@@ -90,10 +107,9 @@ export function buildContainer(config: ContainerConfig): AppContainer {
   // validation rules live in @athlos/config and are the source of truth.
   const validatedEnv = validateEnv(buildContainerEnv(env))
 
-  const { db, pool } =
-    overrides?.db && overrides?.pool
-      ? { db: overrides.db, pool: overrides.pool }
-      : createDb({ connectionString: env['DATABASE_URL'] })
+  const { db, pool } = overrides?.db
+    ? { db: overrides.db, pool: overrides.pool ?? makeStubPool() }
+    : createDb({ connectionString: env['DATABASE_URL'] })
 
   return {
     db,

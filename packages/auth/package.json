@@ -19,6 +19,7 @@
     "@athlos/config": "workspace:*",
     "@athlos/errors": "workspace:*",
     "bcrypt": "^5.1.1",
+    "fastify-plugin": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "zod": "^3.24.1"
   },
