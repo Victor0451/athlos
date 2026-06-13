@@ -1,0 +1,75 @@
+/*
+ * Gorriti Premium — Design Tokens
+ * Single source of truth for the visual identity of Club Atlético Gorriti's
+ * operator console. All component code MUST consume these CSS custom
+ * properties (or their Tailwind aliases) — never raw hex values.
+ *
+ * See openspec/changes/athlos-foundation/specs/ui-design/spec.md
+ * for the full design philosophy.
+ */
+
+:root {
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  --surface: #ffffff;
+  --surface-elevated: #fafafa;
+  --surface-sunken: #f4f4f4;
+
+  /* ── Ink scale (text + borders) ──────────────────────────── */
+  --ink-100: #e8e8e8;
+  --ink-200: #d4d4d4;
+  --ink-300: #9a9a9a;
+  --ink-500: #4a4a4a;
+  --ink-700: #1a1a1a;
+  --ink-900: #0a0a0a;
+
+  /* ── Night (institutional chrome — sidebar, top bar) ─────── */
+  --night-800: #141414;
+  --night-900: #0a0a0a;
+
+  /* ── Accent (Gorriti red — ≤5% screen real estate) ───────── */
+  --accent: #c1272d;
+  --accent-hover: #9a1f24;
+  --accent-soft: #fdf2f2;
+  --accent-foreground: #ffffff;
+
+  /* ── Status (limited use) ───────────────────────────────── */
+  --success: #0d6e3d;
+  --warning: #b8741a;
+  --danger: #c1272d;
+  --info: #1a4a7a;
+
+  /* ── Spacing (4px base unit) ─────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── Radius (angular — NEVER rounded-full) ──────────────── */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-none: 0px;
+
+  /* ── Shadow (floating elements only) ────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
+
+  /* ── Typography (font families) ─────────────────────────── */
+  --font-display:
+    'Inter Display', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ── Motion ─────────────────────────────────────────────── */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
