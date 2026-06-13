@@ -4,6 +4,7 @@ import { authPlugin } from '@athlos/auth'
 import { buildContainer, type AppContainer } from './container.ts'
 import { authRoutes } from './routes/auth.ts'
 import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.ts'
+import { adminOperatorsRoutes } from './routes/admin/operators.ts'
 
 /**
  * Build a Fastify instance with a fully-wired DI container.
@@ -72,6 +73,9 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   // Approval routes (PR 3b): public-by-token + internal create-link.
   await app.register(approvalRoutes)
   await app.register(internalApprovalLinksRoutes)
+
+  // Admin operator management (PR 3b): /api/v1/admin/operators/*.
+  await app.register(adminOperatorsRoutes)
 
   app.get('/', async () => ({ status: 'ok' }))
 
