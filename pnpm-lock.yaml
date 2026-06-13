@@ -38,9 +38,21 @@ importers:
 
   apps/api:
     dependencies:
+      '@athlos/approval':
+        specifier: workspace:*
+        version: link:../../packages/approval
+      '@athlos/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@athlos/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@athlos/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@athlos/errors':
+        specifier: workspace:*
+        version: link:../../packages/errors
       '@athlos/integrations-clock':
         specifier: workspace:*
         version: link:../../packages/integrations/clock
@@ -68,6 +80,9 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.36.0
+        version: 0.36.4(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.21.0)(react@19.0.0)
       fastify:
         specifier: ^5.2.0
         version: 5.8.5
