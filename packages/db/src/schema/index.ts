@@ -21,6 +21,10 @@ export type { AuditEvent, NewAuditEvent, AppSetting, NewAppSetting } from './pub
 export { operators, refreshTokens } from './operators'
 export type { Operator, NewOperator, RefreshToken, NewRefreshToken } from './operators'
 
+// approval tokens (PR 3a approval links)
+export { approvalTokens } from './approval-tokens'
+export type { ApprovalToken, NewApprovalToken } from './approval-tokens'
+
 // socios ───────────────────────────────────────────────────────
 export { sociosSchema, socioEstado, socios } from './socios'
 export type { Socio, NewSocio } from './socios'
