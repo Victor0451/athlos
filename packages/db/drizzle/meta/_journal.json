@@ -8,6 +8,20 @@
       "when": 1781355604720,
       "tag": "0000_quick_wraith",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781358729027,
+      "tag": "0001_funny_eternals",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781358818886,
+      "tag": "0002_stale_tyrannus",
+      "breakpoints": true
     }
   ]
 }

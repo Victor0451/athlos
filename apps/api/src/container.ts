@@ -3,6 +3,7 @@ import { createClock, type Clock, type FakeClock } from '@athlos/integrations-cl
 import { createEmail, type Email, type StubEmail } from '@athlos/integrations-email'
 import { createLegacyDb, type LegacyDb, type StubLegacyDb } from '@athlos/integrations-legacy-db'
 import { createWhatsApp, type WhatsApp, type StubWhatsApp } from '@athlos/integrations-whatsapp'
+import { validateEnv, type Env } from '@athlos/config'
 import type { Pool } from 'pg'
 
 /**
@@ -22,6 +23,8 @@ export interface AppContainer {
   whatsapp: WhatsApp
   email: Email
   clock: Clock | FakeClock
+  /** Validated env object — required for auth services. */
+  env: Env
 }
 
 /**
@@ -82,6 +85,11 @@ export function buildContainer(config: ContainerConfig): AppContainer {
     throw new Error('buildContainer: DATABASE_URL is required')
   }
 
+  // Validate the env once. In test env we relax the LEGACY_DB_PATH /
+  // JWT_SECRET min-length checks by passing synthetic values; the
+  // validation rules live in @athlos/config and are the source of truth.
+  const validatedEnv = validateEnv(buildContainerEnv(env))
+
   const { db, pool } =
     overrides?.db && overrides?.pool
       ? { db: overrides.db, pool: overrides.pool }
@@ -90,6 +98,7 @@ export function buildContainer(config: ContainerConfig): AppContainer {
   return {
     db,
     pool,
+    env: validatedEnv,
     legacyDb:
       overrides?.legacyDb ??
       createLegacyDb({
@@ -129,5 +138,22 @@ export function buildContainer(config: ContainerConfig): AppContainer {
             }),
       }),
     clock: overrides?.clock ?? createClock({ type: useStubs ? 'stub' : 'real' }),
+  }
+}
+
+/**
+ * Build the env object that {@link validateEnv} will see. In test mode
+ * (NODE_ENV=test) we inject 32-char placeholder secrets so the strict
+ * zod checks pass without forcing every test to set a JWT_SECRET.
+ * Production / staging / development all run the real validation.
+ */
+function buildContainerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env['NODE_ENV'] !== 'test') return env
+  const placeholder = 'test-secret-please-rotate-32chars-minimum'
+  return {
+    ...env,
+    JWT_SECRET: env['JWT_SECRET'] ?? placeholder,
+    JWT_REFRESH_SECRET: env['JWT_REFRESH_SECRET'] ?? placeholder,
+    LEGACY_DB_PATH: env['LEGACY_DB_PATH'] ?? '/tmp/athlos-test-legacy',
   }
 }
