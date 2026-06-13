@@ -1,4 +1,5 @@
 import type { FastifyRequest, FastifyPluginCallback, preHandlerHookHandler } from 'fastify'
+import fp from 'fastify-plugin'
 import { verifyAccessToken, type JWTPayload } from './jwt.ts'
 import type { Env } from '@athlos/config'
 import { BusinessError, ErrorCode } from '@athlos/errors'
@@ -29,7 +30,13 @@ export type { JWTPayload }
  * registered in tests with a stub env without rebuilding the server.
  */
 export function authPlugin(getEnv: () => Env): FastifyPluginCallback {
-  return (fastify, _opts, done) => {
+  // Wrap with `fastify-plugin` so the onRequest hook and request
+  // decorator registered here apply to the PARENT scope, not the
+  // plugin's encapsulated context. Without this, the hook only
+  // fires for routes registered inside `authPlugin` itself — which
+  // is none — so every request would reach `requireAuth` with no
+  // operator and bounce to 401.
+  const plugin: FastifyPluginCallback = (fastify, _opts, done) => {
     fastify.decorateRequest('operator', null)
 
     fastify.addHook('onRequest', async (request: FastifyRequest) => {
@@ -49,6 +56,7 @@ export function authPlugin(getEnv: () => Env): FastifyPluginCallback {
 
     done()
   }
+  return fp(plugin, { name: 'athlos-auth' })
 }
 
 /**

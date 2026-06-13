@@ -21,6 +21,7 @@
     "db:migrate": "pnpm --filter @athlos/db migrate",
     "db:studio": "pnpm --filter @athlos/db studio",
     "db:smoke": "pnpm --filter @athlos/db smoke",
+    "db:migrate-users": "LEGACY_DB_PATH=${LEGACY_DB_PATH:-./legacy} pnpm --filter @athlos/api migrate:users",
     "prepare": "husky"
   },
   "devDependencies": {

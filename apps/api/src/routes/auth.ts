@@ -1,24 +1,26 @@
 import type { FastifyPluginCallback } from 'fastify'
 import { z } from 'zod'
-import { BusinessError, ErrorCode, throwIfInvalid } from '@athlos/errors'
+import { throwIfInvalid } from '@athlos/errors'
 import { requireAuth } from '@athlos/auth'
 import type { AppContainer } from '../container.ts'
 import { login } from '../services/login.ts'
+import { changePassword, getMe, logout, refresh } from '../services/auth.ts'
 
 /**
  * Auth routes (`/api/v1/auth/*`).
  *
- *   POST /login           — implemented; username + password → tokens
- *   POST /refresh         — stub: returns 501; full impl in PR 3b
- *   POST /logout          — stub: returns 501; full impl in PR 3b
- *   GET  /me              — stub: returns 501; full impl in PR 3b
- *   POST /change-password — stub: returns 501; full impl in PR 3b
+ *   POST /login           — username + password → tokens
+ *   POST /refresh         — rotate refresh token → new pair
+ *   POST /logout          — revoke a single refresh token
+ *   GET  /me              — current operator profile (auth required)
+ *   POST /change-password — update own password (auth required)
  *
- * The login handler is fully functional end-to-end so PR 3a lands
- * something testable in the HTTP layer. The other four are 501
- * `NOT_IMPLEMENTED` to keep the diff inside the review budget —
- * refresh + logout depend on a refresh-token table that's there but
- * not yet wired into a service.
+ * All handlers delegate to a service function in
+ * `apps/api/src/services/`. The route layer is responsible for HTTP
+ * plumbing (status codes, body shapes, Zod validation). The service
+ * layer is responsible for the database + crypto work and throws
+ * `BusinessError` codes that the global error handler maps to status
+ * codes (so we never construct an HTTP reply in a service).
  */
 const loginSchema = z.object({
   username: z.string().min(1).max(50),
@@ -30,8 +32,8 @@ const refreshSchema = z.object({
 })
 
 const changePasswordSchema = z.object({
-  current: z.string().min(1).max(200),
-  new: z.string().min(8).max(200),
+  current_password: z.string().min(1).max(200),
+  new_password: z.string().min(8).max(200),
 })
 
 export const authRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
@@ -44,38 +46,39 @@ export const authRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     return reply.code(200).send(result)
   })
 
-  fastify.post('/api/v1/auth/refresh', async (_request, _reply) => {
-    throwIfInvalid(refreshSchema, _request.body, 'body')
-    throw BusinessError(
-      ErrorCode.INTERNAL_ERROR,
-      'POST /api/v1/auth/refresh is not implemented in PR 3a (see PR 3b)',
-    )
+  fastify.post('/api/v1/auth/refresh', async (request, reply) => {
+    const body = throwIfInvalid(refreshSchema, request.body, 'body')
+    const result = await refresh(container.db, env, body)
+    return reply.code(200).send(result)
   })
 
-  fastify.post('/api/v1/auth/logout', async (_request, _reply) => {
-    throwIfInvalid(refreshSchema, _request.body, 'body')
-    throw BusinessError(
-      ErrorCode.INTERNAL_ERROR,
-      'POST /api/v1/auth/logout is not implemented in PR 3a (see PR 3b)',
-    )
+  fastify.post('/api/v1/auth/logout', async (request, reply) => {
+    const body = throwIfInvalid(refreshSchema, request.body, 'body')
+    await logout(container.db, body)
+    return reply.code(200).send({ message: 'Logged out' })
   })
 
-  fastify.get('/api/v1/auth/me', { preHandler: requireAuth() }, async (_request, _reply) => {
-    throw BusinessError(
-      ErrorCode.INTERNAL_ERROR,
-      'GET /api/v1/auth/me is not implemented in PR 3a (see PR 3b)',
-    )
+  fastify.get('/api/v1/auth/me', { preHandler: requireAuth() }, async (request, reply) => {
+    if (!request.operator) {
+      // requireAuth already throws, but the type-narrow keeps us honest.
+      return
+    }
+    const dto = await getMe(container.db, request.operator.sub)
+    return reply.code(200).send(dto)
   })
 
   fastify.post(
     '/api/v1/auth/change-password',
     { preHandler: requireAuth() },
-    async (request, _reply) => {
-      throwIfInvalid(changePasswordSchema, request.body, 'body')
-      throw BusinessError(
-        ErrorCode.INTERNAL_ERROR,
-        'POST /api/v1/auth/change-password is not implemented in PR 3a (see PR 3b)',
-      )
+    async (request, reply) => {
+      if (!request.operator) return
+      const body = throwIfInvalid(changePasswordSchema, request.body, 'body')
+      await changePassword(container.db, {
+        operatorId: request.operator.sub,
+        currentPassword: body.current_password,
+        newPassword: body.new_password,
+      })
+      return reply.code(200).send({ message: 'Password changed' })
     },
   )
 
