@@ -3,6 +3,7 @@ import { ApiError, redact } from '@athlos/errors'
 import { authPlugin } from '@athlos/auth'
 import { buildContainer, type AppContainer } from './container.ts'
 import { authRoutes } from './routes/auth.ts'
+import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.ts'
 
 /**
  * Build a Fastify instance with a fully-wired DI container.
@@ -65,9 +66,12 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   // request.operator on every request. Anonymous routes stay reachable.
   await app.register(authPlugin(() => container.env))
 
-  // Auth routes (PR 3a: login implemented; refresh/logout/me/change-password
-  // return 501 until PR 3b wires the refresh-token service).
+  // Auth routes (PR 3a: login; PR 3b: refresh / logout / me / change-password).
   await app.register(authRoutes)
+
+  // Approval routes (PR 3b): public-by-token + internal create-link.
+  await app.register(approvalRoutes)
+  await app.register(internalApprovalLinksRoutes)
 
   app.get('/', async () => ({ status: 'ok' }))
 
