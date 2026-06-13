@@ -38,6 +38,21 @@ importers:
 
   apps/api:
     dependencies:
+      '@athlos/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@athlos/integrations-clock':
+        specifier: workspace:*
+        version: link:../../packages/integrations/clock
+      '@athlos/integrations-email':
+        specifier: workspace:*
+        version: link:../../packages/integrations/email
+      '@athlos/integrations-legacy-db':
+        specifier: workspace:*
+        version: link:../../packages/integrations/legacy-db
+      '@athlos/integrations-whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/integrations/whatsapp
       '@fastify/cors':
         specifier: ^10.0.1
         version: 10.1.0
@@ -72,6 +87,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.21
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
       tsx:
         specifier: ^4.19.2
         version: 4.22.4
@@ -149,6 +167,30 @@ importers:
       typescript-eslint:
         specifier: ^8.19.0
         version: 8.61.0(eslint@9.39.4(jiti@1.21.7))(typescript@5.9.3)
+
+  packages/integrations/clock:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/integrations/email:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/integrations/legacy-db:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/integrations/whatsapp:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/test-builders:
     devDependencies:
