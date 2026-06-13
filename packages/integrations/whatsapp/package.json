@@ -1,0 +1,19 @@
+{
+  "name": "@athlos/integrations-whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WhatsApp integration — real uses the Business Cloud API; stub records messages in memory.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
