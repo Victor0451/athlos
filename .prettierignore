@@ -4,3 +4,4 @@ dist
 build
 pnpm-lock.yaml
 openspec/
+packages/db/drizzle/

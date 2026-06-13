@@ -43,5 +43,23 @@ services:
     ports:
       - '3001:3001'
 
+  # Placeholder for the migration runner. Real implementation (running
+  # `drizzle-kit migrate` against the live DB) lands in PR 9 (Deployment)
+  # alongside the production entrypoint. For PR 2 this just proves the
+  # service composition and the depends_on wiring.
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - node
+      - '-e'
+      - "console.log('migrations service placeholder — see PR 9')"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-athlos}@db:5432/${POSTGRES_DB:-athlos}
+
 volumes:
   pgdata:

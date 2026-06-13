@@ -1,0 +1,36 @@
+{
+  "name": "@athlos/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Athlos data access layer — Drizzle ORM, PostgreSQL pool, schemas, repositories, and migrations.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "studio": "drizzle-kit studio",
+    "smoke": "tsx src/__smoke__.ts",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.30.0",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0"
+  },
+  "peerDependencies": {
+    "pg": "^8.13.0"
+  }
+}
