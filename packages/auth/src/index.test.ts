@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { BCRYPT_COST, hashPassword, needsRehash, verifyPassword } from './password.ts'
 import { signAccessToken, verifyAccessToken } from './jwt.ts'
+import { ATHLOS_GATE_MARKER, requireAuth, requirePermission, requireRole } from './middleware.ts'
 import type { Env } from '@athlos/config'
 
 /**
@@ -82,5 +83,41 @@ describe('jwt', () => {
 
   it('rejects a malformed token', () => {
     expect(() => verifyAccessToken('not-a-jwt', env)).toThrow()
+  })
+})
+
+/**
+ * The `ATHLOS_GATE_MARKER` is the contract between @athlos/auth
+ * and the route-audit plugin in apps/api. Every gate function
+ * (requireAuth / requireRole / requirePermission) MUST mark its
+ * returned preHandler with this symbol so the audit can detect
+ * protected routes at registration time.
+ */
+describe('gate marker', () => {
+  it('requireAuth marks its returned function', () => {
+    const fn = requireAuth()
+    const marker = (fn as unknown as Record<symbol, { kind: string } | undefined>)[
+      ATHLOS_GATE_MARKER
+    ]
+    expect(marker).toBeDefined()
+    expect(marker?.kind).toBe('auth')
+  })
+
+  it('requireRole marks its returned function', () => {
+    const fn = requireRole('ADMIN')
+    const marker = (fn as unknown as Record<symbol, { kind: string } | undefined>)[
+      ATHLOS_GATE_MARKER
+    ]
+    expect(marker).toBeDefined()
+    expect(marker?.kind).toBe('role')
+  })
+
+  it('requirePermission marks its returned function', () => {
+    const fn = requirePermission('can_anulate')
+    const marker = (fn as unknown as Record<symbol, { kind: string } | undefined>)[
+      ATHLOS_GATE_MARKER
+    ]
+    expect(marker).toBeDefined()
+    expect(marker?.kind).toBe('permission')
   })
 })
