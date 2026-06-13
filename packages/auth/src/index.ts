@@ -15,4 +15,10 @@
 export { hashPassword, verifyPassword, needsRehash, BCRYPT_COST } from './password.ts'
 export { signAccessToken, verifyAccessToken } from './jwt.ts'
 export type { JWTPayload } from './jwt.ts'
-export { authPlugin, requireAuth, requireRole, requirePermission } from './middleware.ts'
+export {
+  authPlugin,
+  requireAuth,
+  requireRole,
+  requirePermission,
+  ATHLOS_GATE_MARKER,
+} from './middleware.ts'

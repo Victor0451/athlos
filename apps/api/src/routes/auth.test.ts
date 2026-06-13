@@ -169,12 +169,14 @@ describe('POST /api/v1/auth/refresh', () => {
 
 describe('POST /api/v1/auth/logout', () => {
   it('sets revoked_at and returns 200', async () => {
-    const { app, standin } = await bootstrap()
+    const { app, standin, env } = await bootstrap()
     try {
+      const op = makeOperator()
+      standin.state.operators.push(op)
       const { raw, hash } = generateRefreshToken()
       standin.state.refreshTokens.push({
         id: 'rt-1',
-        operatorId: '00000000-0000-4000-8000-000000000001',
+        operatorId: op.id,
         tokenHash: hash,
         expiresAt: new Date(Date.now() + 60_000),
         revokedAt: null,
@@ -185,10 +187,30 @@ describe('POST /api/v1/auth/logout', () => {
         method: 'POST',
         url: '/api/v1/auth/logout',
         payload: { refresh_token: raw },
+        headers: {
+          authorization: `Bearer ${bearer(
+            { sub: op.id, role: 'ADMIN', permissions: { can_reprint: true, can_anulate: true } },
+            env,
+          )}`,
+        },
       })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toEqual({ message: 'Logged out' })
       expect(standin.state.refreshTokens[0]?.revokedAt).toBeInstanceOf(Date)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns 401 without a bearer token (PR 4b route-audit gate)', async () => {
+    const { app } = await bootstrap()
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        payload: { refresh_token: 'x' },
+      })
+      expect(res.statusCode).toBe(401)
     } finally {
       await app.close()
     }

@@ -20,6 +20,30 @@ declare module 'fastify' {
 export type { JWTPayload }
 
 /**
+ * Marker property on gate functions. Set on every preHandler
+ * returned by `requireAuth` / `requireRole` / `requirePermission`
+ * so the route-audit (apps/api/src/plugins/route-audit.ts) can
+ * detect auth-gated routes at registration time. The function's
+ * `.name` is anonymous after the factory returns, so the marker
+ * is the only reliable signal.
+ *
+ * Exported for the route-audit plugin to read.
+ */
+export const ATHLOS_GATE_MARKER = Symbol.for('@athlos/auth/gate')
+
+/**
+ * Wrap a preHandler factory's return value with the gate marker.
+ * Used internally by the three gate functions below.
+ */
+function markGate(
+  fn: preHandlerHookHandler,
+  kind: 'auth' | 'role' | 'permission',
+): preHandlerHookHandler {
+  ;(fn as unknown as Record<symbol, { kind: string }>)[ATHLOS_GATE_MARKER] = { kind }
+  return fn
+}
+
+/**
  * Build a Fastify plugin that reads the `Authorization: Bearer <jwt>`
  * header on every request, verifies it, and decorates
  * `request.operator` with the payload. Missing / invalid tokens do
@@ -65,11 +89,11 @@ export function authPlugin(getEnv: () => Env): FastifyPluginCallback {
  * care about the role.
  */
 export function requireAuth(): preHandlerHookHandler {
-  return async (request, _reply) => {
+  return markGate(async (request, _reply) => {
     if (!request.operator) {
       throw BusinessError(ErrorCode.TOKEN_INVALID, 'Authentication required')
     }
-  }
+  }, 'auth')
 }
 
 /**
@@ -78,7 +102,7 @@ export function requireAuth(): preHandlerHookHandler {
  * checks for a present operator).
  */
 export function requireRole(...roles: Array<JWTPayload['role']>): preHandlerHookHandler {
-  return async (request) => {
+  return markGate(async (request) => {
     if (!request.operator) {
       throw BusinessError(ErrorCode.TOKEN_INVALID, 'Authentication required')
     }
@@ -88,7 +112,7 @@ export function requireRole(...roles: Array<JWTPayload['role']>): preHandlerHook
         `Role ${request.operator.role} cannot access this resource`,
       )
     }
-  }
+  }, 'role')
 }
 
 /**
@@ -97,12 +121,12 @@ export function requireRole(...roles: Array<JWTPayload['role']>): preHandlerHook
  * at the call site is a compile error.
  */
 export function requirePermission(perm: keyof JWTPayload['permissions']): preHandlerHookHandler {
-  return async (request) => {
+  return markGate(async (request) => {
     if (!request.operator) {
       throw BusinessError(ErrorCode.TOKEN_INVALID, 'Authentication required')
     }
     if (!request.operator.permissions[perm]) {
       throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, `Missing permission: ${perm}`)
     }
-  }
+  }, 'permission')
 }

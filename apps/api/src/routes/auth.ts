@@ -52,9 +52,13 @@ export const authRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     return reply.code(200).send(result)
   })
 
-  fastify.post('/api/v1/auth/logout', async (request, reply) => {
+  fastify.post('/api/v1/auth/logout', { preHandler: requireAuth() }, async (request, reply) => {
     const body = throwIfInvalid(refreshSchema, request.body, 'body')
-    await logout(container.db, body)
+    if (!request.operator) {
+      // requireAuth already throws, but the type-narrow keeps us honest.
+      return
+    }
+    await logout(container.db, { refresh_token: body.refresh_token })
     return reply.code(200).send({ message: 'Logged out' })
   })
 
