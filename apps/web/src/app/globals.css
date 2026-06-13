@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Visible focus ring on every interactive element — Gorriti Premium spec */
+  *:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(193, 39, 45, 0.1);
+  }
+
+  html,
+  body {
+    font-family: var(--font-body);
+    color: var(--ink-700);
+    background: var(--surface);
+  }
+
+  /* Tabular numbers for all tables — required for monetary alignment */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
