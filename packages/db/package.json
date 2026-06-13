@@ -16,6 +16,9 @@
     "migrate": "drizzle-kit migrate",
     "studio": "drizzle-kit studio",
     "smoke": "tsx src/__smoke__.ts",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
@@ -23,6 +26,7 @@
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@athlos/vitest-config": "workspace:*",
     "@types/pg": "^8.11.0",
     "drizzle-kit": "^0.30.0",
     "eslint": "^9.17.0",

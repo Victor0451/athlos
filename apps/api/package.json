@@ -7,6 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
@@ -22,6 +25,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@athlos/vitest-config": "workspace:*",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

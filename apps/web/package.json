@@ -6,6 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit"
   },
@@ -15,6 +18,7 @@
     "react-dom": "19.0.0"
   },
   "devDependencies": {
+    "@athlos/vitest-config": "workspace:*",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
