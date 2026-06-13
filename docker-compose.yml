@@ -1,0 +1,47 @@
+# Docker Compose skeleton — PR 1.
+# Real service definitions (migrations container, backup container, healthcheck
+# refinements) land in PR 9 (Deployment).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-athlos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athlos}
+      POSTGRES_DB: ${POSTGRES_DB:-athlos}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-athlos} -d ${POSTGRES_DB:-athlos}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-athlos}@db:5432/${POSTGRES_DB:-athlos}
+      JWT_SECRET: ${JWT_SECRET}
+      LEGACY_DB_PATH: ${LEGACY_DB_PATH}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+    ports:
+      - '3001:3001'
+
+volumes:
+  pgdata:
