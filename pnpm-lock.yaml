@@ -137,6 +137,19 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/config:
+    dependencies:
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/db:
     dependencies:
       drizzle-orm:
@@ -167,6 +180,19 @@ importers:
       typescript-eslint:
         specifier: ^8.19.0
         version: 8.61.0(eslint@9.39.4(jiti@1.21.7))(typescript@5.9.3)
+
+  packages/errors:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@athlos/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
   packages/integrations/clock:
     devDependencies:
