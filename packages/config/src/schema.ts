@@ -28,6 +28,17 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   FROM_ADDRESS: z.string().email().default('noreply@gorriti.app'),
+  // Scheduler cron expressions (PR 6a). The defaults match the
+  // scheduler-jobs spec §"Cron Configuration" — change here and the
+  // scheduler picks them up on next boot. `RECONCILIATION_CRON` is
+  // optional: when unset the reconciliation job is registered but
+  // disabled (the boot skips it; `runNow` still works for manual
+  // triggers).
+  DRIFT_DETECTION_CRON: z.string().default('*/15 * * * *'),
+  FRESHNESS_REFRESH_CRON: z.string().default('*/5 * * * *'),
+  TOKEN_CLEANUP_CRON: z.string().default('0 3 * * *'),
+  RECONCILIATION_CRON: z.string().optional(),
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
 })
 
 export type Env = z.infer<typeof envSchema>

@@ -25,6 +25,10 @@ export type { Operator, NewOperator, RefreshToken, NewRefreshToken } from './ope
 export { approvalTokens } from './approval-tokens'
 export type { ApprovalToken, NewApprovalToken } from './approval-tokens'
 
+// job runs (PR 6a scheduler)
+export { jobRuns } from './job-runs'
+export type { JobRun, NewJobRun, JobRunStatus, JobTrigger } from './job-runs'
+
 // socios ───────────────────────────────────────────────────────
 export { sociosSchema, socioEstado, socios } from './socios'
 export type { Socio, NewSocio } from './socios'
