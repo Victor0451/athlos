@@ -1,4 +1,13 @@
-import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import {
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core'
 
 /**
  * `public` schema — cross-cutting concerns shared by every domain.
@@ -156,3 +165,60 @@ export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationStatus = Notification['status']
 export type NotificationChannelDb = Notification['channel']
+
+/**
+ * `raw_events` — append-only storage for every legacy record imported by
+ * the import pipeline (PR 7). The pipeline (`@athlos/import`) inserts
+ * one row per legacy record it sees; downstream packages (lineage,
+ * projection, drift, audit) read from this table.
+ *
+ * The unique key `(source_table, source_key, content_hash)` gives the
+ * import pipeline its idempotency contract: re-importing the same
+ * content for the same legacy key is a no-op (`ON CONFLICT DO NOTHING`),
+ * while a content change appends a NEW row (so the audit trail keeps
+ * every historical version of every record).
+ *
+ * `payload` is the full legacy row (column name → value) so downstream
+ * consumers can read whatever the legacy table exposed without a
+ * separate "per-table schema" copy in Athlos. The drift detection
+ * (`@athlos/drift`) and lineage (`@athlos/lineage`) packages both
+ * read `payload` directly.
+ *
+ * `import_batch` ties rows to the import run that produced them so a
+ * failed batch can be rolled back with a single DELETE. The rollback
+ * contract is the spec's "Append-Only Semantics → Rollback batch"
+ * scenario.
+ */
+export const rawEvents = pgTable(
+  'raw_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** The 14-table legacy identifier (e.g. 'socios', 'ctacte', 'paramet'). */
+    sourceTable: varchar('source_table', { length: 32 }).notNull(),
+    /** Legacy primary key (the VFP row's key column, e.g. 'SOC-001'). */
+    sourceKey: varchar('source_key', { length: 64 }).notNull(),
+    /** sha256(canonicalized payload) — see `@athlos/import.computeHash`. */
+    contentHash: varchar('content_hash', { length: 64 }).notNull(),
+    /** The full legacy row, jsonb-encoded. */
+    payload: jsonb('payload').notNull(),
+    /** UUID of the import run (matches `job_runs.id` when triggered by
+     *  the scheduled job). Set by the pipeline on every insert. */
+    importBatch: uuid('import_batch').notNull(),
+    importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    /** Idempotency key — re-importing identical content is a no-op. */
+    sourceKeyHashIdx: uniqueIndex('uq_raw_events_source_key_hash').on(
+      table.sourceTable,
+      table.sourceKey,
+      table.contentHash,
+    ),
+    /** For "all events from this batch" (rollback, debugging). */
+    importBatchIdx: index('idx_raw_events_import_batch').on(table.importBatch),
+    /** For "latest event per source key" (lineage, projection rebuild). */
+    sourceKeyIdx: index('idx_raw_events_source_key').on(table.sourceTable, table.sourceKey),
+  }),
+)
+
+export type RawEvent = typeof rawEvents.$inferSelect
+export type NewRawEvent = typeof rawEvents.$inferInsert
