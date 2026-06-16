@@ -1,0 +1,183 @@
+import { describe, it, expect } from 'vitest'
+import {
+  recordStart,
+  recordRunning,
+  recordFinish,
+  reconcileOrphanedRuns,
+  markInflightAsShutdown,
+  getLastRun,
+} from './run-tracker.ts'
+import { createStandinDb, asDrizzle, findRow, listRows, seedRow } from './test-standins/db.ts'
+
+/**
+ * The run-tracker is the SQL surface for the `job_runs` state machine.
+ * Tests use the in-memory Drizzle standin; the production code path
+ * is exercised in CI's Postgres service.
+ */
+describe('recordStart', () => {
+  it('inserts a row with status=pending and returns it', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const row = await recordStart(db, {
+      jobName: 'drift-detection',
+      triggeredBy: 'scheduler',
+      metadata: { tickAt: '2026-01-01T00:00:00Z' },
+    })
+    expect(row.status).toBe('pending')
+    expect(row.attempt).toBe(1)
+    expect(row.jobName).toBe('drift-detection')
+    expect(row.triggeredBy).toBe('scheduler')
+    expect(row.metadata).toEqual({ tickAt: '2026-01-01T00:00:00Z' })
+    expect(row.id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(listRows(standin)).toHaveLength(1)
+  })
+})
+
+describe('recordRunning', () => {
+  it('transitions a pending row to running and stamps startedAt', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const row = await recordStart(db, {
+      jobName: 'token-cleanup',
+      triggeredBy: 'scheduler',
+      metadata: {},
+    })
+    expect(row.startedAt).toBeNull()
+    await recordRunning(db, row.id)
+    const updated = findRow(standin, row.id)
+    expect(updated?.status).toBe('running')
+    expect(updated?.startedAt).toBeInstanceOf(Date)
+  })
+})
+
+describe('recordFinish', () => {
+  it('marks a row succeeded and merges metadata', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const row = await recordStart(db, {
+      jobName: 'drift-detection',
+      triggeredBy: 'scheduler',
+      metadata: { tickAt: 'x' },
+    })
+    await recordRunning(db, row.id)
+    const updated = await recordFinish(db, {
+      jobRunId: row.id,
+      status: 'succeeded',
+      metadata: { drift_count: 0 },
+    })
+    expect(updated?.status).toBe('succeeded')
+    expect(updated?.finishedAt).toBeInstanceOf(Date)
+    expect(updated?.metadata).toEqual({ drift_count: 0 })
+  })
+
+  it('marks a row failed with error_message preserved', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const row = await recordStart(db, {
+      jobName: 'token-cleanup',
+      triggeredBy: 'scheduler',
+      metadata: {},
+    })
+    await recordRunning(db, row.id)
+    const updated = await recordFinish(db, {
+      jobRunId: row.id,
+      status: 'failed',
+      errorMessage: 'connection refused',
+      attempt: 1,
+    })
+    expect(updated?.status).toBe('failed')
+    expect(updated?.errorMessage).toBe('connection refused')
+    expect(updated?.attempt).toBe(1)
+  })
+
+  it('marks a row dead_letter with the final attempt', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const row = await recordStart(db, {
+      jobName: 'drift-detection',
+      triggeredBy: 'scheduler',
+      metadata: {},
+    })
+    await recordRunning(db, row.id)
+    const updated = await recordFinish(db, {
+      jobRunId: row.id,
+      status: 'dead_letter',
+      errorMessage: 'db down x3',
+      attempt: 3,
+    })
+    expect(updated?.status).toBe('dead_letter')
+    expect(updated?.attempt).toBe(3)
+  })
+})
+
+describe('reconcileOrphanedRuns', () => {
+  it('marks orphaned running rows as failed', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    // Seed a running row (the post-crash state).
+    seedRow(standin, { jobName: 'drift-detection', status: 'running' })
+    seedRow(standin, { jobName: 'freshness-refresh', status: 'running' })
+    seedRow(standin, { jobName: 'token-cleanup', status: 'succeeded' })
+
+    const count = await reconcileOrphanedRuns(db)
+    // The standin's `update().where().returning()` returns the matching
+    // rows, so count === number reconciled.
+    expect(count).toBe(2)
+    const rows = listRows(standin)
+    const failed = rows.filter((r) => r.status === 'failed')
+    expect(failed).toHaveLength(2)
+    for (const r of failed) {
+      expect(r.errorMessage).toBe('process terminated unexpectedly')
+    }
+    const succeeded = rows.find((r) => r.jobName === 'token-cleanup')
+    expect(succeeded?.status).toBe('succeeded')
+  })
+
+  it('returns 0 when no running rows exist', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    seedRow(standin, { jobName: 'drift-detection', status: 'succeeded' })
+    const count = await reconcileOrphanedRuns(db)
+    expect(count).toBe(0)
+  })
+})
+
+describe('markInflightAsShutdown', () => {
+  it('marks running rows as failed with process shutdown', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    seedRow(standin, { jobName: 'freshness-refresh', status: 'running' })
+    const count = await markInflightAsShutdown(db)
+    expect(count).toBe(1)
+    const row = listRows(standin)[0]
+    expect(row?.status).toBe('failed')
+    expect(row?.errorMessage).toBe('process shutdown')
+  })
+})
+
+describe('getLastRun', () => {
+  it('returns the most recent row for a job name', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const old = seedRow(standin, {
+      jobName: 'drift-detection',
+      status: 'succeeded',
+      scheduledAt: new Date('2024-01-01T00:00:00Z'),
+    })
+    const recent = seedRow(standin, {
+      jobName: 'drift-detection',
+      status: 'failed',
+      scheduledAt: new Date('2024-06-01T00:00:00Z'),
+    })
+    const last = await getLastRun(db, 'drift-detection')
+    expect(last?.id).toBe(recent.id)
+    expect(last?.id).not.toBe(old.id)
+  })
+
+  it('returns null when no rows exist for the name', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const last = await getLastRun(db, 'unknown-job')
+    expect(last).toBeNull()
+  })
+})

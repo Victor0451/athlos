@@ -21,6 +21,8 @@ import { helmet } from './plugins/helmet.ts'
 import { rateLimit } from './plugins/rate-limit.ts'
 import { versioning } from './plugins/versioning.ts'
 import { routeAudit } from './plugins/route-audit.ts'
+import { buildScheduler } from './jobs/register.ts'
+import type { JobScheduler } from '@athlos/scheduler'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -185,6 +187,18 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
     buildSha: env['BUILD_SHA'] ?? 'dev',
   })
 
+  // 17. Scheduler (PR 6a TASK-041..TASK-047): build + register all 5
+  //     default jobs. Started in `app.ready` by the caller (apps/api/
+  //     src/index.ts) so cron ticks fire only after the HTTP server
+  //     is bound. Stopped from the SIGTERM handler with a 30s
+  //     graceful window.
+  const scheduler = await buildScheduler({
+    db: container.db,
+    env: container.env,
+    logger: app.log as never,
+  })
+  app.decorate('scheduler', scheduler)
+
   // Smoke probe used by `server.test.ts` and as a last-resort liveness
   // check at `/`. The proper `/health` route is registered above.
   app.get('/', async () => ({ status: 'ok' }))
@@ -195,5 +209,6 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 declare module 'fastify' {
   interface FastifyInstance {
     container: AppContainer
+    scheduler: JobScheduler
   }
 }

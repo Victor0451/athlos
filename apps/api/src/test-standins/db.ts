@@ -450,6 +450,7 @@ interface StandinDrizzle {
   select(): unknown
   insert(t: unknown): unknown
   update(t: unknown): unknown
+  delete(t: unknown): unknown
   transaction<T>(fn: (tx: StandinDrizzle) => Promise<T>): Promise<T>
 }
 
@@ -890,6 +891,31 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
             },
           }
           return result
+        },
+      }
+    },
+    delete(table: unknown) {
+      const tname = tableName(table)
+      const applyDelete = (cond: unknown): { rowCount: number } => {
+        const filters = normalizeFilters(cond)
+        const rows = getRows(tname)
+        const before = rows.length
+        const surviving = rows.filter((r) => !filters.every((f) => clauseMatches(r, f, tname)))
+        // Replace the array's contents so the standin's state arrays
+        // stay the same reference (the container's state object holds
+        // the array reference; we mutate it in place).
+        rows.length = 0
+        for (const r of surviving) rows.push(r)
+        return { rowCount: before - surviving.length }
+      }
+      return {
+        where: (cond: unknown) => {
+          const built = {
+            returning: () => applyDelete(cond),
+            then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+              Promise.resolve(applyDelete(cond)).then(onFulfilled, onRejected),
+          }
+          return built
         },
       }
     },
