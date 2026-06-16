@@ -1,6 +1,7 @@
 import { and, eq, isNull, gt, type SQL } from 'drizzle-orm'
 import type {
   ApprovalToken,
+  AuditEvent,
   Operator,
   RefreshToken,
   Socio,
@@ -47,6 +48,7 @@ type CtacteRow = Ctacte
 type DisciplinaRow = Disciplina
 type EjercicioRow = Ejercicio
 type InscripcionRow = Inscripcion
+type AuditEventRow = AuditEvent
 
 type Row =
   | OperatorRow
@@ -57,6 +59,7 @@ type Row =
   | DisciplinaRow
   | EjercicioRow
   | InscripcionRow
+  | AuditEventRow
 
 interface StandinState {
   operators: OperatorRow[]
@@ -67,6 +70,7 @@ interface StandinState {
   disciplinas: DisciplinaRow[]
   ejercicios: EjercicioRow[]
   inscripciones: InscripcionRow[]
+  auditEvents: AuditEventRow[]
 }
 
 export interface StandinDb {
@@ -74,7 +78,19 @@ export interface StandinDb {
   reset(): void
 }
 
-type Filter = { kind: 'eq' | 'isNull' | 'gt' | 'lt'; column: string; value: unknown }
+type Filter = { kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'ilike'; column: string; value: unknown }
+
+/**
+ * A logical group. The standin models the WHERE as a flat list of
+ * predicates that are AND'd at apply time. An `OrGroup` is a
+ * single predicate that evaluates to true if any of its inner
+ * filters match — used for `or(ilike(a, ...), ilike(b, ...), ...)`.
+ */
+type FilterGroup = { or: Filter[] }
+type Clause = Filter | FilterGroup
+function isOrGroup(c: Clause): c is FilterGroup {
+  return (c as FilterGroup).or !== undefined
+}
 
 const OPERATOR_SQL_TO_JS: Record<string, keyof OperatorRow> = {
   id: 'id',
@@ -172,6 +188,20 @@ const INSCRIPCION_SQL_TO_JS: Record<string, keyof InscripcionRow> = {
   created_at: 'createdAt',
 }
 
+const AUDIT_SQL_TO_JS: Record<string, keyof AuditEventRow> = {
+  id: 'id',
+  operator_id: 'operatorId',
+  action: 'action',
+  entity_type: 'entityType',
+  entity_id: 'entityId',
+  old_value: 'oldValue',
+  new_value: 'newValue',
+  source_ip: 'sourceIp',
+  metadata: 'metadata',
+  idempotency_key: 'idempotencyKey',
+  created_at: 'createdAt',
+}
+
 const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   operators: OPERATOR_SQL_TO_JS,
   refresh_tokens: REFRESH_SQL_TO_JS,
@@ -181,6 +211,7 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   disciplinas: DISCIPLINA_SQL_TO_JS,
   ejercicios: EJERCICIO_SQL_TO_JS,
   inscripciones: INSCRIPCION_SQL_TO_JS,
+  audit_events: AUDIT_SQL_TO_JS,
 }
 
 function jsColumn(tableName: string, sqlName: string): string | null {
@@ -204,6 +235,14 @@ function matches(row: Row, f: Filter, tableName: string): boolean {
     if (typeof v === 'number' && typeof f.value === 'number') return v < f.value
     if (typeof v === 'string' && typeof f.value === 'string') return v < f.value
     return false
+  }
+  if (f.kind === 'ilike') {
+    // The value passed in is the LIKE pattern (e.g. `%garc%`).
+    // Translate `%` to `.*` and match case-insensitively.
+    if (typeof v !== 'string' || typeof f.value !== 'string') return false
+    const pattern = f.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')
+    const re = new RegExp('^' + pattern + '$', 'i')
+    return re.test(v)
   }
   return false
 }
@@ -302,7 +341,7 @@ function isSumProjection(projection: Record<string, unknown> | undefined): boole
   return false
 }
 
-function normalizeFilters(cond: unknown): Filter[] {
+function normalizeFilters(cond: unknown): Clause[] {
   if (!cond) return []
   if (Array.isArray(cond)) return cond.flatMap(normalizeFilters)
   const obj = cond as { queryChunks?: Array<unknown> }
@@ -310,8 +349,8 @@ function normalizeFilters(cond: unknown): Filter[] {
   return []
 }
 
-function parseChunks(chunks: Array<unknown>): Filter[] {
-  const out: Filter[] = []
+function parseChunks(chunks: Array<unknown>): Clause[] {
+  const out: Clause[] = []
   // First, try the leaf shape on the whole array (eq/isNull/gt are
   // a flat SQL with 3 or 5 chunks).
   const leaf = parseLeaf(chunks)
@@ -321,6 +360,20 @@ function parseChunks(chunks: Array<unknown>): Filter[] {
   }
   // Otherwise recurse: AND / OR / nested queries wrap their operands
   // in another SQL with `queryChunks` of their own.
+  // Detect `or(...)` by scanning for the ` or ` separator strings
+  // between child SQL fragments.
+  if (isOrShape(chunks)) {
+    const children = extractOrChildren(chunks)
+    const inner: Filter[] = []
+    for (const c of children) {
+      const norm = normalizeFilters(c)
+      for (const x of norm) {
+        if (!isOrGroup(x)) inner.push(x)
+      }
+    }
+    out.push({ or: inner })
+    return out
+  }
   for (const chunk of chunks) {
     if (chunk === null || chunk === undefined) continue
     if (typeof chunk === 'string') continue
@@ -329,6 +382,40 @@ function parseChunks(chunks: Array<unknown>): Filter[] {
     if (Array.isArray(inner.value)) continue
     if (inner.queryChunks) {
       out.push(...parseChunks(inner.queryChunks))
+    }
+  }
+  return out
+}
+
+/**
+ * Detect an `or(...)` wrapper. The shape is `[parens, qc-1, ' or ', qc-2, ' or ', qc-3, parens]`
+ * — a sequence of child SQLs separated by StringChunk(' or ').
+ */
+function isOrShape(chunks: Array<unknown>): boolean {
+  let sawOr = false
+  for (const c of chunks) {
+    if (typeof c !== 'object' || c === null) continue
+    const o = c as { value?: unknown; queryChunks?: unknown }
+    if (Array.isArray(o.value)) {
+      const arr = o.value as unknown[]
+      if (arr.some((x) => x === ' or ' || x === ' OR ')) sawOr = true
+    }
+  }
+  return sawOr
+}
+
+/** Pull out the child SQLs of an `or(...)` wrapper. */
+function extractOrChildren(chunks: Array<unknown>): unknown[] {
+  const out: unknown[] = []
+  for (const c of chunks) {
+    if (typeof c !== 'object' || c === null) continue
+    const o = c as { value?: unknown; queryChunks?: unknown }
+    if (Array.isArray(o.value)) {
+      // StringChunk — skip, it's the ' or ' separator
+      continue
+    }
+    if (o.queryChunks) {
+      out.push(c)
     }
   }
   return out
@@ -352,6 +439,8 @@ function parseLeaf(chunks: Array<unknown>): Filter | null {
       if (opStr === ' = ') return { kind: 'eq', column: col, value: val }
       if (opStr === ' > ') return { kind: 'gt', column: col, value: val }
       if (opStr === ' < ') return { kind: 'lt', column: col, value: val }
+      if (opStr?.toLowerCase() === ' ilike ')
+        return { kind: 'ilike', column: col, value: String(val) }
     }
   }
   return null
@@ -365,8 +454,12 @@ interface StandinDrizzle {
 }
 
 function buildDrizzleInterface(state: StandinState): StandinDrizzle {
-  function applyFilters(rows: Row[], filters: Filter[], tname: string): Row[] {
-    return rows.filter((r) => filters.every((f) => matches(r, f, tname)))
+  function applyFilters(rows: Row[], filters: Clause[], tname: string): Row[] {
+    return rows.filter((r) => filters.every((f) => clauseMatches(r, f, tname)))
+  }
+  function clauseMatches(row: Row, c: Clause, tname: string): boolean {
+    if (isOrGroup(c)) return c.or.some((f) => matches(row, f, tname))
+    return matches(row, c, tname)
   }
   function getRows(tname: string): Row[] {
     if (tname === 'operators') return state.operators
@@ -377,6 +470,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'disciplinas') return state.disciplinas
     if (tname === 'ejercicios') return state.ejercicios
     if (tname === 'inscripciones') return state.inscripciones
+    if (tname === 'audit_events') return state.auditEvents
     return []
   }
 
@@ -475,15 +569,26 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as EjercicioRow
     }
+    if (tname === 'inscripciones') {
+      return {
+        id: id as string,
+        socioId: v['socioId']!,
+        disciplinaId: v['disciplinaId']!,
+        ejercicioId: v['ejercicioId']!,
+        estado: (v['estado'] as string) ?? 'activa',
+        fechaAlta: v['fechaAlta']!,
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+      } as InscripcionRow
+    }
+    // Default catch-all: audit_events and any future INSERT-only
+    // tables. The standin doesn't enforce column constraints
+    // here, so the caller is responsible for passing a value
+    // shape that matches the row type.
     return {
       id: id as string,
-      socioId: v['socioId']!,
-      disciplinaId: v['disciplinaId']!,
-      ejercicioId: v['ejercicioId']!,
-      estado: (v['estado'] as string) ?? 'activa',
-      fechaAlta: v['fechaAlta']!,
+      ...v,
       createdAt: (v['createdAt'] as Date) ?? new Date(),
-    } as InscripcionRow
+    } as unknown as Row
   }
 
   function project(tname: string, row: Row, cols: Record<string, unknown>): unknown {
@@ -533,6 +638,30 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
   function selectChain(tname: string, projection: Record<string, unknown> | undefined) {
     const isCount = isCountProjection(projection)
     const isSum = isSumProjection(projection)
+    /**
+     * Build a thenable that ALSO exposes `.offset(o)`. The chain
+     * `...limit(n)` should be awaitable (returns rows) and
+     * `...limit(n).offset(o)` should also be awaitable. Drizzle's
+     * real client returns a thenable at every step; the standin
+     * fakes the same shape so the service code can `await ...limit(n)`
+     * OR `await ...limit(n).offset(o)` without branching.
+     */
+    function makeOffsetResult(rowsPromise: Promise<unknown[]>): unknown {
+      const obj = {
+        offset: (o: number) => makeOffsetResult(rowsPromise.then((r) => r.slice(o))),
+        then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+          rowsPromise.then(onFulfilled, onRejected),
+      }
+      return obj
+    }
+    function makeLimitResult(resolveRows: (offset: number) => Promise<unknown[]>): unknown {
+      const rowsPromise = resolveRows(0)
+      return {
+        offset: (o: number) => makeOffsetResult(resolveRows(o)),
+        then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+          rowsPromise.then(onFulfilled, onRejected),
+      }
+    }
     return {
       from: (table: unknown) => {
         const realTname = tableName(table) || tname
@@ -542,60 +671,31 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
             const builder = {
               where: (cond: unknown) => {
                 const filters = normalizeFilters(cond)
-                return {
-                  orderBy: (_sort: unknown) => {
-                    return {
-                      limit: (n: number) => {
-                        // INNER JOIN semantics: row exists only if
-                        // both sides have a match. For PR 5 the
-                        // standin implements this as a cartesian
-                        // filter — only emit rows whose FK matches
-                        // a row in the joined table. Good enough
-                        // for the small fixtures the tests use.
-                        const left = applyFilters(getRows(realTname), filters, realTname)
-                        const rightRows = getRows(tname2)
-                        const joined = left.flatMap((l) => {
-                          const lAny = l as unknown as Record<string, unknown>
-                          // Pick the FK from left that points to right
-                          // by checking known FK columns.
-                          const fkCandidates: Array<keyof typeof lAny> = []
-                          for (const k of Object.keys(lAny)) {
-                            if (tname2 === 'socios' && k === 'socioId') fkCandidates.push(k)
-                            if (tname2 === 'disciplinas' && k === 'disciplinaId')
-                              fkCandidates.push(k)
-                            if (tname2 === 'ejercicios' && k === 'ejercicioId') fkCandidates.push(k)
-                          }
-                          return rightRows
-                            .filter((r) => {
-                              const rAny = r as unknown as Record<string, unknown>
-                              return fkCandidates.some((fk) => lAny[fk] === rAny['id'])
-                            })
-                            .map((r) => mergeJoinRow(lAny, rAny(r), projection))
-                        })
-                        return Promise.resolve(joined.slice(0, n))
-                      },
+                const resolveJoin = (offset: number, n: number): Promise<unknown[]> => {
+                  const left = applyFilters(getRows(realTname), filters, realTname)
+                  const rightRows = getRows(tname2)
+                  const joined = left.flatMap((l) => {
+                    const lAny = l as unknown as Record<string, unknown>
+                    const fkCandidates: Array<keyof typeof lAny> = []
+                    for (const k of Object.keys(lAny)) {
+                      if (tname2 === 'socios' && k === 'socioId') fkCandidates.push(k)
+                      if (tname2 === 'disciplinas' && k === 'disciplinaId') fkCandidates.push(k)
+                      if (tname2 === 'ejercicios' && k === 'ejercicioId') fkCandidates.push(k)
                     }
-                  },
-                  limit: (n: number) => {
-                    const left = applyFilters(getRows(realTname), filters, realTname)
-                    const rightRows = getRows(tname2)
-                    const joined = left.flatMap((l) => {
-                      const lAny = l as unknown as Record<string, unknown>
-                      const fkCandidates: Array<keyof typeof lAny> = []
-                      for (const k of Object.keys(lAny)) {
-                        if (tname2 === 'socios' && k === 'socioId') fkCandidates.push(k)
-                        if (tname2 === 'disciplinas' && k === 'disciplinaId') fkCandidates.push(k)
-                        if (tname2 === 'ejercicios' && k === 'ejercicioId') fkCandidates.push(k)
-                      }
-                      return rightRows
-                        .filter((r) => {
-                          const rAny = r as unknown as Record<string, unknown>
-                          return fkCandidates.some((fk) => lAny[fk] === rAny['id'])
-                        })
-                        .map((r) => mergeJoinRow(lAny, rAny(r), projection))
-                    })
-                    return Promise.resolve(joined.slice(0, n))
-                  },
+                    return rightRows
+                      .filter((r) => {
+                        const rAny = r as unknown as Record<string, unknown>
+                        return fkCandidates.some((fk) => lAny[fk] === rAny['id'])
+                      })
+                      .map((r) => mergeJoinRow(lAny, rAny(r), projection))
+                  })
+                  return Promise.resolve(joined.slice(offset, offset + n))
+                }
+                return {
+                  orderBy: (_sort: unknown) => ({
+                    limit: (n: number) => makeLimitResult((o) => resolveJoin(o, n)),
+                  }),
+                  limit: (n: number) => makeLimitResult((o) => resolveJoin(o, n)),
                 }
               },
             }
@@ -603,51 +703,36 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           },
           where: (cond: unknown) => {
             const filters = normalizeFilters(cond)
+            const resolveFiltered = (offset: number, n: number): Promise<unknown[]> => {
+              const rows = applyFilters(getRows(realTname), filters, realTname)
+              if (isCount) return Promise.resolve([{ n: rows.length }])
+              if (isSum) return Promise.resolve([{ saldo: '0.00' }])
+              return Promise.resolve(rows.slice(offset, offset + n))
+            }
             return {
-              orderBy: (_sort: unknown) => {
-                return {
-                  limit: (n: number) => {
-                    const rows = applyFilters(getRows(realTname), filters, realTname).slice(0, n)
-                    if (isCount) return Promise.resolve([{ n: rows.length }])
-                    if (isSum) {
-                      // Sum debe - haber for ctacte when applicable;
-                      // the standin doesn't fully parse the SQL
-                      // expression but the repository's getSaldo
-                      // pre-filters rows client-side before calling
-                      // sum, so we just return 0 here. The route's
-                      // getSaldo calls run a custom path — see
-                      // select().from(ctacte).where(...).limit(1) with
-                      // a sum() projection. The standin returns 0
-                      // for sum projections; the service uses a
-                      // dedicated helper instead. (See ctacte
-                      // service.ts `sumDebeHaber`.)
-                      return Promise.resolve([{ saldo: '0.00' }])
-                    }
-                    return Promise.resolve(rows)
-                  },
-                }
-              },
-              limit: (n: number) => {
-                const rows = applyFilters(getRows(realTname), filters, realTname).slice(0, n)
-                if (isCount) return Promise.resolve([{ n: rows.length }])
-                if (isSum) return Promise.resolve([{ saldo: '0.00' }])
-                return Promise.resolve(rows.slice(0, n))
-              },
+              orderBy: (_sort: unknown) => ({
+                limit: (n: number) => makeLimitResult((o) => resolveFiltered(o, n)),
+              }),
+              limit: (n: number) => makeLimitResult((o) => resolveFiltered(o, n)),
             }
           },
           orderBy: (_sort: unknown) => {
+            const resolveAll = (offset: number, n: number): Promise<unknown[]> => {
+              const rows = getRows(realTname)
+              if (isCount) return Promise.resolve([{ n: rows.length }])
+              return Promise.resolve(rows.slice(offset, offset + n))
+            }
             return {
-              limit: (n: number) => {
-                const rows = getRows(realTname).slice(0, n)
-                if (isCount) return Promise.resolve([{ n: rows.length }])
-                return Promise.resolve(rows)
-              },
+              limit: (n: number) => makeLimitResult((o) => resolveAll(o, n)),
             }
           },
           limit: (n: number) => {
-            const rows = getRows(realTname).slice(0, n)
-            if (isCount) return Promise.resolve([{ n: rows.length }])
-            return Promise.resolve(rows)
+            const resolveAll = (offset: number): Promise<unknown[]> => {
+              const rows = getRows(realTname)
+              if (isCount) return Promise.resolve([{ n: rows.length }])
+              return Promise.resolve(rows.slice(offset, offset + n))
+            }
+            return makeLimitResult(resolveAll)
           },
         }
       },
@@ -664,7 +749,23 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     projection: Record<string, unknown> | undefined,
   ): unknown {
     if (!projection || Object.keys(projection).length === 0) {
-      return { ...left, ...right }
+      // Drizzle's real client returns nested objects keyed by
+      // the table name — `{ inscripciones: {...}, socios: {...} }`.
+      // The standin matches that shape so the service code can
+      // `row.inscripciones.id` without branching between test
+      // and prod.
+      const leftTname = tnameOf(left)
+      const rightTname = tnameOf(right)
+      const out: Record<string, unknown> = {}
+      if (leftTname) out[leftTname] = left
+      if (rightTname) out[rightTname] = right
+      // If we couldn't resolve a table name for either side,
+      // fall back to a flat merge (the previous behavior) so
+      // unknown tables don't crash.
+      if (!leftTname && !rightTname) {
+        return { ...left, ...right }
+      }
+      return out
     }
     const out: Record<string, unknown> = {}
     for (const [alias, col] of Object.entries(projection)) {
@@ -672,16 +773,12 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       const tableSym = (col as unknown as Record<symbol, unknown>)[DRIZZLE_NAME_SYMBOL]
       const sqlName = obj.name ?? obj._?.name
       if (!sqlName) continue
-      // Try right side first, then left. This is a heuristic —
-      // the standin is good enough for the padrones join used in
-      // PR 5 tests, but real queries should use the real DB.
       const tname2 = tableSym as string | undefined
       const jsCol = tname2 ? jsColumn(tname2, sqlName) : null
       if (jsCol && right[jsCol] !== undefined) {
         out[alias] = right[jsCol]
         continue
       }
-      // Fallback: walk both sides for the column.
       if (right[sqlName] !== undefined) {
         out[alias] = right[sqlName]
         continue
@@ -692,6 +789,25 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       }
     }
     return out
+  }
+
+  /**
+   * Best-effort: figure out which table a row came from by
+   * looking for a known primary-key column. Used by the inner
+   * join so the returned row shape matches Drizzle's nested
+   * `{ <tableName>: { ...row } }`.
+   */
+  function tnameOf(row: Record<string, unknown>): string | null {
+    if ('numeroSocio' in row) return 'socios'
+    if ('anio' in row && 'fechaInicio' in row) return 'ejercicios'
+    if ('codigo' in row && 'nombre' in row) return 'disciplinas'
+    if ('socioId' in row && 'disciplinaId' in row && 'ejercicioId' in row) return 'inscripciones'
+    if ('debe' in row && 'haber' in row) return 'ctacte'
+    if ('username' in row && 'role' in row) return 'operators'
+    if ('tokenHash' in row && 'operatorId' in row) return 'refreshTokens'
+    if ('tokenHash' in row && 'actionType' in row) return 'approvalTokens'
+    if ('entityType' in row) return 'audit_events'
+    return null
   }
 
   return {
@@ -706,9 +822,19 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         cols: Record<string, unknown> | null,
       ): unknown {
         const rows = getRows(tname)
-        if (skipDup && isDuplicate(tname, v, rows)) {
-          if (cols) return Promise.resolve([])
-          return Promise.resolve([])
+        if (isDuplicate(tname, v, rows)) {
+          if (skipDup) {
+            if (cols) return Promise.resolve([])
+            return Promise.resolve([])
+          }
+          // Surface a unique-constraint violation the same way
+          // the pg driver does — the service layer sniffs for
+          // `code === '23505'` and turns it into a CONFLICT.
+          const err = new Error(
+            `duplicate key value violates unique constraint (${tname})`,
+          ) as Error & { code?: string }
+          err.code = '23505'
+          return Promise.reject(err)
         }
         const newRow = makeRow(tname, v)
         rows.push(newRow)
@@ -740,7 +866,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         const rows = getRows(tname)
         const updated: Row[] = []
         for (const r of rows) {
-          if (filters.every((f) => matches(r, f, tname))) {
+          if (filters.every((f) => clauseMatches(r, f, tname))) {
             Object.assign(r, patch)
             updated.push(r)
           }
@@ -821,6 +947,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     disciplinas: [],
     ejercicios: [],
     inscripciones: [],
+    auditEvents: [],
   }
   return {
     state,
@@ -833,6 +960,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.disciplinas.length = 0
       state.ejercicios.length = 0
       state.inscripciones.length = 0
+      state.auditEvents.length = 0
     },
     drizzle: buildDrizzleInterface(state),
   }
