@@ -137,11 +137,16 @@ function flattenWhere(cond: unknown): EqRef[] {
   // eq leaf or sql`...` leaf
   const eq = parseEqLeaf(cond) ?? parseSqlEqLeaf(cond)
   if (eq) return [eq]
-  // sql`...` outer wrapper — 3 chunks with `(`, col, `)`. The
-  // parseSqlEqLeaf above already handles the inner 3-chunk shape
-  // produced by the template tag itself; this guards against
-  // double-wrapping.
-  // and(...) wrapper — outer 3 chunks with parens wrapping a BuildSQL.
+  // and(eq1, eq2, ...) with a single argument — Drizzle returns
+  // a wrapper with 1 chunk whose only child is the eq. Handle
+  // by recursing into the single child.
+  if (obj.queryChunks.length === 1) {
+    return flattenWhere(obj.queryChunks[0])
+  }
+  // and(...) wrapper — outer 3 chunks with parens wrapping a
+  // BuildSQL. The BuildSQL's own `queryChunks` is either:
+  //   - `[eq]` (single-arg and: and(eq)) — flatten into one eq
+  //   - `[eq1, ' and ', eq2, ' and ', eq3, ...]` — separate leaves
   if (obj.queryChunks.length === 3) {
     const left = obj.queryChunks[0] as { value?: string[] }
     const right = obj.queryChunks[2] as { value?: string[] }
@@ -155,9 +160,23 @@ function flattenWhere(cond: unknown): EqRef[] {
     ) {
       const mid = obj.queryChunks[1] as { queryChunks?: Array<unknown> }
       if (mid && Array.isArray(mid.queryChunks)) {
-        // mid is the BuildSQL; recurse into its inner queryChunks
-        // (which is the `[eq1, ' and ', eq2]` or similar shape).
-        return mid.queryChunks.flatMap((c) => flattenWhere(c))
+        // Try the direct-eq case first: if mid.queryChunks is a
+        // 5-chunk eq leaf, parse it as such.
+        const direct = parseEqLeaf(mid) ?? parseSqlEqLeaf(mid)
+        if (direct) return [direct]
+        // Otherwise iterate: each odd element is a StringChunk
+        // (' and '), every other element is a child SQL fragment.
+        const out: EqRef[] = []
+        for (const c of mid.queryChunks) {
+          const r = parseEqLeaf(c) ?? parseSqlEqLeaf(c)
+          if (r) {
+            out.push(r)
+            continue
+          }
+          // Recurse for nested wrappers.
+          out.push(...flattenWhere(c))
+        }
+        return out
       }
     }
     // Direct and(a, b) shape (no parens wrapper): the middle chunk
@@ -220,8 +239,32 @@ export function asDrizzle(standin: StandinDb): Db {
           const matches = Array.from(standin.state.rows.values()).filter((r) =>
             matchesWhere(r, cond),
           )
-          return Promise.resolve(matches)
+          // The scheduler's `listRuns` chains `where(...).orderBy(...).limit(...)`.
+          // The standin honours `limit` and ignores the sort key (rows
+          // are returned in insertion order; tests that depend on
+          // ordering should sort client-side or assert by id).
+          return {
+            orderBy: (_sort: unknown) => ({
+              limit: (n: number) => Promise.resolve(matches.slice(0, n)),
+            }),
+            limit: (n: number) => Promise.resolve(matches.slice(0, n)),
+            then: (
+              onFulfilled?: ((v: JobRunRow[]) => unknown) | null,
+              onRejected?: ((e: unknown) => unknown) | null,
+            ) => Promise.resolve(matches).then(onFulfilled, onRejected),
+          }
         },
+        orderBy: (_sort: unknown) => {
+          const all = Array.from(standin.state.rows.values())
+          return {
+            limit: (n: number) => Promise.resolve(all.slice(0, n)),
+            then: (
+              onFulfilled?: ((v: JobRunRow[]) => unknown) | null,
+              onRejected?: ((e: unknown) => unknown) | null,
+            ) => Promise.resolve(all).then(onFulfilled, onRejected),
+          }
+        },
+        limit: (n: number) => Promise.resolve(Array.from(standin.state.rows.values()).slice(0, n)),
       }),
     }),
     update: (_table: unknown) => ({

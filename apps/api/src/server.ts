@@ -7,6 +7,7 @@ import { buildContainer, type AppContainer } from './container.ts'
 import { authRoutes } from './routes/auth.ts'
 import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.ts'
 import { adminOperatorsRoutes } from './routes/admin/operators.ts'
+import { adminJobsRoutes } from './routes/admin/jobs.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
 import { sociosRoutes } from './routes/socios.ts'
@@ -161,6 +162,11 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 
   // 11. Admin operator management (PR 3b): /api/v1/admin/operators/*.
   await app.register(adminOperatorsRoutes)
+
+  // 11b. Admin jobs (PR 6b TASK-050): /api/v1/admin/jobs/runs
+  //      and /api/v1/admin/jobs/health. Read-only views over the
+  //      scheduler state. Same ADMIN gate as the operator routes.
+  await app.register(adminJobsRoutes)
 
   // 12. Health probes (PR 4b TASK-034): /health, /health/ready,
   //     /health/startup. Registered AFTER the route audit so the

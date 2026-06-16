@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, desc, eq, gte, type SQL } from 'drizzle-orm'
 import { jobRuns, type Db, type JobRun, type JobRunStatus, type JobTrigger } from '@athlos/db'
 import type { RunFinishInput, RunStartInput } from './types.ts'
 
@@ -153,5 +153,39 @@ export interface RunHistoryFilter {
   jobName?: string
   status?: JobRunStatus
   triggeredBy?: JobTrigger
+  /** Lower bound on `started_at` (inclusive) — for "since X" filters. */
+  from?: Date
   limit?: number
+}
+
+/**
+ * Paginated run-history query for the admin `/jobs/runs` endpoint
+ * (PR 6b TASK-050). Filters by job name, status, and `started_at
+ * >= from`. Sorted by `started_at DESC` (nulls last) so the
+ * freshest run shows up first — matches the spec's "last 50 runs
+ * of this job" shape.
+ *
+ * The limit defaults to 50 and is hard-capped at 200 to keep
+ * response sizes bounded. Pagination is via `limit` only in v1
+ * (the spec does not require a cursor — the admin UI shows the
+ * most recent N runs and the user can filter to narrow).
+ */
+export async function listRuns(db: Db, filter: RunHistoryFilter): Promise<JobRun[]> {
+  const conds: SQL[] = []
+  if (filter.jobName !== undefined) {
+    conds.push(eq(jobRuns.jobName, filter.jobName))
+  }
+  if (filter.status !== undefined) {
+    conds.push(eq(jobRuns.status, filter.status))
+  }
+  if (filter.from !== undefined) {
+    conds.push(gte(jobRuns.startedAt, filter.from))
+  }
+  const limit = Math.min(filter.limit ?? 50, 200)
+  const where = conds.length > 0 ? and(...conds) : undefined
+  const base = db.select().from(jobRuns)
+  const q = where
+    ? base.where(where).orderBy(desc(jobRuns.startedAt)).limit(limit)
+    : base.orderBy(desc(jobRuns.startedAt)).limit(limit)
+  return await q
 }
