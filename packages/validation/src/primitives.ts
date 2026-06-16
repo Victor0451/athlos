@@ -87,8 +87,13 @@ export const dateRangeSchema = z.object({
  * stays in the table for audit but is filtered out of every default
  * query. `suspendido` indicates a temporary status (e.g. unpaid
  * dues); the route layer can list suspended members on request.
+ *
+ * Mirrors the `socio_estado` PG enum in `packages/db/src/schema/socios.ts`.
+ * Note: the test-builders library exposes an `inactivo()` builder for
+ * pre-PR-5 fixtures — it is internal to the test suite and is NOT
+ * a valid value in this enum.
  */
-export const socioEstadoSchema = z.enum(['activo', 'inactivo', 'suspendido', 'baja'])
+export const socioEstadoSchema = z.enum(['activo', 'suspendido', 'baja'])
 
 /**
  * Operator RBAC role. The ordering matters: `ADMIN` > `TESORERO` >

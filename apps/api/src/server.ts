@@ -9,6 +9,7 @@ import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.t
 import { adminOperatorsRoutes } from './routes/admin/operators.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
+import { sociosRoutes } from './routes/socios.ts'
 import { errorHandler } from './plugins/error-handler.ts'
 import { genRequestId as genReqId, requestId } from './plugins/request-id.ts'
 import { LOG_REDACT_PATHS, logging } from './plugins/logging.ts'
@@ -162,7 +163,10 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //     audit's allow-list (the /api/v1/* only) doesn't see them.
   await app.register(healthRoutes, { pool: container.pool, version: apiVersion })
 
-  // 13. Version discovery (PR 4b TASK-035): /api/versions is
+  // 13. Socios (PR 5 TASK-037): /api/v1/socios CRUD.
+  await app.register(sociosRoutes)
+
+  // 14. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without
   //     knowing the API version.
   await app.register(versionsRoutes, {

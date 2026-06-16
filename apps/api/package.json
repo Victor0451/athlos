@@ -24,6 +24,7 @@
     "@athlos/integrations-email": "workspace:*",
     "@athlos/integrations-legacy-db": "workspace:*",
     "@athlos/integrations-whatsapp": "workspace:*",
+    "@athlos/validation": "workspace:*",
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.0.1",
     "@fastify/multipart": "^9.0.2",

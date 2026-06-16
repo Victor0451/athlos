@@ -119,7 +119,7 @@ describe('cuitSchema', () => {
 describe('socioEstadoSchema', () => {
   it('accepts all four valid states', () => {
     expect(socioEstadoSchema.parse('activo')).toBe('activo')
-    expect(socioEstadoSchema.parse('inactivo')).toBe('inactivo')
+    expect(socioEstadoSchema.parse('suspendido')).toBe('suspendido')
     expect(socioEstadoSchema.parse('suspendido')).toBe('suspendido')
     expect(socioEstadoSchema.parse('baja')).toBe('baja')
   })
