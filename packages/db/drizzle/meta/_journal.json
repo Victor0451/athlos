@@ -29,6 +29,20 @@
       "when": 1781619422509,
       "tag": "0003_futuristic_gamma_corps",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781624018794,
+      "tag": "0004_lively_obadiah_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781625592751,
+      "tag": "0005_late_genesis",
+      "breakpoints": true
     }
   ]
 }

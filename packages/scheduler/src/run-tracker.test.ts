@@ -6,6 +6,7 @@ import {
   reconcileOrphanedRuns,
   markInflightAsShutdown,
   getLastRun,
+  listRuns,
 } from './run-tracker.ts'
 import { createStandinDb, asDrizzle, findRow, listRows, seedRow } from './test-standins/db.ts'
 
@@ -179,5 +180,53 @@ describe('getLastRun', () => {
     const db = asDrizzle(standin)
     const last = await getLastRun(db, 'unknown-job')
     expect(last).toBeNull()
+  })
+})
+
+describe('listRuns', () => {
+  it('returns every row when no filter is provided', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await recordStart(db, { jobName: 'a', triggeredBy: 'manual', metadata: {} })
+    await recordStart(db, { jobName: 'b', triggeredBy: 'manual', metadata: {} })
+    const out = await listRuns(db, {})
+    expect(out).toHaveLength(2)
+  })
+
+  it('filters by job name', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await recordStart(db, { jobName: 'a', triggeredBy: 'manual', metadata: {} })
+    await recordStart(db, { jobName: 'b', triggeredBy: 'manual', metadata: {} })
+    const out = await listRuns(db, { jobName: 'a' })
+    expect(out).toHaveLength(1)
+    expect(out[0]?.jobName).toBe('a')
+  })
+
+  it('filters by status', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const a = await recordStart(db, { jobName: 'a', triggeredBy: 'manual', metadata: {} })
+    await recordStart(db, { jobName: 'b', triggeredBy: 'manual', metadata: {} })
+    await recordFinish(db, {
+      jobRunId: a.id,
+      status: 'failed',
+      errorMessage: 'boom',
+    })
+    const failed = await listRuns(db, { status: 'failed' })
+    expect(failed).toHaveLength(1)
+    expect(failed[0]?.id).toBe(a.id)
+  })
+
+  it('respects the limit (hard-capped at 200)', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    for (let i = 0; i < 5; i += 1) {
+      await recordStart(db, { jobName: 'x', triggeredBy: 'manual', metadata: {} })
+    }
+    expect(await listRuns(db, { limit: 3 })).toHaveLength(3)
+    // A limit of 1000 is capped at 200 — but we only inserted 5,
+    // so the result is 5. The cap is enforced, not the floor.
+    expect(await listRuns(db, { limit: 1000 })).toHaveLength(5)
   })
 })

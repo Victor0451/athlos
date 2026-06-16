@@ -26,6 +26,7 @@ export {
   reconcileOrphanedRuns,
   markInflightAsShutdown,
   getLastRun,
+  listRuns,
   type RunHistoryFilter,
 } from './run-tracker.ts'
 export { getJobHealth, type JobHealth } from './health.ts'

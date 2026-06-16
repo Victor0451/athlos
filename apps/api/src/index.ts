@@ -25,9 +25,14 @@ async function main() {
 
   // Start the scheduler AFTER the HTTP server is bound so the boot
   // reconciliation runs first and cron ticks do not compete with the
-  // listen() promise.
+  // listen() promise. The log line shape matches the spec AC for
+  // TASK-051 ("scheduler: started with N jobs").
+  const registeredJobs = app.scheduler.list()
   await app.scheduler.start()
-  app.log.info({ jobs: app.scheduler.list().map((j) => j.name) }, 'scheduler started')
+  app.log.info(
+    { jobs: registeredJobs.map((j) => j.name), count: registeredJobs.length },
+    `scheduler: started with ${registeredJobs.length} jobs`,
+  )
 
   // Graceful shutdown: SIGTERM stops the scheduler first (drains
   // in-flight handlers up to 30s) and then closes the HTTP server.

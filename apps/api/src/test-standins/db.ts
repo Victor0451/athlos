@@ -2,6 +2,8 @@ import { and, eq, isNull, gt, type SQL } from 'drizzle-orm'
 import type {
   ApprovalToken,
   AuditEvent,
+  JobRun,
+  Notification,
   Operator,
   RefreshToken,
   Socio,
@@ -49,6 +51,8 @@ type DisciplinaRow = Disciplina
 type EjercicioRow = Ejercicio
 type InscripcionRow = Inscripcion
 type AuditEventRow = AuditEvent
+type NotificationRow = Notification
+type JobRunRow = JobRun
 
 type Row =
   | OperatorRow
@@ -60,6 +64,8 @@ type Row =
   | EjercicioRow
   | InscripcionRow
   | AuditEventRow
+  | NotificationRow
+  | JobRunRow
 
 interface StandinState {
   operators: OperatorRow[]
@@ -71,6 +77,8 @@ interface StandinState {
   ejercicios: EjercicioRow[]
   inscripciones: InscripcionRow[]
   auditEvents: AuditEventRow[]
+  notifications: NotificationRow[]
+  jobRuns: JobRunRow[]
 }
 
 export interface StandinDb {
@@ -202,6 +210,33 @@ const AUDIT_SQL_TO_JS: Record<string, keyof AuditEventRow> = {
   created_at: 'createdAt',
 }
 
+const NOTIFICATION_SQL_TO_JS: Record<string, keyof NotificationRow> = {
+  id: 'id',
+  channel: 'channel',
+  recipient_id: 'recipientId',
+  recipient_address: 'recipientAddress',
+  subject: 'subject',
+  body: 'body',
+  metadata: 'metadata',
+  event_id: 'eventId',
+  status: 'status',
+  read_at: 'readAt',
+  created_at: 'createdAt',
+}
+
+const JOB_RUN_SQL_TO_JS: Record<string, keyof JobRunRow> = {
+  id: 'id',
+  job_name: 'jobName',
+  scheduled_at: 'scheduledAt',
+  started_at: 'startedAt',
+  finished_at: 'finishedAt',
+  status: 'status',
+  attempt: 'attempt',
+  error_message: 'errorMessage',
+  metadata: 'metadata',
+  triggered_by: 'triggeredBy',
+}
+
 const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   operators: OPERATOR_SQL_TO_JS,
   refresh_tokens: REFRESH_SQL_TO_JS,
@@ -212,6 +247,8 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   ejercicios: EJERCICIO_SQL_TO_JS,
   inscripciones: INSCRIPCION_SQL_TO_JS,
   audit_events: AUDIT_SQL_TO_JS,
+  notifications: NOTIFICATION_SQL_TO_JS,
+  job_runs: JOB_RUN_SQL_TO_JS,
 }
 
 function jsColumn(tableName: string, sqlName: string): string | null {
@@ -472,6 +509,8 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'ejercicios') return state.ejercicios
     if (tname === 'inscripciones') return state.inscripciones
     if (tname === 'audit_events') return state.auditEvents
+    if (tname === 'notifications') return state.notifications
+    if (tname === 'job_runs') return state.jobRuns
     return []
   }
 
@@ -581,6 +620,35 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as InscripcionRow
     }
+    if (tname === 'notifications') {
+      return {
+        id: id as string,
+        channel: v['channel']!,
+        recipientId: (v['recipientId'] as string | null) ?? null,
+        recipientAddress: (v['recipientAddress'] as string | null) ?? null,
+        subject: (v['subject'] as string | null) ?? null,
+        body: v['body']!,
+        metadata: (v['metadata'] as Record<string, unknown>) ?? {},
+        eventId: (v['eventId'] as string | null) ?? null,
+        status: (v['status'] as NotificationRow['status']) ?? 'pending',
+        readAt: (v['readAt'] as Date | null) ?? null,
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+      } as NotificationRow
+    }
+    if (tname === 'job_runs') {
+      return {
+        id: id as string,
+        jobName: v['jobName']!,
+        scheduledAt: (v['scheduledAt'] as Date) ?? new Date(),
+        startedAt: (v['startedAt'] as Date | null) ?? null,
+        finishedAt: (v['finishedAt'] as Date | null) ?? null,
+        status: (v['status'] as JobRunRow['status']) ?? 'pending',
+        attempt: (v['attempt'] as number) ?? 1,
+        errorMessage: (v['errorMessage'] as string | null) ?? null,
+        metadata: (v['metadata'] as Record<string, unknown>) ?? {},
+        triggeredBy: (v['triggeredBy'] as JobRunRow['triggeredBy']) ?? 'scheduler',
+      } as JobRunRow
+    }
     // Default catch-all: audit_events and any future INSERT-only
     // tables. The standin doesn't enforce column constraints
     // here, so the caller is responsible for passing a value
@@ -632,6 +700,14 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           (r as InscripcionRow).disciplinaId === v['disciplinaId'] &&
           (r as InscripcionRow).ejercicioId === v['ejercicioId'],
       )
+    }
+    if (tname === 'notifications') {
+      // The dispatcher dedups at the event level (via
+      // `isDuplicate`) before fanning out. Multiple in-app rows
+      // for the same event (one per recipient) are allowed; the
+      // standin does not enforce uniqueness on `event_id` to
+      // match the production index (non-unique).
+      return false
     }
     return false
   }
@@ -715,6 +791,15 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
                 limit: (n: number) => makeLimitResult((o) => resolveFiltered(o, n)),
               }),
               limit: (n: number) => makeLimitResult((o) => resolveFiltered(o, n)),
+              then(onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) {
+                // `await this.db.select().from(t).where(c)` is
+                // a valid Drizzle pattern (no `.limit(...)`).
+                // The scheduler's `getJobHealth` uses it to
+                // collect all matching rows. Make the chain
+                // awaitable so the consumer can do
+                // `const rows = await ...`.
+                return resolveFiltered(0, Number.MAX_SAFE_INTEGER).then(onFulfilled, onRejected)
+              },
             }
           },
           orderBy: (_sort: unknown) => {
@@ -725,6 +810,9 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
             }
             return {
               limit: (n: number) => makeLimitResult((o) => resolveAll(o, n)),
+              then(onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) {
+                return resolveAll(0, Number.MAX_SAFE_INTEGER).then(onFulfilled, onRejected)
+              },
             }
           },
           limit: (n: number) => {
@@ -808,6 +896,8 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if ('tokenHash' in row && 'operatorId' in row) return 'refreshTokens'
     if ('tokenHash' in row && 'actionType' in row) return 'approvalTokens'
     if ('entityType' in row) return 'audit_events'
+    if ('channel' in row && 'body' in row) return 'notifications'
+    if ('jobName' in row && 'attempt' in row) return 'job_runs'
     return null
   }
 
@@ -974,6 +1064,8 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     ejercicios: [],
     inscripciones: [],
     auditEvents: [],
+    notifications: [],
+    jobRuns: [],
   }
   return {
     state,
@@ -987,6 +1079,8 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.ejercicios.length = 0
       state.inscripciones.length = 0
       state.auditEvents.length = 0
+      state.notifications.length = 0
+      state.jobRuns.length = 0
     },
     drizzle: buildDrizzleInterface(state),
   }
