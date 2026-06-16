@@ -43,6 +43,13 @@
       "when": 1781625592751,
       "tag": "0005_late_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781641278437,
+      "tag": "0006_great_shadow_king",
+      "breakpoints": true
     }
   ]
 }

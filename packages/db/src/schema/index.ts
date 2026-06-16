@@ -14,7 +14,7 @@
  */
 
 // public ───────────────────────────────────────────────────────
-export { auditEvents, appSettings, notifications } from './public'
+export { auditEvents, appSettings, notifications, rawEvents } from './public'
 export type {
   AuditEvent,
   NewAuditEvent,
@@ -24,6 +24,8 @@ export type {
   NewNotification,
   NotificationStatus,
   NotificationChannelDb,
+  RawEvent,
+  NewRawEvent,
 } from './public'
 
 // operators + refresh tokens (PR 3a auth)
