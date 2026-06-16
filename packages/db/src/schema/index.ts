@@ -33,7 +33,16 @@ export type { Socio, NewSocio } from './socios'
 export { contabilidadSchema } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
-export { tesoreriaSchema } from './tesoreria'
+export { tesoreriaSchema, ctacteTipo, ctacte } from './tesoreria'
+export type { Ctacte, NewCtacte } from './tesoreria'
 
 // deportes ─────────────────────────────────────────────────────
-export { deportesSchema } from './deportes'
+export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'
+export type {
+  Disciplina,
+  NewDisciplina,
+  Ejercicio,
+  NewEjercicio,
+  Inscripcion,
+  NewInscripcion,
+} from './deportes'

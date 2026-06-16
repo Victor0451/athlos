@@ -65,6 +65,9 @@ importers:
       '@athlos/integrations-whatsapp':
         specifier: workspace:*
         version: link:../../packages/integrations/whatsapp
+      '@athlos/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       '@fastify/cors':
         specifier: ^10.0.1
         version: 10.1.0

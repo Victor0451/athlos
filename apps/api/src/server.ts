@@ -9,6 +9,9 @@ import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.t
 import { adminOperatorsRoutes } from './routes/admin/operators.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
+import { sociosRoutes } from './routes/socios.ts'
+import { ctacteRoutes } from './routes/ctacte.ts'
+import { padronesRoutes } from './routes/padrones.ts'
 import { errorHandler } from './plugins/error-handler.ts'
 import { genRequestId as genReqId, requestId } from './plugins/request-id.ts'
 import { LOG_REDACT_PATHS, logging } from './plugins/logging.ts'
@@ -162,7 +165,18 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //     audit's allow-list (the /api/v1/* only) doesn't see them.
   await app.register(healthRoutes, { pool: container.pool, version: apiVersion })
 
-  // 13. Version discovery (PR 4b TASK-035): /api/versions is
+  // 13. Socios (PR 5 TASK-037): /api/v1/socios CRUD.
+  await app.register(sociosRoutes)
+
+  // 14. Cuenta corriente (PR 5 TASK-039): /api/v1/socios/:id/cuenta-corriente
+  //     and the movimientos sub-path. Read-only in PR 5.
+  await app.register(ctacteRoutes)
+
+  // 15. Padrones (PR 5 TASK-040): /api/v1/padrones. Read-only
+  //     list of socio/disciplina/enrollments for an ejercicio.
+  await app.register(padronesRoutes)
+
+  // 16. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without
   //     knowing the API version.
   await app.register(versionsRoutes, {
