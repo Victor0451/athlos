@@ -20,7 +20,7 @@ export interface JobHealth {
   /** Last run row (any status), or `null` if the job has never run. */
   lastRun: {
     id: string
-    status: 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter'
+    status: 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter' | 'cancelled'
     startedAt: Date | null
     finishedAt: Date | null
     attempt: number
