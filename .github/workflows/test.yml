@@ -28,8 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        # version auto-detected from package.json `packageManager` (pnpm@9.15.9)
+        # — do NOT set `version:` explicitly or pnpm/action-setup@v4 fails with
+        # "Multiple versions of pnpm specified" (ERR_PNPM_BAD_PM_VERSION).
       - uses: actions/setup-node@v4
         with:
           node-version: 22
