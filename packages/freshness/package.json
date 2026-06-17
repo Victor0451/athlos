@@ -16,7 +16,9 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@athlos/errors": "workspace:*"
+    "@athlos/db": "workspace:*",
+    "@athlos/errors": "workspace:*",
+    "drizzle-orm": "^0.36.0"
   },
   "devDependencies": {
     "@athlos/vitest-config": "workspace:*",

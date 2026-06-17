@@ -9,3 +9,4 @@
  */
 export { DOMAIN_THRESHOLDS, ageToStatus, ageDisplay } from './thresholds.js'
 export type { DomainFreshnessStatus } from './thresholds.js'
+export { getFreshness, type DomainFreshness } from './api.js'
