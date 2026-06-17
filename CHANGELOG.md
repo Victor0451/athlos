@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — 2026-06-17
+
+### Added
+
+- **`@athlos/audit`** — New package for operator-facing audit trail.
+  - `auditPlugin` — `fp()`-wrapped Fastify plugin with `onRequest`/`onResponse` hooks; operator events via middleware, system events via `emitAudit()` direct insert.
+  - `emitAudit(db, opts)` — inserts `audit_events` row; SHA-256 10-second idempotency bucket prevents double-writes on retries.
+  - `queryAudit(db, filters, opts?)` — paginated audit trail query with operator/entity/action filters.
+  - CI guard: `ci-check-audit-fp.sh` enforces `fp()` wrap in CI.
+
+- **`role_permissions` table** (`00010_role_permissions`) — Composite PK on `(operator_id, permission_key)`; supports arbitrary permission keys beyond JWT payload flags.
+
+- **`PermissionsRepo`** — Interface + `makePermissionsRepo` implementation for `hasPermission`, `grant`, `revoke`.
+
+- **`audit_idempotency_partial_index`** (`00011_audit_idempotency_partial_index`) — Partial unique index on `(idempotency_key, created_at)` where `idempotency_key IS NOT NULL`.
+
+- **`requirePermission`** middleware (updated) — Checks JWT payload first (`can_reprint`, `can_anulate`); falls through to `role_permissions` table for arbitrary keys like `data_steward`.
+
+- **New HTTP routes:**
+  - `GET /api/v1/lineage/:entityId` — any authenticated operator
+  - `GET /api/v1/freshness` — any authenticated operator
+  - `GET /api/v1/drift` — ADMIN or data_steward permission
+  - `GET /api/v1/audit` — ADMIN or data_steward permission; paginated query with filters
+  - `POST /api/v1/import/trigger` — ADMIN only
+  - `DELETE /api/v1/import/trigger/:batchId` — ADMIN only; cancels queued batches
+  - `GET /api/v1/import/status` — any authenticated operator
+  - `GET /api/v1/import/status/:batchId` — any authenticated operator
+
+- **`reconciliation` job body** — Full implementation: `projectionService.rebuildAll()` then `driftService.detectAll()`.
+
+- **`cancelled` job run status** — Widened `$type<>` union in `job_runs` schema and `JobHealth.lastRun.status`; supported in scheduler health checks.
+
+- **`docs/runbook.md`** — DATA_STEWARD grant procedure, import pipeline overview, rollback steps.
+
+### Changed
+
+- **`apps/api` container** — Added `permissionsRepo`, `projectionService`, `auditPlugin`.
+- **`apps/api` server** — `auditPlugin` registered before routes; 5 new route registrations.
+- **`apps/api` reconciliation job** — Takes `ProjectionService + DriftService` directly (not AppContainer); `makeProjectionSvc()` and `makeDriftSvc()` factory helpers in `register.ts`.
+- **`apps/api` import route tests** — `authPlugin` registration + `JWT_ACCESS_TTL_SECONDS` in mock env.
+
 ## [0.2.0] — 2026-06-17
 
 ### Added

@@ -32,7 +32,7 @@ export const jobRuns = pgTable(
     status: text('status')
       .notNull()
       .default('pending')
-      .$type<'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter'>(),
+      .$type<'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter' | 'cancelled'>(),
     attempt: integer('attempt').notNull().default(1),
     errorMessage: text('error_message'),
     /** Free-form key-value bag (e.g. drift count, deleted token count). */

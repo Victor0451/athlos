@@ -11,6 +11,9 @@ import {
   makeTokenCleanupHandler,
 } from './index.ts'
 import { reconcileOrphanedRuns } from '@athlos/scheduler'
+import { rebuildProjection, DOMAIN_PROJECTION_TABLE, type Domain } from '@athlos/projection'
+import { detect, emitDriftAlert } from '@athlos/drift'
+import type { DriftService, ProjectionService } from '../container'
 
 /**
  * Build the scheduler instance + register all 5 default jobs. The
@@ -112,7 +115,11 @@ export async function buildScheduler(opts: {
     { timezone: 'America/Argentina/Buenos_Aires' },
   )
   if (env.RECONCILIATION_CRON) {
-    scheduler.schedule('reconciliation', env.RECONCILIATION_CRON, makeReconciliationHandler(db))
+    scheduler.schedule(
+      'reconciliation',
+      env.RECONCILIATION_CRON,
+      makeReconciliationHandler(makeProjectionSvc(db), makeDriftSvc(db)),
+    )
   }
   // When `RECONCILIATION_CRON` is unset, register a disabled job so
   // `runNow('reconciliation')` still works for manual triggers but
@@ -121,11 +128,35 @@ export async function buildScheduler(opts: {
     scheduler.schedule(
       'reconciliation',
       '0 0 31 2 *', // Feb 31 — never
-      makeReconciliationHandler(db),
+      makeReconciliationHandler(makeProjectionSvc(db), makeDriftSvc(db)),
     )
   }
 
   return scheduler
+}
+
+/** Build the projection service for the reconciliation job */
+function makeProjectionSvc(db: Db): ProjectionService {
+  return {
+    rebuild: async (domain) => rebuildProjection(db, domain as Domain),
+    rebuildAll: async () => {
+      const domains = Object.keys(DOMAIN_PROJECTION_TABLE) as Domain[]
+      const results = await Promise.all(domains.map((d) => rebuildProjection(db, d)))
+      return {
+        domainsChecked: domains,
+        totalRowCount: results.reduce((sum, r) => sum + r.rowCount, 0),
+      }
+    },
+  }
+}
+
+/** Build the drift service for the reconciliation job */
+function makeDriftSvc(db: Db): DriftService {
+  return {
+    detect: (opts) => detect(db, opts ?? {}),
+    detectAll: () => detect(db, {}),
+    emitDriftAlert: (report, ctx) => emitDriftAlert(db, report, ctx),
+  }
 }
 
 /**
