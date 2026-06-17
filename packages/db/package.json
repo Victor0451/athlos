@@ -1,6 +1,6 @@
 {
   "name": "@athlos/db",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Athlos data access layer — Drizzle ORM, PostgreSQL pool, schemas, repositories, and migrations.",
   "type": "module",

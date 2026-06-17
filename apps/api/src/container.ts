@@ -5,6 +5,8 @@ import { createLegacyDb, type LegacyDb, type StubLegacyDb } from '@athlos/integr
 import { createWhatsApp, type WhatsApp, type StubWhatsApp } from '@athlos/integrations-whatsapp'
 import { validateEnv, type Env } from '@athlos/config'
 import type { Pool } from 'pg'
+import { detect, emitDriftAlert, type DriftReport } from '@athlos/drift'
+import { getFreshness, refreshAll, type DomainFreshness } from '@athlos/freshness'
 
 /**
  * App-wide DI container. Every service, route handler, and job reaches
@@ -25,6 +27,10 @@ export interface AppContainer {
   clock: Clock | FakeClock
   /** Validated env object — required for auth services. */
   env: Env
+  /** Drift detection service — detect() + emitDriftAlert() */
+  driftService: DriftService
+  /** Freshness service — getFreshness() + refreshAll() */
+  freshnessService: FreshnessService
 }
 
 /**
@@ -39,6 +45,25 @@ export interface StubContainerOverrides {
   whatsapp?: StubWhatsApp
   email?: StubEmail
   clock?: FakeClock
+  driftService?: DriftService
+  freshnessService?: FreshnessService
+}
+
+/** Drift detection service interface */
+export interface DriftService {
+  detect: (opts?: { domain?: string }) => Promise<DriftReport>
+  emitDriftAlert: (
+    report: DriftReport,
+    ctx: { jobRunId: string },
+  ) => Promise<{ audited: true; notificationDispatched: boolean }>
+}
+
+/** Freshness monitoring service interface */
+export interface FreshnessService {
+  getFreshness: (opts?: { domain?: string }) => Promise<DomainFreshness[]>
+  refreshAll: (opts?: {
+    domain?: string
+  }) => Promise<Array<{ domain: string; lastImportAt: Date | null; recordCount: number }>>
 }
 
 /**
@@ -111,6 +136,16 @@ export function buildContainer(config: ContainerConfig): AppContainer {
     ? { db: overrides.db, pool: overrides.pool ?? makeStubPool() }
     : createDb({ connectionString: env['DATABASE_URL'] })
 
+  const driftService: DriftService = overrides?.driftService ?? {
+    detect: (opts) => detect(db, opts ?? {}),
+    emitDriftAlert: (report, ctx) => emitDriftAlert(db, report, ctx),
+  }
+
+  const freshnessService: FreshnessService = overrides?.freshnessService ?? {
+    getFreshness: (opts) => getFreshness(db, opts ?? {}),
+    refreshAll: (opts) => refreshAll(db, opts ?? {}),
+  }
+
   return {
     db,
     pool,
@@ -154,6 +189,8 @@ export function buildContainer(config: ContainerConfig): AppContainer {
             }),
       }),
     clock: overrides?.clock ?? createClock({ type: useStubs ? 'stub' : 'real' }),
+    driftService,
+    freshnessService,
   }
 }
 
