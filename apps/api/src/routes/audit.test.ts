@@ -4,17 +4,11 @@ import { signAccessToken, authPlugin } from '@athlos/auth'
 import { auditRoutes } from './audit.ts'
 import { queryAudit } from '@athlos/audit'
 import type { AppContainer } from '../container.ts'
+import { mockEnv } from '../test-helpers/mock-env.ts'
 
 vi.mock('@athlos/audit', () => ({
   queryAudit: vi.fn(),
 }))
-
-const PLACEHOLDER_SECRET = 'test-secret-please-rotate-32chars-minimum'
-
-const mockEnv = () => ({
-  JWT_SECRET: PLACEHOLDER_SECRET,
-  JWT_ACCESS_TTL_SECONDS: 900,
-})
 
 function makeAdminToken(sub = '00000000-0000-4000-8000-000000000001') {
   return signAccessToken(

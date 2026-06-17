@@ -21,14 +21,12 @@ import type { AppContainer } from '../container.ts'
  */
 function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
   const first = handlers[0]
-  const wrapper = async (
-    request: Parameters<typeof first>[0],
-    reply: Parameters<typeof first>[1],
-  ) => {
+  // See audit.ts for explanation of the permissive cast.
+  const wrapper = async (request: unknown, reply: unknown): Promise<void> => {
     let lastErr: unknown
     for (const h of handlers) {
       try {
-        await h(request, reply)
+        await (h as unknown as (r: unknown, s: unknown) => Promise<unknown>)(request, reply)
         return // this handler passed
       } catch (err) {
         lastErr = err
@@ -42,7 +40,7 @@ function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
   if (marker) {
     ;(wrapper as unknown as Record<symbol, unknown>)[Symbol.for('@athlos/auth/gate')] = marker
   }
-  return wrapper
+  return wrapper as unknown as preHandlerHookHandler
 }
 
 export const driftRoutes: FastifyPluginCallback = (fastify, _opts, done) => {

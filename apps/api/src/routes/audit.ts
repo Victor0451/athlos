@@ -22,14 +22,15 @@ import type { AppContainer } from '../container.ts'
  */
 function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
   const first = handlers[0]
-  const wrapper = async (
-    request: Parameters<typeof first>[0],
-    reply: Parameters<typeof first>[1],
-  ) => {
+  // Cast to a permissive function type so the inner `await h(request, reply)` call
+  // doesn't trip TS strict about preHandlerHookHandler's 3-argument signature
+  // (`request, reply, done`). Fastify v5 preHandlers can be either async or
+  // callback-style; we always invoke them with just the first 2 args.
+  const wrapper = async (request: unknown, reply: unknown): Promise<void> => {
     let lastErr: unknown
     for (const h of handlers) {
       try {
-        await h(request, reply)
+        await (h as unknown as (r: unknown, s: unknown) => Promise<unknown>)(request, reply)
         return // this handler passed
       } catch (err) {
         lastErr = err
@@ -43,7 +44,7 @@ function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
   if (marker) {
     ;(wrapper as unknown as Record<symbol, unknown>)[Symbol.for('@athlos/auth/gate')] = marker
   }
-  return wrapper
+  return wrapper as unknown as preHandlerHookHandler
 }
 
 const querySchema = z.object({
