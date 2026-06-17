@@ -1,36 +1,50 @@
-import type { Db } from '@athlos/db'
 import type { JobHandler } from '@athlos/scheduler'
+import type { ProjectionService, DriftService } from '../container.ts'
 
 /**
  * Build the `reconciliation` job handler.
  *
- * Runs hourly (configurable via `RECONCILIATION_CRON`). Compares
- * `raw_events` row counts vs projection row counts per domain, and
- * emits a `RECONCILIATION_DRIFT` audit event when the counts diverge
- * by more than the configured threshold.
+ * Runs on a configurable cron (default: daily at 02:00 Argentina TZ).
+ * The full reconciliation logic (design §8):
+ *   1. Rebuild all 11 domain projections (truncate + replay raw_events)
+ *   2. Detect drift across all domains
  *
- * The full reconciliation logic ships in PR 7. For PR 6a we ship a
- * STUB that:
- *   1. Reports `mismatched_domains: 0` (the real implementation
- *      iterates 14 domains and compares counts).
- *   2. Records the run in `job_runs.metadata` so the admin health
- *      endpoint (PR 6b) surfaces the snapshot.
+ * Returns metadata for the admin health endpoint to surface.
  *
- * The handler is gated by `RECONCILIATION_CRON` being set — when
- * unset, the scheduler registers the job with `enabled: false` and
- * the cron task is not created. Manual `runNow` still works.
+ * The `rebuildAll()` call is idempotent — same raw_events → same end state.
+ * Drift detection uses `detectAll()` which scans all domains.
  */
-export function makeReconciliationHandler(_db: Db): JobHandler {
+export function makeReconciliationHandler(
+  projectionService: ProjectionService,
+  driftService: DriftService,
+): JobHandler {
   return async (ctx) => {
     ctx.log.info({ event: 'RECONCILIATION_START' }, 'starting reconciliation')
-    // PR 7 replaces this body with the real comparison logic. The
-    // return shape is stable: `mismatched_domains` is consumed by
-    // the admin health endpoint to populate `lastRun.metadata`.
+
+    // Step 1: rebuild all domain projections
+    const rebuildResult = await projectionService.rebuildAll()
+
+    // Step 2: detect drift across all domains
+    const driftReport = await driftService.detectAll()
+
+    const totalDriftCount = driftReport.driftCount
+
+    ctx.log.info(
+      {
+        event: 'RECONCILIATION_COMPLETE',
+        domainsChecked: rebuildResult.domainsChecked.length,
+        totalRowCount: rebuildResult.totalRowCount,
+        driftCount: totalDriftCount,
+      },
+      'reconciliation complete',
+    )
+
     return {
       status: 'succeeded',
       metadata: {
-        mismatched_domains: 0,
-        domains_checked: 0,
+        domains_checked: rebuildResult.domainsChecked,
+        total_rows: rebuildResult.totalRowCount,
+        drift_count: totalDriftCount,
       },
     }
   }
