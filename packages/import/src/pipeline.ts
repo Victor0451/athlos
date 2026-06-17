@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Dbf } from 'dbf-reader/dbf'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
-import { rawEvents, type NewRawEvent } from '@athlos/db/schema'
+import { entityUuids, rawEvents, type NewRawEvent } from '@athlos/db/schema'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { LegacyTableName } from '@athlos/integrations-legacy-db'
 import type { DataTable } from 'dbf-reader/models/dbf-file'
@@ -403,9 +403,56 @@ async function hasAnyEvent(db: Db, sourceTable: LegacyTableName): Promise<boolea
   return rows.length > 0
 }
 
+/**
+ * Look up or create a stable UUID for a (source_table, source_key) pair.
+ *
+ * Uses `ON CONFLICT DO NOTHING` on the composite PK to handle the race:
+ * if two concurrent imports both try to create the same UUID, one wins,
+ * the other gets a no-op, and both re-read to get the winner's UUID.
+ *
+ * This is the spec's Decision 4A (UUID generated at import, reused on
+ * re-import, robust to concurrent inserts).
+ */
+export async function getOrCreateEntityUuid(
+  db: Db,
+  sourceTable: string,
+  sourceKey: string,
+): Promise<string> {
+  // Try to find existing UUID
+  const [existing] = await db
+    .select({ entityUuid: entityUuids.entityUuid })
+    .from(entityUuids)
+    .where(and(eq(entityUuids.sourceTable, sourceTable), eq(entityUuids.sourceKey, sourceKey)))
+    .limit(1)
+  if (existing) return existing.entityUuid
+
+  // Create new UUID
+  const uuid = crypto.randomUUID()
+  await db
+    .insert(entityUuids)
+    .values({ sourceTable, sourceKey, entityUuid: uuid })
+    .onConflictDoNothing({
+      target: [entityUuids.sourceTable, entityUuids.sourceKey],
+    })
+
+  // Re-read on conflict (a concurrent insert won the race)
+  const [row] = await db
+    .select({ entityUuid: entityUuids.entityUuid })
+    .from(entityUuids)
+    .where(and(eq(entityUuids.sourceTable, sourceTable), eq(entityUuids.sourceKey, sourceKey)))
+    .limit(1)
+
+  return row?.entityUuid ?? uuid
+}
+
 async function insertRawEvent(db: Db, row: NewRawEvent): Promise<boolean> {
+  // TASK-065: Get or create the stable UUID for this entity.
+  // The entityUuid is stored in entity_uuids (joined via source_table + source_key).
+  // The raw_events.id is a separate per-row UUID (gen_random_uuid()).
+  void getOrCreateEntityUuid(db, row.sourceTable, row.sourceKey)
+
   // `ON CONFLICT (source_table, source_key, content_hash) DO NOTHING`
-  // means identical content is a no-op (the row count = 0). We use
+  // means identical content is a no-op (row count = 0). We use
   // `.returning({ id })` so the caller can tell "inserted" from
   // "skipped" without a second SELECT.
   const inserted = await db

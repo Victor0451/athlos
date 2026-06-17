@@ -33,6 +33,13 @@ import { rawEvents } from '@athlos/db/schema'
 
 export interface ImportStandinState {
   rows: RawEvent[]
+  /** TASK-065: entity_uuids for UUID lookup-or-create */
+  entityUuids: Array<{
+    sourceTable: string
+    sourceKey: string
+    entityUuid: string
+    createdAt: Date
+  }>
 }
 
 export interface ImportStandinDb {
@@ -136,7 +143,7 @@ function parseEqLeaf(cond: unknown): { sqlCol: string; value: unknown } | null {
 export function createImportStandinDb(): ImportStandinDb & {
   drizzle: DrizzleShim
 } {
-  const state: ImportStandinState = { rows: [] }
+  const state: ImportStandinState = { rows: [], entityUuids: [] }
 
   function applyConflictTarget(target: unknown): Array<keyof RawEvent> {
     if (Array.isArray(target)) {
