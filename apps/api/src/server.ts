@@ -24,6 +24,13 @@ import { versioning } from './plugins/versioning.ts'
 import { routeAudit } from './plugins/route-audit.ts'
 import { buildScheduler } from './jobs/register.ts'
 import type { JobScheduler } from '@athlos/scheduler'
+// 7b.2 new imports
+import { auditPlugin } from '@athlos/audit'
+import { importRoutes } from './routes/import.ts'
+import { lineageRoutes } from './routes/lineage.ts'
+import { driftRoutes } from './routes/drift.ts'
+import { freshnessRoutes } from './routes/freshness.ts'
+import { auditRoutes } from './routes/audit.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -150,13 +157,18 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   await app.register(routeAudit)
 
   // 8. Auth plugin: parses Authorization: Bearer <jwt> and decorates
-  //    request.operator on every request. Anonymous routes stay reachable.
+  //    request.operator on every request. Anonymous routes still reachable.
   await app.register(authPlugin(() => container.env))
 
-  // 9. Auth routes (PR 3a: login; PR 3b: refresh / logout / me / change-password).
+  // 9. Audit plugin: captures operator mutations via onResponse hook.
+  //    CRITICAL: fp()-wrapped so hooks reach the parent scope (PR 3a bug).
+  //    Registered BEFORE routes so the hooks apply to all route handlers.
+  await app.register(auditPlugin)
+
+  // 10. Auth routes (PR 3a: login; PR 3b: refresh / logout / me / change-password).
   await app.register(authRoutes)
 
-  // 10. Approval routes (PR 3b): public-by-token + internal create-link.
+  // 10b. Approval routes (PR 3b): public-by-token + internal create-link.
   await app.register(approvalRoutes)
   await app.register(internalApprovalLinksRoutes)
 
@@ -184,7 +196,24 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //     list of socio/disciplina/enrollments for an ejercicio.
   await app.register(padronesRoutes)
 
-  // 16. Version discovery (PR 4b TASK-035): /api/versions is
+  // 16. Import pipeline routes (PR 7b.2 TASK-088):
+  //     POST /api/v1/import/trigger (ADMIN), DELETE /api/v1/import/trigger/:batchId (ADMIN),
+  //     GET /api/v1/import/status (ADMIN), GET /api/v1/import/status/:batchId (ADMIN)
+  await app.register(importRoutes)
+
+  // 17. Lineage route (PR 7b.2 TASK-087): GET /api/v1/lineage/:entityId (any auth)
+  await app.register(lineageRoutes)
+
+  // 18. Drift route (PR 7b.2 TASK-087): GET /api/v1/drift (ADMIN OR data_steward)
+  await app.register(driftRoutes)
+
+  // 19. Freshness route (PR 7b.2 TASK-087): GET /api/v1/freshness (any auth)
+  await app.register(freshnessRoutes)
+
+  // 20. Audit route (PR 7b.2 TASK-089): GET /api/v1/audit (ADMIN OR data_steward)
+  await app.register(auditRoutes)
+
+  // 21. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without
   //     knowing the API version.
   await app.register(versionsRoutes, {
@@ -193,7 +222,7 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
     buildSha: env['BUILD_SHA'] ?? 'dev',
   })
 
-  // 17. Scheduler (PR 6a TASK-041..TASK-047): build + register all 5
+  // 22. Scheduler (PR 6a TASK-041..TASK-047): build + register all 5
   //     default jobs. Started in `app.ready` by the caller (apps/api/
   //     src/index.ts) so cron ticks fire only after the HTTP server
   //     is bound. Stopped from the SIGTERM handler with a 30s
