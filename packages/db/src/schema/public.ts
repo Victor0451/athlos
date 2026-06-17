@@ -1,5 +1,6 @@
 import {
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -251,3 +252,43 @@ export const entityUuids = pgTable(
 )
 export type EntityUuid = typeof entityUuids.$inferSelect
 export type NewEntityUuid = typeof entityUuids.$inferInsert
+
+/**
+ * Snapshot table for drift detection.
+ *
+ * One row per entity (source_table, source_key) resolved via entity_uuids.
+ * Stores the last content_hash and raw_events.id seen at the time of snapshot.
+ * The drift detector compares `raw_events.content_hash` against
+ * `drift_snapshots.last_hash` — mismatch means the legacy record changed
+ * since the last import (drift).
+ *
+ * PK is `entity_uuid` (references entity_uuids.entity_uuid). The FK
+ * constraint is added in a follow-up migration after entity_uuids exists.
+ */
+export const driftSnapshots = pgTable('drift_snapshots', {
+  entityUuid: uuid('entity_uuid').primaryKey(),
+  domain: varchar('domain', { length: 32 }).notNull(),
+  lastHash: varchar('last_hash', { length: 64 }).notNull(),
+  lastEventId: uuid('last_event_id').notNull(),
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull().defaultNow(),
+})
+export type DriftSnapshot = typeof driftSnapshots.$inferSelect
+export type NewDriftSnapshot = typeof driftSnapshots.$inferInsert
+
+/**
+ * Cache table for per-domain freshness status.
+ *
+ * One row per domain. Written by the `freshness-refresh` job (cron every 60s).
+ * Read by GET /api/v1/freshness to show UI the staleness of each domain.
+ *
+ * The `age_display` field is computed at query time (not stored) by
+ * `freshness.ageDisplay()`.
+ */
+export const domainFreshness = pgTable('domain_freshness', {
+  domain: varchar('domain', { length: 32 }).primaryKey(),
+  lastImportAt: timestamp('last_import_at', { withTimezone: true }),
+  recordCount: integer('record_count').notNull().default(0),
+  refreshedAt: timestamp('refreshed_at', { withTimezone: true }).notNull().defaultNow(),
+})
+export type DomainFreshness = typeof domainFreshness.$inferSelect
+export type NewDomainFreshness = typeof domainFreshness.$inferInsert

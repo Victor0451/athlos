@@ -26,6 +26,8 @@ export const ErrorCode = {
   // Generic
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  // Config
+  CONFIG_MISSING: 'CONFIG_MISSING',
 } as const
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]
