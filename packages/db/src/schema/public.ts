@@ -1,5 +1,6 @@
 import {
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -273,3 +274,21 @@ export const driftSnapshots = pgTable('drift_snapshots', {
 })
 export type DriftSnapshot = typeof driftSnapshots.$inferSelect
 export type NewDriftSnapshot = typeof driftSnapshots.$inferInsert
+
+/**
+ * Cache table for per-domain freshness status.
+ *
+ * One row per domain. Written by the `freshness-refresh` job (cron every 60s).
+ * Read by GET /api/v1/freshness to show UI the staleness of each domain.
+ *
+ * The `age_display` field is computed at query time (not stored) by
+ * `freshness.ageDisplay()`.
+ */
+export const domainFreshness = pgTable('domain_freshness', {
+  domain: varchar('domain', { length: 32 }).primaryKey(),
+  lastImportAt: timestamp('last_import_at', { withTimezone: true }),
+  recordCount: integer('record_count').notNull().default(0),
+  refreshedAt: timestamp('refreshed_at', { withTimezone: true }).notNull().defaultNow(),
+})
+export type DomainFreshness = typeof domainFreshness.$inferSelect
+export type NewDomainFreshness = typeof domainFreshness.$inferInsert

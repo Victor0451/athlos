@@ -19,6 +19,7 @@ export {
   appSettings,
   entityUuids,
   driftSnapshots,
+  domainFreshness,
   notifications,
   rawEvents,
 } from './public'
@@ -31,6 +32,8 @@ export type {
   NewEntityUuid,
   DriftSnapshot,
   NewDriftSnapshot,
+  DomainFreshness,
+  NewDomainFreshness,
   Notification,
   NewNotification,
   NotificationStatus,
