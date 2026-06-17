@@ -2,6 +2,7 @@ import {
   index,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -222,3 +223,31 @@ export const rawEvents = pgTable(
 
 export type RawEvent = typeof rawEvents.$inferSelect
 export type NewRawEvent = typeof rawEvents.$inferInsert
+
+/**
+ * Stable UUID identity for every imported entity.
+ *
+ * Generated once at first-import of a (source_table, source_key) pair.
+ * Reused on every subsequent re-import. This is the spec's Decision 4A
+ * (UUID generated at import, independent of legacy keys, robust to
+ * legacy schema renumbering).
+ *
+ * The composite PK (source_table, source_key) enforces uniqueness of
+ * the legacy key pair. The UNIQUE constraint on entity_uuid ensures
+ * every entity has exactly one UUID system-wide — no two distinct
+ * (source_table, source_key) pairs can share the same UUID.
+ */
+export const entityUuids = pgTable(
+  'entity_uuids',
+  {
+    sourceTable: varchar('source_table', { length: 32 }).notNull(),
+    sourceKey: varchar('source_key', { length: 64 }).notNull(),
+    entityUuid: uuid('entity_uuid').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.sourceTable, t.sourceKey] }),
+  }),
+)
+export type EntityUuid = typeof entityUuids.$inferSelect
+export type NewEntityUuid = typeof entityUuids.$inferInsert
