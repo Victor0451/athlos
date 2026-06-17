@@ -3,6 +3,7 @@ import {
   char,
   integer,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -62,7 +63,36 @@ export const refreshTokens = pgTable('refresh_tokens', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/**
+ * `role_permissions` — explicit permission grants for operators.
+ *
+ * Composite PK (operator_id, permission_key). No default grants — the
+ * DATA_STEWARD permission is completely silent until an admin inserts
+ * a row here. This implements OI-1 B: narrow enum + separate table.
+ *
+ * Unlike the JWT's `permissions` field (which is bootstrapped from
+ * can_reprint / can_anulate booleans at login), this table is the
+ * live source of truth for arbitrary permission keys including
+ * data_steward. An admin can grant a permission mid-session and it
+ * takes effect on the next request without token rotation.
+ */
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'cascade' }),
+    permissionKey: text('permission_key').notNull(),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+    grantedBy: uuid('granted_by').references(() => operators.id),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.operatorId, t.permissionKey] }),
+  }),
+)
+
 export type Operator = typeof operators.$inferSelect
+export type RolePermission = typeof rolePermissions.$inferSelect
 export type NewOperator = typeof operators.$inferInsert
 export type RefreshToken = typeof refreshTokens.$inferSelect
 export type NewRefreshToken = typeof refreshTokens.$inferInsert
