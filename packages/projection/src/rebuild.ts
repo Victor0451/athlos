@@ -41,7 +41,7 @@ export async function rebuildProjection(
 ): Promise<RebuildResult> {
   const table = DOMAIN_PROJECTION_TABLE[domain]
   if (!table) {
-    throw BusinessError(ErrorCode.VALIDATION, `Unknown domain: ${String(domain)}`, { domain })
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, `Unknown domain: ${String(domain)}`, { domain })
   }
 
   const t0 = Date.now()

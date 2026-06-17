@@ -54,7 +54,10 @@ export async function computeSaldo(db: Db, socioEntityId: string): Promise<Saldo
     throw new Error(`entity_uuid not found: ${socioEntityId}`)
   }
 
-  const socioId = (uuidResult.rows as { id: string }[])[0].id
+  const socioId = ((uuidResult.rows as { id: string }[]) ?? [])[0]?.id
+  if (!socioId) {
+    throw new Error(`entity_uuid not found: ${socioEntityId}`)
+  }
 
   // Step 2: query ctacte for this socio
 

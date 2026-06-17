@@ -5,20 +5,14 @@ import { TechnicalError } from '@athlos/errors'
 /**
  * Build the `drift-detection` job handler.
  *
- * The full drift detection logic (comparing `drift_snapshots` last_hash
- * against the current imported hash) lives in `@athlos/drift` and
- * ships in PR 7 (TASK-057). For PR 6a we ship a STUB that:
- *   1. Calls a placeholder `runDriftDetection(db, ctx)` that always
- *      reports `drift_count: 0` and a list of unknown affected keys.
- *   2. Logs a structured `event: 'DRIFT_DETECTED'` if drift is non-zero
- *      (or skips the log otherwise — matches the spec scenario "no
- *      drift does not alert").
- *   3. Records the run in `job_runs` with metadata `drift_count: 0`
- *      and `domains: []`.
+ * Body (PR 7b.1b — TASK-076):
+ *   1. Call `makeDriftService(db).detectAll()` (all domains).
+ *   2. Loop over reports; call `service.emitDriftAlert(report, { jobRunId })`
+ *      for each with driftCount > 0.
+ *   3. Return { status: 'succeeded', metadata: { drift_count, domains } }.
  *
- * PR 7 swaps the placeholder import for the real `@athlos/drift`
- * package; the job handler's contract (return shape + log lines)
- * stays the same.
+ * In PR 7b.1a we ship the SKELETON (stub that returns 0 drift).
+ * The full body is completed in TASK-076 (7b.1b).
  */
 export function makeDriftDetectionHandler(_db: Db): JobHandler {
   return async (ctx) => {
