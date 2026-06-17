@@ -1,46 +1,77 @@
 import type { Db } from '@athlos/db'
 import type { JobHandler } from '@athlos/scheduler'
+import { runImport, type ImportTableSummary } from '@athlos/import'
+import { rebuildProjection, DOMAIN_PROJECTION_TABLE, type Domain } from '@athlos/projection'
 
 /**
  * Build the `scheduled-import` job handler.
  *
- * The full import pipeline (`runImport({ trigger, domain? })` reading
- * 14 legacy DBF tables, writing into `raw_events`, rebuilding
- * projections) lives in `@athlos/import` and ships in PR 7
- * (TASK-053). For PR 6a we ship a STUB that:
- *   1. Runs on cron (default `0 2 * * *` — 02:00 Argentina time).
- *   2. Logs the trigger and the date range covered.
- *   3. Returns `succeeded` with `imported_tables: 0` (the count is
- *      filled in by the real implementation in PR 7).
+ * Body (PR 7b.1a — TASK-069):
+ *   1. Call `runImport(db, { trigger: 'scheduled', batchId: ctx.jobRunId })`.
+ *   2. On success: rebuild projections for every domain that was imported.
+ *      The rebuild is idempotent (TRUNCATE + replay), so re-running is safe.
  *
- * The real handler in PR 7 will:
- *   - Read 14 tables from `LEGACY_DBF_PATH`.
- *   - Compute content hash for each row.
- *   - Insert into `raw_events` with `ON CONFLICT (source_table, source_key, content_hash) DO NOTHING`.
- *   - On success, call `scheduler.runNow('freshness-refresh', { triggeredBy: 'post-import', domain })`.
+ * Post-import `freshnessSvc.refreshAll()` is wired in 7b.1b (TASK-076)
+ * once `@athlos/freshness` is available.
  *
  * Manual trigger: the admin endpoint (PR 6b TASK-050) calls
  * `scheduler.runNow('scheduled-import', { triggeredBy: 'manual' })` —
  * the trigger value in `ctx.triggeredBy` is what the import pipeline
  * logs for lineage.
  */
-export function makeScheduledImportHandler(_db: Db): JobHandler {
+export function makeScheduledImportHandler(db: Db): JobHandler {
   return async (ctx) => {
     ctx.log.info(
-      {
-        event: 'SCHEDULED_IMPORT_START',
-        triggeredBy: ctx.triggeredBy,
-      },
+      { event: 'SCHEDULED_IMPORT_START', triggeredBy: ctx.triggeredBy },
       'starting scheduled import',
     )
-    // PR 7 replaces this body with `runImport({ trigger: 'scheduled' })`.
-    // The handler's return shape is stable: callers (the admin endpoint
-    // and the import pipeline's post-trigger) consume metadata only.
+
+    const batch = await runImport(db, {
+      trigger: ctx.triggeredBy === 'manual' ? 'manual' : 'scheduled',
+      batchId: ctx.jobRunId,
+    })
+
+    // Post-import: rebuild projections for domains that had imports.
+    // rebuildProjection is idempotent (TRUNCATE + replay), so rebuilding
+    // a domain with zero raw_events is a no-op.
+    if (batch.status === 'succeeded') {
+      const importedDomains = batch.tables
+        .filter((t: ImportTableSummary) => t.recordsRead > 0)
+        .map((t: ImportTableSummary) => t.table as Domain)
+
+      // Rebuild projections for imported domains
+      for (const domain of importedDomains) {
+        if (!DOMAIN_PROJECTION_TABLE[domain]) continue // skip unknown domains
+        try {
+          await rebuildProjection(db, domain)
+          ctx.log.info(
+            { event: 'PROJECTION_REBUILT', domain, table: DOMAIN_PROJECTION_TABLE[domain] },
+            `projection rebuilt for ${domain}`,
+          )
+        } catch (err) {
+          ctx.log.error(
+            {
+              event: 'PROJECTION_REBUILD_FAILED',
+              domain,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            `projection rebuild failed for ${domain}`,
+          )
+          // Continue rebuilding other domains — don't abort the whole job
+        }
+      }
+    }
+
     return {
       status: 'succeeded',
       metadata: {
-        imported_tables: 0,
-        triggered_by: ctx.triggeredBy,
+        imported_tables: batch.totals.read,
+        inserted: batch.totals.inserted,
+        skipped: batch.totals.skipped,
+        failed: batch.totals.failed,
+        batch_id: batch.id,
+        batch_status: batch.status,
+        error_message: batch.errorMessage,
       },
     }
   }
