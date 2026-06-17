@@ -6,7 +6,10 @@ import { createWhatsApp, type WhatsApp, type StubWhatsApp } from '@athlos/integr
 import { validateEnv, type Env } from '@athlos/config'
 import type { Pool } from 'pg'
 import { detect, emitDriftAlert, type DriftReport } from '@athlos/drift'
+import { rebuildProjection, DOMAIN_PROJECTION_TABLE, type Domain } from '@athlos/projection'
 import { getFreshness, refreshAll, type DomainFreshness } from '@athlos/freshness'
+import { makePermissionsRepo, type PermissionsRepo } from '@athlos/db/repositories/permissions'
+import { auditPlugin } from '@athlos/audit'
 
 /**
  * App-wide DI container. Every service, route handler, and job reaches
@@ -31,6 +34,12 @@ export interface AppContainer {
   driftService: DriftService
   /** Freshness service — getFreshness() + refreshAll() */
   freshnessService: FreshnessService
+  /** Permissions repo — hasPermission() + grant() + revoke() */
+  permissionsRepo: PermissionsRepo
+  /** Projection service — rebuild() + rebuildAll() */
+  projectionService: ProjectionService
+  /** Audit plugin instance — registered in server.ts before routes */
+  auditPlugin: typeof auditPlugin
 }
 
 /**
@@ -46,16 +55,25 @@ export interface StubContainerOverrides {
   email?: StubEmail
   clock?: FakeClock
   driftService?: DriftService
+  projectionService?: ProjectionService
   freshnessService?: FreshnessService
+  permissionsRepo?: PermissionsRepo
 }
 
 /** Drift detection service interface */
 export interface DriftService {
   detect: (opts?: { domain?: string }) => Promise<DriftReport>
+  detectAll: () => Promise<DriftReport>
   emitDriftAlert: (
     report: DriftReport,
     ctx: { jobRunId: string },
   ) => Promise<{ audited: true; notificationDispatched: boolean }>
+}
+
+/** Projection service interface */
+export interface ProjectionService {
+  rebuild: (domain: string) => Promise<{ rowCount: number; durationMs: number }>
+  rebuildAll: () => Promise<{ domainsChecked: string[]; totalRowCount: number }>
 }
 
 /** Freshness monitoring service interface */
@@ -138,13 +156,28 @@ export function buildContainer(config: ContainerConfig): AppContainer {
 
   const driftService: DriftService = overrides?.driftService ?? {
     detect: (opts) => detect(db, opts ?? {}),
+    detectAll: () => detect(db, {}),
     emitDriftAlert: (report, ctx) => emitDriftAlert(db, report, ctx),
+  }
+
+  const projectionService: ProjectionService = {
+    rebuild: async (domain) => rebuildProjection(db, domain as Domain),
+    rebuildAll: async () => {
+      const domains = Object.keys(DOMAIN_PROJECTION_TABLE) as Domain[]
+      const results = await Promise.all(domains.map((d) => rebuildProjection(db, d)))
+      return {
+        domainsChecked: domains,
+        totalRowCount: results.reduce((sum, r) => sum + r.rowCount, 0),
+      }
+    },
   }
 
   const freshnessService: FreshnessService = overrides?.freshnessService ?? {
     getFreshness: (opts) => getFreshness(db, opts ?? {}),
     refreshAll: (opts) => refreshAll(db, opts ?? {}),
   }
+
+  const permissionsRepo: PermissionsRepo = overrides?.permissionsRepo ?? makePermissionsRepo(db)
 
   return {
     db,
@@ -190,7 +223,10 @@ export function buildContainer(config: ContainerConfig): AppContainer {
       }),
     clock: overrides?.clock ?? createClock({ type: useStubs ? 'stub' : 'real' }),
     driftService,
+    projectionService,
     freshnessService,
+    permissionsRepo,
+    auditPlugin,
   }
 }
 
