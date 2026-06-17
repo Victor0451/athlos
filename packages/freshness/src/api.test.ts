@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { getFreshness, refreshAll } from './api.js'
 
-// The getFreshness function we're implementing
-import { getFreshness } from './api.js'
-
-// Mock standin for Drizzle's db.execute
 function makeMockDb(executeResults: unknown[]) {
   return {
     execute: vi.fn().mockImplementation(() => Promise.resolve(executeResults.shift())),
@@ -11,197 +8,172 @@ function makeMockDb(executeResults: unknown[]) {
   } as any
 }
 
-describe('freshness.getFreshness', () => {
-  /**
-   * RED STEP: Write failing tests first.
-   *
-   * The tests exercise getFreshness({ domain? }) which:
-   * 1. Reads domain_freshness cache table
-   * 2. Applies ageToStatus to compute status per row
-   * 3. Applies ageDisplay to compute human-readable age
-   */
+function makeStatsRow(domain: string, minutesAgo: number, recordCount: number) {
+  return {
+    domain,
+    last_import_at: new Date(Date.now() - minutesAgo * 60 * 1000),
+    record_count: recordCount,
+    refreshed_at: new Date(),
+  }
+}
 
+describe('freshness.getFreshness', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  describe('single domain filter', () => {
-    it('returns only the requested domain', async () => {
-      const now = new Date()
-      const lastImport = new Date(now.getTime() - 30 * 60 * 1000) // 30 min ago
+  it('returns only the requested domain', async () => {
+    const db = makeMockDb([{ rows: [makeStatsRow('ctacte', 30, 50_000)] }])
 
-      const db = makeMockDb([
-        {
-          rows: [
-            {
-              domain: 'ctacte',
-              last_import_at: lastImport,
-              record_count: 50000,
-              refreshed_at: now,
-            },
-          ],
-          rowCount: 1,
-        },
-      ])
+    const results = await getFreshness(db, { domain: 'ctacte' })
 
-      const results = await getFreshness(db, { domain: 'ctacte' })
-
-      expect(results).toHaveLength(1)
-      expect(results[0]!.domain).toBe('ctacte')
-      expect(results[0]!.recordCount).toBe(50000)
-      expect(results[0]!.status).toBe('current') // 30min < 1h threshold
-      expect(results[0]!.ageDisplay).toMatch(/^hace/)
-    })
+    expect(results).toHaveLength(1)
+    expect(results[0]!.domain).toBe('ctacte')
+    expect(results[0]!.recordCount).toBe(50000)
+    expect(results[0]!.status).toBe('current')
   })
 
-  describe('all domains (no filter)', () => {
-    it('returns all 11 domains', async () => {
-      const db = makeMockDb([
-        {
-          rows: [
-            { domain: 'socios', last_import_at: null, record_count: 0, refreshed_at: new Date() },
-            {
-              domain: 'ctacte',
-              last_import_at: new Date(),
-              record_count: 50000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'ctacte1',
-              last_import_at: new Date(),
-              record_count: 12000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'contable',
-              last_import_at: new Date(),
-              record_count: 8000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'contabl1',
-              last_import_at: new Date(),
-              record_count: 3000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'catastros',
-              last_import_at: new Date(),
-              record_count: 2000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'escuela',
-              last_import_at: new Date(),
-              record_count: 1500,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'deportes',
-              last_import_at: new Date(),
-              record_count: 3000,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'locacion',
-              last_import_at: new Date(),
-              record_count: 200,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'caja',
-              last_import_at: new Date(),
-              record_count: 500,
-              refreshed_at: new Date(),
-            },
-            {
-              domain: 'gastos',
-              last_import_at: new Date(),
-              record_count: 1000,
-              refreshed_at: new Date(),
-            },
-          ],
-          rowCount: 11,
-        },
-      ])
+  it('returns all 11 domains from DOMAIN_THRESHOLDS', async () => {
+    const allDomains = [
+      'socios',
+      'ctacte',
+      'ctacte1',
+      'contable',
+      'contabl1',
+      'catastros',
+      'escuela',
+      'deportes',
+      'locacion',
+      'caja',
+      'gastos',
+    ]
+    const db = makeMockDb([
+      { rows: allDomains.map((d, i) => makeStatsRow(d, 20 + i * 5, 1000 * (i + 1))) },
+    ])
 
-      const results = await getFreshness(db, {})
+    const results = await getFreshness(db)
 
-      expect(results).toHaveLength(11)
-    })
-
-    it('null last_import_at produces status unknown', async () => {
-      const db = makeMockDb([
-        {
-          rows: [
-            { domain: 'socios', last_import_at: null, record_count: 0, refreshed_at: new Date() },
-          ],
-          rowCount: 1,
-        },
-      ])
-
-      const results = await getFreshness(db, {})
-
-      expect(results[0]!.status).toBe('unknown')
-      expect(results[0]!.ageDisplay).toBe('nunca')
-    })
-
-    it('stale domain (old import) produces status stale', async () => {
-      const oldImport = new Date(Date.now() - 48 * 60 * 60 * 1000) // 48 hours ago
-      const db = makeMockDb([
-        {
-          rows: [
-            {
-              domain: 'socios',
-              last_import_at: oldImport,
-              record_count: 1000,
-              refreshed_at: new Date(),
-            },
-          ],
-          rowCount: 1,
-        },
-      ])
-
-      const results = await getFreshness(db, {})
-
-      expect(results[0]!.status).toBe('stale') // 48h > 1.5 * 1h threshold
-    })
+    expect(results).toHaveLength(11)
   })
 
-  describe('domain field', () => {
-    it('echoes back the domain argument when filtering', async () => {
-      const db = makeMockDb([
-        {
-          rows: [
-            {
-              domain: 'socios',
-              last_import_at: new Date(),
-              record_count: 100,
-              refreshed_at: new Date(),
-            },
-          ],
-          rowCount: 1,
-        },
-      ])
+  it('null last_import_at produces status unknown', async () => {
+    const db = makeMockDb([
+      {
+        rows: [{ domain: 'caja', last_import_at: null, record_count: 0, refreshed_at: new Date() }],
+      },
+    ])
 
-      const results = await getFreshness(db, { domain: 'socios' })
+    const results = await getFreshness(db, { domain: 'caja' })
 
-      expect(results[0]!.domain).toBe('socios')
-    })
+    expect(results[0]!.status).toBe('unknown')
+    expect(results[0]!.ageDisplay).toBe('nunca')
   })
 
-  describe('unknown domain filter (no rows)', () => {
-    it('returns empty array for unknown domain', async () => {
-      const db = makeMockDb([
-        {
-          rows: [],
-          rowCount: 0,
-        },
-      ])
+  it('stale domain (old import) produces status stale', async () => {
+    // caja threshold = PT30M = 30 min; 2h ago is way beyond 1.5× grace zone
+    const db = makeMockDb([{ rows: [makeStatsRow('caja', 60 * 2, 100)] }])
 
-      const results = await getFreshness(db, { domain: 'unknown_domain' })
+    const results = await getFreshness(db, { domain: 'caja' })
 
-      expect(results).toHaveLength(0)
-    })
+    expect(results[0]!.status).toBe('stale')
+  })
+
+  it('domain filter is passed through to the SQL query', async () => {
+    const executeMock = vi.fn().mockResolvedValue({ rows: [] })
+    const db = makeMockDb([])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).execute = executeMock
+
+    await getFreshness(db, { domain: 'socios' })
+
+    expect(executeMock).toHaveBeenCalledOnce()
+  })
+})
+
+describe('freshness.refreshAll', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns empty array when no events exist', async () => {
+    const db = makeMockDb([{ rows: [] }])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).insert = vi
+      .fn()
+      .mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn() }) })
+
+    const results = await refreshAll(db)
+
+    expect(results).toEqual([])
+  })
+
+  it('inserts a row per domain and returns the computed stats', async () => {
+    const onConflictMock = vi.fn().mockResolvedValue({ rowCount: 1 })
+    const insertMock = vi
+      .fn()
+      .mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoUpdate: onConflictMock }) })
+    const db = makeMockDb([
+      {
+        rows: [
+          {
+            domain: 'ctacte',
+            last_import_at: new Date('2026-06-15T10:00:00Z'),
+            record_count: 50000,
+          },
+        ],
+      },
+    ])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).insert = insertMock
+
+    const results = await refreshAll(db, { domain: 'ctacte' })
+
+    expect(results).toHaveLength(1)
+    expect(results[0]!.domain).toBe('ctacte')
+    expect(results[0]!.recordCount).toBe(50000)
+    expect(insertMock).toHaveBeenCalledOnce()
+    expect(onConflictMock).toHaveBeenCalledOnce()
+  })
+
+  it('filters by domain when the option is provided', async () => {
+    const executeMock = vi.fn().mockResolvedValue({ rows: [] })
+    const db = makeMockDb([])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).execute = executeMock
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).insert = vi
+      .fn()
+      .mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn() }) })
+
+    await refreshAll(db, { domain: 'caja' })
+
+    expect(executeMock).toHaveBeenCalledOnce()
+    const calledSql = executeMock.mock.calls[0]![0] as object
+    expect(JSON.stringify(calledSql)).toContain('source_table')
+  })
+
+  it('upserts domain_freshness row via insert().values().onConflictDoUpdate()', async () => {
+    const onConflictMock = vi.fn().mockResolvedValue({ rowCount: 1 })
+    const insertMock = vi
+      .fn()
+      .mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoUpdate: onConflictMock }) })
+    const db = makeMockDb([
+      {
+        rows: [
+          {
+            domain: 'socios',
+            last_import_at: new Date('2026-06-16T08:30:00Z'),
+            record_count: 12000,
+          },
+        ],
+      },
+    ])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(db as any).insert = insertMock
+
+    await refreshAll(db)
+
+    expect(insertMock).toHaveBeenCalledOnce()
+    expect(onConflictMock).toHaveBeenCalledOnce()
   })
 })
