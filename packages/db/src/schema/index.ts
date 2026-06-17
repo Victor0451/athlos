@@ -43,8 +43,14 @@ export type {
 } from './public'
 
 // operators + refresh tokens (PR 3a auth)
-export { operators, refreshTokens } from './operators'
-export type { Operator, NewOperator, RefreshToken, NewRefreshToken } from './operators'
+export { operators, refreshTokens, rolePermissions } from './operators'
+export type {
+  Operator,
+  NewOperator,
+  RefreshToken,
+  NewRefreshToken,
+  RolePermission,
+} from './operators'
 
 // approval tokens (PR 3a approval links)
 export { approvalTokens } from './approval-tokens'
