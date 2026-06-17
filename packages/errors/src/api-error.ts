@@ -101,6 +101,8 @@ function mapToStatus(code: ErrorCode): number {
       return 423
     case ErrorCode.SERVICE_UNAVAILABLE:
       return 503
+    case ErrorCode.CONFIG_MISSING:
+      return 500
     case ErrorCode.INTERNAL_ERROR:
       return 500
   }
