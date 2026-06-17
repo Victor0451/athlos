@@ -18,6 +18,7 @@
   "dependencies": {
     "@athlos/db": "workspace:*",
     "@athlos/errors": "workspace:*",
+    "@athlos/notifications": "workspace:*",
     "drizzle-orm": "^0.36.0"
   },
   "devDependencies": {
