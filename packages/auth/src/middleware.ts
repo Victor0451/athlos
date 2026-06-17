@@ -117,16 +117,38 @@ export function requireRole(...roles: Array<JWTPayload['role']>): preHandlerHook
 
 /**
  * Reject requests whose operator lacks a specific permission flag.
- * Permissions are typed via `keyof JWTPayload['permissions']` so a typo
- * at the call site is a compile error.
+ *
+ * Permission keys are checked against TWO sources:
+ *   1. JWT payload permissions (can_reprint, can_anulate — set at login)
+ *   2. role_permissions table (arbitrary keys like 'data_steward')
+ *      — checked via permissionsRepo in container for live grants
+ *
+ * The `perm` parameter accepts a string so arbitrary keys compile.
+ * Known keys (can_reprint, can_anulate) are still typed via
+ * keyof JWTPayload['permissions'] at the call site for compile-time safety.
  */
-export function requirePermission(perm: keyof JWTPayload['permissions']): preHandlerHookHandler {
+export function requirePermission(perm: string): preHandlerHookHandler {
   return markGate(async (request) => {
     if (!request.operator) {
       throw BusinessError(ErrorCode.TOKEN_INVALID, 'Authentication required')
     }
-    if (!request.operator.permissions[perm]) {
+    // First check the JWT payload (for can_reprint, can_anulate, etc.)
+    const perms = (request.operator as { permissions?: Record<string, boolean> }).permissions
+    if (perms !== undefined && perm in perms) {
+      if (perms[perm]) return // permission granted in JWT
       throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, `Missing permission: ${perm}`)
     }
+    // For arbitrary keys (e.g. 'data_steward'), check the role_permissions table
+
+    const serverWithContainer = request.server as {
+      container?: {
+        permissionsRepo?: { hasPermission: (operatorId: string, key: string) => Promise<boolean> }
+      }
+    }
+    const repo = serverWithContainer.container?.permissionsRepo
+    if (repo) {
+      if (await repo.hasPermission(request.operator.sub, perm)) return
+    }
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, `Missing permission: ${perm}`)
   }, 'permission')
 }

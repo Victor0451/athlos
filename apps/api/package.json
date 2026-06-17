@@ -1,6 +1,6 @@
 {
   "name": "@athlos/api",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@athlos/approval": "workspace:*",
+    "@athlos/audit": "workspace:*",
     "@athlos/auth": "workspace:*",
     "@athlos/config": "workspace:*",
     "@athlos/db": "workspace:*",
@@ -23,6 +24,7 @@
     "@athlos/errors": "workspace:*",
     "@athlos/freshness": "workspace:*",
     "@athlos/import": "workspace:*",
+    "@athlos/lineage": "workspace:*",
     "@athlos/integrations-clock": "workspace:*",
     "@athlos/integrations-email": "workspace:*",
     "@athlos/integrations-legacy-db": "workspace:*",

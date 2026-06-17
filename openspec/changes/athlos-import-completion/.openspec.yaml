@@ -1,0 +1,57 @@
+change_name: athlos-import-completion
+artifact_store: both
+pace: interactive
+strict_tdd: true
+delivery_strategy: ask-always
+review_budget_lines: 400
+
+# Pre-flight (cached from user at session start — see Engram obs #2050)
+# - interactive: orchestrator shows each phase output, waits for user OK before next
+# - both: write OpenSpec files to repo AND persist to Engram
+# - ask-always: orchestrator stops and asks user if forecast > 400 lines or risk = high
+# - strict_tdd: true — RED-GREEN-REFACTOR mandatory for each package
+
+# Predecessor (archived; do NOT modify)
+predecessor: athlos-foundation
+predecessor_archived_at: 2026-06-16
+
+# Implementation scope (TASK-055..060 from archived foundation/tasks.md PR 7b + 7c)
+tasks_in_scope:
+  - TASK-055 # packages/lineage (query + verify) ~80L
+  - TASK-056 # packages/projection (rebuild + saldo) ~200L
+  - TASK-057 # packages/drift (detect + alert) ~100L
+  - TASK-058 # packages/freshness (api + thresholds) ~80L
+  - TASK-059 # packages/audit (middleware + emitter + query) ~150L
+  - TASK-060 # apps/api/src/routes (import + lineage + drift + freshness + audit) ~180L
+
+# Sub-slice recommendation (orchestrator to confirm with user)
+# 7b.1 data plane (~460L code + ~280L tests): TASK-055..058 + 3 job body swaps
+# 7b.2 route + audit plane (~330L code + ~320L tests): TASK-059 + TASK-060 + 1 job body swap
+recommended_sub_slices:
+  - id: pr-7b.1
+    label: data plane
+    tasks: [TASK-055, TASK-056, TASK-057, TASK-058]
+    code_lines: ~460
+    test_lines: ~280
+  - id: pr-7b.2
+    label: route + audit plane
+    tasks: [TASK-059, TASK-060]
+    code_lines: ~330
+    test_lines: ~320
+    depends_on: pr-7b.1
+
+# Risk register summary
+known_risks:
+  - id: R-001
+    description: Sub-agent session_message.seq platform error (last hit on PR 7b attempt)
+    severity: medium
+    mitigation: Recommend sub-slice split; fallback to direct sdd-apply if sub-agent fails again
+    engram_ref: obs-8655f9f3655e73c8 #2037
+  - id: R-002
+    description: drift_snapshots table may not exist yet
+    severity: low
+    mitigation: Verify Drizzle schema in apply preflight; add migration 0007 if needed
+  - id: R-003
+    description: Fastify plugin encapsulation on audit middleware
+    severity: medium
+    mitigation: fp-wrap; route-audit rejects unwrapped plugins; ATHLOS_GATE_MARKER
