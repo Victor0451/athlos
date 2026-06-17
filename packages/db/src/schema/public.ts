@@ -2,6 +2,7 @@ import {
   index,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -222,3 +223,53 @@ export const rawEvents = pgTable(
 
 export type RawEvent = typeof rawEvents.$inferSelect
 export type NewRawEvent = typeof rawEvents.$inferInsert
+
+/**
+ * Stable UUID identity for every imported entity.
+ *
+ * Generated once at first-import of a (source_table, source_key) pair.
+ * Reused on every subsequent re-import. This is the spec's Decision 4A
+ * (UUID generated at import, independent of legacy keys, robust to
+ * legacy schema renumbering).
+ *
+ * The composite PK (source_table, source_key) enforces uniqueness of
+ * the legacy key pair. The UNIQUE constraint on entity_uuid ensures
+ * every entity has exactly one UUID system-wide — no two distinct
+ * (source_table, source_key) pairs can share the same UUID.
+ */
+export const entityUuids = pgTable(
+  'entity_uuids',
+  {
+    sourceTable: varchar('source_table', { length: 32 }).notNull(),
+    sourceKey: varchar('source_key', { length: 64 }).notNull(),
+    entityUuid: uuid('entity_uuid').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.sourceTable, t.sourceKey] }),
+  }),
+)
+export type EntityUuid = typeof entityUuids.$inferSelect
+export type NewEntityUuid = typeof entityUuids.$inferInsert
+
+/**
+ * Snapshot table for drift detection.
+ *
+ * One row per entity (source_table, source_key) resolved via entity_uuids.
+ * Stores the last content_hash and raw_events.id seen at the time of snapshot.
+ * The drift detector compares `raw_events.content_hash` against
+ * `drift_snapshots.last_hash` — mismatch means the legacy record changed
+ * since the last import (drift).
+ *
+ * PK is `entity_uuid` (references entity_uuids.entity_uuid). The FK
+ * constraint is added in a follow-up migration after entity_uuids exists.
+ */
+export const driftSnapshots = pgTable('drift_snapshots', {
+  entityUuid: uuid('entity_uuid').primaryKey(),
+  domain: varchar('domain', { length: 32 }).notNull(),
+  lastHash: varchar('last_hash', { length: 64 }).notNull(),
+  lastEventId: uuid('last_event_id').notNull(),
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }).notNull().defaultNow(),
+})
+export type DriftSnapshot = typeof driftSnapshots.$inferSelect
+export type NewDriftSnapshot = typeof driftSnapshots.$inferInsert

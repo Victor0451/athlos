@@ -14,12 +14,23 @@
  */
 
 // public ───────────────────────────────────────────────────────
-export { auditEvents, appSettings, notifications, rawEvents } from './public'
+export {
+  auditEvents,
+  appSettings,
+  entityUuids,
+  driftSnapshots,
+  notifications,
+  rawEvents,
+} from './public'
 export type {
   AuditEvent,
   NewAuditEvent,
   AppSetting,
   NewAppSetting,
+  EntityUuid,
+  NewEntityUuid,
+  DriftSnapshot,
+  NewDriftSnapshot,
   Notification,
   NewNotification,
   NotificationStatus,
