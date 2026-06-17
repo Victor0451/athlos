@@ -21,24 +21,21 @@ interface MockEventRow {
 }
 
 // Build a minimal Db-like mock that returns controlled data
+// Drizzle's db.execute(sql) returns { rows: T[] } — match that shape.
 function makeMockDb(entityRows: MockRow[], eventRows: MockEventRow[]) {
   let callCount = 0
   return {
     db: {
-      async execute(query: { queryChunks?: unknown[] }): Promise<unknown[]> {
+      async execute(query: { queryChunks?: unknown[] }): Promise<{ rows: unknown[] }> {
         callCount++
         const q = JSON.stringify(query.queryChunks ?? [])
         if (q.includes('entity_uuids')) {
-          // Return entity rows based on the entityUuid param
-          // (param extraction deferred to reduce unused variable warning)
-          void query.queryChunks
-          // The param value for entityUuid is in the queryChunks as a string
-          return entityRows
+          return { rows: entityRows }
         }
         if (q.includes('raw_events')) {
-          return eventRows.length > 0 ? [eventRows[0]] : []
+          return { rows: eventRows.length > 0 ? [eventRows[0]] : [] }
         }
-        return []
+        return { rows: [] }
       },
     },
     getCallCount: () => callCount,

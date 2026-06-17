@@ -29,31 +29,33 @@ export interface LineageResponse {
  */
 export async function queryLineage(db: Db, entityId: string): Promise<LineageResponse | null> {
   // Resolve the source metadata from entity_uuids
-  const sourceRows = await db.execute(sql`
+  // Drizzle's db.execute(sql) returns QueryResult<Record<string, unknown>>
+  // with shape { rows: T[] } — NOT an array. Access via .rows.
+  const sourceRows = (await db.execute(sql`
     SELECT source_table, source_key
     FROM entity_uuids
     WHERE entity_uuid = ${entityId}
     LIMIT 1
-  `)
-  const source = sourceRows[0] as { source_table: string; source_key: string } | undefined
+  `)) as unknown as { rows: Array<{ source_table: string; source_key: string }> }
+  const source = sourceRows.rows[0]
   if (!source) return null
 
   // Get the most recent raw_events row for this (source_table, source_key)
-  const eventRows = await db.execute(sql`
+  const eventRows = (await db.execute(sql`
     SELECT content_hash, imported_at, import_batch
     FROM raw_events
     WHERE source_table = ${source.source_table}
       AND source_key = ${source.source_key}
     ORDER BY imported_at DESC
     LIMIT 1
-  `)
-  const event = eventRows[0] as
-    | {
-        content_hash: string
-        imported_at: Date
-        import_batch: string
-      }
-    | undefined
+  `)) as unknown as {
+    rows: Array<{
+      content_hash: string
+      imported_at: Date
+      import_batch: string
+    }>
+  }
+  const event = eventRows.rows[0]
   if (!event) return null
 
   return {

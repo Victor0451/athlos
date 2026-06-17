@@ -19,7 +19,9 @@ export interface HashVerificationResult {
  */
 export async function verifyHash(db: Db, entityId: string): Promise<HashVerificationResult> {
   // Get the latest raw_events row for this entity
-  const rows = await db.execute(sql`
+  // Drizzle's db.execute(sql) returns QueryResult<Record<string, unknown>>
+  // with shape { rows: T[] } — NOT an array. Access via .rows.
+  const result = (await db.execute(sql`
     SELECT r.content_hash, r.payload
     FROM raw_events r
     JOIN entity_uuids e
@@ -27,9 +29,9 @@ export async function verifyHash(db: Db, entityId: string): Promise<HashVerifica
     WHERE e.entity_uuid = ${entityId}
     ORDER BY r.imported_at DESC
     LIMIT 1
-  `)
+  `)) as unknown as { rows: Array<{ content_hash: string; payload: Record<string, unknown> }> }
 
-  const row = rows[0] as { content_hash: string; payload: Record<string, unknown> } | undefined
+  const row = result.rows[0]
   if (!row) {
     throw new Error(`verifyHash: entity ${entityId} not found in raw_events`)
   }

@@ -20,8 +20,8 @@ const row = (debe: string, haber: string, anulado = false): CtacteRow => ({
 })
 
 describe('computeSaldo', () => {
-  // entity_uuids lookup result shape
-  const foundUuidRow = { entity_uuid: 'entity-uuid-socio-1' }
+  // entity_uuids lookup result shape — SQL selects source_key which IS socios.id
+  const foundUuidRow = { id: 'socio-db-uuid-1' }
 
   // ctacte rows for socio-1: 3 non-anulada, 1 anulada (should be excluded)
   const ctacteRows = [
@@ -36,22 +36,20 @@ describe('computeSaldo', () => {
   const expectedSaldo = '125.50' // 160.50 - 35.00
 
   let mockDb: Db
+  let mockExecute: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    mockExecute = vi.fn()
     mockDb = {
-      execute: vi.fn(),
+      execute: mockExecute,
     } as unknown as never
   })
 
   it('returns { socioEntityId, debe, haber, saldo, as_of }', async () => {
     // Setup: entity_uuids returns the socio id, ctacte returns rows
-    ;(mockDb.execute as unknown as { mockResolvedValue: unknown[] }).mockResolvedValueOnce(
-      makeResult(1, [foundUuidRow]),
-    )
+    mockExecute.mockResolvedValueOnce(makeResult(1, [foundUuidRow]))
     // ctacte query returns rows
-    ;(mockDb.execute as unknown as { mockResolvedValue: unknown[] }).mockResolvedValueOnce(
-      makeResult(ctacteRows.length, ctacteRows),
-    )
+    mockExecute.mockResolvedValueOnce(makeResult(ctacteRows.length, ctacteRows))
 
     const result = await computeSaldo(mockDb, 'entity-uuid-socio-1')
 
@@ -66,12 +64,8 @@ describe('computeSaldo', () => {
   })
 
   it('excludes anulada rows from debe/haber/saldo sum', async () => {
-    ;(mockDb.execute as unknown as { mockResolvedValue: unknown[] }).mockResolvedValueOnce(
-      makeResult(1, [foundUuidRow]),
-    )
-    ;(mockDb.execute as unknown as { mockResolvedValue: unknown[] }).mockResolvedValueOnce(
-      makeResult(ctacteRows.length, ctacteRows),
-    )
+    mockExecute.mockResolvedValueOnce(makeResult(1, [foundUuidRow]))
+    mockExecute.mockResolvedValueOnce(makeResult(ctacteRows.length, ctacteRows))
 
     const result = await computeSaldo(mockDb, 'entity-uuid-socio-1')
 
@@ -83,9 +77,7 @@ describe('computeSaldo', () => {
 
   it('throws if entity_uuids lookup finds no row', async () => {
     // entity_uuids returns 0 rows
-    ;(mockDb.execute as unknown as { mockResolvedValue: unknown[] }).mockResolvedValueOnce(
-      makeResult(0),
-    )
+    mockExecute.mockResolvedValueOnce(makeResult(0))
 
     await expect(computeSaldo(mockDb, 'unknown-entity')).rejects.toThrow('entity_uuid not found')
   })

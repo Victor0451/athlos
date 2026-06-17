@@ -21,13 +21,15 @@ describe('verifyHash', () => {
     // Its canonical SHA-256 (sorted keys, JSON stringify) is:
     const expectedHash = 'a481709896591cfae85bba211036135b56ccc189352174ad59572a49d63bc546'
     const mockDb = {
-      async execute(_query: { queryChunks?: unknown[] }): Promise<unknown[]> {
-        return [
-          {
-            content_hash: expectedHash,
-            payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
-          },
-        ]
+      async execute(_query: { queryChunks?: unknown[] }): Promise<{ rows: unknown[] }> {
+        return {
+          rows: [
+            {
+              content_hash: expectedHash,
+              payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
+            },
+          ],
+        }
       },
     } as unknown as never
 
@@ -41,7 +43,7 @@ describe('verifyHash', () => {
   it('returns match:false when stored hash differs from recomputed (tampered)', async () => {
     let callCount = 0
     const mockDb = {
-      async execute(_query: { queryChunks?: unknown[] }): Promise<unknown[]> {
+      async execute(_query: { queryChunks?: unknown[] }): Promise<{ rows: unknown[] }> {
         callCount++
         // Call 1: stored hash is 'abc...' (what's in the DB)
         // Call 2: stored hash is 'xyz...' (simulating stored != recomputed)
@@ -50,19 +52,23 @@ describe('verifyHash', () => {
         // Since payload is same in both, stored_hash='abc' != recomputed_hash='xyz'
         // → match:false
         if (callCount === 1) {
-          return [
-            {
-              content_hash: 'abc123def456abc123def456abc123def456abc123def456abc123def456ab',
-              payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
-            },
-          ]
+          return {
+            rows: [
+              {
+                content_hash: 'abc123def456abc123def456abc123def456abc123def456abc123def456ab',
+                payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
+              },
+            ],
+          }
         } else {
-          return [
-            {
-              content_hash: 'xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xy',
-              payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
-            },
-          ]
+          return {
+            rows: [
+              {
+                content_hash: 'xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xyz789xy',
+                payload: { NOMBRE: 'Ana', APELLIDO: 'García' },
+              },
+            ],
+          }
         }
       },
     } as unknown as never
@@ -75,13 +81,15 @@ describe('verifyHash', () => {
 
   it('returns all required fields with ISO8601 verified_at', async () => {
     const mockDb = {
-      async execute(_query: { queryChunks?: unknown[] }): Promise<unknown[]> {
-        return [
-          {
-            content_hash: 'hashhashhashhashhashhashhashhashhashhashhashhashhashhashhashhash',
-            payload: { monto: 500 },
-          },
-        ]
+      async execute(_query: { queryChunks?: unknown[] }): Promise<{ rows: unknown[] }> {
+        return {
+          rows: [
+            {
+              content_hash: 'hashhashhashhashhashhashhashhashhashhashhashhashhashhashhashhash',
+              payload: { monto: 500 },
+            },
+          ],
+        }
       },
     } as unknown as never
 

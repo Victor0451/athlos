@@ -12,12 +12,14 @@ import { rebuildProjection, type Domain } from './rebuild.ts'
 
 describe('rebuildProjection', () => {
   it('is idempotent: rebuild twice produces identical rowCount', async () => {
-    // Mock DB that returns same data for both calls
+    // Mock DB that returns same data for both calls.
+    // Drizzle's db.execute(sql) returns { rows: T[], rowCount: number } — match that shape.
     const mockDb = {
-      async execute(query: { queryChunks?: unknown[] }): Promise<unknown[]> {
+      async execute(query: {
+        queryChunks?: unknown[]
+      }): Promise<{ rowCount: number; rows?: unknown[] }> {
         const q = JSON.stringify(query.queryChunks ?? [])
         if (q.includes('TRUNCATE')) {
-          callCount++
           return { rowCount: 0 }
         }
         if (q.includes('raw_events') && q.includes('SELECT')) {
@@ -48,7 +50,7 @@ describe('rebuildProjection', () => {
 
   it('unknown domain throws BusinessError(VALIDATION)', async () => {
     const mockDb = {
-      async execute(): Promise<unknown[]> {
+      async execute(): Promise<{ rowCount: number; rows?: unknown[] }> {
         return { rowCount: 0 }
       },
     } as unknown as never
@@ -60,7 +62,7 @@ describe('rebuildProjection', () => {
 
   it('returns { rowCount, durationMs } shape', async () => {
     const mockDb = {
-      async execute(): Promise<unknown[]> {
+      async execute(): Promise<{ rowCount: number; rows?: unknown[] }> {
         return { rowCount: 50 }
       },
     } as unknown as never
