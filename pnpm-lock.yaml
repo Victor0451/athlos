@@ -41,6 +41,9 @@ importers:
       '@athlos/approval':
         specifier: workspace:*
         version: link:../../packages/approval
+      '@athlos/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
       '@athlos/auth':
         specifier: workspace:*
         version: link:../../packages/auth
@@ -74,6 +77,9 @@ importers:
       '@athlos/integrations-whatsapp':
         specifier: workspace:*
         version: link:../../packages/integrations/whatsapp
+      '@athlos/lineage':
+        specifier: workspace:*
+        version: link:../../packages/lineage
       '@athlos/projection':
         specifier: workspace:*
         version: link:../../packages/projection
@@ -194,6 +200,37 @@ importers:
       '@athlos/vitest-config':
         specifier: workspace:*
         version: link:../vitest-config
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/audit:
+    dependencies:
+      '@athlos/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@athlos/db':
+        specifier: workspace:*
+        version: link:../db
+      '@athlos/errors':
+        specifier: workspace:*
+        version: link:../errors
+      drizzle-orm:
+        specifier: ^0.36.0
+        version: 0.36.4(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.21.0)(react@19.0.0)
+      fastify:
+        specifier: ^5.2.0
+        version: 5.8.5
+      fastify-plugin:
+        specifier: ^6.0.0
+        version: 6.0.0
+    devDependencies:
+      '@athlos/vitest-config':
+        specifier: workspace:*
+        version: link:../vitest-config
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.21
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
