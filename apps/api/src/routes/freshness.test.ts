@@ -3,13 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { signAccessToken, authPlugin } from '@athlos/auth'
 import { freshnessRoutes } from './freshness.ts'
 import type { AppContainer } from '../container.ts'
-
-const PLACEHOLDER_SECRET = 'test-secret-please-rotate-32chars-minimum'
-
-const mockEnv = () => ({
-  JWT_SECRET: PLACEHOLDER_SECRET,
-  JWT_ACCESS_TTL_SECONDS: 900,
-})
+import { mockEnv } from '../test-helpers/mock-env.ts'
 
 function makeToken(role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA' = 'CONSULTA') {
   return signAccessToken(
@@ -27,7 +21,8 @@ async function buildApp(overrides?: Partial<AppContainer>): Promise<FastifyInsta
   // Catch errors to return proper responses instead of 500
   app.setErrorHandler((err, _request, reply) => {
     const statusCode = (err as { statusCode?: number }).statusCode ?? 500
-    return reply.code(statusCode).send({ error: 'TEST_ERROR', message: err.message })
+    const message = err instanceof Error ? err.message : String(err)
+    return reply.code(statusCode).send({ error: 'TEST_ERROR', message })
   })
   const mockContainer = {
     db: {},

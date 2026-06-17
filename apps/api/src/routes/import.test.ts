@@ -3,13 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { signAccessToken, authPlugin } from '@athlos/auth'
 import { importRoutes } from './import.ts'
 import type { AppContainer } from '../container.ts'
-
-const PLACEHOLDER_SECRET = 'test-secret-please-rotate-32chars-minimum'
-
-const mockEnv = () => ({
-  JWT_SECRET: PLACEHOLDER_SECRET,
-  JWT_ACCESS_TTL_SECONDS: 900,
-})
+import { mockEnv } from '../test-helpers/mock-env.ts'
 
 function makeAdminToken(sub = '00000000-0000-4000-8000-000000000001'): string {
   return signAccessToken(

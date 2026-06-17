@@ -4,17 +4,11 @@ import { signAccessToken, authPlugin } from '@athlos/auth'
 import { lineageRoutes } from './lineage.ts'
 import { queryLineage } from '@athlos/lineage'
 import type { AppContainer } from '../container.ts'
+import { mockEnv } from '../test-helpers/mock-env.ts'
 
 vi.mock('@athlos/lineage', () => ({
   queryLineage: vi.fn(),
 }))
-
-const PLACEHOLDER_SECRET = 'test-secret-please-rotate-32chars-minimum'
-
-const mockEnv = () => ({
-  JWT_SECRET: PLACEHOLDER_SECRET,
-  JWT_ACCESS_TTL_SECONDS: 900,
-})
 
 function makeToken(
   sub = '00000000-0000-4000-8000-000000000001',
