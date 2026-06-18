@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] — 2026-06-18
+
+### Fixed
+
+- **`@athlos/notifications`** — `resolveDrift()` now routes `drift_alert` events to operators with the `data_steward` permission via `role_permissions` table (decision OI-1 B), instead of falling back to ADMINs. Added `PermissionsRepo.listOperatorsWithPermission(key)` to `packages/db/src/repositories/permissions.ts`; the dispatcher now consumes it via the new optional `permissionsRepo` field on `DispatcherDeps`. Legacy fallback to ADMINs when no `permissionsRepo` is wired (standalone / pre-deploy contexts) is preserved.
+- **`CHANGELOG.md`** — Added the missing `[0.3.0]` and `[0.2.0]` comparison links at the bottom of the file (Keep a Changelog convention).
+- **`openspec/changes/athlos-import-completion/tasks.md`** — Marked all 33 tasks (TASK-061..093) as `[x]` (the implementation is on main; the checkboxes were left unchecked after the sdd-apply sub-agents finished).
+
+### Tests
+
+- 5 new tests added (4 for `PermissionsRepo.listOperatorsWithPermission`, 1 for the dispatcher's DATA_STEWARD fan-out). **439/439 tests passing** (was 434, +5).
+
 ## [0.3.0] — 2026-06-17
 
 ### Added
@@ -83,5 +95,6 @@ All notable changes to this project will be documented in this file.
 
 Initial released version. See archived `athlos-foundation` change for history.
 
+[0.3.1]: https://github.com/Victor0451/athlos/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Victor0451/athlos/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Victor0451/athlos/compare/v0.1.0...v0.2.0
