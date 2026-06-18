@@ -61,35 +61,50 @@ async function getLocalMigrations(drizzleDir: string): Promise<string[]> {
   return migrations.sort()
 }
 
+interface MigrationMeta {
+  tag: string
+  createdAt: Date
+}
+
+function formatDate(date: Date): string {
+  return new Date(date).toISOString()
+}
+
+/**
+ * Print a section header and list of migrations to the given output stream.
+ */
+function printSection(
+  label: string,
+  migrations: string[],
+  meta: MigrationMeta[],
+  isError = false,
+): void {
+  if (migrations.length === 0) return
+  const stream = isError ? console.error.bind(console) : console.info.bind(console)
+  stream(`\n${label}`)
+  for (const tag of migrations) {
+    if (meta.length > 0) {
+      const entry = meta.find((m) => m.tag === tag)
+      const date = entry ? formatDate(entry.createdAt) : 'unknown'
+      stream(`  ${tag} (${date})`)
+    } else {
+      stream(`  ${tag}`)
+    }
+  }
+}
+
 /**
  * Print human-readable status output.
  */
-function printHuman(
-  result: { applied: string[]; pending: string[]; divergence: string[] },
-  appliedMigrations: Array<{ tag: string; createdAt: Date }>,
-): void {
-  if (result.applied.length > 0) {
-    console.info('\nApplied migrations:')
-    for (const tag of result.applied) {
-      const meta = appliedMigrations.find((m) => m.tag === tag)
-      const date = meta ? new Date(meta.createdAt).toISOString() : 'unknown'
-      console.info(`  ${tag} (${date})`)
-    }
-  }
-
-  if (result.pending.length > 0) {
-    console.info('\nPending migrations (not yet applied):')
-    for (const tag of result.pending) {
-      console.info(`  ${tag}`)
-    }
-  }
-
-  if (result.divergence.length > 0) {
-    console.error('\nDivergence detected (DB has migrations not in filesystem):')
-    for (const tag of result.divergence) {
-      console.error(`  ${tag}`)
-    }
-  }
+function printHuman(result: diffMigrationsResult, meta: MigrationMeta[]): void {
+  printSection('Applied migrations:', result.applied, meta, false)
+  printSection('Pending migrations (not yet applied):', result.pending, [], false)
+  printSection(
+    'Divergence detected (DB has migrations not in filesystem):',
+    result.divergence,
+    [],
+    true,
+  )
 
   if (
     result.applied.length === 0 &&
@@ -100,13 +115,12 @@ function printHuman(
   }
 }
 
+type diffMigrationsResult = { applied: string[]; pending: string[]; divergence: string[] }
+
 /**
  * Print JSON output (Zod-validated).
  */
-function printJson(
-  result: { applied: string[]; pending: string[]; divergence: string[] },
-  exitCode: 0 | 1,
-): void {
+function printJson(result: diffMigrationsResult, exitCode: 0 | 1): void {
   const output = statusSchema.parse({
     applied: result.applied,
     pending: result.pending,
@@ -117,52 +131,16 @@ function printJson(
 }
 
 /**
- * Main CLI entry point.
+ * Parse minimal argv (no external deps).
  */
-async function main() {
-  const args = process.argv.slice(2)
-  const jsonFlag = args.includes('--json')
-
-  const connectionString =
-    process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@localhost:5432/athlos'
-
-  // Determine drizzle directory (script is at src/scripts/status.ts)
-  const drizzleDir = join(__dirname, '..', '..', 'drizzle')
-
-  let applied: string[] = []
-  let appliedWithDates: Array<{ tag: string; createdAt: Date }> = []
-
-  try {
-    appliedWithDates = await getAppliedMigrationsWithDates(connectionString)
-    applied = appliedWithDates.map((m) => m.tag)
-  } catch (err) {
-    console.error(
-      `db package: cannot connect to <redacted>: ${err instanceof Error ? err.message : String(err)}`,
-    )
-    process.exitCode = 2
-    return
-  }
-
-  const local = await getLocalMigrations(drizzleDir)
-  const result = diffMigrations(applied, local)
-
-  if (result.pending.length > 0 || result.divergence.length > 0) {
-    process.exitCode = 1
-  }
-
-  if (jsonFlag) {
-    printJson(result, process.exitCode as 0 | 1)
-  } else {
-    printHuman(result, appliedWithDates)
-  }
+function parseArgv(argv: string[]): { json: boolean } {
+  return { json: argv.includes('--json') }
 }
 
 /**
  * Get applied migrations with their creation timestamps.
  */
-async function getAppliedMigrationsWithDates(
-  connectionString: string,
-): Promise<Array<{ tag: string; createdAt: Date }>> {
+async function getAppliedMigrationsWithDates(connectionString: string): Promise<MigrationMeta[]> {
   const pool = new Pool({ connectionString })
 
   try {
@@ -176,7 +154,43 @@ async function getAppliedMigrationsWithDates(
   }
 }
 
-main().catch((err) => {
-  console.error(`db package: unexpected error: ${err instanceof Error ? err.message : String(err)}`)
+/**
+ * Main CLI entry point.
+ */
+async function main(argv: string[]): Promise<void> {
+  const { json } = parseArgv(argv)
+  const connectionString =
+    process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@localhost:5432/athlos'
+  const drizzleDir = join(__dirname, '..', '..', 'drizzle')
+
+  let appliedWithDates: MigrationMeta[] = []
+
+  try {
+    appliedWithDates = await getAppliedMigrationsWithDates(connectionString)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`db package: cannot connect to <redacted>: ${message}`)
+    process.exitCode = 2
+    return
+  }
+
+  const applied = appliedWithDates.map((m) => m.tag)
+  const local = await getLocalMigrations(drizzleDir)
+  const result = diffMigrations(applied, local)
+
+  if (result.pending.length > 0 || result.divergence.length > 0) {
+    process.exitCode = 1
+  }
+
+  if (json) {
+    printJson(result, process.exitCode as 0 | 1)
+  } else {
+    printHuman(result, appliedWithDates)
+  }
+}
+
+main(process.argv.slice(2)).catch((err) => {
+  const message = err instanceof Error ? err.message : String(err)
+  console.error(`db package: unexpected error: ${message}`)
   process.exitCode = 2
 })
