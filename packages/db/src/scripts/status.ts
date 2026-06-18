@@ -52,7 +52,7 @@ async function getLocalMigrations(drizzleDir: string): Promise<string[]> {
     if (entry.isFile() && entry.name.endsWith('.sql')) {
       // Match pattern: 4 digits underscore name .sql
       const match = entry.name.match(/^(\d{4}_.+)\.sql$/)
-      if (match) {
+      if (match?.[1]) {
         migrations.push(match[1])
       }
     }
