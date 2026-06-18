@@ -2,6 +2,7 @@ import type { Logger } from 'pino'
 import type { Db } from '@athlos/db'
 import type { Email } from '@athlos/integrations-email'
 import type { WhatsApp } from '@athlos/integrations-whatsapp'
+import type { PermissionsRepo } from '@athlos/db/repositories/permissions'
 
 /**
  * v1 channel types (notifications spec §"Channel Types"). Adding a new
@@ -133,6 +134,10 @@ export interface ResolvedAttempt {
  * - `whatsapp` — the WhatsApp adapter (for approval links only)
  * - `logger` — pino child logger; structured failure logs go here
  * - `clock` — optional time source (tests can inject a fake)
+ * - `permissionsRepo` — used to resolve `drift_alert` recipients
+ *   to operators with the `data_steward` permission (decision OI-1 B).
+ *   Without it, `drift_alert` events would fall back to ADMINs — the
+ *   legacy behavior that this change explicitly retired.
  */
 export interface DispatcherDeps {
   db: Db
@@ -140,6 +145,7 @@ export interface DispatcherDeps {
   whatsapp: WhatsApp
   logger: Logger
   clock?: () => Date
+  permissionsRepo?: PermissionsRepo
 }
 
 /**

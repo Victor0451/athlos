@@ -40,6 +40,7 @@ async function buildApp(overrides?: Partial<AppContainer>): Promise<FastifyInsta
       hasPermission: vi.fn().mockResolvedValue(false),
       grant: vi.fn(),
       revoke: vi.fn(),
+      listOperatorsWithPermission: vi.fn().mockResolvedValue([]),
     },
     ...overrides,
   } as unknown as AppContainer
@@ -79,6 +80,7 @@ describe('GET /api/v1/audit', () => {
         hasPermission: vi.fn().mockResolvedValue(true),
         grant: vi.fn(),
         revoke: vi.fn(),
+        listOperatorsWithPermission: vi.fn().mockResolvedValue([]),
       },
     })
 
