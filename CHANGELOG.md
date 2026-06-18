@@ -82,3 +82,6 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0] — 2026-06-16
 
 Initial released version. See archived `athlos-foundation` change for history.
+
+[0.3.0]: https://github.com/Victor0451/athlos/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/Victor0451/athlos/compare/v0.1.0...v0.2.0
