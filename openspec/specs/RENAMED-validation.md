@@ -1,6 +1,6 @@
-# validation-zod — rename note
-
 > **Note, not a capability**
+
+# validation-zod — rename note
 
 ## Note: validation-zod → validation rename
 
