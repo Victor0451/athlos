@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
+    "migrate:status": "tsx src/scripts/status.ts",
     "studio": "drizzle-kit studio",
     "smoke": "tsx src/__smoke__.ts",
     "test": "vitest",
