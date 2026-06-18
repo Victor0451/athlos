@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — 2026-06-18
+
+### Changed
+
+- **README**: bilingual EN+ES with v0.3.1 truth (Next 16.2.9, Fastify 5, Postgres 16, pnpm 9.15.9, Node 22, TS 5.7.2 strict)
+- **Obsidian entry points**: refreshed to v0.3.1 (`0-README.md`, `0-Index.md`, `3-Tech-Stack/0-Stack.md`, `7-Roadmap/0-Roadmap.md`)
+- **Obsidian**: new `5-Modules/8-Module-Package-Map.md` (9 product modules × 20 packages/integrations)
+- **OpenSpec hygiene notes**: `openspec/specs/RENAMED-validation.md` (validation-zod → validation), `openspec/specs/auth-login/FOLDED-rbac.md` (user-management-rbac → auth-login)
+
 ## [0.3.1] — 2026-06-18
 
 ### Fixed
