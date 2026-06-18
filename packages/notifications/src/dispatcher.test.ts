@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { pino } from 'pino'
 import {
   NotificationDispatcher,
@@ -205,6 +205,58 @@ describe('dispatcher.send', () => {
     const failed = harness.standin.state.auditEvents.filter((a) => a.action === 'NOTIFY_FAILED')
     expect(sent).toHaveLength(2)
     expect(failed).toHaveLength(2)
+  })
+
+  it('drift fan-out uses DATA_STEWARD permission (not ADMIN role) when permissionsRepo is wired', async () => {
+    // Per design §3 + decision OI-1 B: drift alerts go to operators
+    // with `role_permissions.permission_key = 'data_steward'`, NOT
+    // to ADMINs. This test wires a permissionsRepo with 2 active
+    // data stewards and verifies the fan-out hits the stewards only.
+    const steward1 = makeOp({
+      id: '00000000-0000-4000-8000-00000000ddd1',
+      username: 'steward1',
+      role: 'O',
+    })
+    const steward2 = makeOp({
+      id: '00000000-0000-4000-8000-00000000ddd2',
+      username: 'steward2',
+      role: 'O',
+    })
+    const permissionsRepo = {
+      hasPermission: vi.fn().mockResolvedValue(true),
+      grant: vi.fn(),
+      revoke: vi.fn(),
+      listOperatorsWithPermission: vi.fn().mockResolvedValue([
+        { id: steward1.id, username: steward1.username },
+        { id: steward2.id, username: steward2.username },
+      ]),
+    }
+    const dispatcherWithPerms = new NotificationDispatcher({
+      db: harness.standin.drizzle as never,
+      email: harness.email,
+      whatsapp: harness.whatsapp,
+      logger: silent,
+      permissionsRepo: permissionsRepo as never,
+    })
+    const event = buildDriftEvent({
+      jobRunId: 'run-data-steward',
+      domain: 'socios',
+      count: 5,
+      affectedKeys: ['S-1', 'S-2'],
+    })
+    await dispatcherWithPerms.send(event)
+
+    // 2 in-app rows, one per data steward. The existing admin and op
+    // in the harness are NOT in role_permissions(data_steward) so they
+    // receive no notifications.
+    expect(harness.standin.state.notifications).toHaveLength(2)
+    const inAppRecipients = harness.standin.state.notifications.map((n) => n.recipientId)
+    expect(inAppRecipients).toContain(steward1.id)
+    expect(inAppRecipients).toContain(steward2.id)
+    expect(inAppRecipients).not.toContain(harness.admin.id)
+    expect(inAppRecipients).not.toContain(harness.op.id)
+    // The repo was consulted with the correct key.
+    expect(permissionsRepo.listOperatorsWithPermission).toHaveBeenCalledWith('data_steward')
   })
 
   it('idempotency: a second send with the same eventId writes a skipped audit row and 0 new channels', async () => {
