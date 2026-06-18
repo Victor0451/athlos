@@ -11,6 +11,7 @@ import type {
   ResolvedAttempt,
   ResolvedRecipient,
 } from './types.ts'
+import type { PermissionsRepo } from '@athlos/db/repositories/permissions'
 
 /**
  * Notification dispatcher — the single entry point for every
@@ -41,6 +42,7 @@ export class NotificationDispatcher {
   private readonly emailChannel: EmailChannel
   private readonly whatsappChannel: WhatsAppChannel
   private readonly inAppChannel: InAppChannel
+  private readonly permissionsRepo: PermissionsRepo | undefined
 
   constructor(deps: DispatcherDeps) {
     this.db = deps.db
@@ -50,6 +52,7 @@ export class NotificationDispatcher {
       logger: deps.logger,
     })
     this.inAppChannel = new InAppChannel({ db: deps.db, logger: deps.logger })
+    this.permissionsRepo = deps.permissionsRepo
   }
 
   /**
@@ -154,7 +157,16 @@ export class NotificationDispatcher {
   private async resolveDrift(
     event: Extract<NotificationEvent, { type: 'drift_alert' }>,
   ): Promise<ResolvedAttempt[]> {
-    const admins = await this.fetchAdmins()
+    // DATA_STEWARD fan-out (decision OI-1 B): operators with
+    // `role_permissions.permission_key = 'data_steward'` receive
+    // drift alerts. Falls back to ADMINs only when no
+    // permissionsRepo is wired (legacy/standalone mode) — the
+    // archive runbook documents the explicit "admin must grant
+    // data_steward" deploy step, so the fallback is intentional
+    // for early deployments before any grants are made.
+    const stewards = this.permissionsRepo
+      ? await this.fetchDataStewards()
+      : await this.fetchAdmins()
     const subject = `Drift detectado: ${event.metadata.domain}`
     const body = render(
       [
@@ -171,10 +183,28 @@ export class NotificationDispatcher {
         sample: event.metadata.affectedKeys.slice(0, 5).join(', '),
       },
     )
-    return admins.flatMap((r): ResolvedAttempt[] => [
+    return stewards.flatMap((r): ResolvedAttempt[] => [
       { channel: 'email', recipient: r, subject, body, eventId: event.eventId },
       { channel: 'in_app', recipient: r, subject, body, eventId: event.eventId },
     ])
+  }
+
+  /**
+   * Fetch all active operators with the `data_steward` permission
+   * via the permissions repository. Resolves to `[]` when no
+   * grants exist (drift alerts are silent until the first grant
+   * per the R-108 decision).
+   */
+  private async fetchDataStewards(): Promise<ResolvedRecipient[]> {
+    if (!this.permissionsRepo) return []
+    const rows = await this.permissionsRepo.listOperatorsWithPermission('data_steward')
+    return rows.map((r) => ({
+      operatorId: r.id,
+      email: null,
+      phone: null,
+      role: 'OPERADOR',
+      username: r.username,
+    }))
   }
 
   private async resolveImportCompleted(

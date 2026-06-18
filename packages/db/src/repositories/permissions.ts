@@ -15,12 +15,21 @@
  */
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../pool'
-import { rolePermissions } from '../schema/operators.js'
+import { rolePermissions, operators } from '../schema/operators.js'
 
 export interface PermissionsRepo {
   hasPermission(operatorId: string, key: string): Promise<boolean>
   grant(operatorId: string, key: string, grantedBy: string | null): Promise<void>
   revoke(operatorId: string, key: string): Promise<void>
+  /**
+   * List the IDs (and usernames) of operators who hold the given
+   * permission key. Used by the notifications dispatcher to fan out
+   * `drift_alert` events to DATA_STEWARD operators.
+   *
+   * Returns active operators only — the join to `operators` filters
+   * out `isActive = false` rows.
+   */
+  listOperatorsWithPermission(key: string): Promise<Array<{ id: string; username: string | null }>>
 }
 
 export function makePermissionsRepo(db: Db): PermissionsRepo {
@@ -49,6 +58,17 @@ export function makePermissionsRepo(db: Db): PermissionsRepo {
         .where(
           and(eq(rolePermissions.operatorId, operatorId), eq(rolePermissions.permissionKey, key)),
         )
+    },
+
+    async listOperatorsWithPermission(key) {
+      const rows = await db
+        .select({ id: operators.id, username: operators.username, isActive: operators.isActive })
+        .from(rolePermissions)
+        .innerJoin(operators, eq(rolePermissions.operatorId, operators.id))
+        .where(eq(rolePermissions.permissionKey, key))
+      return rows
+        .filter((r) => r.isActive === true)
+        .map((r) => ({ id: r.id, username: r.username }))
     },
   }
 }
