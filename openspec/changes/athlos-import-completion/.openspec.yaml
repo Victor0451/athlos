@@ -4,6 +4,10 @@ pace: interactive
 strict_tdd: true
 delivery_strategy: ask-always
 review_budget_lines: 400
+status: archived
+archived_at: 2026-06-18
+archive_path: archive/2026-06-18
+final_version: 0.3.0
 
 # Pre-flight (cached from user at session start — see Engram obs #2050)
 # - interactive: orchestrator shows each phase output, waits for user OK before next

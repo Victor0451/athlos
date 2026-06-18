@@ -251,23 +251,35 @@ The system MUST NOT expose a UI to edit preferences in v1. Preferences MAY be ed
 
 ### Requirement: Notification Trigger — Drift Detected
 
-The notification dispatcher MUST trigger when the drift-detector reports drift. The system MUST send `email` to all operators with `email` enabled for `drift_alert` AND role `ADMIN`. The system MUST insert an `in_app` row for every operator with `in_app` enabled for `drift_alert`.
+The notification dispatcher MUST trigger when the drift-detector reports drift. The system MUST send `email` to all operators with `email` enabled for `drift_alert` AND role `DATA_STEWARD`. The system MUST insert an `in_app` row for every operator with `in_app` enabled for `drift_alert` AND role `DATA_STEWARD`.
 
-#### Scenario: Drift detected in CTACTE alerts all admins
+Operators whose role is `ADMIN` MUST NOT receive `drift_alert` notifications. Operators whose role is anything other than `DATA_STEWARD` MUST NOT receive them either. The role filter runs BEFORE preferences.
+
+#### Scenario: Drift detected in CTACTE alerts only DATA_STEWARD operators
 
 - GIVEN drift is detected in domain `ctacte` (5 records)
-- AND admins `admin1`, `admin2` both have `email` and `in_app` enabled for `drift_alert`
+- AND `steward1` and `steward2` (both DATA_STEWARD) have `email` and `in_app` enabled for `drift_alert`
+- AND `admin1` and `admin2` (both ADMIN) also have `email` and `in_app` enabled for `drift_alert`
 - WHEN the drift-detector emits the event
-- THEN `admin1` and `admin2` MUST each receive one `drift_alert` email
-- AND `admin1` and `admin2` MUST each have one in-app row with `event_type = 'drift_alert'`
+- THEN `steward1` and `steward2` MUST each receive one `drift_alert` email
+- AND `steward1` and `steward2` MUST each have one in-app row with `event_type: 'drift_alert'`
+- AND `admin1` and `admin2` MUST receive ZERO emails and ZERO in-app rows for this event
 
-#### Scenario: Non-admin operators are not notified of drift
+#### Scenario: Non-DATA_STEWARD roles are excluded
 
-- GIVEN operator `op1` (role `OPERATOR`) has `email` enabled for `drift_alert`
+- GIVEN an operator with role `OPERATOR` has `email` enabled for `drift_alert`
 - WHEN drift is detected
-- THEN `op1` MUST NOT receive the drift email
-- AND no in-app row MUST be inserted for `op1`
+- THEN that operator MUST NOT receive the drift email
+- AND no in-app row MUST be inserted for them
 - AND this MUST hold regardless of the preference table, because the role filter runs before preferences
+
+#### Scenario: Zero DATA_STEWARD operators → events are still audited
+
+- GIVEN no operator in the system has role `DATA_STEWARD`
+- WHEN drift is detected
+- THEN zero emails MUST be sent
+- AND zero in-app rows MUST be inserted
+- AND the drift itself MUST still be recorded in `audit_events` (via the drift package's direct write — see drift-detector spec) so the event is not silently lost
 
 ---
 
