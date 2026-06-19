@@ -9,13 +9,15 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
-    "./repositories/permissions": "./src/repositories/permissions.ts"
+    "./repositories/permissions": "./src/repositories/permissions.ts",
+    "./repositories/operators": "./src/repositories/operators.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "migrate:status": "tsx src/scripts/status.ts",
+    "grant:data-steward": "tsx src/scripts/grant-data-steward.ts",
     "studio": "drizzle-kit studio",
     "smoke": "tsx src/__smoke__.ts",
     "test": "vitest",
