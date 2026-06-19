@@ -49,7 +49,7 @@ function makeInsertChain() {
  * pops the next value from the queue. Tests configure the queue to return
  * the right rows for findByUsername (1st call) and hasPermission (2nd call).
  */
-function makeMockDb(): Db {
+function makeMockDb(limitQueue: unknown[][] = [[]]): Db {
   // tx mock passed to transaction() — must support emitAudit's select+insert
   const txMock = {
     select: () => makeSelectChain([]),
@@ -60,9 +60,8 @@ function makeMockDb(): Db {
     }),
   }
 
-  // Queue of results for select().from().where().limit() calls
+  // Call-count queue — each select().from().where().limit() pops the next result
   let callIndex = 0
-  const limitQueue: unknown[][] = []
 
   return {
     select: () => ({
@@ -79,11 +78,6 @@ function makeMockDb(): Db {
     insert: () => makeInsertChain(),
     transaction: async <T>(fn: (tx: Db) => Promise<T>): Promise<T> => {
       return fn(txMock as unknown as Db)
-    },
-    _setLimitQueue(rows: unknown[][]) {
-      limitQueue.length = 0
-      limitQueue.push(...rows)
-      callIndex = 0
     },
   } as unknown as Db
 }
@@ -130,9 +124,8 @@ describe('grant-data-steward', () => {
         username: 'alice',
         isActive: true,
       }
-      const mockDb = makeMockDb()
-      // Queue: findByUsername returns [operatorRow], hasPermission returns [] (no perm yet)
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([[operatorRow], []])
+      // Queue: findByUsername=[operatorRow], hasPermission=[] (no perm yet)
+      const mockDb = makeMockDb([[operatorRow], []])
 
       const { main } = await import('./grant-data-steward.js')
       await main(['--username', 'alice'], mockDb)
@@ -147,9 +140,8 @@ describe('grant-data-steward', () => {
         username: 'alice',
         isActive: true,
       }
-      const mockDb = makeMockDb()
-      // Queue: findByUsername returns [operatorRow], hasPermission returns [row] (perm exists)
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([[operatorRow], [{ x: 1 }]])
+      // Queue: findByUsername=[operatorRow], hasPermission=[row] (perm exists)
+      const mockDb = makeMockDb([[operatorRow], [{ x: 1 }]])
 
       const { main } = await import('./grant-data-steward.js')
       await main(['--username', 'alice'], mockDb)
@@ -159,9 +151,8 @@ describe('grant-data-steward', () => {
 
   describe('CLI --username unknown user', () => {
     it('exits 1 and reports unknown username', async () => {
-      const mockDb = makeMockDb()
-      // Queue: findByUsername returns [] → unknown user
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([[]])
+      // Queue: findByUsername=[] → unknown user
+      const mockDb = makeMockDb([[]])
 
       const { main } = await import('./grant-data-steward.js')
       await main(['--username', 'nonexistent'], mockDb)
@@ -176,16 +167,13 @@ describe('grant-data-steward', () => {
         username: 'alice',
         isActive: true,
       }
-      const bob = { id: '22222222-2222-2222-2222-222222222222', username: 'bob', isActive: true }
-      const mockDb = makeMockDb()
-      // For each username: findByUsername returns the operator, hasPermission returns [] (no perm yet)
-      // 4 calls: find alice, has alice, find bob, has bob
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([
-        [alice], // findByUsername('alice')
-        [], // hasPermission(alice_id)
-        [bob], // findByUsername('bob')
-        [], // hasPermission(bob_id)
-      ])
+      const bob = {
+        id: '22222222-2222-2222-2222-222222222222',
+        username: 'bob',
+        isActive: true,
+      }
+      // find alice, has alice, find bob, has bob
+      const mockDb = makeMockDb([[alice], [], [bob], []])
 
       const { main } = await import('./grant-data-steward.js')
       await main(['--username', 'alice', '--username', 'bob'], mockDb)
@@ -199,9 +187,8 @@ describe('grant-data-steward', () => {
       const uuid2 = '22222222-2222-2222-2222-222222222222'
       process.env.DATA_STEWARD_OPERATOR_IDS = `${uuid1},${uuid2}`
 
-      // from-env path only calls hasPermission (no findByUsername)
-      const mockDb = makeMockDb()
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([[], []])
+      // from-env calls hasPermission twice (once per UUID)
+      const mockDb = makeMockDb([[], []])
 
       const { main } = await import('./grant-data-steward.js')
       await main(['--from-env'], mockDb)
@@ -219,9 +206,8 @@ describe('grant-data-steward', () => {
         isActive: true,
       }
       let output = ''
-      const mockDb = makeMockDb()
-      // Queue: findByUsername returns [operatorRow], hasPermission returns [] (no perm → granted)
-      ;(mockDb as Record<string, unknown>)._setLimitQueue([[operatorRow], []])
+      // Queue: findByUsername=[operatorRow], hasPermission=[] (no perm → granted)
+      const mockDb = makeMockDb([[operatorRow], []])
 
       const origLog = console.info
       console.info = (msg: string) => {
