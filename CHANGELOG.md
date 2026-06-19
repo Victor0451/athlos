@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] — 2026-06-18
+
+### Added
+
+- **`@athlos/db`** — `migrate:status` command with drift detection.
+  - `pnpm db:migrate:status` reads `__drizzle_migrations` table, compares against `drizzle/*.sql` filesystem entries
+  - Reports applied, pending, and divergent migrations
+  - Supports `--json` flag with Zod-validated output
+  - Exit codes: 0 (clean), 1 (drift/pending), 2 (connection error)
+
+- **CI drift gate** — `.github/workflows/test.yml` now runs `drizzle-kit check` as a `drift-check` job that blocks PR merge on drift
+
+### Changed
+
+- **`docs/runbook.md`** — Removed `db:migrate:rollback` block; migrations are now documented as forward-only per spec
+
 ## [0.4.0] — 2026-06-18
 
 ### Changed

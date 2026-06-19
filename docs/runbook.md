@@ -56,15 +56,19 @@ WHERE operator_id = '<operator-uuid>' AND permission_key = 'data_steward';
 
 ## Rollback Procedure
 
+<!-- DEPRECATED 2026-06-18: the rollback procedure that lived here was removed.
+Migrations are forward-only by spec. If your runbook snippet still contains
+a rollback command, ignore it and follow the procedure below. -->
+
 If a migration fails to apply:
 
-```bash
-# Roll back the last migration
-pnpm db:migrate:rollback
+Migrations are **forward-only** by spec (`openspec/specs/database-migrations/spec.md:56`).
+There is no rollback command. To revert a bad migration:
 
-# Or roll back to a specific migration
-pnpm db:migrate:rollback --to 0009_domain_freshness
-```
+1. Author a new forward migration that undoes the bad change's effect (column drop,
+   constraint reversal, etc.).
+2. Commit it via the normal PR flow (`pnpm db:generate` to scaffold).
+3. Re-deploy.
 
 If a deployed version causes issues:
 
