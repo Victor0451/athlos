@@ -8,8 +8,14 @@ import { eq } from 'drizzle-orm'
 import type { Db } from '../pool'
 import { operators } from '../schema/operators.js'
 
+import type { Operator } from '../schema/operators.js'
+
 export interface OperatorsRepo {
-  findByUsername(username: string): Promise<typeof operators.$inferSelect | null>
+  /**
+   * Look up a single operator by username.
+   * Returns the operator row, or null if no matching username exists.
+   */
+  findByUsername(username: string): Promise<Operator | null>
 }
 
 export function makeOperatorsRepo(db: Db): OperatorsRepo {
