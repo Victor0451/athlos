@@ -1,6 +1,6 @@
 {
   "name": "@athlos/integrations-clock",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "Clock integration — real uses new Date(); stub lets tests advance time deterministically.",
   "type": "module",

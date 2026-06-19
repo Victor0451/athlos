@@ -23,13 +23,16 @@
 
 To enable drift alerts for an operator:
 
-```sql
--- Find the operator
-SELECT id, username FROM operators WHERE role = 'A' AND is_active = true;
+<!-- DEPRECATED 2026-06-19: the raw SQL GRANT block below has been replaced by
+     the idempotent, audited CLI. If you have this snippet saved somewhere,
+     please update to the new command. -->
 
--- Grant data_steward permission
-INSERT INTO role_permissions (operator_id, permission_key, granted_by)
-VALUES ('<operator-uuid>', 'data_steward', '<granting-operator-uuid>');
+```bash
+# Idempotent, audited grant — safe to re-run:
+pnpm ops:grant-data-steward --username alice
+
+# Bulk grant via env var (comma-separated UUIDs):
+DATA_STEWARD_OPERATOR_IDS=<uuid1>,<uuid2> pnpm ops:grant-data-steward --from-env
 ```
 
 After granting, the operator will receive `drift_alert` in_app and email notifications

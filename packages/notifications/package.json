@@ -1,6 +1,6 @@
 {
   "name": "@athlos/notifications",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "Athlos cross-cutting notifications — dispatcher, channels (email, in-app, whatsapp), triggers (drift, import, approval).",
   "type": "module",
