@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] — 2026-06-19
+
+### Added
+
+- **`@athlos/db`** — `grant-data-steward` CLI: idempotent DATA_STEWARD permission grant with per-grant audit trail.
+  - `pnpm ops:grant-data-steward --username <u>` (repeatable flag)
+  - `DATA_STEWARD_OPERATOR_IDS=<uuid1>,<uuid2> pnpm ops:grant-data-steward --from-env`
+  - `pnpm ops:grant-data-steward --username <u> --json` — Zod-validated JSON output
+  - Pre-check `hasPermission()` before `grant()` for idempotency (safe to re-run)
+  - Per-grant `db.transaction(grant + emitAudit)` — no orphan audit rows
+  - Exit codes: 0 (success), 1 (unknown username/bad UUID), 2 (connection/args error)
+
+- **`@athlos/db`** — `OperatorsRepo.findByUsername(username)` repository method
+  - Factory pattern matching `makePermissionsRepo`
+  - Used by `grant-data-steward.ts` for username → operator ID resolution
+
+- **`docs/runbook.md`** — Replaced error-prone raw SQL `INSERT INTO role_permissions` block with idempotent, audited CLI command
+
 ## [0.4.1] — 2026-06-18
 
 ### Added
