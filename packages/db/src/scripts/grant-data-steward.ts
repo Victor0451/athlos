@@ -13,7 +13,7 @@
  */
 import pg from 'pg'
 import { emitAudit, type AuditRecord } from '@athlos/audit'
-import { createDb } from '../pool.js'
+import { createDb, type Db } from '../pool.js'
 import { makeOperatorsRepo } from '../repositories/operators.js'
 import { makePermissionsRepo } from '../repositories/permissions.js'
 import { grantDataStewardOutputSchema } from './grant-data-steward.schema.js'
@@ -68,7 +68,13 @@ function parseArgv(argv: string[]): ParseArgvResult {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--username') {
-      usernames.push(argv[i + 1])
+      const next = argv[i + 1]
+      if (!next) {
+        console.error('Error: --username requires a value.')
+        process.exitCode = 2
+        return { usernames: [], fromEnv: false, json: false }
+      }
+      usernames.push(next)
       i++
     } else if (arg === '--from-env') {
       fromEnv = true
@@ -107,10 +113,7 @@ function printJson(granted: string[], alreadyGranted: string[], auditIds: string
 
 const { Pool } = pg
 
-export async function main(
-  argv: string[],
-  dbOverride?: Parameters<typeof createDb>[0] extends { db: infer D } ? D : never,
-): Promise<void> {
+export async function main(argv: string[], dbOverride?: Db): Promise<void> {
   const { usernames, fromEnv, json } = parseArgv(argv)
 
   // Validate: --from-env and --username are mutually exclusive
@@ -131,8 +134,8 @@ export async function main(
     process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@localhost:5432/athlos'
 
   let pool: pg.Pool | undefined
-  const getDb = (): Parameters<typeof makeOperatorsRepo>[0] => {
-    if (dbOverride) return dbOverride as Parameters<typeof makeOperatorsRepo>[0]
+  const getDb = (): Db => {
+    if (dbOverride) return dbOverride
     if (!pool) {
       pool = new Pool({ connectionString })
     }
