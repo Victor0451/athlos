@@ -12,11 +12,14 @@ import { operators } from '../schema/operators.js'
  */
 
 // Mock-DB standin matching permissions.test.ts:14-30 pattern
+// Extended to support .limit(1) used by findByUsername
 function makeMockDb(rows: Array<{ id: string; username: string | null; isActive: boolean }>) {
   return {
     select: () => ({
       from: () => ({
-        where: async () => rows,
+        where: () => ({
+          limit: () => Promise.resolve(rows),
+        }),
       }),
     }),
   } as unknown as Db
