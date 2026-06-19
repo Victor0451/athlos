@@ -34,3 +34,6 @@ test-results/
 
 # Docker
 pgdata/
+
+# LLM tooling (cache, never tracked)
+.atl/
