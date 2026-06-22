@@ -164,7 +164,7 @@ The system SHALL run migrations automatically on API startup and provide a mecha
 
 ### Requirement: Backup Strategy
 
-The system SHALL perform automated PostgreSQL backups with defined frequency, retention, and storage location.
+The system SHALL perform automated PostgreSQL backups with defined frequency, retention, and storage location. Backups SHALL run on the HOST (not inside a compose container) via `scripts/backup.sh`, scheduled by `/etc/cron.d/athlos-backup`, and SHALL use only Ubuntu packages — no cloud SDK, no AWS CLI, no external service.
 
 #### Scenario: Automated backup script
 
@@ -193,6 +193,25 @@ The system SHALL perform automated PostgreSQL backups with defined frequency, re
 - THEN they MUST be stored outside the PostgreSQL data volume
 - AND they MUST be accessible for restore operations
 - AND they SHOULD be replicated to offsite storage
+
+#### Scenario: backup.sh runs on host via cron, reads DATABASE_URL
+
+- GIVEN `/etc/cron.d/athlos-backup` is installed on the host
+- WHEN the daily cron entry triggers at 3 AM as the configured user (default `admin`)
+- THEN `scripts/backup.sh` SHALL read `DATABASE_URL` from the environment
+- AND SHALL write the dump to `$BACKUP_DIR` (also from environment, default `/var/backups/athlos`)
+- AND SHALL NOT depend on any cloud SDK, AWS CLI, or external service
+- AND SHALL exit non-zero on any failure so cron emails the operator
+
+#### Scenario: backup-bats CI job runs on every PR
+
+- GIVEN `.github/workflows/test.yml` includes a `backup-bats` job
+- WHEN a pull request is opened
+- THEN the job SHALL install `bats`, `shellcheck`, and `postgresql-client` via `sudo apt-get install`
+- AND SHALL run `shellcheck scripts/*.sh scripts/lib/*.sh` (must be clean)
+- AND SHALL run `bats scripts/tests/*.test.bats` against an ephemeral Postgres service
+- AND the workflow SHALL exit non-zero if any bats test fails or any shellcheck warning is present
+- AND the pull request SHALL be blocked from being merged while the job is red
 
 ---
 
