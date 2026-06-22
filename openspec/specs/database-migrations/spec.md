@@ -66,7 +66,7 @@ Production migrations SHALL run via the same entrypoint on every deploy. Destruc
 
 - GIVEN a `db-destructive` label on a PR
 - WHEN the deploy job reaches the migration step
-- THEN the deploy script SHALL run `pg_dump` to `$BACKUP_DIR/pre-deploy-<sha>.sql.gz`
+- THEN the deploy script SHALL run `pg_dump` and write the dump to `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz`
 - AND the deploy SHALL abort if the dump fails
 
 ---
