@@ -69,6 +69,48 @@ Production migrations SHALL run via the same entrypoint on every deploy. Destruc
 - THEN the deploy script SHALL run `pg_dump` and write the dump to `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz`
 - AND the deploy SHALL abort if the dump fails
 
+#### Scenario: Daily backup via backup.sh produces timestamped gzipped dump
+
+- GIVEN `DATABASE_URL` points to a running Postgres
+- AND `$BACKUP_DIR` exists and is writable
+- WHEN `scripts/backup.sh` runs
+- THEN it SHALL produce `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz` containing a valid `pg_dump`
+- AND the file SHALL pass `gunzip -t` integrity check
+- AND the script SHALL exit 0
+
+#### Scenario: Backup retention sweep deletes files older than BACKUP_RETENTION_DAYS
+
+- GIVEN `$BACKUP_DIR` contains backup files spanning more than `$BACKUP_RETENTION_DAYS` days
+- WHEN `scripts/backup.sh` runs
+- THEN it SHALL delete files older than `$BACKUP_RETENTION_DAYS` at the END of its run
+- AND SHALL retain every file within the retention window
+- AND SHALL exit 0 whether or not any files were deleted
+
+#### Scenario: Restore requires --confirm flag
+
+- GIVEN a valid backup file at `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz`
+- WHEN `scripts/restore.sh --source <path>` runs WITHOUT `--confirm`
+- THEN it SHALL exit 1
+- AND SHALL print an error stating `--confirm is required`
+- AND SHALL NOT modify any data in the target database
+
+#### Scenario: Restore refuses when active connections > 0
+
+- GIVEN a valid backup file AND a target database with one or more active connections
+- WHEN `scripts/restore.sh --source <path> --confirm` runs
+- THEN it SHALL exit 2 with a message identifying the active connection count
+- AND SHALL print a banner with the target DB host BEFORE the connection check
+- AND `scripts/restore.sh --source <path> --confirm --force-allow-active` SHALL bypass this check (operator override)
+
+#### Scenario: Restore --dry-run prints banner without modifying DB
+
+- GIVEN a valid backup file at `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz`
+- WHEN `scripts/restore.sh --source <path> --confirm --dry-run` runs
+- THEN it SHALL print a banner with the target DB host, a warning, and the source file path
+- AND SHALL run `gunzip -t <source>` for integrity check
+- AND SHALL exit 0
+- AND SHALL NOT execute any write against the target database
+
 ---
 
 ### Requirement: Data Migrations
