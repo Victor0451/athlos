@@ -79,6 +79,71 @@ If a deployed version causes issues:
 2. Verify `/health` is ok
 3. Check `GET /api/v1/admin/jobs/runs` for any failed jobs
 
+## Backup & Restore
+
+### Daily backup
+
+The `scripts/backup.sh` script runs on the host via `/etc/cron.d/athlos-backup`
+(at 03:00 local). It reads `DATABASE_URL`, `BACKUP_DIR`, and `BACKUP_RETENTION_DAYS`
+from the environment and produces a gzip-compressed SQL dump:
+
+```bash
+# Manual run (from the host):
+DATABASE_URL=postgresql://... BACKUP_DIR=/var/backups/athlos \
+  BACKUP_RETENTION_DAYS=7 bash scripts/backup.sh
+```
+
+Verify a backup:
+
+```bash
+# List recent backups
+ls -lh /var/backups/athlos/athlos-*.sql.gz
+
+# Check integrity (does not extract)
+gunzip -t /var/backups/athlos/athlos-2026-06-22-0300.sql.gz
+```
+
+Retention: files older than `BACKUP_RETENTION_DAYS` are deleted automatically at the
+end of each backup run. The worst-case disk footprint is
+`BACKUP_RETENTION_DAYS × ~50 MB ≈ 350 MB`.
+
+### Restore procedure
+
+Restore requires `--confirm` to proceed. Run with `--dry-run` first to verify
+the source file is valid and see the target DB host:
+
+```bash
+# dry-run (safe — no DB writes)
+bash scripts/restore.sh \
+  --source /var/backups/athlos/athlos-2026-06-22-0300.sql.gz \
+  --confirm --dry-run
+```
+
+Apply (active connections will block by default):
+
+```bash
+bash scripts/restore.sh \
+  --source /var/backups/athlos/athlos-2026-06-22-0300.sql.gz \
+  --confirm
+```
+
+Apply with active connections (DANGEROUS — only for maintenance windows):
+
+```bash
+bash scripts/restore.sh \
+  --source /var/backups/athlos/athlos-2026-06-22-0300.sql.gz \
+  --confirm --force-allow-active
+```
+
+Exit codes:
+
+| Code | Meaning                                                       |
+| ---- | ------------------------------------------------------------- |
+| 0    | Success                                                       |
+| 1    | Bad argv (missing `--source` or `--confirm`)                  |
+| 2    | Safety refused (active connections, corrupt source, bad path) |
+| 3    | `psql` restore failed                                         |
+
 ## Common Issues
 
 ### Drift alerts not received
