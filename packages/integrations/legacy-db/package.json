@@ -1,6 +1,6 @@
 {
   "name": "@athlos/integrations-legacy-db",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Legacy DBF reader integration — real uses the xbase npm library; stub serves in-memory fixtures.",
   "type": "module",

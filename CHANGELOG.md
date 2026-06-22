@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3] — 2026-06-22
+
+### Added
+
+- **`scripts/backup.sh`** — Daily `pg_dump` + `gzip` backup script with inline retention sweep.
+  - Reads `DATABASE_URL`, `BACKUP_DIR`, `BACKUP_RETENTION_DAYS` from environment
+  - Output: `$BACKUP_DIR/athlos-<YYYY-MM-DD-HHMM>.sql.gz`
+  - `gunzip -t` integrity verification after each dump
+  - `cleanup_old_backups()` removes files older than `BACKUP_RETENTION_DAYS` days
+  - Partial `pg_dump` failure removes the corrupt output file before exit 3
+
+- **`scripts/restore.sh`** — Assisted restore with `--confirm` safety gates.
+  - Mandatory: `--source <path>` (must be `.sql.gz`) and `--confirm`
+  - Optional: `--target <connstring>`, `--dry-run`, `--force-allow-active`
+  - Safety gates: `--confirm` → source valid → banner (stderr) → `gunzip -t` → active-conn check → apply
+  - Exit codes: 0 success, 1 bad argv, 2 safety refused, 3 psql failure
+
+- **`scripts/lib/common.sh`** — Shared bash helpers for backup and restore scripts.
+  - `log()`, `die()`, `require_env()`, `require_cmd()`, `get_timestamp()`, `cleanup_old_backups()`
+
+- **bats test suites** — `scripts/tests/common.test.bats`, `backup.test.bats`, `restore.test.bats`
+  - 19 test cases covering positive and negative paths for all three scripts
+
+- **`backup-bats` CI job** — `.github/workflows/test.yml` runs `bats` + `shellcheck` on every PR
+
+- **`.env.example`** — Added `BACKUP_DIR` and `BACKUP_RETENTION_DAYS` under new `─── Backup (PR Slice B1a) ───` section
+
+- **`docs/runbook.md`** — Added `## Backup & Restore` section with daily backup procedure, restore invocations, and exit code table
+
+### Changed
+
+- **`openspec/specs/database-migrations/spec.md`** — Replaced `s3://athlos-backups/pre-deploy-<sha>.sql.gz` literal with `$BACKUP_DIR/pre-deploy-<sha>.sql.gz` (per ADR #30 — local + USB only, no S3)
+
+- **`openspec/specs/deployment-devops/spec.md`** — Updated `Backup Strategy` requirement text to reflect local backup approach
+
 ## [0.4.2] — 2026-06-19
 
 ### Added
