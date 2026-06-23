@@ -6,9 +6,9 @@
  */
 import { eq } from 'drizzle-orm'
 import type { Db } from '../pool'
-import { operators } from '../schema/operators.js'
+import { operators } from '../schema/operators.ts'
 
-import type { Operator } from '../schema/operators.js'
+import type { Operator } from '../schema/operators.ts'
 
 export interface OperatorsRepo {
   /**

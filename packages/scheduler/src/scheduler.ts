@@ -144,7 +144,7 @@ export class InProcessScheduler implements JobScheduler {
     if (!def.cronExpr) return
     // Dynamic import keeps the bundle slim for code paths that never
     // start a task (e.g. when only `runNow` is exercised in tests).
-    void import('./adapters/node-cron.ts')
+    void import('./adapters/node-cron.js')
       .then(({ createNodeCronTask }) => {
         const entry = this.jobs.get(name)
         if (!entry) return

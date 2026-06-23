@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getFreshness, refreshAll } from './api.js'
+import { getFreshness, refreshAll } from './api.ts'
 
 function makeMockDb(executeResults: unknown[]) {
   return {

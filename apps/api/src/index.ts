@@ -1,13 +1,13 @@
 // dotenv/config MUST be imported first so the rest of the app sees env vars
 // at module init time (per openspec/changes/athlos-foundation/specs/config-environment).
-import { loadEnv } from './env.js'
+import { loadEnv } from './env.ts'
 
 // Guard: loadEnv() calls dotenv.config() only when NODE_ENV !== 'production'.
 // In production, env vars come from compose env_file: .env.production.
 // Must be called before any code that reads env vars.
 loadEnv()
 
-import { buildServer } from './server.js'
+import { buildServer } from './server.ts'
 
 const PORT = Number(process.env['PORT'] ?? 3001)
 const HOST = process.env['HOST'] ?? '0.0.0.0'

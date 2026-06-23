@@ -13,10 +13,10 @@
  */
 import pg from 'pg'
 import { emitAudit, type AuditRecord } from '@athlos/audit'
-import { createDb, type Db } from '../pool.js'
-import { makeOperatorsRepo } from '../repositories/operators.js'
-import { makePermissionsRepo } from '../repositories/permissions.js'
-import { grantDataStewardOutputSchema } from './grant-data-steward.schema.js'
+import { createDb, type Db } from '../pool.ts'
+import { makeOperatorsRepo } from '../repositories/operators.ts'
+import { makePermissionsRepo } from '../repositories/permissions.ts'
+import { grantDataStewardOutputSchema } from './grant-data-steward.schema.ts'
 
 export { grantDataStewardOutputSchema }
 

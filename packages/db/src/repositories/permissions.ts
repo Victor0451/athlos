@@ -15,7 +15,7 @@
  */
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../pool'
-import { rolePermissions, operators } from '../schema/operators.js'
+import { rolePermissions, operators } from '../schema/operators.ts'
 
 export interface PermissionsRepo {
   hasPermission(operatorId: string, key: string): Promise<boolean>

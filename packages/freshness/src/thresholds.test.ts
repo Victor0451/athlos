@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DOMAIN_THRESHOLDS, ageToStatus, ageDisplay } from './thresholds.js'
+import { DOMAIN_THRESHOLDS, ageToStatus, ageDisplay } from './thresholds.ts'
 
 describe('DOMAIN_THRESHOLDS', () => {
   /**

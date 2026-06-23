@@ -22,8 +22,8 @@
  * The middleware path is for OPERATOR events (human-initiated HTTP calls).
  * The direct-insert path is for SYSTEM events (jobs, cron triggers).
  */
-export { auditPlugin } from './middleware.js'
-export { emitAudit } from './emitter.js'
-export { queryAudit } from './query.js'
-export type { AuditRecord } from './emitter.js'
-export type { AuditQueryFilters, AuditPage } from './query.js'
+export { auditPlugin } from './middleware.ts'
+export { emitAudit } from './emitter.ts'
+export { queryAudit } from './query.ts'
+export type { AuditRecord } from './emitter.ts'
+export type { AuditQueryFilters, AuditPage } from './query.ts'

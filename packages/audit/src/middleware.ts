@@ -19,7 +19,7 @@
  */
 import fp from 'fastify-plugin'
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify'
-import { emitAudit, type AuditRecord } from './emitter.js'
+import { emitAudit, type AuditRecord } from './emitter.ts'
 import type { Db } from '@athlos/db'
 import type { JWTPayload } from '@athlos/auth'
 
