@@ -24,7 +24,7 @@ The system SHALL provide a multi-stage Dockerfile for the API service and a dock
 
 - GIVEN `docker-compose.yml` is present
 - WHEN `docker-compose up -d` is executed
-- THEN services `api` and `db` MUST be defined (no separate `migrations` service — migrations run in `api` entrypoint)
+- THEN services `api`, `db`, and `migrations` MUST be defined
 - AND `api` MUST expose port 3001 to the host
 - AND `db` MUST expose port 5432 to the host
 - AND `api` MUST wait for `db` to be healthy before starting
@@ -391,5 +391,5 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 21. `docker-entrypoint.sh` runs `pnpm --filter @athlos/db migrate` when `RUN_MIGRATIONS=true` and `exec`s the Node process as PID 1
 22. `docker-entrypoint.sh` runs `scripts/backup.sh` to local `$BACKUP_DIR` (NOT S3) when `BACKUP_BEFORE_MIGRATE=true`, and exits `2` if the backup fails
 23. `docker-compose.yml` defines `api` + `db` only, uses `env_file: .env.production`, `depends_on: db: condition: service_healthy`, `/health/ready` healthcheck (30s/5s/5/30s), and json-file log rotation
-24. `apps/api/src/index.ts` does NOT load `dotenv/config` when `NODE_ENV=production`; verified by `apps/api/test/env.test.ts` (RED-first TDD)
+24. `apps/api/src/index.ts` does NOT load `dotenv/config` when `NODE_ENV=production`; verified by `apps/api/test/dotenv-guard.test.ts` (RED-first TDD)
 25. Canonical `deployment-devops/spec.md` has zero S3 URI references (S3→local reconciliation per ADR #30) and zero references to the legacy migrations-service shape (forward-only Drizzle migrator in `api` entrypoint replaces the B1a-era placeholder `migrations` service)

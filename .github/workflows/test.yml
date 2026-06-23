@@ -129,3 +129,26 @@ jobs:
         run: shellcheck scripts/backup.sh scripts/restore.sh scripts/lib/common.sh scripts/mount-usb.sh scripts/unmount-usb.sh scripts/backup-to-usb.sh scripts/setup-usb.sh
       - name: bats tests (must all pass)
         run: bats scripts/tests/common.test.bats scripts/tests/backup.test.bats scripts/tests/restore.test.bats scripts/tests/mount-usb.test.bats scripts/tests/unmount-usb.test.bats scripts/tests/backup-to-usb.test.bats scripts/tests/setup-usb.test.bats
+
+  docker-build-smoke:
+    name: Docker build smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t athlos-api:smoke .
+
+      - name: Smoke test: node version
+        run: docker run --rm athlos-api:smoke node --version
+
+      - name: Smoke test: entrypoint present
+        run: docker run --rm athlos-api:smoke ls /usr/local/bin/docker-entrypoint.sh
+
+      - name: Smoke test: non-root user
+        run: docker run --rm athlos-api:smoke id

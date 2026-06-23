@@ -1,6 +1,6 @@
 {
   "name": "@athlos/vitest-config",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "description": "Shared Vitest preset factory for Athlos packages — node and dom presets with coverage defaults.",
   "type": "module",

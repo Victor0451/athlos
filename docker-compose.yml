@@ -1,65 +1,80 @@
-# Docker Compose skeleton — PR 1.
-# Real service definitions (migrations container, backup container, healthcheck
-# refinements) land in PR 9 (Deployment).
+# docker-compose.yml — Athlos production stack (Slice C)
+#
+# Services:
+#   db  — Postgres 16 Alpine, persisted via named volume pgdata.
+#   api — Node 22 Alpine multi-stage build, runs migrations + backup in entrypoint.
+#
+# Usage:
+#   cp .env.example .env.production && vim .env.production
+#   docker compose up -d
+#   docker compose ps
+#   curl http://localhost:3001/health/ready
 
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    env_file:
+      - .env.production
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-athlos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athlos}
       POSTGRES_DB: ${POSTGRES_DB:-athlos}
-    ports:
-      - '5432:5432'
+      POSTGRES_USER: ${POSTGRES_USER:-athlos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-athlos} -d ${POSTGRES_DB:-athlos}']
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athlos} -d ${POSTGRES_DB:-athlos}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - athlos-net
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ghcr.io/victor0451/athlos-api:local
     restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      RUN_MIGRATIONS: "true"
+      BACKUP_BEFORE_MIGRATE: "true"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-}@db:5432/${POSTGRES_DB:-athlos}
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      PORT: 3001
-      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-athlos}@db:5432/${POSTGRES_DB:-athlos}
-      JWT_SECRET: ${JWT_SECRET}
-      LEGACY_DB_PATH: ${LEGACY_DB_PATH}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASS: ${SMTP_PASS}
-      SMTP_FROM: ${SMTP_FROM}
     ports:
-      - '3001:3001'
-
-  # Placeholder for the migration runner. Real implementation (running
-  # `drizzle-kit migrate` against the live DB) lands in PR 9 (Deployment)
-  # alongside the production entrypoint. For PR 2 this just proves the
-  # service composition and the depends_on wiring.
-  migrations:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command:
-      - node
-      - '-e'
-      - "console.log('migrations service placeholder — see PR 9')"
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-athlos}@db:5432/${POSTGRES_DB:-athlos}
+      - "3001:3001"
+    volumes:
+      - ./backups:/var/backups/athlos
+      - ./legacy:/legacy:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - athlos-net
 
 volumes:
   pgdata:
+
+networks:
+  athlos-net:
+    driver: bridge
