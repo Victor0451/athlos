@@ -1,6 +1,6 @@
 {
   "name": "@athlos/integrations-email",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "description": "Email integration — real uses nodemailer SMTP; stub records messages in an in-memory outbox.",
   "type": "module",
