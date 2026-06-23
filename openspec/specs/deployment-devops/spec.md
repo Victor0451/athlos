@@ -24,7 +24,7 @@ The system SHALL provide a multi-stage Dockerfile for the API service and a dock
 
 - GIVEN `docker-compose.yml` is present
 - WHEN `docker-compose up -d` is executed
-- THEN services `api`, `db`, and `migrations` MUST be defined
+- THEN services `api` and `db` MUST be defined (no separate `migrations` service — migrations run in `api` entrypoint)
 - AND `api` MUST expose port 3001 to the host
 - AND `db` MUST expose port 5432 to the host
 - AND `api` MUST wait for `db` to be healthy before starting
@@ -50,13 +50,15 @@ The system SHALL use PostgreSQL with persistent storage, automatic migration exe
 - THEN a volume MUST be mounted at `/var/lib/postgresql/data` for persistent storage
 - AND the database MUST be initialized with the `athlos` database
 
-#### Scenario: Database migrations on startup
+#### Scenario: Database migrations on startup (rewritten by Slice C: 2026-06-19)
 
-- GIVEN the `migrations` service runs before `api` in startup order
-- WHEN `docker-compose up` is executed
-- THEN migrations MUST be executed automatically via the migrations service
+- GIVEN the `api` service has `RUN_MIGRATIONS=true` in its env
+- WHEN `docker compose up -d` is executed
+- THEN the `api` container's entrypoint SHALL wait for the `db` service healthcheck (`pg_isready`)
+- AND SHALL run `pnpm --filter @athlos/db migrate` automatically (NOT a separate `migrations` service)
 - AND if any migration fails, the `api` service MUST NOT start
 - AND the `db` service MUST remain running for debugging
+- AND alternative manual execution is `docker compose run --rm api sh -c 'pnpm --filter @athlos/db migrate'`
 
 #### Scenario: Database environment variables
 
@@ -148,17 +150,81 @@ The system SHALL run migrations automatically on API startup and provide a mecha
 
 - GIVEN a migration has been applied to production
 - WHEN a rollback is required
-- THEN the operator MUST execute `docker-compose run migrations rollback <migration-name>`
-- AND the rollback MUST be logged in the audit trail
-- AND if rollback fails, the API MUST NOT start
+- THEN the operator MUST redeploy the previous `athlos-api:<git-sha>` image tag (forward-only migration model per `database-migrations/spec.md` — there is NO down-migration path)
+- AND the redeployment MUST be logged in the audit trail with the previous and current image tags
+- AND a corrective forward-only data-fix migration MUST be authored to compensate; the previous image MUST remain redeployable as a fallback
+- AND if redeploy of the previous image fails, the API MUST NOT start
 
 #### Scenario: One-off migration execution
 
-- GIVEN a specific migration needs to be run manually (e.g., after manual data fix)
-- WHEN the operator runs `docker-compose run migrations run <migration-name>`
+- GIVEN a specific migration needs to be run manually (e.g., after a manual data fix)
+- WHEN the operator runs `docker compose run --rm api sh -c 'pnpm --filter @athlos/db migrate'`
+- OR sets `RUN_MIGRATIONS=true` and runs `docker compose restart api`
 - THEN the migration MUST execute against the production database
 - AND the output MUST be logged
 - AND the exit code MUST reflect success or failure
+
+---
+
+### Requirement: Containerized Deploy
+
+The system SHALL be deployable as a containerized stack using a multi-stage Dockerfile plus a Docker Compose v2 stack that defines `api` and `db` services with healthchecks, environment-driven configuration via `env_file`, a non-root runtime user, and a `docker-entrypoint.sh` script that conditionally runs a pre-migration backup and then conditionally runs Drizzle migrations before `exec`-ing the API process as PID 1. Secrets SHALL be loaded from the orchestrator-provided environment (compose `env_file`) and the `dotenv/config` import SHALL be suppressed in production to comply with the "MUST NOT look for a `.env` file" requirement above.
+
+#### Scenario: Multi-stage Dockerfile builds the API image as non-root, with tini PID-1 entrypoint
+
+- GIVEN the `Dockerfile` at the repo root is a 2-stage build
+- WHEN `docker build -t athlos-api:test .` is run
+- THEN the build SHALL produce a `builder` stage (carries `node:22-alpine`, `pnpm@9.15.9` via corepack, source tree, runs `pnpm fetch` + `pnpm install --frozen-lockfile` + `pnpm build` + `pnpm deploy --filter @athlos/api --prod`)
+- AND a `runtime` stage based on `node:22-alpine` SHALL copy the pruned `node_modules` and `dist` from the builder
+- AND the runtime image SHALL install `tini` (for proper SIGTERM PID-1 handling) and `postgresql-client` (for `pg_dump` used by `BACKUP_BEFORE_MIGRATE`)
+- AND a non-root user (UID `1001`, e.g. `athlos`) SHALL own the application files and the `docker-entrypoint.sh`
+- AND the runtime image SHALL `EXPOSE 3001` (the API port)
+- AND the runtime image SHALL set `ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]` (exec form)
+- AND the final image size SHALL be `< 300 MB` (Alpine baseline target ~150 MB)
+
+#### Scenario: Entrypoint runs migrations conditionally and execs the API as PID 1
+
+- GIVEN `docker-entrypoint.sh` at the repo root is `chmod +x` and copied to `/usr/local/bin/docker-entrypoint.sh` in the runtime image
+- WHEN the `api` container starts with `RUN_MIGRATIONS=true` in its env
+- THEN the entrypoint SHALL source `scripts/lib/common.sh` (B1a shared helpers)
+- AND SHALL wait for Postgres readiness via `pg_isready` (belt-and-suspenders for cold starts, in addition to compose `depends_on: db: condition: service_healthy`)
+- AND SHALL run `pnpm --filter @athlos/db migrate` (the forward-only Drizzle migrator)
+- AND on migration success SHALL `exec node dist/index.js` so the Node process becomes PID 1 and inherits SIGTERM
+- AND on SIGTERM, the Node process SHALL receive SIGTERM directly (not the entrypoint shell), enabling Fastify's graceful-shutdown handler
+- AND on any non-zero exit (`set -euo pipefail`), the entrypoint SHALL exit non-zero, which `docker compose` SHALL surface as a non-healthy container
+
+#### Scenario: Entrypoint runs backup before migrations when BACKUP_BEFORE_MIGRATE=true
+
+- GIVEN the `api` container starts with `RUN_MIGRATIONS=true` AND `BACKUP_BEFORE_MIGRATE=true` in its env
+- AND `$BACKUP_DIR` is set (default `/var/backups/athlos`) and points to a writable path (host-mounted volume or named volume)
+- WHEN the entrypoint begins the pre-migration sequence
+- THEN the entrypoint SHALL run `scripts/backup.sh` to local `$BACKUP_DIR` (NOT to S3, NOT to any cloud object store) BEFORE running migrations
+- AND the backup filename SHALL include the database name and a timestamp (e.g. `athlos-<UTC-timestamp>.sql.gz`) per the Backup Strategy requirement
+- AND if the backup exits non-zero, the entrypoint SHALL exit `2` and SHALL NOT run migrations
+- AND the order SHALL be observable in `docker compose logs api` (backup lines precede migration lines)
+
+#### Scenario: docker-compose defines api+db with healthchecks, env_file, and json-file logs
+
+- GIVEN `docker-compose.yml` at the repo root
+- WHEN `docker compose up -d` is run
+- THEN the file SHALL define exactly two services: `api` and `db` (the B1a/B1b `migrations` service SHALL be removed — migrations run inside the `api` entrypoint)
+- AND the `db` service SHALL use `postgres:16-alpine` with a `pgdata` named volume mounted at `/var/lib/postgresql/data` and a `pg_isready` healthcheck (interval `10s`, timeout `5s`, retries `5`)
+- AND the `api` service SHALL have a healthcheck hitting `/health/ready` (NOT `/health`) with `interval: 30s`, `timeout: 5s`, `retries: 5`, `start_period: 30s` (defaults per the explore decision)
+- AND the `api` service SHALL declare `depends_on: db: condition: service_healthy` (not just `service_started`)
+- AND both services SHALL load secrets via `env_file: .env.production` (the env file is host-mounted, NOT baked into the image)
+- AND `POSTGRES_PASSWORD` SHALL be sourced from `env_file` and SHALL NOT be hardcoded in `docker-compose.yml`
+- AND both services SHALL use the `json-file` logging driver with rotation `max-size: 10m, max-file: 3`
+- AND `docker compose ps` SHALL show both `api` and `db` as `(healthy)` within 60s of `up -d`
+
+#### Scenario: dotenv/config is loaded only in non-production environments
+
+- GIVEN `apps/api/src/index.ts` originally had `import 'dotenv/config'` on line 3 (the B1a-era spec violation per the explore §6 finding)
+- WHEN the code is changed in this change
+- THEN `apps/api/src/index.ts` SHALL NOT load `dotenv/config` when `process.env.NODE_ENV === 'production'`
+- AND SHALL load `dotenv/config` only when `process.env.NODE_ENV !== 'production'` (development, test, or unset)
+- AND the API SHALL read all secrets from the compose-provided environment (`env_file: .env.production` in production, host env in dev)
+- AND a vitest regression test SHALL exist at `apps/api/test/env.test.ts` that asserts the load behavior under both `NODE_ENV=production` and `NODE_ENV=development`
+- AND the test SHALL be authored RED first (fails against the pre-change code) and turned GREEN by the source change, per strict TDD
 
 ---
 
@@ -191,8 +257,10 @@ The system SHALL perform automated PostgreSQL backups with defined frequency, re
 
 - GIVEN backups are generated
 - THEN they MUST be stored outside the PostgreSQL data volume
-- AND they MUST be accessible for restore operations
-- AND they SHOULD be replicated to offsite storage
+- AND they MUST be written to the local `$BACKUP_DIR` path (default `/var/backups/athlos`) — NOT to S3 and NOT to any cloud object store (S3 path was explicitly rejected by ADR #30; this is the S3→local reconciliation)
+- AND they MUST be mirrored weekly to a LUKS-encrypted external USB drive per the USB Rotation requirement below
+- AND `$BACKUP_DIR` MUST be a host-mounted path or named volume (e.g. `backup_data:/var/backups/athlos`) accessible to the API container so the `BACKUP_BEFORE_MIGRATE` entrypoint branch can write pre-deploy dumps
+- AND the previous "SHOULD be replicated to offsite storage" language is satisfied by the USB Rotation weekly mirror (offsite = encrypted USB rotation, not cloud)
 
 #### Scenario: backup.sh runs on host via cron, reads DATABASE_URL
 
@@ -309,7 +377,7 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 7. Production containers receive secrets via environment injection only
 8. Rotating a secret does not require rebuilding the Docker image
 9. Migrations run automatically on API startup when `RUN_MIGRATIONS=true`
-10. Manual migration execution works via `docker-compose run migrations`
+10. Manual migration execution works via `docker compose run --rm api sh -c 'pnpm --filter @athlos/db migrate'`
 11. Backup script produces valid gzip SQL dumps
 12. Backups run daily and are retained for at least 7 days
 13. `LEGACY_DB_PATH` is mounted read-only in the API container
@@ -319,3 +387,9 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 17. `unmount-usb.sh` `umount`s before `cryptsetup close`s and is safe to call when nothing is mounted
 18. `backup-to-usb.sh` uses `flock -n /var/lock/athlos-backup.lock` so overlapping invocations exit silently instead of corrupting the USB copy
 19. Files on the USB older than `$USB_RETENTION_DAYS` are removed automatically after each successful rsync
+20. Multi-stage `Dockerfile` builds a `< 300 MB` non-root Alpine image with `tini` PID-1 and a `docker-entrypoint.sh` exec-form entrypoint
+21. `docker-entrypoint.sh` runs `pnpm --filter @athlos/db migrate` when `RUN_MIGRATIONS=true` and `exec`s the Node process as PID 1
+22. `docker-entrypoint.sh` runs `scripts/backup.sh` to local `$BACKUP_DIR` (NOT S3) when `BACKUP_BEFORE_MIGRATE=true`, and exits `2` if the backup fails
+23. `docker-compose.yml` defines `api` + `db` only, uses `env_file: .env.production`, `depends_on: db: condition: service_healthy`, `/health/ready` healthcheck (30s/5s/5/30s), and json-file log rotation
+24. `apps/api/src/index.ts` does NOT load `dotenv/config` when `NODE_ENV=production`; verified by `apps/api/test/env.test.ts` (RED-first TDD)
+25. Canonical `deployment-devops/spec.md` has zero S3 URI references (S3→local reconciliation per ADR #30) and zero references to the legacy migrations-service shape (forward-only Drizzle migrator in `api` entrypoint replaces the B1a-era placeholder `migrations` service)
