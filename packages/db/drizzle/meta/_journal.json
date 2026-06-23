@@ -50,6 +50,41 @@
       "when": 1781641278437,
       "tag": "0006_great_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781704179000,
+      "tag": "0007_entity_uuids",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781730432000,
+      "tag": "0008_drift_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781731782000,
+      "tag": "0009_domain_freshness",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781739241000,
+      "tag": "0010_role_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1781739254000,
+      "tag": "0011_audit_idempotency_partial_index",
+      "breakpoints": true
     }
   ]
 }
