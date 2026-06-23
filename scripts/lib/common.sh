@@ -97,3 +97,37 @@ cleanup_old_backups() {
   # Only match our backup naming pattern — be conservative
   find "$dir" -maxdepth 1 -name 'athlos-*.sql.gz' -mtime "+$days" -delete
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# require_root
+#
+# Exits 1 if the current EUID is not 0 (root).
+# ─────────────────────────────────────────────────────────────────────────────
+require_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    die "must run as root (EUID=${EUID:-$(id -u)})"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# is_mounted PATH
+#
+# Returns 0 (success) if PATH is a mount point, non-zero otherwise.
+# Uses /proc/mounts for reliable detection.
+# ─────────────────────────────────────────────────────────────────────────────
+is_mounted() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  mountpoint -q "$path"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# is_luks_open MAPPER
+#
+# Returns 0 (success) if the LUKS mapper is currently open in /dev/mapper/,
+# non-zero otherwise.
+# ─────────────────────────────────────────────────────────────────────────────
+is_luks_open() {
+  local mapper="$1"
+  cryptsetup status "$mapper" >/dev/null 2>&1
+}
