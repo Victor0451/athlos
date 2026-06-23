@@ -104,6 +104,11 @@ jobs:
       BACKUP_DIR: /tmp/athlos-backup-test
       BACKUP_RETENTION_DAYS: 7
       NODE_ENV: test
+      USB_DEVICE: /dev/disk/by-label/athlos-backup-usb
+      USB_KEYFILE: /root/athlos-usb.key
+      USB_MAPPER: athlos-backup-usb
+      USB_MOUNT_POINT: /mnt/athlos-backup-usb
+      USB_RETENTION_DAYS: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -119,8 +124,8 @@ jobs:
             sleep 1
           done
       - name: Install bats and shellcheck
-        run: sudo apt-get update && sudo apt-get install -y bats shellcheck postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck postgresql-client cryptsetup rsync
       - name: shellcheck (must be clean)
-        run: shellcheck scripts/backup.sh scripts/restore.sh scripts/lib/common.sh
+        run: shellcheck scripts/backup.sh scripts/restore.sh scripts/lib/common.sh scripts/mount-usb.sh scripts/unmount-usb.sh scripts/backup-to-usb.sh scripts/setup-usb.sh
       - name: bats tests (must all pass)
-        run: bats scripts/tests/common.test.bats scripts/tests/backup.test.bats scripts/tests/restore.test.bats
+        run: bats scripts/tests/common.test.bats scripts/tests/backup.test.bats scripts/tests/restore.test.bats scripts/tests/mount-usb.test.bats scripts/tests/unmount-usb.test.bats scripts/tests/backup-to-usb.test.bats scripts/tests/setup-usb.test.bats
