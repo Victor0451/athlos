@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4] — 2026-06-23
+
+### Added
+
+- **`scripts/mount-usb.sh`** — Open LUKS partition and mount USB for weekly backup rotation.
+  - Checks keyfile perms (600, root:root) BEFORE `cryptsetup open`
+  - Idempotent: exits 0 if already mounted
+  - Exit codes: 0 success, 1 config/keyfile error, 2 USB not present
+
+- **`scripts/unmount-usb.sh`** — Unmount USB and close LUKS partition.
+  - umount BEFORE cryptsetup close (order matters!)
+  - Idempotent: safe to call when nothing is mounted
+  - Exit code: 0 always success
+
+- **`scripts/backup-to-usb.sh`** — Weekly USB backup rotation pipeline.
+  - `flock -n /var/lock/athlos-backup.lock` for concurrency safety
+  - Calls mount-usb.sh → rsync -av --delete → cleanup_old_backups → unmount-usb.sh
+  - Exit codes: 0 success, 1 config error, 2 mount fail, 3 rsync/retention fail
+
+- **`scripts/setup-usb.sh`** — First-time USB LUKS + ext4 setup (manual one-shot).
+  - `--device` required; `--dry-run` prints plan without formatting
+  - Requires operator to type `YES` to confirm destructive format
+  - Generates keyfile (dd, chmod 0600, root:root), luksFormat, mkfs.ext4
+
+- **`scripts/lib/common.sh`** — Extended with 3 new helpers:
+  - `require_root()` — exits 1 if EUID != 0
+  - `is_mounted PATH` — returns 0 if PATH is a mount point
+  - `is_luks_open MAPPER` — returns 0 if LUKS mapper is open in /dev/mapper/
+
+### Changed
+
+- **`.env.example`** — Added 5 USB rotation variables: `USB_DEVICE`, `USB_KEYFILE`, `USB_MAPPER`, `USB_MOUNT_POINT`, `USB_RETENTION_DAYS` (default 30)
+
+- **`docs/runbook.md`** — Added USB Rotation section with weekly overview, first-time setup, emergency unmount, verify last backup, and exit code table
+
+- **`.github/workflows/test.yml`** — Extended `backup-bats` CI job with `cryptsetup rsync` apt install, expanded shellcheck glob to all USB scripts, expanded bats test glob to all new test files, added USB env vars
+
 ## [0.4.3] — 2026-06-22
 
 ### Added
