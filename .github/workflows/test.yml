@@ -144,11 +144,11 @@ jobs:
       - name: Build image
         run: docker build -t athlos-api:smoke .
 
-      - name: Smoke test: node version
+      - name: "Smoke test: node version"
         run: docker run --rm athlos-api:smoke node --version
 
-      - name: Smoke test: entrypoint present
+      - name: "Smoke test: entrypoint present"
         run: docker run --rm athlos-api:smoke ls /usr/local/bin/docker-entrypoint.sh
 
-      - name: Smoke test: non-root user
+      - name: "Smoke test: non-root user"
         run: docker run --rm athlos-api:smoke id
