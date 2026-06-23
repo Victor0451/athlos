@@ -17,3 +17,6 @@ test-results
 .idea
 .vscode
 README.md
+.atl/
+.nyc_output/
+.husky/

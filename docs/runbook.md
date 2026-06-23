@@ -233,3 +233,63 @@ Exit codes for `mount-usb.sh` / `unmount-usb.sh` / `backup-to-usb.sh`:
 - Verify the `freshness-refresh` job is running: check `GET /api/v1/admin/jobs/runs?job_name=freshness-refresh`
 - Verify `domain_freshness` table has rows: `SELECT COUNT(*) FROM domain_freshness`
 - If empty, manually trigger: `POST /api/v1/admin/jobs/run-now` with `{"job_name": "freshness-refresh"}`
+
+## Containerized Deploy (Docker)
+
+Slice C delivers the production containerized deploy for Athlos. The API runs in a multi-stage `node:22-alpine` image; the database runs in `postgres:16-alpine`. Migrations and pre-migration backups run in the API container's entrypoint before the Fastify process starts.
+
+### First deploy
+
+```bash
+cd /run/media/vlongo/Archivos/Projectos/Athlos
+cp .env.example .env.production
+$EDITOR .env.production   # set POSTGRES_PASSWORD, JWT_SECRET, etc.
+docker compose pull       # no-op on first run (local image)
+docker compose build      # builds api via Dockerfile
+docker compose up -d      # starts api + db, entrypoint runs migrations + backup
+```
+
+### Verify
+
+```bash
+docker compose ps                                       # both healthy
+curl -s http://localhost:3000/health/ready             # 200 OK
+docker compose logs --tail 100 api                      # json-file driver logs
+ls -la ./backups/                                       # athlos-<ts>.sql.gz from entrypoint backup
+```
+
+### Migrations
+
+`RUN_MIGRATIONS=true` is set in the compose `environment:` block, so every `docker compose up -d` runs migrations before the API starts. Subsequent restarts are no-op (idempotent).
+
+### Backups
+
+`BACKUP_BEFORE_MIGRATE=true` runs `scripts/backup.sh` to `$BACKUP_DIR` (mounted to `./backups` on the host) before every migration. See `deployment-devops/spec.md` for the full backup strategy (B1a's daily cron writes to the same path).
+
+### Rollback
+
+To redeploy a previous image tag:
+
+```bash
+docker compose pull
+IMAGE_TAG=<old-sha> docker compose up -d
+```
+
+### One-off migration
+
+```bash
+docker compose run --rm api sh -c 'pnpm --filter @athlos/db migrate'
+```
+
+### Health checks
+
+The `api` container healthcheck hits `/health/ready` every 30s. The `db` container healthcheck runs `pg_isready`. Both must be healthy for the stack to be considered ready.
+
+### Logs
+
+```bash
+docker compose logs -f api        # follow
+docker compose logs --tail 200 api # recent
+```
+
+Logs are stored via the `json-file` driver with `max-size: 10m, max-file: 3` rotation.
