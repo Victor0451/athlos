@@ -27,7 +27,8 @@ require_env USB_MOUNT_POINT
 
 # ── Guard: USB device must exist ─────────────────────────────────
 if [[ ! -b "$USB_DEVICE" ]]; then
-  die "USB device $USB_DEVICE not found (not plugged in or not labeled)"
+  log ERROR "USB device $USB_DEVICE not found (not plugged in or not labeled)"
+  exit 2
 fi
 
 # ── Guard: keyfile must exist ────────────────────────────────────
