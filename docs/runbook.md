@@ -144,6 +144,75 @@ Exit codes:
 | 2    | Safety refused (active connections, corrupt source, bad path) |
 | 3    | `psql` restore failed                                         |
 
+### USB Rotation (weekly)
+
+Weekly offsite backup to a LUKS-encrypted external USB drive. Runs every Sunday
+at 04:00 as `root` via `/etc/cron.d/athlos-backup`.
+
+**One-time setup** (before first use):
+
+```bash
+# Format the USB drive (DESTRUCTIVE — only once per drive)
+sudo bash scripts/setup-usb.sh --device /dev/sdX  # replace sdX with your USB device
+
+# Verify the setup
+sudo bash scripts/setup-usb.sh --device /dev/sdX --dry-run
+```
+
+**Cron entry** (add to `/etc/cron.d/athlos-backup`):
+
+```
+0 4 * * 0 root /run/media/vlongo/Archivos/Projectos/Athlos/scripts/backup-to-usb.sh
+```
+
+**Manual run**:
+
+```bash
+# Full pipeline: mount → rsync → retention → unmount
+sudo bash scripts/backup-to-usb.sh
+```
+
+**Verify last weekly backup**:
+
+```bash
+# Mount USB manually to inspect
+sudo bash scripts/mount-usb.sh
+ls -lh /mnt/athlos-backup-usb/
+sudo bash scripts/unmount-usb.sh
+```
+
+**Emergency unmount** (if the USB is left mounted after an incident):
+
+```bash
+sudo bash scripts/unmount-usb.sh
+```
+
+Exit codes for `mount-usb.sh` / `unmount-usb.sh` / `backup-to-usb.sh`:
+
+| Code | Meaning                                                    |
+| ---- | ---------------------------------------------------------- |
+| 0    | Success                                                    |
+| 1    | Configuration error (missing env var, keyfile perms wrong) |
+| 2    | USB device not present (mount-usb.sh only)                 |
+| 3    | rsync or retention failed (backup-to-usb.sh only)          |
+
+**Troubleshooting**:
+
+- Keyfile error (exit 1): ensure `$USB_KEYFILE` has mode `0600` and owner `root:root`
+  ```bash
+  ls -l /root/athlos-usb.key      # should be -rw------- 1 root root
+  ```
+- USB not found (exit 2): check the USB is plugged in and has the correct label
+  ```bash
+  sudo lsblk -o NAME,LABEL,SIZE
+  sudo blkid /dev/disk/by-label/athlos-backup-usb
+  ```
+- LUKS status:
+  ```bash
+  sudo cryptsetup status athlos-backup-usb
+  sudo ls -l /dev/mapper/athlos-backup-usb
+  ```
+
 ## Common Issues
 
 ### Drift alerts not received
