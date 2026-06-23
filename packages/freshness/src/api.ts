@@ -6,7 +6,7 @@ import {
   ageDisplay,
   getThresholdMs,
   type DomainFreshnessStatus,
-} from './thresholds.js'
+} from './thresholds.ts'
 
 export interface DomainFreshness {
   domain: string

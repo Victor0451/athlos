@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Db } from '../pool'
-import { operators } from '../schema/operators.js'
+import { operators } from '../schema/operators.ts'
 
 /**
  * Tests for OperatorsRepo.findByUsername.

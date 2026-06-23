@@ -8,8 +8,8 @@ vi.mock('@athlos/notifications', () => ({
 }))
 
 // The alert function we're implementing
-import { emitDriftAlert } from './alert.js'
-import type { DriftReport } from './detect.js'
+import { emitDriftAlert } from './alert.ts'
+import type { DriftReport } from './detect.ts'
 
 describe('drift.emitDriftAlert', () => {
   /**

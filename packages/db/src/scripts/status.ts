@@ -10,8 +10,8 @@
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import pg from 'pg'
-export { statusSchema } from './status.schema.js'
-import { statusSchema } from './status.schema.js'
+export { statusSchema } from './status.schema.ts'
+import { statusSchema } from './status.schema.ts'
 
 const { Pool } = pg
 

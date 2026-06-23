@@ -5,5 +5,5 @@
  *   - `detect` — compare latest raw_events hash against drift_snapshots
  *   - `emitDriftAlert` — direct Drizzle insert to audit_events + notification dispatch
  */
-export { detect, type DriftReport } from './detect.js'
-export { emitDriftAlert } from './alert.js'
+export { detect, type DriftReport } from './detect.ts'
+export { emitDriftAlert } from './alert.ts'

@@ -7,6 +7,6 @@
  *   - `ageDisplay` — Spanish human-readable age ("hace 5 min")
  *   - `getFreshness` — reads domain_freshness cache and computes status
  */
-export { DOMAIN_THRESHOLDS, ageToStatus, ageDisplay } from './thresholds.js'
-export type { DomainFreshnessStatus } from './thresholds.js'
-export { getFreshness, refreshAll, type DomainFreshness, type RefreshResult } from './api.js'
+export { DOMAIN_THRESHOLDS, ageToStatus, ageDisplay } from './thresholds.ts'
+export type { DomainFreshnessStatus } from './thresholds.ts'
+export { getFreshness, refreshAll, type DomainFreshness, type RefreshResult } from './api.ts'

@@ -1,7 +1,7 @@
 import type { Db } from '@athlos/db'
 import { auditEvents } from '@athlos/db/schema'
 import { sendNotification } from '@athlos/notifications'
-import type { DriftReport } from './detect.js'
+import type { DriftReport } from './detect.ts'
 
 export interface EmitDriftAlertOptions {
   jobRunId: string

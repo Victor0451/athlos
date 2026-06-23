@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePermissionsRepo } from './permissions.ts'
 import type { Db } from '../pool'
-import { rolePermissions, operators } from '../schema/operators.js'
+import { rolePermissions, operators } from '../schema/operators.ts'
 
 /**
  * Tests for PermissionsRepo. Uses the in-memory Drizzle standin

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // The detect function we're implementing
-import { detect } from './detect.js'
+import { detect } from './detect.ts'
 
 // Minimal mock DB that satisfies the Db interface
 function makeMockDb(executeResults: { rows: unknown[]; rowCount: number }[]) {
