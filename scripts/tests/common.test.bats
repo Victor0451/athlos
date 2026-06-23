@@ -123,3 +123,50 @@ export ATHLOS_COMMON_LOADED
   source "$SCRIPT_DIR/../lib/common.sh"
   [[ "$ATHLOS_COMMON_LOADED" == "1" ]]
 }
+
+# ────────────────────────────────────────────────────────────────
+# require_root — exits non-zero if not running as root
+# ────────────────────────────────────────────────────────────────
+
+@test "require_root exits non-zero when EUID != 0" {
+  run bash -c '
+    id() { echo 9999; }
+    export -f id
+    source "$SCRIPT_DIR/../lib/common.sh"
+    require_root
+  '
+  [[ "$status" -ne 0 ]]
+}
+
+@test "require_root succeeds when EUID == 0" {
+  run bash -c '
+    id() { echo 0; }
+    export -f id
+    source "$SCRIPT_DIR/../lib/common.sh"
+    require_root
+  '
+  [[ "$status" -eq 0 ]]
+}
+
+# ────────────────────────────────────────────────────────────────
+# is_mounted — returns true (0) if given path is a mount point
+# ────────────────────────────────────────────────────────────────
+
+@test "is_mounted returns true for / (root mount)" {
+  run is_mounted "/"
+  [[ "$status" -eq 0 ]]
+}
+
+@test "is_mounted returns false for /nonexistent/mount/point" {
+  run is_mounted "/nonexistent/mount/point/$(date +%s)"
+  [[ "$status" -ne 0 ]]
+}
+
+# ────────────────────────────────────────────────────────────────
+# is_luks_open — returns true (0) if given mapper is open in /dev/mapper/
+# ────────────────────────────────────────────────────────────────
+
+@test "is_luks_open returns false for nonexistent mapper" {
+  run is_luks_open "nonexistent-mapper-$(date +%s)"
+  [[ "$status" -ne 0 ]]
+}
