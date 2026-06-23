@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.5] — 2026-06-23
+
+### Added
+
+- **`Dockerfile`** — Multi-stage build (node:22-alpine, builder + runtime stages, non-root UID 1001, tini PID-1, < 300 MB).
+- **`docker-entrypoint.sh`** — pg_isready wait, conditional backup via `BACKUP_BEFORE_MIGRATE`, conditional migration via `RUN_MIGRATIONS`, exec Node as PID 1.
+- **`docker-compose.yml`** — `api` + `db` services (no migrations service), healthchecks, `env_file: .env.production`, json-file log rotation.
+- **`.env.example`** — Added 10 containerized deploy vars: `RUN_MIGRATIONS`, `BACKUP_BEFORE_MIGRATE`, `BACKUP_DIR`, `BUILD_SHA`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_HOST`, `NODE_ENV`, `PORT`.
+- **`.dockerignore`** — Excludes `openspec/`, `.atl/`, `coverage/`, `.nyc_output/`, `.husky/`.
+- **`docs/runbook.md`** — Added Containerized Deploy section (deploy, verify, migrate, backup, rollback, one-off migration).
+- **`.github/workflows/test.yml`** — Added `docker-build-smoke` job (full build + smoke run, no push).
+
+### Changed
+
+- **`apps/api/src/index.ts`** — Replaced `import 'dotenv/config'` with explicit `loadEnv()` call from `./env.js`, guarded by `NODE_ENV !== 'production'`.
+- **`openspec/specs/deployment-devops/spec.md`** — Canonical sync: added Containerized Deploy requirement (5 scenarios), rewrote 4 stale scenarios in-place (Database migrations on startup, Rollback procedure, One-off migration execution, Backup storage location), S3→local reconciliation for `$BACKUP_DIR` per ADR #30.
+
+### Fixed
+
+- **dotenv/config guard** — `apps/api/src/env.ts` extracted `loadEnv()` guard, ensuring dotenv only loads in non-production (compose env_file supplies prod env vars).
+
 ## [0.4.4] — 2026-06-23
 
 ### Added
