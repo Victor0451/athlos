@@ -223,7 +223,7 @@ The system SHALL be deployable as a containerized stack using a multi-stage Dock
 - THEN `apps/api/src/index.ts` SHALL NOT load `dotenv/config` when `process.env.NODE_ENV === 'production'`
 - AND SHALL load `dotenv/config` only when `process.env.NODE_ENV !== 'production'` (development, test, or unset)
 - AND the API SHALL read all secrets from the compose-provided environment (`env_file: .env.production` in production, host env in dev)
-- AND a vitest regression test SHALL exist at `apps/api/test/dotenv-guard.test.ts` that asserts the load behavior under both `NODE_ENV=production` and `NODE_ENV=development`
+- AND a vitest regression test SHALL exist at `apps/api/test/env.test.ts` that asserts the load behavior under both `NODE_ENV=production` and `NODE_ENV=development`
 - AND the test SHALL be authored RED first (fails against the pre-change code) and turned GREEN by the source change, per strict TDD
 
 ---

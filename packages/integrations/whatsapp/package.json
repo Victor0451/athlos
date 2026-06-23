@@ -1,6 +1,6 @@
 {
   "name": "@athlos/integrations-whatsapp",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "description": "WhatsApp integration — real uses the Business Cloud API; stub records messages in memory.",
   "type": "module",
