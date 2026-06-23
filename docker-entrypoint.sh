@@ -16,14 +16,14 @@ set -euo pipefail
 # shellcheck source=scripts/lib/common.sh
 source /app/scripts/lib/common.sh
 
-log_info "Entrypoint: waiting for database at ${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}..."
+log INFO "Entrypoint: waiting for database at ${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}..."
 ready=0
 for i in $(seq 1 60); do
   if pg_isready -h "${POSTGRES_HOST:-db}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-athlos}" >/dev/null 2>&1; then
     ready=1
     break
   fi
-  log_info "Database not ready, attempt $i/60 — sleeping 1s..."
+  log INFO "Database not ready, attempt $i/60 — sleeping 1s..."
   sleep 1
 done
 
@@ -32,27 +32,27 @@ if [ "$ready" -ne 1 ]; then
   exit 4
 fi
 
-log_info "Database is ready."
+log INFO "Database is ready."
 
 # Optional pre-migration backup
 if [ "${BACKUP_BEFORE_MIGRATE:-false}" = "true" ]; then
-  log_info "BACKUP_BEFORE_MIGRATE=true — running backup.sh..."
+  log INFO "BACKUP_BEFORE_MIGRATE=true — running backup.sh..."
   if ! /app/scripts/backup.sh; then
     log_error "Backup failed. Aborting migration."
     exit 2
   fi
-  log_info "Backup complete."
+  log INFO "Backup complete."
 fi
 
 # Optional migration
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
-  log_info "RUN_MIGRATIONS=true — running migrations..."
+  log INFO "RUN_MIGRATIONS=true — running migrations..."
   if ! pnpm --filter @athlos/db migrate; then
     log_error "Migration failed."
     exit 3
   fi
-  log_info "Migrations complete."
+  log INFO "Migrations complete."
 fi
 
-log_info "Starting API: $*"
+log INFO "Starting API: $*"
 exec "$@"
