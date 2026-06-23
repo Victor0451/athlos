@@ -1,7 +1,7 @@
 # docker-compose.yml — Athlos production stack (Slice C)
 #
 # Services:
-#   db  — Postgres 16 Alpine, persisted via named volume pgdata.
+#   db  — Postgres 17 Alpine, persisted via named volume pgdata.
 #   api — Node 22 Alpine multi-stage build, runs migrations + backup in entrypoint.
 #
 # Usage:
@@ -12,7 +12,7 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     restart: unless-stopped
     env_file:
       - .env.production
