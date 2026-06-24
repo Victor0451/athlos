@@ -23,6 +23,7 @@
     "ops:grant-data-steward": "pnpm --filter @athlos/db grant:data-steward",
     "db:studio": "pnpm --filter @athlos/db studio",
     "db:smoke": "pnpm --filter @athlos/db smoke",
+    "db:promote": "pnpm --filter @athlos/promotion promote",
     "db:migrate-users": "LEGACY_DB_PATH=${LEGACY_DB_PATH:-./legacy} pnpm --filter @athlos/api migrate:users",
     "prepare": "husky"
   },

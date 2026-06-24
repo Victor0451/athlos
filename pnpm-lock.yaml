@@ -509,6 +509,28 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/promotion:
+    dependencies:
+      '@athlos/db':
+        specifier: workspace:*
+        version: link:../db
+      '@athlos/errors':
+        specifier: workspace:*
+        version: link:../errors
+      drizzle-orm:
+        specifier: ^0.36.0
+        version: 0.36.4(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(@types/react@19.2.17)(pg@8.21.0)(react@19.0.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.21
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.21)(jsdom@25.0.1)
+
   packages/scheduler:
     dependencies:
       '@athlos/db':
