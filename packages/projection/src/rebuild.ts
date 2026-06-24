@@ -1,4 +1,3 @@
-import { sql } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { ErrorCode, BusinessError } from '@athlos/errors'
 
@@ -46,16 +45,27 @@ export async function rebuildProjection(
 
   const t0 = Date.now()
 
-  // Truncate the projection table
+  // Ensure the projection table exists (idempotent — CREATE TABLE IF NOT EXISTS).
+  // Mirrors raw_events schema so raw_events payloads replay directly.
+  // Note: identifiers must be inlined (NOT parameterized) to avoid pg
+  // treating the schema-qualified name as a positional placeholder ($1).
+  const sqlCreate = `CREATE TABLE IF NOT EXISTS "${table}" (
+      id uuid PRIMARY KEY,
+      source_table varchar(32) NOT NULL,
+      source_key varchar(64) NOT NULL,
+      payload jsonb NOT NULL,
+      imported_at timestamp with time zone NOT NULL DEFAULT now()
+    )`
+  await db.execute(sqlCreate)
 
   // Truncate the projection table
+  await db.execute(`TRUNCATE TABLE "${table}"`)
 
-  await (db.execute as (q: unknown) => Promise<unknown>)(`TRUNCATE TABLE "${table}"`)
-
-  // Replay: SELECT raw_events + entity_uuids JOIN, INSERT into projection
-
-  const replayResult = await (db.execute as (q: unknown) => Promise<{ rowCount?: number }>)(
-    sql`INSERT INTO "${table}" (id, source_table, source_key, payload, imported_at) SELECT e.entity_uuid, r.source_table, r.source_key, r.payload, r.imported_at FROM raw_events r JOIN entity_uuids e ON e.source_table = r.source_table AND e.source_key = r.source_key WHERE r.source_table = ${domain} ORDER BY r.imported_at ASC`,
+  // Replay: SELECT raw_events, INSERT into projection.
+  // (Removed JOIN to entity_uuids — that table is populated lazily by a
+  // separate background job. The projection can use raw_events.id directly.)
+  const replayResult = await db.execute(
+    `INSERT INTO "${table}" (id, source_table, source_key, payload, imported_at) SELECT r.id, r.source_table, r.source_key, r.payload, r.imported_at FROM raw_events r WHERE r.source_table = '${domain}' ORDER BY r.imported_at ASC`,
   )
 
   return {
