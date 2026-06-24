@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   test:
@@ -152,3 +153,11 @@ jobs:
 
       - name: "Smoke test: non-root user"
         run: docker run --rm athlos-api:smoke id
+
+  labeler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          configuration-path: .github/labeler.yml
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

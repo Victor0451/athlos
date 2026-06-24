@@ -71,37 +71,96 @@ The system SHALL use PostgreSQL with persistent storage, automatic migration exe
 
 ### Requirement: CI/CD Pipeline
 
-The system SHALL use GitHub Actions for continuous integration and deployment with branch-based environment targeting.
+The system SHALL provide a GitHub Actions-based CI/CD pipeline that builds, publishes, and deploys the API image to the production server on every push to `main`, with a pre-merge destructive-migration gate, an auto-labeler for migration PRs, and auto-rollback to the previous image tag on healthcheck failure.
 
-#### Scenario: GitHub Actions workflow structure
+#### Scenario: CI workflow file is `.github/workflows/deploy.yml` (rewritten by Slice D: 2026-06-24)
 
-- GIVEN `.github/workflows/ci.yml` exists
-- WHEN a push or pull request occurs
-- THEN the workflow MUST run stages: `lint`, `test`, `build`, `push`
-- AND each stage MUST pass before the next executes
-- AND a failure in any stage MUST fail the workflow
+- GIVEN the project uses GitHub Actions for CI/CD
+- WHEN the operator inspects `.github/workflows/`
+- THEN the deploy workflow file SHALL be named `deploy.yml` (NOT the legacy `ci.yml` from the PR-7 design)
+- AND the workflow SHALL run lint, test, build, push, and deploy stages sequentially
+- AND a failure in any stage SHALL fail the workflow
+- AND the workflow SHALL be triggered by `push` events to `main` (NOT by `pull_request` events to `staging`)
 
-#### Scenario: Branch-based deployment
+#### Scenario: Image is `ghcr.io/victor0451/athlos-api` (rewritten by Slice D: 2026-06-24)
 
-- GIVEN the branch is `main`
-- WHEN the `push` stage completes
-- THEN the Docker image MUST be tagged as `athlos-api:latest` and `athlos-api:<git-sha>`
-- AND deployment MUST target the production environment
-- AND GITHUB_ENV secrets for production MUST be available
+- GIVEN a commit is pushed to `main`
+- WHEN the `build` stage completes
+- THEN the Docker image SHALL be published to `ghcr.io/victor0451/athlos-api` (NOT the bare `athlos-api:` short form)
+- AND deployment SHALL target the production environment
+- AND GHCR push credentials SHALL be sourced from `${{ secrets.GITHUB_TOKEN }}` (automatic, no manual secret rotation)
 
-#### Scenario: Staging deployment
+#### Scenario: Deploys on push to `main` branch (rewritten by Slice D: 2026-06-24)
 
-- GIVEN the branch is `staging`
-- WHEN the `push` stage completes
-- THEN the Docker image MUST be tagged as `athlos-api:staging`
-- AND deployment MUST target the staging environment
+- GIVEN the repository is configured for a single-environment production deploy
+- WHEN a commit is pushed to `main`
+- THEN the deploy workflow SHALL trigger
+- AND the workflow SHALL NOT trigger on push to `staging` (the staging branch is explicitly out of scope for Slice D)
+- AND a push to any non-`main` branch SHALL NOT trigger the deploy workflow
 
-#### Scenario: Docker image tagging
+#### Scenario: Registry organization is `ghcr.io/victor0451` (rewritten by Slice D: 2026-06-24)
 
 - GIVEN a commit with SHA `abc1234` is pushed to `main`
 - WHEN the build stage completes
-- THEN the image MUST be tagged as `ghcr.io/athlos/athlos-api:abc1234`
-- AND `ghcr.io/athlos/athlos-api:latest` MUST be updated
+- THEN the image SHALL be tagged as `ghcr.io/victor0451/athlos-api:abc1234` (NOT `ghcr.io/athlos/...`)
+- AND `ghcr.io/victor0451/athlos-api:latest` SHALL be updated
+- AND `ghcr.io/victor0451/athlos-api:main-abc1234` SHALL be published (short-SHA tag for rollback anchoring)
+
+#### Scenario: Image tags are `:latest`, `:vX.Y.Z`, `:main-<sha>`
+
+- GIVEN `docker/metadata-action@v5` runs with `flavor: latest=regex=^v[0-9]+\.[0-9]+\.[0-9]+$`
+- WHEN the build stage runs against a commit
+- THEN the image SHALL always be tagged `:latest`
+- AND SHALL be tagged `:main-<short-sha>` (7-char git SHA) for every push to `main`
+- AND SHALL additionally be tagged `:vX.Y.Z` when the commit message OR a git tag matches the version regex
+- AND `docker images ghcr.io/victor0451/athlos-api` on the server SHALL list all 3 tags after a release deploy
+
+#### Scenario: Deploy SSH action uses `appleboy/ssh-action@v1` with `DEPLOY_SSH_KEY` + `DEPLOY_HOST` secrets
+
+- GIVEN the `deploy` job in `.github/workflows/deploy.yml` needs to reach the production server
+- WHEN the deploy step runs
+- THEN it SHALL use `appleboy/ssh-action@v1` (NOT a custom SSH step, NOT `webfactory/ssh-agent`)
+- AND the SSH key SHALL be sourced from `${{ secrets.DEPLOY_SSH_KEY }}` (a long-lived private key, no passphrase)
+- AND the target host SHALL be `${{ secrets.DEPLOY_HOST }}` (the production server IP, e.g. `192.168.1.102`)
+- AND the SSH command SHALL be `set -euo pipefail; cd /run/media/vlongo/Archivos/Projectos/Athlos && docker compose pull && docker compose up -d`
+- AND the SSH key's `authorized_keys` entry SHALL restrict the key to `command="/usr/local/bin/athlos-deploy-wrapper.sh"` + `from="*.github.com,140.82.114.0/24,185.199.108.0/22,192.30.252.0/22"` + `no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty` (defense in depth)
+
+#### Scenario: Auto-rollback: on `/health/ready` failure, redeploy previous image tag
+
+- GIVEN the `deploy` job's SSH step has run `docker compose up -d` and the new image is starting
+- WHEN the `/health/ready` poll loop does not return 200 within 60 seconds (12 attempts × 5s sleep)
+- THEN the deploy job SHALL fail
+- AND the failed container's logs SHALL be dumped to `/tmp/deploy-fail-<timestamp>.log` on the server before rollback
+- AND the rollback step SHALL redeploy the previous image tag (captured via `git rev-parse --short HEAD~1`) via `docker compose pull && docker compose up -d`
+- AND the workflow output SHALL log the previous and current image tags in the audit trail
+
+#### Scenario: Concurrency: `group: deploy, cancel-in-progress: false` (queue, don't cancel mid-deploy)
+
+- GIVEN two consecutive pushes to `main` could trigger overlapping deploy workflows
+- WHEN the second push occurs while the first deploy is still running
+- THEN the second deploy SHALL be queued (waiting for the first to complete)
+- AND the `concurrency` block at the top of `deploy.yml` SHALL declare `group: deploy, cancel-in-progress: false`
+- AND the second deploy SHALL NOT cancel the first (canceling mid-deploy leaves the server in an unknown state)
+- AND the queued second deploy SHALL begin only after the first (and any rollback) completes
+
+#### Scenario: Pre-merge destructive gate: `db-destructive` label required; backup artifact OR `/backup-skipped` directive
+
+- GIVEN a PR is opened against `main` and the `db-destructive` label is present
+- WHEN `.github/workflows/check-destructive.yml` runs
+- THEN the workflow SHALL scan the diff for destructive SQL patterns (`DROP TABLE|COLUMN|INDEX|CONSTRAINT|SCHEMA`, `TRUNCATE`, `DELETE FROM <table>;`)
+- AND if destructive patterns are found AND no migration files changed → the workflow SHALL pass (label is irrelevant)
+- AND if destructive patterns are found AND migration files changed AND the PR body contains `/backup-skipped` → the workflow SHALL pass and the override SHALL be logged in workflow output
+- AND if destructive patterns are found AND migration files changed AND a PR comment contains a `*.sql.gz` URL → the workflow SHALL pass
+- AND otherwise → the workflow SHALL fail with `::error::Destructive migration detected — please run \`pnpm db:backup && pnpm db:status\` and paste the backup URL, or add \`/backup-skipped\` directive to PR body with justification`
+
+#### Scenario: Auto-labeler: PRs touching `packages/db/migrations/**` or `packages/db/src/schema/**` get `db-destructive` label automatically
+
+- GIVEN `.github/labeler.yml` declares the `db-destructive` label with glob patterns
+- WHEN a PR is opened or synchronized that touches a matching file path
+- THEN the `labeler` job in `.github/workflows/test.yml` SHALL run `actions/labeler@v5` within 1 minute
+- AND the `db-destructive` label SHALL be auto-applied to the PR
+- AND the matching globs SHALL include `packages/db/migrations/**`, `packages/db/src/schema/**`, and `drizzle/**`
+- AND a test PR touching only `apps/api/src/foo.ts` SHALL NOT receive the `db-destructive` label
 
 ---
 
@@ -393,3 +452,8 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 23. `docker-compose.yml` defines `api` + `db` only, uses `env_file: .env.production`, `depends_on: db: condition: service_healthy`, `/health/ready` healthcheck (30s/5s/5/30s), and json-file log rotation
 24. `apps/api/src/index.ts` does NOT load `dotenv/config` when `NODE_ENV=production`; verified by `apps/api/test/env.test.ts` (RED-first TDD)
 25. Canonical `deployment-devops/spec.md` has zero S3 URI references (S3→local reconciliation per ADR #30) and zero references to the legacy migrations-service shape (forward-only Drizzle migrator in `api` entrypoint replaces the B1a-era placeholder `migrations` service)
+26. **Slice D NEW**: `pnpm test:run` and `pnpm typecheck` and `pnpm lint` all pass inside the deploy job before any image is built or pushed (fail-fast on regressions)
+27. **Slice D NEW**: `actionlint .github/workflows/deploy.yml` exits 0 and `actionlint .github/workflows/check-destructive.yml` exits 0 (workflow YAML is lint-clean)
+28. **Slice D NEW**: After a successful deploy, `docker images ghcr.io/victor0451/athlos-api` on the server shows all 3 tags (`:latest`, `:vX.Y.Z` when applicable, `:main-<sha>`)
+29. **Slice D NEW**: Auto-rollback restores the previous image tag on `/health/ready` failure within 60s; `/tmp/deploy-fail-<timestamp>.log` exists on the server with the failed container's logs; the workflow output logs previous and current image tags
+30. **Slice D NEW**: Destructive gate fails the PR check when the `db-destructive` label is present AND migration files changed AND no `*.sql.gz` backup artifact URL is in PR comments AND no `/backup-skipped` directive is in the PR body; the `/backup-skipped` override is logged in workflow output for post-mortem audit
