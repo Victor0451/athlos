@@ -183,8 +183,10 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - WHEN domains are promoted in sequence
 - THEN `socios` SHALL be promoted first (no FK dependencies)
 - AND `ctacte` SHALL be promoted second (depends on `socios.id`)
-- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`)
+- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`) [DEFERRED to E1b — see note below]
 - AND if any domain fails, dependent domains SHALL NOT be attempted
+
+> **CTACTE1 DEFERRED TO E1b (2026-06-24).** During E1a post-merge smoke test, the `ctacte1` → `ctacte` FK lookup failed due to a data-model gap: `tesoreria.ctacte` master has no `cctcuenta` column to preserve the VFP natural key after promotion, AND `entity_uuids.source_key` does not contain values matching `payload.CCTCUENTA` in the projection. Code-level fixes shipped in E1a (transform field corrections, compound natural-key dedup, simplified fk-lookup JOIN). E1b will wire the `ctacte1` PROMOTION_ORDER step after a schema change (migration to add `cctcuenta` column to `tesoreria.ctacte` + backfill during rebuildProjection).
 
 #### Scenario: Batched INSERT with deduplication
 

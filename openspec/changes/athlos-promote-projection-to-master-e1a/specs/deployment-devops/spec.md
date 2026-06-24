@@ -20,6 +20,8 @@
 
 > **PARTIAL SPEC SYNC NOTE (B1b LESSON #1, CRITICAL).** This delta captures E1a scope ONLY: 3 priority-domain scenarios + the data-layer algorithm + CLI runner. E1b and E2 will each add their own scenarios in their own atomic syncs. The `diff` against `openspec/specs/deployment-devops/spec.md` SHALL be empty only AFTER E2's sync lands. Verify checklist item 8.3 captures this incremental contract.
 
+> **CTACTE1 DEFERRED TO E1b (post-merge data model gap, 2026-06-24).** During the post-merge smoke test, the `ctacte1` → `ctacte` foreign-key lookup failed: `entity_uuids.source_key` does not contain values that match `payload.CCTCUENTA` in the projection, AND `tesoreria.ctacte` master has no `cctcuenta` column to preserve the VFP natural key after promotion. Without either, the FK cannot be resolved at promotion time. Code-level fixes (field name corrections in the transform + dedup compound keys + simpler JOIN in `fk-lookup.ts`) are shipped in E1a; the `ctacte1` PROMOTION_ORDER position + scenario remain in the spec for E1b to wire after a schema change (add `cctcuenta` column to `tesoreria.ctacte` master, backfill from raw_events during rebuildProjection). E1b's spec delta will rewrite the `ctacte1` scenario IN-PLACE with the schema-aware FK strategy.
+
 ---
 
 ## Context
