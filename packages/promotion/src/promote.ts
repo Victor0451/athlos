@@ -62,10 +62,10 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
     const fkMap = await buildFkMap(db, domain)
 
     // 2. Read all projection rows for this domain (full scan; E2 will add `promoted_at` filter)
-    const projTable = PROJECTION_TABLE[domain]
-    // Projection tables are created lazily by rebuild.ts.
-    // NOTE: schema-qualified name must be split: "schema"."table" not "schema.table"
-    const [projSchema, projTableName] = projTable.split('.')
+    const { schema: projSchema, table: projTableName } = PROJECTION_TABLE[domain]
+    // Projection tables are created lazily by rebuild.ts with literal dots in the
+    // table name (e.g. `public."socios.socios_projection"`). Quote schema and
+    // table separately — DO NOT split on `.` (table names contain dots).
     const projectionRows =
       (
         await db.execute<{ source_key: string; payload: Record<string, unknown> }>(
@@ -149,24 +149,21 @@ async function insertMasterBatch(db: Db, domain: Domain, rows: unknown[]): Promi
   let inserted: { id: unknown }[] = []
 
   if (domain === 'socios') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     inserted = await db
       .insert(socios)
-      .values(rows as any)
+      .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: socios.id })
   } else if (domain === 'ctacte') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     inserted = await db
       .insert(ctacte)
-      .values(rows as any)
+      .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: ctacte.id })
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     inserted = await db
       .insert(ctacte1)
-      .values(rows as any)
+      .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: ctacte1.id })
   }
