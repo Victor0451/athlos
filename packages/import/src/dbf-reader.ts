@@ -111,6 +111,16 @@ function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): Leg
   // resolve the conventional VFP primary-key column.
   if (out['LEGACY_KEY'] === undefined || out['LEGACY_KEY'] === null || out['LEGACY_KEY'] === '') {
     const pk = primaryKeyFor(out, table)
+    console.log(
+      '[DEBUG] table:',
+      table,
+      'col:',
+      TABLE_PK_COLUMN[table],
+      'value:',
+      out[TABLE_PK_COLUMN[table]!],
+      'pk:',
+      pk,
+    )
     if (pk) {
       out['LEGACY_KEY'] = pk
     } else {
@@ -126,23 +136,27 @@ function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): Leg
 /**
  * Pick the legacy primary-key column for a table. Each entry maps
  * the table to the VFP column that uniquely identifies a row.
+ *
+ * Real DBF column names from the production legacy data (Gorriti
+ * club, AplicacionGorriti). VFP stores columns with the table name
+ * as a prefix — e.g. PARAMET.PARCODIGO, SOCIOS.SOCCARNET.
  */
 const TABLE_PK_COLUMN: Readonly<Record<LegacyTableName, string>> = {
-  paramet: 'CODIGO',
+  paramet: 'PARCODIGO',
   usuario: 'USUCLAVE',
-  ctacte1: 'NROASIE',
-  socios: 'NUMERO',
-  ctacte: 'NROASIE',
-  asiento: 'NUMCOMP',
-  asientod: 'NUMCOMP',
-  cobros: 'NUMCOMP',
-  plancue: 'CODIGO',
-  catastros: 'CODIGO',
-  escuela: 'CODIGO',
-  deportes: 'CODIGO',
-  locacion: 'CODIGO',
-  caja: 'NUMCOMP',
-  gastos: 'NUMCOMP',
+  ctacte1: 'SECNUMERO',
+  socios: 'SOCCARNET',
+  ctacte: 'CCTCUENTA',
+  asiento: 'ASINUMERO',
+  asientod: 'ASINUMERO',
+  cobros: 'COBNUMERO',
+  plancue: 'PCTCTAPRIN',
+  catastros: 'CATCODIGO',
+  escuela: 'ESCCODIGO',
+  deportes: 'DEPCODIGO',
+  locacion: 'LCNNUMERO',
+  caja: 'CAJNUMERO',
+  gastos: 'GASNUMERO',
 }
 
 function primaryKeyFor(raw: Record<string, unknown>, table: LegacyTableName): string | null {

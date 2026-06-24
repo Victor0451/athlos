@@ -347,6 +347,10 @@ async function* readTableFromDisk(
  * Convert a raw `Dbf.read` row into a {@link LegacyRecord}: trim
  * string fields (VFP pads with spaces) and resolve the legacy key
  * from the conventional PK column.
+ *
+ * Real DBF column names from the production legacy data (Gorriti
+ * club, AplicacionGorriti). VFP stores columns with the table name
+ * as a prefix — e.g. PARAMET.PARCODIGO, SOCIOS.SOCCARNET.
  */
 function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
   const out: Record<string, unknown> = {}
@@ -356,6 +360,7 @@ function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
   }
   const legacyKey =
     firstNonEmpty([
+      // Common VFP PK column names
       out['LEGACY_KEY'],
       out['NUMERO'],
       out['CODIGO'],
@@ -364,8 +369,22 @@ function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
       out['ID'],
       out['CLAVE'],
       out['USUCLAVE'],
+      // Real legacy DBF columns from Gorriti (AplicacionGorriti)
+      out['PARCODIGO'],
+      out['SOCCARNET'],
+      out['SOCNUMERO'],
+      out['CCTCUENTA'],
+      out['SECNUMERO'],
+      out['ASINUMERO'],
+      out['COBNUMERO'],
+      out['PCTCTAPRIN'],
+      out['ESCCODIGO'],
+      out['DEPCODIGO'],
+      out['LCNNUMERO'],
+      out['CAJNUMERO'],
+      out['GASNUMERO'],
     ]) ?? ''
-  out['legacyKey'] = legacyKey
+  out['LEGACY_KEY'] = legacyKey
   return out as LegacyRecord
 }
 

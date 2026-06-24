@@ -38,3 +38,4 @@ pgdata/
 
 # LLM tooling (cache, never tracked)
 .atl/
+legacy-test/
