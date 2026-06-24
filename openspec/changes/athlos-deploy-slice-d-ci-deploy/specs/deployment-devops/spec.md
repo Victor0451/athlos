@@ -1,3 +1,29 @@
+# Delta for deployment-devops
+
+## Header
+
+| Field | Value |
+|-------|-------|
+| **Change** | `athlos-deploy-slice-d-ci-deploy` |
+| **Date** | 2026-06-24 |
+| **Phase** | Spec |
+| **Mode** | Both (Engram + OpenSpec) |
+| **Status** | Draft — ready for design |
+| **File path** | `openspec/changes/athlos-deploy-slice-d-ci-deploy/specs/deployment-devops/spec.md` |
+| **Modified capability** | `deployment-devops` |
+| **Source artifacts** | `openspec/changes/explore-athlos-deploy-slice-d/exploration.md` · `openspec/changes/athlos-deploy-slice-d-ci-deploy/proposal.md` |
+| **Sister change (DONE)** | `athlos-deploy-slice-c-containerized-deploy` (v0.4.5, archived 2026-06-23) |
+| **Target release** | v0.5.0 (MINOR — new CI capability) |
+| **B1b LESSONs embedded** | #1 atomic sync · #2 separate release commit · #3 cherry-pick reorder · #4 merge-before-delete |
+
+## Context
+
+Slice C (v0.4.5) shipped the containerized deploy surface — a real multi-stage `Dockerfile`, `docker-entrypoint.sh`, and `docker-compose.yml` (api+db, healthchecks, env_file). The compose file references `ghcr.io/victor0451/athlos-api:local` as a placeholder, but no CI workflow actually pushes to that registry and the operator still has to SSH into the production server to deploy manually after every merge to `main`. The canonical spec has been promising a CI deploy since the foundation (`openspec/changes/athlos-foundation/design.md:6009-6019`), and the `db-destructive` PR label has been a spec requirement since B1a — but no `labeler.yml` exists and no CI check enforces the gate.
+
+Slice D closes both loops. It rewrites the 4 stale `CI/CD Pipeline` scenarios (lines 72-105 of the canonical) IN-PLACE — those scenarios were written for a PR-7 design phase that referenced `ci.yml`, a `staging` branch, and `ghcr.io/athlos/...`, none of which match the actual deploy surface (GHCR + `victor0451` + `main`-only + SSH). Six new scenarios cover the new capability: image tags, SSH action + secrets, auto-rollback, concurrency, the destructive gate, and the auto-labeler. The canonical `CI/CD Pipeline` requirement grows from 4 to 10 scenarios, and 5 new success criteria capture the CI deploy contract end-to-end. Apply-phase enforcement of B1b LESSON #1 (atomic canonical sync — `diff delta vs canonical` empty before task complete) ensures the rewrite stays IN-PLACE with no `_v2` suffix.
+
+---
+
 # Deployment/DevOps Specification
 
 ## Purpose
@@ -452,8 +478,50 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 23. `docker-compose.yml` defines `api` + `db` only, uses `env_file: .env.production`, `depends_on: db: condition: service_healthy`, `/health/ready` healthcheck (30s/5s/5/30s), and json-file log rotation
 24. `apps/api/src/index.ts` does NOT load `dotenv/config` when `NODE_ENV=production`; verified by `apps/api/test/env.test.ts` (RED-first TDD)
 25. Canonical `deployment-devops/spec.md` has zero S3 URI references (S3→local reconciliation per ADR #30) and zero references to the legacy migrations-service shape (forward-only Drizzle migrator in `api` entrypoint replaces the B1a-era placeholder `migrations` service)
-26. **Slice D NEW**: `pnpm test:run` and `pnpm typecheck` and `pnpm lint` all pass inside the deploy job before any image is built or pushed (fail-fast on regressions)
+26. **Slice D NEW**: `pnpm test:run` and `pnpm typecheck` and `pnpm lint` all pass inside the `build-and-push` job before any image is built or pushed (fail-fast on regressions)
 27. **Slice D NEW**: `actionlint .github/workflows/deploy.yml` exits 0 and `actionlint .github/workflows/check-destructive.yml` exits 0 (workflow YAML is lint-clean)
-28. **Slice D NEW**: After a successful deploy, `docker images ghcr.io/victor0451/athlos-api` on the server shows all 3 tags (`:latest`, `:vX.Y.Z` when applicable, `:main-<sha>`)
-29. **Slice D NEW**: Auto-rollback restores the previous image tag on `/health/ready` failure within 60s; `/tmp/deploy-fail-<timestamp>.log` exists on the server with the failed container's logs; the workflow output logs previous and current image tags
+28. **Slice D NEW**: After a successful deploy, `docker images ghcr.io/victor0451/athlos-api` on the server shows all 3 tags (`:latest`, `:vX.Y.Z` when applicable, `:main-<sha>`) — `IMAGE_TAG_PREVIOUS` is captured by `docker/metadata-action` flavor `versioned`
+29. **Slice D NEW**: Auto-rollback restores the previous image tag on `/health/ready` failure within 90s; `/tmp/deploy-fail-<timestamp>.log` exists on the server with the failed container's logs; the workflow output logs previous and current image tags
 30. **Slice D NEW**: Destructive gate fails the PR check when the `db-destructive` label is present AND migration files changed AND no `*.sql.gz` backup artifact URL is in PR comments AND no `/backup-skipped` directive is in the PR body; the `/backup-skipped` override is logged in workflow output for post-mortem audit
+
+---
+
+## Modified Requirements Summary
+
+**Modified capability:** `deployment-devops` — 1 requirement modified, 5 new success criteria, all other 7 requirements unchanged.
+
+### `CI/CD Pipeline` — modified IN-PLACE (no `_v2` suffix)
+
+**Requirement text** rewritten to reflect the actual deploy surface (GHCR + `victor0451` + main-only + SSH + auto-rollback + labeler + destructive gate), replacing the stale PR-7 phrasing.
+
+**4 scenarios rewritten IN-PLACE** (no `_v2` suffix, per Slice C pattern):
+
+| # | Before (stale, lines 72-105) | After (Slice D) |
+|---|----------------|------------------|
+| 1 | "GitHub Actions workflow structure" — `ci.yml`, stages `lint/test/build/push` | "CI workflow file is `.github/workflows/deploy.yml`" — `deploy.yml`, stages `lint/test/build/push/deploy` |
+| 2 | "Branch-based deployment" — `athlos-api:latest` + `athlos-api:<git-sha>` | "Image is `ghcr.io/victor0451/athlos-api`" — full GHCR path |
+| 3 | "Staging deployment" — `staging` branch → `athlos-api:staging` | "Deploys on push to `main` branch" — main-only, staging explicitly out of scope |
+| 4 | "Docker image tagging" — `ghcr.io/athlos/athlos-api:abc1234` | "Registry organization is `ghcr.io/victor0451`" — correct org |
+
+**6 new scenarios:** image tags (`:latest`, `:vX.Y.Z`, `:main-<sha>`) · SSH action + secrets · auto-rollback · concurrency queue · destructive gate · auto-labeler.
+
+**5 new success criteria** (items 26-30): lint+test+typecheck gate · `actionlint` clean · 3 tags on GHCR · auto-rollback within 90s · destructive gate failure mode.
+
+---
+
+## Open Questions
+
+**None.** All 4 proposal open questions are resolved with user-locked defaults:
+
+| # | Question | Resolution |
+|---|----------|------------|
+| Q1 | Version bump: patch `v0.4.5 → v0.4.6` or minor `v0.5.0`? | **MINOR `v0.5.0`** — new CI capability |
+| Q2 | Image tag strategy: 2 tags or 3 tags? | **3 tags** — `:latest`, `:vX.Y.Z` (release commits), `:main-<sha>` (rollback anchor) |
+| Q3 | Destructive gate: strict or lenient? | **LENIENT** — backup artifact URL OR `/backup-skipped` directive (override logged) |
+| Q4 | Concurrency policy: queue or cancel? | **QUEUE** — `cancel-in-progress: false` (canceling mid-deploy leaves server in unknown state) |
+
+---
+
+## Apply-Phase B1b LESSON #1 (HIGHEST)
+
+TASK-007 in apply phase MUST verify `diff openspec/specs/deployment-devops/spec.md openspec/changes/athlos-deploy-slice-d-ci-deploy/specs/deployment-devops/spec.md` is empty before marking complete. The 4 rewrites are IN-PLACE (no `_v2` suffix). Verify phase re-runs the diff as a checklist item. LESSON #2 (separate release commit), #3 (cherry-pick reorder), #4 (merge-before-delete) are enforced in the apply prompt per the proposal §5.

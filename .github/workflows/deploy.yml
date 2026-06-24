@@ -1,0 +1,91 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:run
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/victor0451/athlos-api
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{version}},enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha,format=long
+          flavor: |
+            latest=auto
+            prefix=
+            suffix=
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: athlos
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /run/media/vlongo/Archivos/Projectos/Athlos
+
+            PREVIOUS_TAG="ghcr.io/victor0451/athlos-api:$(git rev-parse --short HEAD~1 2>/dev/null || echo "")"
+            echo "Previous tag (rollback anchor): $PREVIOUS_TAG"
+
+            docker compose pull
+            docker compose up -d
+
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:3001/health/ready > /dev/null; then
+                echo "Deploy successful after ${i} attempts"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "Healthcheck failed, rolling back to $PREVIOUS_TAG"
+            docker compose logs --tail 200 api > /tmp/deploy-fail-$(date +%s).log 2>&1 || true
+            docker compose pull $PREVIOUS_TAG || true
+            docker compose up -d
+            exit 1

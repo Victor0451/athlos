@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] — 2026-06-24
+
+### Added
+
+- **`.github/workflows/deploy.yml`** — Post-merge deploy workflow: build + GHCR push (3 tags: `:latest`, `:vX.Y.Z`, `:main-<sha>`) + appleboy SSH deploy + 60s `/health/ready` poll + auto-rollback to previous tag on failure.
+- **`.github/workflows/check-destructive.yml`** — Pre-merge destructive migration gate: scans `packages/db/migrations/*.sql` for `DROP TABLE|TRUNCATE|DELETE FROM`. Requires backup artifact URL in PR comment OR `/backup-skipped` directive in PR body when `db-destructive` label present.
+- **`.github/labeler.yml`** + labeler job in `test.yml` — Auto-applies `db-destructive` label to PRs touching `packages/db/migrations/**`, `packages/db/src/schema/**`, or `drizzle/**`.
+- **`docs/runbook.md`** — New "CI/CD" section: deploy flow, GitHub Secrets table, db-destructive label docs, manual rollback procedure, server-side `authorized_keys` hardening, quarterly key rotation note.
+- **`openspec/specs/deployment-devops/spec.md`** — Atomic canonical sync: 4 stale `CI/CD Pipeline` scenarios rewritten IN-PLACE (`ci.yml` → `deploy.yml`, `athlos-api:` → `ghcr.io/victor0451/athlos-api:`, `staging` → `main`, `ghcr.io/athlos/` → `ghcr.io/victor0451/`), 6 new scenarios added, 5 new success criteria (26-30).
+
+### Changed
+
+- **`.env.example`** — Added `DEPLOY_HOST` + `DEPLOY_SSH_KEY` placeholders under `─── CI Deploy (PR Slice D) ───`.
+
+### Fixed
+
+- (none)
+
+### Spec
+
+- 1 modified capability: `deployment-devops`
+- 4 rewrites IN-PLACE (no `_v2` suffix): `ci.yml` → `deploy.yml`, `athlos-api:` → `ghcr.io/victor0451/athlos-api:`, `staging` → `main`, `ghcr.io/athlos/` → `ghcr.io/victor0451/`
+- 6 new scenarios: image tags, SSH action, auto-rollback, concurrency, destructive gate, auto-labeler
+- 5 new success criteria
+
 ## [0.4.5] — 2026-06-23
 
 ### Added
