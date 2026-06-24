@@ -1,14 +1,15 @@
 /**
  * Dedup by natural key.
  *
- * For socios: natural key is `SOCCARNET` / `SOCNUMERO` → `numeroSocio`.
+ * For socios: natural key is `SOCCARNET` → `numeroSocio`.
  *   Full dedup available: UNIQUE constraint on `socios.numeroSocio` + pre-check.
  *
- * For ctacte: natural key is `CCTNUMERO`.
- *   PARTIAL dedup: no legacy_id column on ctacte master; relies on
- *   `ON CONFLICT DO NOTHING` only. E2 will add `legacy_id` column.
+ * For ctacte: compound key `${CCTCUENTA}|${CCTFECHA}|${CCTNROCOMP}|${CCTMES}|${CCTTALONAR}`.
+ *   PARTIAL dedup: ~78% unique (256k distinct of 326k); remaining duplicates
+ *   are intra-batch only (since master has no UNIQUE constraint). E2 will
+ *   add `legacy_id` column for full dedup.
  *
- * For ctacte1: natural key is composite `${CCT1NUMERO}-${CCT1ITEM}`.
+ * For ctacte1: compound key `${CCTPAGONRO}|${CCTPAGOSEC}|${CCTPAGOTAL}`.
  *   PARTIAL dedup: same limitation as ctacte. E2 will fix.
  */
 import type { Db } from '@athlos/db'
@@ -18,12 +19,23 @@ export type Domain = 'socios' | 'ctacte' | 'ctacte1'
 
 /** Natural key extractor from VFP jsonb payload. */
 export function naturalKey(domain: Domain, payload: Record<string, unknown>): string {
-  if (domain === 'socios') return String(payload.SOCCARNET ?? payload.SOCNUMERO ?? '')
-  if (domain === 'ctacte') return String(payload.CCTNUMERO ?? '')
-  // ctacte1: composite key
-  const num = String(payload.CCT1NUMERO ?? '')
-  const item = String(payload.CCT1ITEM ?? '0')
-  return `${num}-${item}`
+  if (domain === 'socios') return String(payload['SOCCARNET'] ?? payload['SOCNUMERO'] ?? '')
+  if (domain === 'ctacte') {
+    // Compound key: cuenta + fecha + nrocomp + mes + talonario
+    return [
+      payload['CCTCUENTA'] ?? '',
+      payload['CCTFECHA'] ?? '',
+      payload['CCTNROCOMP'] ?? '',
+      payload['CCTMES'] ?? '',
+      payload['CCTTALONAR'] ?? '',
+    ].join('|')
+  }
+  // ctacte1: compound key
+  return [
+    payload['CCTPAGONRO'] ?? '',
+    payload['CCTPAGOSEC'] ?? '',
+    payload['CCTPAGOTAL'] ?? '',
+  ].join('|')
 }
 
 /** Load existing natural keys already in master table (for dedup pre-check). */
