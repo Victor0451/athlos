@@ -293,3 +293,51 @@ docker compose logs --tail 200 api # recent
 ```
 
 Logs are stored via the `json-file` driver with `max-size: 10m, max-file: 3` rotation.
+
+## CI/CD
+
+### Deploy flow
+
+Push to `main` → GitHub Actions `deploy.yml` runs:
+
+1. Install + lint + typecheck + test (fail fast on regression)
+2. Build image with buildx + GHA cache (~30s warm)
+3. Push to GHCR with tags `:latest`, `:vX.Y.Z` (release commits), `:main-<sha>`
+4. SSH to server → `docker compose pull && docker compose up -d`
+5. Poll `/health/ready` every 5s for 60s
+6. On pass: done. On fail: dump logs to `/tmp/deploy-fail-<ts>.log`, redeploy previous tag, exit red.
+
+### GitHub Secrets
+
+| Secret           | Purpose                                                                                         | Rotation            |
+| ---------------- | ----------------------------------------------------------------------------------------------- | ------------------- |
+| `DEPLOY_HOST`    | Server IP (current: `192.168.1.102`; switch when prod host is provisioned)                      | When server changes |
+| `DEPLOY_SSH_KEY` | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs | Quarterly           |
+| `GITHUB_TOKEN`   | Automatic (used for GHCR push)                                                                  | Automatic           |
+
+### db-destructive label
+
+Auto-applied by `actions/labeler@v5` when a PR touches `packages/db/migrations/**`, `packages/db/src/schema/**`, or `drizzle/**`. `check-destructive.yml` then requires either a backup URL (matching `https://.*\.sql\.gz` in a PR comment) OR `/backup-skipped` directive in PR body. Both paths log to the workflow summary for audit.
+
+### Manual rollback
+
+When auto-rollback fails or operator needs to roll back further:
+
+```bash
+ssh athlos@$DEPLOY_HOST
+cd /opt/athlos
+docker images ghcr.io/victor0451/athlos-api    # pick previous tag
+docker compose pull ghcr.io/victor0451/athlos-api:previous-sha
+docker compose up -d
+curl -sf http://localhost:3001/health/ready   # verify
+```
+
+### Server hardening (one-time setup, NOT automated by CI)
+
+- `authorized_keys` entry for deploy key uses `command="/opt/athlos/scripts/deploy-wrapper.sh"` + `from="140.82.112.0/20,185.199.108.0/22,192.30.252.0/22"` (GitHub Actions IPs) + `no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`
+- Wrapper script only accepts `docker compose pull && docker compose up -d`; rejects other commands
+- Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
+
+### Quarterly key rotation
+
+See `docs/security.md` (TODO) for the rotation procedure.

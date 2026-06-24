@@ -1,0 +1,57 @@
+name: check-destructive
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: changed
+        run: |
+          MIGRATION_FILES=$(git diff --name-only origin/main...HEAD | grep -E 'packages/db/migrations/.*\.sql$' || true)
+          DESTRUCTIVE=$(echo "$MIGRATION_FILES" | xargs -I{} grep -lE 'DROP TABLE|TRUNCATE|DELETE FROM' {} 2>/dev/null || echo "")
+          echo "migrations<<EOF" >> $GITHUB_OUTPUT
+          echo "$MIGRATION_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "destructive<<EOF" >> $GITHUB_OUTPUT
+          echo "$DESTRUCTIVE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "has_destructive=$([ -n "$DESTRUCTIVE" ] && echo true || echo false)" >> $GITHUB_OUTPUT
+
+      - name: Check destructive migration
+        if: steps.changed.outputs.has_destructive == 'true'
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if echo "$PR_LABELS" | grep -q 'db-destructive'; then
+            HAS_BACKUP=$(gh pr view ${{ github.event.pull_request.number }} --json comments \
+              --jq '[.comments[] | select(.body | test("https://.*\\.sql\\.gz"))] | length')
+            HAS_SKIP=$(echo "$PR_BODY" | grep -c '/backup-skipped' || true)
+
+            {
+              echo "## Destructive migration gate"
+              echo ""
+              echo "- **Migration files:** ${{ steps.changed.outputs.destructive }}"
+              echo "- **Backup artifact posted:** $([ "$HAS_BACKUP" -gt 0 ] && echo yes || echo no)"
+              echo "- **/backup-skipped directive:** $([ "$HAS_SKIP" -gt 0 ] && echo yes || echo no)"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$HAS_BACKUP" -eq 0 ] && [ "$HAS_SKIP" -eq 0 ]; then
+              echo "::error::Destructive migration detected. Either:"
+              echo "  1. Run \`pnpm db:backup && pnpm db:status\` and paste the backup URL as a PR comment, OR"
+              echo "  2. Add \`/backup-skipped\` directive to PR body with justification"
+              exit 1
+            fi
+            echo "Destructive migration acknowledged"
+          else
+            echo "::error::Destructive migration in PR but missing \`db-destructive\` label. Add it manually or wait for the labeler."
+            exit 1
+          fi

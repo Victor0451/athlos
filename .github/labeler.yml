@@ -1,0 +1,4 @@
+db-destructive:
+  - packages/db/migrations/**
+  - packages/db/src/schema/**
+  - drizzle/**
