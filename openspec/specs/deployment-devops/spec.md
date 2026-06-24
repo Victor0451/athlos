@@ -164,6 +164,45 @@ The system SHALL provide a GitHub Actions-based CI/CD pipeline that builds, publ
 
 ---
 
+### Requirement: Promotion Pipeline
+
+The system SHALL provide a manual promotion pipeline that moves validated data from `*_projection` tables into application master tables, triggered exclusively via CLI (no automatic promotion). Promotion is intentionally irreversible at the application-surface level — the operator reviews the projection data before committing it to master tables.
+
+#### Scenario: CLI runner via `pnpm db:promote`
+
+- GIVEN the pnpm workspace is installed
+- WHEN the operator executes `pnpm db:promote`
+- THEN the CLI SHALL run `packages/promotion/src/promote-cli.ts` against the database specified by `DATABASE_URL` (default: `postgresql://athlos:athlos@192.168.1.102:5432/athlos`)
+- AND the CLI SHALL NOT require any additional arguments or flags for a full promotion run
+- AND the CLI SHALL print per-domain summary lines showing `attempted`, `inserted`, `skipped`, `failed`, and `durationMs`
+- AND the CLI SHALL exit with code 0 on success, or non-zero if any domain had `failed > 0`
+
+#### Scenario: Domain promotion order respects FK dependencies
+
+- GIVEN `pnpm db:promote` is executed
+- WHEN domains are promoted in sequence
+- THEN `socios` SHALL be promoted first (no FK dependencies)
+- AND `ctacte` SHALL be promoted second (depends on `socios.id`)
+- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`)
+- AND if any domain fails, dependent domains SHALL NOT be attempted
+
+#### Scenario: Batched INSERT with deduplication
+
+- GIVEN a domain is being promoted
+- WHEN rows are inserted into the master table
+- THEN inserts SHALL be batched at 1000 rows per batch
+- AND each batch SHALL use `ON CONFLICT DO NOTHING` (idempotent — re-running is safe)
+- AND the promotion SHALL be considered best-effort: individual row failures SHALL NOT stop the batch; a summary of failed rows SHALL be printed after each domain
+
+#### Scenario: Projection tables are schema-qualified
+
+- GIVEN the promotion query reads from `socios.socios_projection`
+- WHEN the query executes
+- THEN the SQL SHALL use `"socios"."socios_projection"` (schema-qualified, double-quoted identifiers)
+- AND NOT `"socios.socios_projection"` (which PostgreSQL treats as a single identifier name, not schema.table)
+
+---
+
 ### Requirement: Environment Variables in Production
 
 The system SHALL inject secrets via environment variables at runtime without rebuilding the Docker image.
