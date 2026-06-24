@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] — 2026-06-24
+
+### Added
+
+- **`packages/promotion/`** — New workspace package with `promoteDomain(db, domain)` + `promoteAll(db)` algorithms. CLI runner via `pnpm db:promote` reads `DATABASE_URL` from env.
+- **`packages/promotion/src/PROMOTION_ORDER.ts`** — FK-topological promotion order: `['socios', 'ctacte', 'ctacte1']`.
+- **`packages/promotion/src/transforms/`** — jsonb → typed Drizzle inserts for `socios`, `ctacte`, `ctacte1`. Helpers: `parseFechaVFP` (VFP `'YYYYMMDD'` → ISO `'YYYY-MM-DD'`), `splitDebeHaber` (text NUMERIC 14,2), `splitApellidoNombre`.
+- **`packages/db/src/schema/tesoreria.ts`** — New `tesoreria.ctacte1` master table (`id` uuid PK, `ctacte_id` uuid FK to `tesoreria.ctacte.id` ON DELETE RESTRICT, `fecha` date NOT NULL, `concepto` text NOT NULL, `monto` text NUMERIC 14,2 default `'0.00'`, `created_at` timestamptz default `now()`).
+- **`packages/db/drizzle/0012_volatile_rocket_racer.sql`** — Migration: `CREATE TABLE tesoreria.ctacte1` + `CREATE INDEX ctacte1_ctacte_id_idx`.
+- **`packages/promotion/src/__tests__/promote.test.ts`** — 7 vitest cases (T1 happy socios, T2 ctacte FK failure, T3 ctacte1 happy path, T4 idempotency re-run, T5 PROMOTION_ORDER enforcement, T6 transformSocio unit, T7 transformCtacte unit).
+- **`openspec/specs/deployment-devops/spec.md`** — Atomic canonical sync: new "Promotion Pipeline" requirement with 3 scenarios + 6 success criteria.
+
+### Changed
+
+- (none)
+
+### Fixed
+
+- **`packages/promotion/src/promote.ts`** — PostgreSQL identifiers with dots require `"schema"."table"` notation; fixed `db.execute` to split schema-qualified table names (single identifier `socios.socios_projection` is NOT a valid PostgreSQL name).
+
+### Spec
+
+- 1 modified capability: `deployment-devops`
+- 1 new requirement: "Promotion Pipeline" (CLI runner, FK-topological order, batched INSERT with ON CONFLICT DO NOTHING, projection table reads use `"schema"."table"` notation)
+- 3 new scenarios: socios happy path (39,357 rows), ctacte with FK dependency on socios via in-memory map (326,275 rows), ctacte1 with chained FK on ctacte via entity_uuids (245,370 rows)
+- 6 new success criteria
+
 ## [0.5.0] — 2026-06-24
 
 ### Added
