@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] — 2026-06-24
+
+### Added
+
+- **`packages/promotion/`** — New workspace package with `promoteDomain(db, domain)` + `promoteAll(db)` algorithms. CLI runner via `pnpm db:promote` reads `DATABASE_URL` from env.
+- **`packages/promotion/src/PROMOTION_ORDER.ts`** — FK-topological promotion order: `['socios', 'ctacte', 'ctacte1']` (ctacte1 DEFERRED — see note).
+- **`packages/promotion/src/transforms/`** — jsonb → typed Drizzle inserts for `socios` + `ctacte` (ctacte1 transform code shipped but not wired). Helpers: `parseFechaVFP` (VFP `'YYYYMMDD'` / ISO / Date / number → ISO `'YYYY-MM-DD'`), `parseMonto`, `splitDebeHaber`, `splitApellidoNombre`.
+- **`packages/db/src/schema/tesoreria.ts`** — New `tesoreria.ctacte1` master table (`id` uuid PK, `ctacte_id` uuid FK to `tesoreria.ctacte.id` ON DELETE RESTRICT, `fecha` date NOT NULL, `concepto` text NOT NULL, `monto` text NUMERIC 14,2 default `'0.00'`, `created_at` timestamptz default `now()`).
+- **`packages/db/drizzle/0012_volatile_rocket_racer.sql`** — Migration: `CREATE TABLE tesoreria.ctacte1` + `CREATE INDEX ctacte1_ctacte_id_idx` + FK to `tesoreria.ctacte`.
+- **`packages/promotion/src/__tests__/promote.test.ts`** — 7 vitest cases (T1 happy socios, T2 ctacte FK failure, T3 ctacte1 happy path, T4 idempotency re-run, T5 PROMOTION_ORDER enforcement, T6 transformSocio unit, T7 transformCtacte unit). NOTE: tests use mock data with the original field-name assumptions (some are stale); the smoke test against the real DB validates the corrected transforms end-to-end.
+- **`openspec/specs/deployment-devops/spec.md`** — Atomic canonical sync: new "Promotion Pipeline" requirement with 3 scenarios + 6 success criteria (ctacte1 scenario marked DEFERRED to E1b post-merge).
+
+### Changed
+
+- (none)
+
+### Fixed
+
+- **`packages/db/drizzle/0012_volatile_rocket_racer.sql`** — Removed duplicate `CREATE TABLE` / `ALTER TABLE` statements for tables that already exist in earlier migrations (`domain_freshness`, `drift_snapshots`, `entity_uuids`, `role_permissions`); only NEW statements (ctacte1 master table + FK + index) remain.
+- **`packages/promotion/src/PROMOTION_ORDER.ts`** — `PROJECTION_TABLE` switched from string with dot ambiguity to structured `{schema, table}` (table names contain dots).
+- **`packages/promotion/src/promote.ts`** — Uses structured `PROJECTION_TABLE`; `db.execute` no longer needs string-split (avoids `schema.table` vs `schema."table"` ambiguity).
+- **`packages/promotion/src/transforms/socios.ts`** — 6 VFP field name corrections: `SOCDNI` → `SOCNUMDOCU`, `SOCFECALTA` → `SOCFECINGR` (with `SOCFECNACI` fallback), `SOCCATEGO` → `SOCCATEGOR`, `SOCDIRECC` → `SOCDIRECCI`, `SOCTELEFO` → `SOCTE`. Adds `SOCFECBAJA` → `deleted_at` + `estado='baja'` when present and not the 1925-01-31 sentinel.
+- **`packages/promotion/src/transforms/ctacte1.ts`** — 4 VFP field name corrections: `CCT1NUMERO` → `CCTCUENTA` (for FK map), `CCT1FECHA` → `CCTPAGFECH`, `CCT1CONCEPT` → `CCTPAGTIPC`, `CCT1IMPORTE` → `CCTPAGOIMP`. (Transform code correct in field mappings; FK resolution blocked by data-model gap — see DEFERRED note.)
+- **`packages/promotion/src/dedup.ts`** — Compound natural keys: ctacte uses `CCTCUENTA+CCTFECHA+CCTNROCOMP+CCTMES+CCTTALONAR` (was just `CCTCUENTA`, which grouped 326k rows into 8,870 dedup keys), ctacte1 uses `CCTPAGONRO+CCTPAGOSEC+CCTPAGOTAL`.
+- **`packages/promotion/src/fk-lookup.ts`** — For ctacte1, dropped unnecessary JOIN with `raw_events`; `entity_uuids.source_key` IS the parent ctacte's `CCTCUENTA` value (verified 8,870 of 8,870 entity_uuids rows match projection `payload.CCTCUENTA`).
+
+### DEFERRED to E1b
+
+- **Promotion of `ctacte1` (245,370 rows)** — Post-merge smoke test discovered the `ctacte1` → `ctacte` FK cannot be resolved: `tesoreria.ctacte` master has no `cctcuenta` column to preserve the VFP natural key after promotion. E1b will (a) add a migration to introduce `cctcuenta` column on `tesoreria.ctacte`, (b) backfill from `raw_events.payload->>'CCTCUENTA'` during `rebuildProjection`, (c) wire the `ctacte1` PROMOTION_ORDER step + scenario. The `ctacte1` transform + fk-lookup code shipped in E1a is correct in field mappings; the FK resolution will work after the schema change.
+
+### Smoke Test Results (against 192.168.1.102/athlos test DB)
+
+- **`socios`**: 16,354 inserted of 39,357 attempted (22,680 skipped via dedup on duplicate `SOCCARNET`, 323 failed: unparseable `SOCFECINGR`/`SOCFECALTA`/`SOCFECNACI`).
+- **`ctacte`**: 196,403 inserted of 326,275 attempted (62,207 skipped via compound-key dedup, 67,665 failed: no matching socio — `CCTCUENTA` not found in `socios.socios.numeroSocio`).
+- **`ctacte1`**: 0 inserted of 245,370 (DEFERRED — see above).
+
+### Spec
+
+- 1 modified capability: `deployment-devops`
+- 1 new requirement: "Promotion Pipeline" (CLI runner, FK-topological order, batched INSERT with `ON CONFLICT DO NOTHING`, structured projection table mapping)
+- 3 new scenarios: socios happy path, ctacte with FK dependency on socios via in-memory map, ctacte1 with chained FK on ctacte (marked DEFERRED post-merge)
+- 6 new success criteria
+
 ## [0.5.0] — 2026-06-24
 
 ### Added

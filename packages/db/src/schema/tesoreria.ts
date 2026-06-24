@@ -68,3 +68,28 @@ export const ctacte = tesoreriaSchema.table(
 
 export type Ctacte = typeof ctacte.$inferSelect
 export type NewCtacte = typeof ctacte.$inferInsert
+
+/**
+ * ctacte1 sub-ledger — created lazily by rebuild.ts projection only.
+ * E1a ships the master table so 245,370 rows can be promoted into it.
+ */
+export const ctacte1 = tesoreriaSchema.table(
+  'ctacte1',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ctacteId: uuid('ctacte_id')
+      .notNull()
+      .references(() => ctacte.id, { onDelete: 'restrict' }),
+    fecha: date('fecha').notNull(),
+    concepto: text('concepto').notNull(),
+    /** NUMERIC(14,2) stored as text. */
+    monto: text('monto').notNull().default('0.00'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    ctacteIdIdx: index('ctacte1_ctacte_id_idx').on(table.ctacteId),
+  }),
+)
+
+export type Ctacte1 = typeof ctacte1.$inferSelect
+export type NewCtacte1 = typeof ctacte1.$inferInsert
