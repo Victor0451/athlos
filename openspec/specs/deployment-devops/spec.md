@@ -182,11 +182,18 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - GIVEN `pnpm db:promote` is executed
 - WHEN domains are promoted in sequence
 - THEN `socios` SHALL be promoted first (no FK dependencies)
-- AND `ctacte` SHALL be promoted second (depends on `socios.id`)
-- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`)
-- AND if any domain fails AND all attempted rows failed, dependent domains SHALL NOT be attempted
+- AND `escuela` SHALL be promoted second (independent FK tree — no required FK in v1.0)
+- AND `deportes` SHALL be promoted third (independent FK tree — no required FK in v1.0)
+- AND `locacion` SHALL be promoted fourth (independent FK tree — no required FK in v1.0)
+- AND `caja` SHALL be promoted fifth (independent FK tree — no required FK in v1.0; header-only in v1.0, 122 detail columns deferred)
+- AND `ctacte` SHALL be promoted sixth (depends on `socios.id`)
+- AND `ctacte1` SHALL be promoted seventh (depends on `ctacte.id`)
+- AND if any domain fails AND all attempted rows failed AND the domain is in `FK_BLOCKING_DOMAINS` (socios, ctacte), dependent domains SHALL NOT be attempted
+- AND the 4 NEW domains (escuela, deportes, locacion, caja) do NOT block each other — their failures do NOT short-circuit each other
 
-> **E1b1 (v0.5.2/v0.5.3) UPDATE (2026-06-24).** ctacte1 is wired. Migration 0013 added `cctcuenta` to `tesoreria.ctacte` + backfilled best-effort. Migration 0014 added `legacy_id text` + `UNIQUE INDEX` on `tesoreria.ctacte.legacy_id` and `tesoreria.ctacte1.legacy_id`. The promotion transform computes `legacy_id` as a deterministic UUID5 from the natural key (CCTCUENTA+CCTFECHA+CCTNROCOMP+CCTMES+CCTTALONAR for ctacte; CCTPAGONRO+CCTPAGOSEC+CCTPAGOTAL+CCTPAGOFAM+CCTCUENTA for ctacte1). Cross-run idempotency now works: re-running `pnpm db:promote` is a no-op (0 new inserts) when the same projection data is re-processed. Verified 3 runs against test DB: 1st inserts 363,991 rows; 2nd/3rd insert 0 rows (all skipped via dedup pre-check + ON CONFLICT DO NOTHING).
+> **E1b1 (v0.5.2/v0.5.3) UPDATE (2026-06-24).** ctacte1 is wired. Migration 0013 added `cctcuenta` to `tesoreria.ctacte` + backfilled best-effort. Migration 0014 added `legacy_id text` + `UNIQUE INDEX` on `tesoreria.ctacte.legacy_id` and `tesoreria.ctacte1.legacy_id`. Cross-run idempotency works: re-running `pnpm db:promote` is a no-op (0 new inserts) via dedup pre-check + ON CONFLICT DO NOTHING.
+>
+> **E1b2a (v0.5.4) UPDATE (2026-06-25).** 4 NEW domains wired: escuela, deportes, locacion, caja. Migration 0014 (E1b2a) creates `socios.escuela` (per-school master, NO socio_id FK), adds `legacy_id` to `deportes.disciplinas` (table already existed), creates `socios.locacion` (per-socio address), and creates `tesoreria.caja_movimiento` (cash movement header with 4-tuple NK). Scope corrections: (C1) escuela is per-school master with NO `socio_id` FK — verified 0 of 66 projection rows have SOCNUMERO/SOCCARNET fields; (C3) caja NK is 4-tuple `(CAJNUMERO, CAJSECUENC, CAJFECHA, CAJHORA)` — the 3-tuple yields 7,957 distinct = 188 silent row losses, 4-tuple yields 8,145 distinct = 100% unique.
 
 #### Scenario: Batched INSERT with deduplication
 
@@ -202,6 +209,49 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - WHEN the query executes
 - THEN the SQL SHALL use `"socios"."socios_projection"` (schema-qualified, double-quoted identifiers)
 - AND NOT `"socios.socios_projection"` (which PostgreSQL treats as a single identifier name, not schema.table)
+
+#### Scenario: Escuela domain promotion (per-school master)
+
+- GIVEN `escuela` domain is being promoted
+- WHEN rows are read from `public."socios.escuela_projection"` and written to `socios.escuela`
+- THEN each row SHALL be transformed with natural key `ESCCODIGO` → `codigo` (text, deterministic UUID5 via `legacy_id`)
+- AND the transform SHALL compute `legacy_id = deterministicUuid('escuela:codigo')` where `codigo = ESCCODIGO`
+- AND `nombre` SHALL be mapped from `ESCNOMBRE` (upstream alias, deferred to v1.1)
+- AND there is NO `socio_id` FK column in `socios.escuela` (verified: 0 projection rows contain SOCNUMERO/SOCCARNET)
+- AND the projection table `public."socios.escuela_projection"` is schema-qualified (NOT `socios."escuela_projection"`)
+- AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on the natural key `(codigo)` + `legacy_id UNIQUE INDEX`
+
+#### Scenario: Deportes domain promotion (disciplinas with legacy_id)
+
+- GIVEN `deportes` domain is being promoted
+- WHEN rows are read from `public."deportes.deportes_projection"` and written to `deportes.disciplinas`
+- THEN each row SHALL be transformed with natural key `DEPCODIGO` → `codigo` (numeric → text coercion required)
+- AND the transform SHALL compute `legacy_id = deterministicUuid('deporte:codigo')` where `codigo = DEPCODIGO`
+- AND `nombre` SHALL be mapped from `DEPNOMBRE`
+- AND the projection table `public."deportes.deportes_projection"` is schema-qualified
+- AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on `(codigo)` + `legacy_id UNIQUE INDEX`
+
+#### Scenario: Locacion domain promotion (per-socio address)
+
+- GIVEN `locacion` domain is being promoted
+- WHEN rows are read from `public."socios.locacion_projection"` and written to `socios.locacion`
+- THEN each row SHALL be transformed with composite natural key `(LCNCTAPRIN, LCNNUMERO)` → `(tipo_principal, numero)`
+- AND empty string `''` is a valid value for both NK components (verified: 15 of 89 projection rows have empty `LCNCTAPRIN`)
+- AND `legacy_id = deterministicUuid('locacion:tipo_principal|numero')`
+- AND the projection table `public."socios.locacion_projection"` is schema-qualified
+- AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on the composite NK + `legacy_id UNIQUE INDEX`
+
+#### Scenario: Caja domain promotion (cash movement header)
+
+- GIVEN `caja` domain is being promoted
+- WHEN rows are read from `public."tesoreria.caja_projection"` and written to `tesoreria.caja_movimiento`
+- THEN each row SHALL be transformed with 4-tuple natural key `(CAJNUMERO, CAJSECUENC, CAJFECHA, CAJHORA)` → `(numero, secuencia, fecha, hora)`
+- AND the 4-tuple NK is CRITICAL: the 3-tuple `(CAJNUMERO, CAJSECUENC, CAJFECHA)` yields only 7,957 distinct values (188 row losses), while the 4-tuple yields 8,145 distinct (100% unique, verified against live data)
+- AND `legacy_id = deterministicUuid('caja:numero|secuencia|fecha|hora')` using all 4 NK components
+- AND `descripcion` SHALL be mapped from `CAJDESC` (upstream alias, deferred to v1.1)
+- AND the projection table `public."tesoreria.caja_projection"` is schema-qualified
+- AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on the 4-tuple NK + `legacy_id UNIQUE INDEX`
+- AND v1.0 scope is header-only (122 detail columns deferred to v1.1)
 
 ---
 
