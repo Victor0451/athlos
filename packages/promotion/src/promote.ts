@@ -22,9 +22,17 @@ import {
   deterministicUuid,
 } from './transform-helpers.ts'
 import type { TransformHelpers } from './transform-helpers.ts'
-import { socios, ctacte, ctacte1 } from '@athlos/db/schema'
+import {
+  socios,
+  ctacte,
+  ctacte1,
+  escuela,
+  locacion,
+  disciplinas,
+  cajaMovimiento,
+} from '@athlos/db/schema'
 
-export type Domain = 'socios' | 'ctacte' | 'ctacte1'
+export type Domain = 'socios' | 'ctacte' | 'ctacte1' | 'escuela' | 'deportes' | 'locacion' | 'caja'
 
 export interface PromotionResult {
   domain: Domain
@@ -171,12 +179,36 @@ async function insertMasterBatch(db: Db, domain: Domain, rows: unknown[]): Promi
       .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: ctacte.id })
-  } else {
+  } else if (domain === 'ctacte1') {
     inserted = await db
       .insert(ctacte1)
       .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: ctacte1.id })
+  } else if (domain === 'escuela') {
+    inserted = await db
+      .insert(escuela)
+      .values(rows as unknown as never[])
+      .onConflictDoNothing()
+      .returning({ id: escuela.id })
+  } else if (domain === 'deportes') {
+    inserted = await db
+      .insert(disciplinas)
+      .values(rows as unknown as never[])
+      .onConflictDoNothing()
+      .returning({ id: disciplinas.id })
+  } else if (domain === 'locacion') {
+    inserted = await db
+      .insert(locacion)
+      .values(rows as unknown as never[])
+      .onConflictDoNothing()
+      .returning({ id: locacion.id })
+  } else if (domain === 'caja') {
+    inserted = await db
+      .insert(cajaMovimiento)
+      .values(rows as unknown as never[])
+      .onConflictDoNothing()
+      .returning({ id: cajaMovimiento.id })
   }
 
   return inserted.length

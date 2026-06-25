@@ -22,3 +22,7 @@ export {
   type TransformHelpers,
   type FkMap,
 } from './transform-helpers.ts'
+export { transformEscuela } from './transforms/escuela.ts'
+export { transformDeportes } from './transforms/deportes.ts'
+export { transformLocacion } from './transforms/locacion.ts'
+export { transformCaja } from './transforms/caja.ts'
