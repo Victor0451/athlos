@@ -294,6 +294,139 @@ docker compose logs --tail 200 api # recent
 
 Logs are stored via the `json-file` driver with `max-size: 10m, max-file: 3` rotation.
 
+## Promotion Pipeline
+
+The promotion pipeline moves data from VFP source files → `raw_events` → `*_projection` tables → **master tables**. The master tables are what the API queries at runtime.
+
+### How to run promotion (CLI vs API)
+
+**CLI** (full `domain: 'all'`, ~60–90s on live DB):
+
+```bash
+DATABASE_URL=postgresql://athlos:athlos@192.168.1.102:5432/athlos pnpm db:promote
+```
+
+**API** (single-domain or full, ADMIN role required):
+
+```bash
+# Full promotion
+curl -X POST http://localhost:3001/api/v1/promote/trigger \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Single domain
+curl -X POST http://localhost:3001/api/v1/promote/trigger \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "socios"}'
+
+# Check status
+curl http://localhost:3001/api/v1/promote/status \
+  -H "Authorization: Bearer $ADMIN_JWT"
+```
+
+> **Recommendation**: Use the API for single-domain promotions (<10s, no NGINX timeout risk). Use the CLI for full `domain: 'all'` promotions.
+
+### The 8 master tables + their natural keys
+
+| Domain     | Master table                | Natural key (legacy)       | legacy_id source                              |
+| ---------- | --------------------------- | -------------------------- | --------------------------------------------- |
+| `socios`   | `socios.socios`             | `numero_socio`             | `deterministicUuid('socios:'+numeroSocio)`    |
+| `escuela`  | `socios.escuela`            | `codigo`                   | `deterministicUuid('escuela:'+codigo)`        |
+| `deportes` | `deportes.disciplinas`      | `codigo`                   | `deterministicUuid('deporte:'+codigo)`        |
+| `locacion` | `socios.locacion`           | `(tipo_principal, numero)` | `deterministicUuid('locacion:'+tipo\|numero)` |
+| `caja`     | `tesoreria.caja_movimiento` | 4-tuple                    | `deterministicUuid('caja:'+4-tuple)`          |
+| `gastos`   | `tesoreria.gastos`          | 5-tuple                    | `deterministicUuid('gastos:'+5-tuple)`        |
+| `ctacte`   | `tesoreria.ctacte`          | 5-tuple                    | `deterministicUuid('ctacte:'+5-tuple)`        |
+| `ctacte1`  | `tesoreria.ctacte1`         | 5-tuple                    | `deterministicUuid('ctacte1:'+5-tuple)`       |
+
+**Promotion order** (topological by FK dependency):
+
+```
+socios → escuela → deportes → locacion → caja → gastos → ctacte → ctacte1
+        ↑                                              ↑
+   independent                                 FK: ctacte1.ctacte_id → ctacte.id
+```
+
+### The `promoted_at` audit column
+
+`raw_events.promoted_at` tracks which source rows have been promoted to master tables.
+
+```sql
+-- Per-domain promotion status
+SELECT
+  source_table,
+  count(*) AS total,
+  count(promoted_at) AS promoted,
+  count(*) - count(promoted_at) AS pending
+FROM public.raw_events
+GROUP BY source_table
+ORDER BY source_table;
+```
+
+Expected output post-E2:
+
+| source_table |   total | promoted | pending |
+| ------------ | ------: | -------: | ------: |
+| socios       |  39,357 |   16,383 |  22,974 |
+| ctacte       | 326,275 |        0 | 326,275 |
+| ctacte1      | 245,370 |        0 | 245,370 |
+| escuela      |      66 |        0 |      66 |
+| deportes     |      32 |        0 |      32 |
+| locacion     |      89 |        0 |      89 |
+| caja         |   8,145 |        0 |   8,145 |
+| gastos       |   2,114 |        0 |   2,114 |
+
+> **Note**: `socios` shows 16,383 promoted (the current master table count). The 22,974 pending are pre-E1a orphan rows that lack `legacy_id` and cannot be matched for backfill.
+
+### Cross-run idempotency contract
+
+Re-running `pnpm db:promote` or `POST /api/v1/promote/trigger` is **idempotent**:
+
+- `inserted` = 0 (no new rows inserted)
+- `skipped` = total projection rows (all filtered by `promoted_at IS NULL` + dedup)
+- `failed` = 0 (no errors on re-run)
+
+Three layers of protection:
+
+1. **`WHERE raw_events.promoted_at IS NULL`** — skips rows already stamped as promoted
+2. **`master.legacy_id` UNIQUE INDEX** — blocks duplicates at the DB level
+3. **`ON CONFLICT DO NOTHING`** — no-op on conflict (belt-and-suspenders)
+
+### Admin API: `POST /api/v1/promote/trigger`
+
+| Attribute     | Value                                                                     |
+| ------------- | ------------------------------------------------------------------------- |
+| Method + Path | `POST /api/v1/promote/trigger`                                            |
+| Auth          | `requireRole('ADMIN')` (JWT Bearer)                                       |
+| Rate limit    | 1 request / 60s per operator (via `@fastify/rate-limit`)                  |
+| Request body  | `{}` (defaults to `domain: 'all'`) or `{"domain": "socios"}`              |
+| Timeout       | 120s (avoids NGINX `proxy_read_timeout 60s` cut-off)                      |
+| Response 200  | `{ status: 'completed', inserted, skipped, failed, durationMs, domains }` |
+| Response 200  | `{ status: 'already_running' }` (concurrent trigger guard)                |
+| Response 401  | Unauthorized (no/invalid JWT)                                             |
+| Response 403  | Forbidden (non-ADMIN role)                                                |
+| Response 429  | Rate limit exceeded (`Retry-After` header)                                |
+| Audit row     | 1 × `audit_events` with `action: 'PROMOTE_TRIGGER'` per trigger           |
+
+`GET /api/v1/promote/status` returns the last 20 promotion runs from `audit_events`.
+
+### Known Limitations
+
+| ID  | Description                                                                   | Future slice |
+| --- | ----------------------------------------------------------------------------- | ------------ |
+| N7  | `caja_detalle` has 122 wide columns — deferred to future slice                | N7           |
+| N8  | `deportes.inscripciones` rebuild needs a `*_inscripciones_projection` table   | N8           |
+| N14 | ~107k ctacte1 orphan rows stuck at ~61% promotion rate (stale `entity_uuids`) | N14 (E3+)    |
+| N16 | `gastos` has no FK to `ctacte` via `cctcuenta` (flat ledger in v1)            | N16          |
+
+**N14 detail**: The `ctacte1` promotion rate is stuck at ~61% because `entity_uuids` has stale entries for ~107k orphan rows. When those are repopulated (future work), re-running promotion will insert the missing rows.
+
+**N16 detail**: `gastos` intentionally has no `socio_id` or `ctacte` FK in v1. The ledger is flat — each `gastos` row stands alone. FK reconstruction is deferred.
+
+---
+
 ## CI/CD
 
 ### Deploy flow

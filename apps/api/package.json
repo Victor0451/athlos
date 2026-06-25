@@ -1,6 +1,6 @@
 {
   "name": "@athlos/api",
-  "version": "0.5.0",
+  "version": "0.5.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -30,6 +30,7 @@
     "@athlos/integrations-legacy-db": "workspace:*",
     "@athlos/integrations-whatsapp": "workspace:*",
     "@athlos/projection": "workspace:*",
+    "@athlos/promotion": "workspace:*",
     "@athlos/scheduler": "workspace:*",
     "@athlos/validation": "workspace:*",
     "@fastify/cors": "^10.0.1",

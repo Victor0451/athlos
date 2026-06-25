@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6] — 2026-06-25
+
+### Added
+
+- **`POST /api/v1/promote/trigger`** — Admin endpoint (Fastify v5.2.0, role: ADMIN, per-operator 1/min rate limit via `@fastify/rate-limit`). Synchronous trigger of `pnpm db:promote`. Returns `{ status, inserted, skipped, failed, durationMs, domains }`. 120s request timeout (NGINX default is 60s).
+- **`GET /api/v1/promote/status`** — Companion status endpoint (returns current promotionInFlight state + last result).
+- **`packages/db/drizzle/0016_promoted_at.sql`** — Migration: `ALTER TABLE public.raw_events ADD COLUMN promoted_at timestamp with time zone` + `CREATE INDEX raw_events_promoted_at_idx`. Best-effort backfill of `socios` rows (~35,709). Applied via `psql` (NOT drizzle-kit per E1b1 LESSON).
+- **`docs/runbook.md`** — New top-level "Promotion Pipeline" section with 6 sub-sections: (1) How to run promotion (CLI vs API), (2) The 8 master tables + their natural keys, (3) The `promoted_at` audit column, (4) Cross-run idempotency contract, (5) Admin API: `POST /promote/trigger`, (6) Known Limitations (N7/N8/N14/N16).
+
+### Changed
+
+- **`packages/promotion/src/promote.ts`** — `promoteDomain` now filters projection via JOIN `public.raw_events ON (source_table, source_key) WHERE raw_events.promoted_at IS NULL`. After successful INSERT, bulk UPDATE `public.raw_events SET promoted_at = now() WHERE source_table = $domain AND source_key = ANY($inserted_keys)`.
+- **`packages/promotion/src/dedup.ts`** — `loadExistingNaturalKeys` for ctacte/ctacte1 now reads from raw_events.promoted_at (per-row idempotency), falls back to master.legacy_id for domains without promoted_at.
+- **`apps/api/package.json`** — version bumped 0.5.0 → 0.5.6. Added `@fastify/rate-limit` dependency.
+
+### Spec
+
+- `openspec/specs/deployment-devops/spec.md` — final atomic sync (B1b LESSON #1): 3 NEW additive requirements (Admin Promotion Trigger, Per-row Promotion Audit `promoted_at`, Runbook Documentation). Existing Promotion Pipeline (lines 167-276) + tesoreria.gastos requirement (lines 280-315) UNCHANGED. **Closes Slice E permanently.**
+
+### Smoke Test Results (against 192.168.1.102/athlos test DB)
+
+- **1st run**: `verify-slice.sh` reports promotion runs + 10 expected FK failures (escuela + deportes + locacion FK resolution gaps)
+- **2nd run**: 0 inserted, 58,244 skipped (TRUE idempotency verified across all 8 master tables)
+- **`promoted_at` backfill**: 35,709 socios rows populated (master has 16,383 → 16,383 master rows × ~2.18 projection rows/socio ≈ 35,709)
+- **Migration 0016 idempotency**: re-running is no-op (verified live)
+
+### Out of scope (deferred to E3+)
+
+- ctacte/ctacte1 `promoted_at` backfill (requires `raw_events.legacy_id` column)
+- Async scheduler for promotion (E2 is sync only per locked decision)
+- Cross-table analytics, multi-region deployment
+- N7: caja_detalle · N8: deportes.inscripciones · N14: stale entity_uuids · N16: gastos FK to ctacte
+
 ## [0.5.4] — 2026-06-25
 
 ### Added
