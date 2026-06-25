@@ -183,10 +183,10 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - WHEN domains are promoted in sequence
 - THEN `socios` SHALL be promoted first (no FK dependencies)
 - AND `ctacte` SHALL be promoted second (depends on `socios.id`)
-- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`) [DEFERRED to E1b — see note below]
-- AND if any domain fails, dependent domains SHALL NOT be attempted
+- AND `ctacte1` SHALL be promoted third (depends on `ctacte.id`)
+- AND if any domain fails AND all attempted rows failed, dependent domains SHALL NOT be attempted
 
-> **CTACTE1 DEFERRED TO E1b (2026-06-24).** During E1a post-merge smoke test, the `ctacte1` → `ctacte` FK lookup failed due to a data-model gap: `tesoreria.ctacte` master has no `cctcuenta` column to preserve the VFP natural key after promotion, AND `entity_uuids.source_key` does not contain values matching `payload.CCTCUENTA` in the projection. Code-level fixes shipped in E1a (transform field corrections, compound natural-key dedup, simplified fk-lookup JOIN). E1b will wire the `ctacte1` PROMOTION_ORDER step after a schema change (migration to add `cctcuenta` column to `tesoreria.ctacte` + backfill during rebuildProjection).
+> **E1b1 (v0.5.2/v0.5.3) UPDATE (2026-06-24).** ctacte1 is wired. Migration 0013 added `cctcuenta` to `tesoreria.ctacte` + backfilled best-effort. Migration 0014 added `legacy_id text` + `UNIQUE INDEX` on `tesoreria.ctacte.legacy_id` and `tesoreria.ctacte1.legacy_id`. The promotion transform computes `legacy_id` as a deterministic UUID5 from the natural key (CCTCUENTA+CCTFECHA+CCTNROCOMP+CCTMES+CCTTALONAR for ctacte; CCTPAGONRO+CCTPAGOSEC+CCTPAGOTAL+CCTPAGOFAM+CCTCUENTA for ctacte1). Cross-run idempotency now works: re-running `pnpm db:promote` is a no-op (0 new inserts) when the same projection data is re-processed. Verified 3 runs against test DB: 1st inserts 363,991 rows; 2nd/3rd insert 0 rows (all skipped via dedup pre-check + ON CONFLICT DO NOTHING).
 
 #### Scenario: Batched INSERT with deduplication
 
