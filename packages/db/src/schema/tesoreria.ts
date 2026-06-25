@@ -1,4 +1,13 @@
-import { boolean, date, index, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import {
+  boolean,
+  date,
+  index,
+  pgSchema,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core'
 import { socios } from './socios.ts'
 
 /**
@@ -58,11 +67,22 @@ export const ctacte = tesoreriaSchema.table(
     anulado: boolean('anulado').notNull().default(false),
     anuladoAt: timestamp('anulado_at', { withTimezone: true }),
     anuladoMotivo: text('anulado_motivo'),
+    /** E1b1: VFP natural key (CCTCUENTA = socio number) for ctacte1 FK lookup. NULL-able. */
+    cctcuenta: text('cctcuenta'),
+    /**
+     * Deterministic UUID derived from natural key
+     * (CCTCUENTA+CCTFECHA+CCTNROCOMP+CCTMES+CCTTALONAR) via uuidv5.
+     * Enables cross-run idempotency via UNIQUE INDEX — re-runs ON CONFLICT DO NOTHING.
+     * Migration 0014 adds the column + UNIQUE INDEX.
+     */
+    legacyId: text('legacy_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     socioIdIdx: index('ctacte_socio_id_idx').on(table.socioId),
     fechaIdx: index('ctacte_fecha_idx').on(table.fecha),
+    cctcuentaIdx: index('ctacte_cctcuenta_idx').on(table.cctcuenta),
+    legacyIdUnique: uniqueIndex('ctacte_legacy_id_unique').on(table.legacyId),
   }),
 )
 
@@ -84,10 +104,18 @@ export const ctacte1 = tesoreriaSchema.table(
     concepto: text('concepto').notNull(),
     /** NUMERIC(14,2) stored as text. */
     monto: text('monto').notNull().default('0.00'),
+    /**
+     * Deterministic UUID derived from natural key
+     * (CCTPAGONRO+CCTPAGOSEC+CCTPAGOTAL+CCTPAGOFAM+CCTCUENTA) via uuidv5.
+     * Enables cross-run idempotency via UNIQUE INDEX — re-runs ON CONFLICT DO NOTHING.
+     * Migration 0014 adds the column + UNIQUE INDEX.
+     */
+    legacyId: text('legacy_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     ctacteIdIdx: index('ctacte1_ctacte_id_idx').on(table.ctacteId),
+    legacyIdUnique: uniqueIndex('ctacte1_legacy_id_unique').on(table.legacyId),
   }),
 )
 

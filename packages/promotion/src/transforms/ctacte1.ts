@@ -24,7 +24,7 @@ export function transformCtacte1(
   payload: Record<string, unknown>,
   helpers: TransformHelpers,
 ): NewCtacte1 {
-  const { fkMap, parseFechaVFP, parseMonto } = helpers
+  const { fkMap, parseFechaVFP, parseMonto, deterministicUuid } = helpers
 
   const cuenta = String(payload['CCTCUENTA'] ?? '')
   const ctacteUuid = fkMap.get(`ctacte:${cuenta}`)
@@ -33,12 +33,25 @@ export function transformCtacte1(
   const fecha = parseFechaVFP(payload['CCTPAGFECH'] ?? null)
   if (!fecha) throw new Error('Unparseable CCTPAGFECH')
 
+  // legacy_id is a deterministic UUID from the 5-tuple natural key —
+  // enables cross-run idempotency via UNIQUE INDEX on legacy_id.
+  const legacyId = deterministicUuid(
+    [
+      payload['CCTPAGONRO'] ?? '',
+      payload['CCTPAGOSEC'] ?? '',
+      payload['CCTPAGOTAL'] ?? '',
+      payload['CCTPAGOFAM'] ?? '',
+      cuenta,
+    ].join('|'),
+  )
+
   return {
     id: randomUUID(),
     ctacteId: ctacteUuid,
     fecha,
     concepto: String(payload['CCTPAGTIPC'] ?? '').trim(),
     monto: parseMonto(payload['CCTPAGOIMP']),
+    legacyId,
     createdAt: new Date(),
   }
 }

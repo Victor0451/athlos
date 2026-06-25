@@ -5,8 +5,8 @@
  * where N = number of rows being promoted.
  *
  * For ctacte: loads `socios.id` keyed by `socios.numeroSocio` (master table).
- * For ctacte1: additionally loads `ctacte.id` keyed by `entity_uuids.source_key`
- *   (which IS the parent ctacte's CCTCUENTA value — verified 2026-06-24).
+ * For ctacte1: additionally loads `ctacte.id` keyed by `tesoreria.ctacte.cctcuenta`
+ *   (E1b1+ strategy — replaces the broken E1a entity_uuids JOIN).
  */
 import { sql } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
@@ -22,17 +22,18 @@ export async function buildFkMap(db: Db, domain: string): Promise<FkMap> {
     for (const r of rows) map.set(`socio:${r.numeroSocio}`, r.id)
   }
 
-  // For ctacte1, also build ctacte CCTCUENTA → uuid map
+  // E1b1+: ctacte1 FK map via direct SELECT from the cctcuenta column.
+  // entity_uuids JOIN (E1a strategy) yields 0 rows because entity_uuids is stale
+  // (populated at import time before promotion assigned new UUIDs to master).
+  // New strategy: direct SELECT DISTINCT ON to get lexicographically smallest
+  // UUID per cctcuenta.
   if (domain === 'ctacte1') {
-    // ctacte master has no legacy_id column in E1a.
-    // entity_uuids.source_key IS the CCTCUENTA value (verified 8,870 of 8,870
-    // entity_uuids rows for ctacte match projection payload.CCTCUENTA exactly).
-    // entity_uuid IS the ctacte master row's UUID (set when the row was created).
-    const rows = await db.execute<{ id: string; cctcuenta: string }>(sql`
-      SELECT c.id, e.source_key AS cctcuenta
-      FROM "tesoreria"."ctacte" c
-      JOIN "public"."entity_uuids" e ON e.source_table = 'ctacte' AND e.entity_uuid = c.id
-    `)
+    const rows = await db.execute<{ cctcuenta: string; id: string }>(sql`
+        SELECT DISTINCT ON (cctcuenta) cctcuenta, id
+        FROM "tesoreria"."ctacte" c
+        WHERE c.cctcuenta IS NOT NULL
+        ORDER BY cctcuenta, id
+      `)
     for (const r of rows.rows ?? []) map.set(`ctacte:${r.cctcuenta}`, r.id)
   }
 
