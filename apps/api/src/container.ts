@@ -40,6 +40,8 @@ export interface AppContainer {
   projectionService: ProjectionService
   /** Audit plugin instance — registered in server.ts before routes */
   auditPlugin: typeof auditPlugin
+  /** E2: in-memory flag for concurrent-trigger guard on POST /api/v1/promote/trigger */
+  promotionInFlight: boolean
 }
 
 /**
@@ -58,6 +60,7 @@ export interface StubContainerOverrides {
   projectionService?: ProjectionService
   freshnessService?: FreshnessService
   permissionsRepo?: PermissionsRepo
+  promotionInFlight?: boolean
 }
 
 /** Drift detection service interface */
@@ -227,6 +230,7 @@ export function buildContainer(config: ContainerConfig): AppContainer {
     freshnessService,
     permissionsRepo,
     auditPlugin,
+    promotionInFlight: false,
   }
 }
 

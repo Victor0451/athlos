@@ -113,6 +113,13 @@
       "when": 1782341000000,
       "tag": "0015_gastos",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1782341100000,
+      "tag": "0016_promoted_at",
+      "breakpoints": true
     }
   ]
 }

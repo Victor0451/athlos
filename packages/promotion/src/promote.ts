@@ -5,6 +5,7 @@
  * typed Drizzle inserts, resolves FKs via bulk in-memory lookups, and
  * writes to master tables in batches of 1000 with ON CONFLICT DO NOTHING.
  */
+import { sql } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { buildFkMap } from './fk-lookup.ts'
 import { loadExistingNaturalKeys, naturalKey } from './dedup.ts'
@@ -79,15 +80,22 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
     // 1. Bulk FK lookup (1 SELECT per domain — the O(1) optimization)
     const fkMap = await buildFkMap(db, domain)
 
-    // 2. Read all projection rows for this domain (full scan; E2 will add `promoted_at` filter)
+    // 2. Read all projection rows for this domain, FILTERED by raw_events.promoted_at IS NULL
+    //    (E2: per-row idempotency — skips rows already stamped as promoted)
     const { schema: projSchema, table: projTableName } = PROJECTION_TABLE[domain]
     // Projection tables are created lazily by rebuild.ts with literal dots in the
     // table name (e.g. `public."socios.socios_projection"`). Quote schema and
     // table separately — DO NOT split on `.` (table names contain dots).
+    // The JOIN filters out rows that have already been promoted (promoted_at IS NOT NULL).
     const projectionRows =
       (
         await db.execute<{ source_key: string; payload: Record<string, unknown> }>(
-          `SELECT source_key, payload FROM "${projSchema}"."${projTableName}"`,
+          `SELECT pe.source_key, pe.payload
+           FROM "${projSchema}"."${projTableName}" pe
+           JOIN public.raw_events re
+             ON re.source_table = '${domain}'
+            AND re.source_key = pe.source_key
+            AND re.promoted_at IS NULL`,
         )
       ).rows ?? []
     result.attempted = projectionRows.length
@@ -95,14 +103,24 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
     // 3. Build dedup set (natural keys already in master — belt-and-suspenders with ON CONFLICT)
     const existingKeys = await loadExistingNaturalKeys(db, domain)
 
-    // 4. Transform + batch insert
+    // 4. Track successfully inserted source_keys for bulk UPDATE (E2)
+    const insertedSourceKeys: string[] = []
+
+    // 5. Transform + batch insert
     let buffer: unknown[] = []
+    let bufferKeys: string[] = []
     const flush = async () => {
       if (buffer.length === 0) return
       const inserted = await insertMasterBatch(db, domain, buffer)
       result.inserted += inserted
       result.skipped += buffer.length - inserted
+      // Track source_keys for successfully inserted rows (E2 bulk UPDATE)
+      if (inserted > 0) {
+        // The inserted keys are the first `inserted` entries in bufferKeys
+        insertedSourceKeys.push(...bufferKeys.slice(0, inserted))
+      }
       buffer = []
+      bufferKeys = []
     }
 
     const helpers: TransformHelpers = {
@@ -122,6 +140,7 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
         }
         const masterRow = transform(row.payload, helpers)
         buffer.push(masterRow)
+        bufferKeys.push(row.source_key)
         existingKeys.add(key)
       } catch (err) {
         result.failed++
@@ -130,6 +149,17 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
       if (buffer.length >= BATCH_SIZE) await flush()
     }
     await flush()
+
+    // 6. Bulk UPDATE: stamp all successfully-promoted rows in raw_events (E2)
+    //    Single UPDATE per domain — atomic, fast (uses idx_raw_events_source_key)
+    if (insertedSourceKeys.length > 0) {
+      await db.execute(sql`
+        UPDATE public.raw_events
+        SET promoted_at = now()
+        WHERE source_table = ${domain}
+          AND source_key = ANY(${insertedSourceKeys}::varchar[])
+      `)
+    }
   } catch (err) {
     result.errors.push({ sourceKey: '*', reason: errMsg(err) })
   }
