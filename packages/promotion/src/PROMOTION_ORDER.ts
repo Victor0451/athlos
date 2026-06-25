@@ -2,10 +2,10 @@
  * PROMOTION_ORDER — topological sort of domains by FK dependency.
  *
  * socios (no FK) → ctacte (FK: socio_id → socios.id) → ctacte1 (FK: ctacte_id → ctacte.id)
- * escuela, deportes, locacion, caja are independent FK trees (no required FK in v1.0).
+ * escuela, deportes, locacion, caja, gastos are independent FK trees (no required FK in v1.0).
  *
  * E1b2a extends: escuela, deportes, locacion, caja (4 NEW independent domains).
- * E1b2b will add: gastos.
+ * E1b2b adds: gastos (flat expense ledger, no FK in v1, placed between caja and ctacte).
  */
 import type { Domain } from './promote.ts'
 import type { TransformHelpers } from './transform-helpers.ts'
@@ -16,6 +16,7 @@ import { transformEscuela } from './transforms/escuela.ts'
 import { transformDeportes } from './transforms/deportes.ts'
 import { transformLocacion } from './transforms/locacion.ts'
 import { transformCaja } from './transforms/caja.ts'
+import { transformGastos } from './transforms/gastos.ts'
 
 export type { Domain }
 
@@ -25,6 +26,7 @@ export const PROMOTION_ORDER: readonly Domain[] = [
   'deportes',
   'locacion',
   'caja',
+  'gastos',
   'ctacte',
   'ctacte1',
 ] as const
@@ -45,6 +47,7 @@ export const PROJECTION_TABLE: Record<Domain, { schema: string; table: string }>
   deportes: { schema: 'public', table: 'deportes.deportes_projection' },
   locacion: { schema: 'public', table: 'socios.locacion_projection' },
   caja: { schema: 'public', table: 'tesoreria.caja_projection' },
+  gastos: { schema: 'public', table: 'tesoreria.gastos_projection' },
   ctacte: { schema: 'public', table: 'tesoreria.ctacte_projection' },
   ctacte1: { schema: 'public', table: 'tesoreria.ctacte1_projection' },
 }
@@ -57,6 +60,7 @@ export const DOMAIN_TRANSFORMS: Record<Domain, TransformFn> = {
   deportes: transformDeportes as TransformFn,
   locacion: transformLocacion as TransformFn,
   caja: transformCaja as TransformFn,
+  gastos: transformGastos as TransformFn,
   ctacte: transformCtacte as TransformFn,
   ctacte1: transformCtacte1 as TransformFn,
 }

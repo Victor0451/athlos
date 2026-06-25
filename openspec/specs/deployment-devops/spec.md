@@ -177,23 +177,26 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - AND the CLI SHALL print per-domain summary lines showing `attempted`, `inserted`, `skipped`, `failed`, and `durationMs`
 - AND the CLI SHALL exit with code 0 on success, or non-zero if any domain had `failed > 0`
 
-#### Scenario: Domain promotion order respects FK dependencies
+#### Scenario: Domain promotion order respects FK dependencies (8 domains — E1b2b rewrite)
 
-- GIVEN `pnpm db:promote` is executed
+- GIVEN `pnpm db:promote` is executed after E1b2b lands
 - WHEN domains are promoted in sequence
-- THEN `socios` SHALL be promoted first (no FK dependencies)
-- AND `escuela` SHALL be promoted second (independent FK tree — no required FK in v1.0)
-- AND `deportes` SHALL be promoted third (independent FK tree — no required FK in v1.0)
-- AND `locacion` SHALL be promoted fourth (independent FK tree — no required FK in v1.0)
-- AND `caja` SHALL be promoted fifth (independent FK tree — no required FK in v1.0; header-only in v1.0, 122 detail columns deferred)
-- AND `ctacte` SHALL be promoted sixth (depends on `socios.id`)
-- AND `ctacte1` SHALL be promoted seventh (depends on `ctacte.id`)
+- THEN `socios` SHALL be promoted first (no FK dependencies; populates 39,357 rows)
+- AND `escuela` SHALL be promoted second (independent FK tree — no required FK in v1.0; populates 66 rows)
+- AND `deportes` SHALL be promoted third (independent FK tree — no required FK in v1.0; populates 32 rows into existing `deportes.disciplinas` table)
+- AND `locacion` SHALL be promoted fourth (independent FK tree — no required FK in v1.0; populates 89 rows)
+- AND `caja` SHALL be promoted fifth (independent FK tree — no required FK in v1.0; header-only in v1.0, 122 detail columns deferred; populates 8,145 rows)
+- AND **`gastos` SHALL be promoted sixth (NEW in E1b2b — flat expense ledger, no FK in v1.0; populates 2,114 rows; 5-tuple natural key verified 2,114/2,114 = 100% unique)**
+- AND `ctacte` SHALL be promoted seventh (depends on `socios.id`; populates 326,275 rows)
+- AND `ctacte1` SHALL be promoted eighth (depends on `ctacte.id` via `cctcuenta`; populates ~138,742 rows in v1.0, partial due to N14 stale `entity_uuids`)
 - AND if any domain fails AND all attempted rows failed AND the domain is in `FK_BLOCKING_DOMAINS` (socios, ctacte), dependent domains SHALL NOT be attempted
-- AND the 4 NEW domains (escuela, deportes, locacion, caja) do NOT block each other — their failures do NOT short-circuit each other
+- AND the 5 NEW independent domains (escuela, deportes, locacion, caja, gastos) do NOT block each other — their failures do NOT short-circuit each other (verified: `gastos` has no FK dependency on `socios` / `ctacte` / any sibling)
 
 > **E1b1 (v0.5.2/v0.5.3) UPDATE (2026-06-24).** ctacte1 is wired. Migration 0013 added `cctcuenta` to `tesoreria.ctacte` + backfilled best-effort. Migration 0014 added `legacy_id text` + `UNIQUE INDEX` on `tesoreria.ctacte.legacy_id` and `tesoreria.ctacte1.legacy_id`. Cross-run idempotency works: re-running `pnpm db:promote` is a no-op (0 new inserts) via dedup pre-check + ON CONFLICT DO NOTHING.
 >
 > **E1b2a (v0.5.4) UPDATE (2026-06-25).** 4 NEW domains wired: escuela, deportes, locacion, caja. Migration 0014 (E1b2a) creates `socios.escuela` (per-school master, NO socio_id FK), adds `legacy_id` to `deportes.disciplinas` (table already existed), creates `socios.locacion` (per-socio address), and creates `tesoreria.caja_movimiento` (cash movement header with 4-tuple NK). Scope corrections: (C1) escuela is per-school master with NO `socio_id` FK — verified 0 of 66 projection rows have SOCNUMERO/SOCCARNET fields; (C3) caja NK is 4-tuple `(CAJNUMERO, CAJSECUENC, CAJFECHA, CAJHORA)` — the 3-tuple yields 7,957 distinct = 188 silent row losses, 4-tuple yields 8,145 distinct = 100% unique.
+>
+> **E1b2b (v0.5.5) UPDATE (2026-06-25) — FINAL SLICE E SYNC.** 8th domain wired: gastos. Migration `0015_gastos.sql` creates `tesoreria.gastos` (flat expense ledger, NO socio_id FK, NO ctacte FK in v1) + adds `legacy_id` column + 3 UNIQUE INDEXes (legacy_id, 5-tuple composite, cuenta+fecha) + 2 secondary INDEXes. Scope corrections: (C2) `gastos` NK is 5-tuple `(GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB)` — the 3-tuple yields 346 distinct (84% duplicates → silent loss of 1,768 rows), 5-tuple yields 2,114 distinct = 100% unique; (C7) `gastos` has NO ctacte FK — verified 0 of 165 distinct `GASCTAPRIN` match any `tesoreria.ctacte.cctcuenta` (GASCTAPRIN is accounting-plan code, e.g., `1111001`, `6001015`); (C8) `gastos` has NO `socio_id` FK in v1 — no `GASNUMSOC` / `SOCNUMERO` / `SOCCARNET` field in the 11-field payload, `socio_id` column exists (nullable, FK constraint deferred to N16) for future backfill.
 
 #### Scenario: Batched INSERT with deduplication
 
@@ -252,6 +255,63 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 - AND the projection table `public."tesoreria.caja_projection"` is schema-qualified
 - AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on the 4-tuple NK + `legacy_id UNIQUE INDEX`
 - AND v1.0 scope is header-only (122 detail columns deferred to v1.1)
+
+#### Scenario: Gastos domain promotion (flat expense ledger — NEW in E1b2b)
+
+- GIVEN `gastos` domain is being promoted
+- WHEN rows are read from `public."tesoreria.gastos_projection"` and written to `tesoreria.gastos`
+- THEN each row SHALL be transformed with **5-tuple natural key** `(GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB)` → `(tipo, cuenta, secuencia, fecha, comprob)`
+- AND the 5-tuple NK is CRITICAL: the 3-tuple `(GASTIPGAST, GASCTAPRIN, GASSECUENC)` yields only **346 distinct** values (84% duplicates → silent loss of 1,768 rows via `legacy_id` UNIQUE collision), while the **5-tuple yields 2,114 distinct = 100% unique** (verified against live data 2026-06-25)
+- AND `legacy_id = deterministicUuid('gastos:tipo|cuenta|secuencia|stadium|comprob')` using all 5 NK components
+- AND `importe` SHALL be mapped from `GASIMPORTE` (NUMERIC(14,2), values 0.01..3000, no negatives)
+- AND `iva` SHALL be mapped from `GASIVA` (NUMERIC(14,2), mostly 0; default `'0.00'`)
+- AND `ingreso_bruto` SHALL be mapped from `GASINGBRUT` (20-character accounting-grid debit string; stored as `text`, NOT numeric)
+- AND `concepto` SHALL be mapped from `GASCONCEPT` (free text — operator description; fallback `'(sin concepto)'` if empty)
+- AND `tipo_cuenta` SHALL be mapped from `GASTIPCTA` (sentinel 0 for all 2,114 rows; nullable)
+- AND `cuenta_auxiliar` SHALL be mapped from `GASCTAAUXI` (sentinel for most rows; nullable)
+- AND **there is NO `socio_id` FK constraint** in `tesoreria.gastos` (column exists as nullable `uuid`, FK constraint deferred to N16 — verified live: 0 of 2,114 projection rows have `GASNUMSOC` / `SOCNUMERO` / `SOCCARNET` field; scope correction #C8)
+- AND **there is NO `ctacte` FK constraint** in `tesoreria.gastos` (verified live: 0 of 165 distinct `GASCTAPRIN` match any `tesoreria.ctacte.cctcuenta`; `GASCTAPRIN` is accounting-plan code, NOT socio carnet; scope correction #C7)
+- AND the projection table `public."tesoreria.gastos_projection"` is schema-qualified
+- AND idempotency is guaranteed via `ON CONFLICT DO NOTHING` on the 5-tuple NK (`gastos_5tuple_unique` UNIQUE INDEX) + `gastos_legacy_id_unique` UNIQUE INDEX — defense in depth (3 layers: dedup pre-check → 5-tuple UNIQUE → legacy_id UNIQUE)
+- AND `errors[]` SHALL be empty (no FK failures possible — flat ledger)
+
+---
+
+### Requirement: tesoreria.gastos master table (NEW in E1b2b)
+
+The system SHALL provide a `tesoreria.gastos` master table as a flat accounting expense ledger populated from `public."tesoreria.gastos_projection"` via the `gastos` promotion domain. The table SHALL store per-row expense entries (VFP GAS* fields) with a 5-tuple natural key encoded as `legacy_id`, and SHALL have NO foreign key constraints to `socios.socios` or `tesoreria.ctacte` in v1 (flat-ledger scope per corrections #C7 and #C8).
+
+The migration creating this table (`packages/db/drizzle/0015_gastos.sql`) SHALL be hand-written SQL (NOT drizzle-kit generated, per E1b1 LESSON re: `_journal.json` tracking mismatch with hand-written SQL), SHALL be idempotent (`CREATE TABLE IF NOT EXISTS` + `CREATE UNIQUE INDEX IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS`), and SHALL be applied via `psql` against the target database. The migration SHALL create 1 NEW table + 3 UNIQUE INDEXes (`legacy_id`, 5-tuple composite, `cuenta+fecha` lookup) + 2 secondary INDEXes (`cuenta+fecha`, `socio_id` partial).
+
+#### Scenario: gastos master table created via migration 0015
+
+- GIVEN migration `0015_gastos.sql` has NOT been applied yet
+- WHEN `PGPASSWORD=athlos psql -h 192.168.1.102 -U athlos -d athlos -f packages/db/drizzle/0015_gastos.sql` is executed
+- THEN the `tesoreria.gastos` table SHALL be created with 15 columns: `id` (uuid PK), `tipo` (int NOT NULL), `tipo_cuenta` (int NOT NULL), `cuenta_principal` (text NOT NULL), `cuenta_auxiliar` (int nullable), `secuencia` (int NOT NULL DEFAULT 0), `fecha` (date NOT NULL), `comprobante` (text NOT NULL DEFAULT ''), `concepto` (text nullable), `importe` (text NOT NULL DEFAULT '0.00'), `iva` (text DEFAULT '0.00' NOT NULL), `ingreso_bruto` (text nullable), `socio_id` (uuid nullable, NO FK constraint), `legacy_id` (text nullable), `created_at` (timestamptz NOT NULL DEFAULT now())
+- AND 3 UNIQUE INDEXes SHALL be created: `gastos_legacy_id_unique` (on `legacy_id`), `gastos_5tuple_unique` (on `(tipo, cuenta_principal, secuencia, fecha, comprobante)`), `gastos_cuenta_fecha_idx` (on `(cuenta_principal, fecha)`)
+- AND 1 partial INDEX SHALL be created: `gastos_socio_id_idx` on `socio_id` WHERE `socio_id IS NOT NULL`
+- AND running the same SQL twice SHALL be a no-op (idempotent — `IF NOT EXISTS` guards)
+- AND `\d tesoreria.gastos` SHALL show NO foreign key constraints (flat ledger)
+
+#### Scenario: gastos promotion populates master table with 5-tuple NK
+
+- GIVEN migration `0015_gastos.sql` has been applied and `tesoreria.gastos` table is empty
+- AND `public."tesoreria.gastos_projection"` contains 2,114 rows
+- WHEN `pnpm db:promote` runs the `gastos` domain (6th in PROMOTION_ORDER)
+- THEN ~2,114 rows SHALL be inserted into `tesoreria.gastos` (1:1 with projection — no FK failures possible)
+- AND `legacy_id` SHALL be a deterministic UUID5 from the 5-tuple `(GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB)` via `deterministicUuid('gastos:tipo|cuenta|secuencia|stadium|comprob')`
+- AND `SELECT count(DISTINCT legacy_id) FROM tesoreria.gastos` SHALL return 2,114 (100% unique — 5-tuple NK verified live)
+- AND `SELECT count(*) FROM tesoreria.gastos WHERE socio_id IS NOT NULL` SHALL return 0 (no source field; per scope correction #C8)
+- AND `errors[]` SHALL be empty (no FK failures possible)
+- AND `pnpm db:promote` SHALL exit 0 on success
+
+#### Scenario: gastos re-promotion is idempotent (no new inserts on 2nd/3rd run)
+
+- GIVEN `pnpm db:promote` has been run once and `tesoreria.gastos` contains 2,114 rows
+- WHEN `pnpm db:promote` is run a 2nd time
+- THEN `gastos` SHALL appear in the per-domain output with `{domain: 'gastos', attempted: 2114, inserted: 0, skipped: 2114, failed: 0, errors: []}`
+- AND `SELECT count(*) FROM tesoreria.gastos` SHALL STILL be 2,114 (no new rows; dedup pre-check + 5-tuple UNIQUE INDEX + legacy_id UNIQUE INDEX catch duplicates)
+- AND `bash scripts/verify-slice.sh` SHALL exit 0 (TRUE idempotency verified)
 
 ---
 
@@ -548,3 +608,5 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 28. **Slice D NEW**: After a successful deploy, `docker images ghcr.io/victor0451/athlos-api` on the server shows all 3 tags (`:latest`, `:vX.Y.Z` when applicable, `:main-<sha>`)
 29. **Slice D NEW**: Auto-rollback restores the previous image tag on `/health/ready` failure within 60s; `/tmp/deploy-fail-<timestamp>.log` exists on the server with the failed container's logs; the workflow output logs previous and current image tags
 30. **Slice D NEW**: Destructive gate fails the PR check when the `db-destructive` label is present AND migration files changed AND no `*.sql.gz` backup artifact URL is in PR comments AND no `/backup-skipped` directive is in the PR body; the `/backup-skipped` override is logged in workflow output for post-mortem audit
+47. **E1b2b NEW**: `pnpm db:promote` against the test DB (`192.168.1.102:5432/athlos`) populates `tesoreria.gastos` with exactly **2,114 rows**; the CLI stdout shows `{domain: 'gastos', inserted: 2114, skipped: 0, failed: 0, errors: []}` in the per-domain JSON output. The row count of 2,114 (NOT 346) verifies the 5-tuple NK is correctly applied (per scope correction #C2; 3-tuple would yield 346 distinct via `legacy_id` UNIQUE collision).
+48. **E1b2b NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) after E1b2b lands — promotion works for all **8 domains** + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables). `scripts/verify-slice.sh` already includes `tesoreria.gastos` in `MASTER_TABLES` (updated in commit `061be50`).

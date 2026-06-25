@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4] — 2026-06-25
+
+### Added
+
+- **4 NEW master tables wired**: `socios.escuela` (66 rows), `deportes.disciplinas` (32 rows), `socios.locacion` (89 rows), `tesoreria.caja_movimiento` (8,145 rows). Total: 8,332 NEW rows via `pnpm db:promote`.
+- **Migration `0014_new_masters.sql`**: 3 NEW tables + `legacy_id` columns + 7 UNIQUE INDEXes. Idempotent (IF NOT EXISTS).
+- **4 NEW transforms**: `transformEscuela`, `transformDeportes`, `transformLocacion`, `transformCaja`.
+- **PROMOTION_ORDER extended to 7 domains**: `['socios', 'escuela', 'deportes', 'locacion', 'caja', 'ctacte', 'ctacte1']`.
+- **Dedup + FK lookup extended**: 4 NEW `naturalKey` branches + 4 NEW `loadExistingNaturalKeys` branches.
+- **Scope correction #C1**: `escuela` is per-school master with NO `socio_id` FK (verified: 0 projection rows have SOCNUMERO/SOCCARNET fields).
+- **Scope correction #C3**: `caja` natural key is **4-tuple** `(CAJNUMERO, CAJSECUENC, CAJFECHA, CAJHORA)`; the 3-tuple silently loses 188 rows (7,957 distinct vs 8,145 total).
+- **Cross-run idempotency**: re-running `pnpm db:promote` inserts 0 rows in all 4 NEW domains (via `legacy_id` UNIQUE INDEX + ON CONFLICT DO NOTHING).
+- **verify-slice.sh**: NEW post-merge idempotency gate (introduced in commit b26896c).
+
+### Changed
+
+- **`packages/promotion/src/promote.ts`**: cascade short-circuit condition fixed (`inserted === 0 && failed > 0 && failed === attempted`).
+- **`packages/promotion/src/fk-lookup.ts`**: replaced stale entity_uuids JOIN with direct `SELECT DISTINCT ON (cctcuenta) cctcuenta, id FROM tesoreria.ctacte`.
+
+### Spec
+
+- `openspec/specs/deployment-devops/spec.md` — atomic sync: PROMOTION_ORDER scenario rewritten to 7 domains + 4 NEW domain scenarios + 10 NEW success criteria (#37-46).
+
+## [0.5.5] — 2026-06-25
+
+### Added
+
+- **`tesoreria.gastos` master table** (E1b2b): flat expense ledger, 2,114 rows, 5-tuple natural key `(GASTIPGAST|GASCTAPRIN|GASSECUENC|GASFECHA|GASCOMPROB)`.
+- **Migration `0015_gastos.sql`**: creates `tesoreria.gastos` + 3 UNIQUE INDEXes (legacy_id, 5-tuple composite, cuenta+fecha) + 2 secondary INDEXes. Idempotent.
+- **`transformGastos`**: 5-tuple NK transform, no FK lookups (flat ledger).
+- **PROMOTION_ORDER extended to 8 domains**: `['socios', 'escuela', 'deportes', 'locacion', 'caja', 'gastos', 'ctacte', 'ctacte1']`.
+- **Dedup extended**: `gastos` `naturalKey` (5-tuple) + `loadExistingNaturalKeys` (reads legacy_id from `tesoreria.gastos`).
+- **Scope correction #C2**: `gastos` NK is **5-tuple** (verified 2,114/2,114 = 100% unique); 3-tuple yields only 346 distinct (84% dupes — would silently lose 1,768 rows).
+- **Scope correction #C7**: `gastos` has NO `ctacte` FK (verified: 0 of 165 distinct GASCTAPRIN match any `tesoreria.ctacte.cctcuenta`; GASCTAPRIN is accounting-plan code, NOT socio carnet).
+- **Scope correction #C8**: `gastos` has NO `socio_id` FK in v1 (no source field in 11-field payload; column reserved for future N16 backfill).
+- **FINAL atomic canonical spec sync**: `openspec/specs/deployment-devops/spec.md` — 8-domain PROMOTION_ORDER scenario + 1 NEW `tesoreria.gastos` requirement + 1 NEW Gastos scenario + 2 NEW success criteria (#47-48). **Slice E closed.**
+
+### Spec
+
+- `openspec/specs/deployment-devops/spec.md` — FINAL atomic sync (B1b LESSON #1): all 8 domains in PROMOTION_ORDER + gastos flat-ledger scenario + scope corrections documented + E2 deferred markers. No further Slice E atomic syncs planned.
+
+### Smoke Test Results (3 runs against 192.168.1.102/athlos test DB)
+
+- **1st run**: gastos inserted=2,114 (all other 7 domains: 0 inserted — already populated from prior slices).
+- **2nd run**: all 8 domains → 0 inserted (idempotent via legacy_id UNIQUE). **Idempotency verified.**
+- **3rd run**: all 8 domains → 0 inserted. **Idempotency verified.**
+- `bash scripts/verify-slice.sh`: **PASS** (exit 0).
+
 ## [0.5.3] — 2026-06-24
 
 ### Added

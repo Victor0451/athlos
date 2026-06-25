@@ -68,7 +68,7 @@ export type { Socio, NewSocio, Escuela, NewEscuela, Locacion, NewLocacion } from
 export { contabilidadSchema } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
-export { tesoreriaSchema, ctacteTipo, ctacte, ctacte1, cajaMovimiento } from './tesoreria'
+export { tesoreriaSchema, ctacteTipo, ctacte, ctacte1, cajaMovimiento, gastos } from './tesoreria'
 export type {
   Ctacte,
   NewCtacte,
@@ -76,6 +76,8 @@ export type {
   NewCtacte1,
   CajaMovimiento,
   NewCajaMovimiento,
+  Gastos,
+  NewGastos,
 } from './tesoreria'
 
 // deportes ─────────────────────────────────────────────────────
