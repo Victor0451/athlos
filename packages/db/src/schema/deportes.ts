@@ -31,10 +31,12 @@ export const disciplinas = deportesSchema.table(
     id: uuid('id').primaryKey().defaultRandom(),
     codigo: text('codigo').notNull(),
     nombre: text('nombre').notNull(),
+    legacyId: text('legacy_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     codigoUnique: uniqueIndex('disciplinas_codigo_unique').on(table.codigo),
+    legacyIdUnique: uniqueIndex('disciplinas_legacy_id_unique').on(table.legacyId),
   }),
 )
 
