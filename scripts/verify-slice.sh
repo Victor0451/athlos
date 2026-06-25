@@ -31,6 +31,7 @@ MASTER_TABLES=(
   "deportes.disciplinas"
   "socios.locacion"
   "tesoreria.caja_movimiento"
+  "tesoreria.gastos"
   "tesoreria.ctacte"
   "tesoreria.ctacte1"
 )
@@ -38,9 +39,31 @@ MASTER_TABLES=(
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 # Count rows in a master table (schema-qualified).
+# NOTE: PostgreSQL parses schema.table as a single quoted identifier unless
+# each part is quoted separately: "schema"."table" (NOT "schema.table").
+# We split on the first dot to handle both single-segment and schema-qualified
+# table names. Returns 0 if the table does NOT exist (useful during E1b2b
+# rollout before tesoreria.gastos is created).
 count_rows() {
   local table="$1"
-  eval $PSQL "\"SELECT count(*) FROM $table\"" 2>/dev/null || echo "ERR"
+  local schema="" name=""
+  if [[ "$table" == *.* ]]; then
+    schema="${table%%.*}"
+    name="${table#*.}"
+  else
+    name="$table"
+  fi
+  local result
+  if [ -n "$schema" ]; then
+    result=$(PGPASSWORD=athlos psql "${DB_URL}" -t -A -c "SELECT count(*) FROM \"$schema\".\"$name\";" 2>/dev/null || true)
+  else
+    result=$(PGPASSWORD=athlos psql "${DB_URL}" -t -A -c "SELECT count(*) FROM \"$name\";" 2>/dev/null || true)
+  fi
+  if [ -z "$result" ] || ! [[ "$result" =~ ^[0-9]+$ ]]; then
+    echo "0"
+  else
+    echo "$result"
+  fi
 }
 
 # Print a separator line.
