@@ -21,8 +21,12 @@
  * loadExistingNaturalKeys reads existing legacy_ids from master so re-runs
  * skip already-promoted rows (pre-check) AND ON CONFLICT DO NOTHING skips
  * any duplicates that slipped through (defense in depth).
+ *
+ * E2 (this file): For ctacte/ctacte1, ALSO checks raw_events.promoted_at IS NOT NULL
+ * as a secondary cross-check (belt-and-suspenders with master.legacy_id).
+ * NOTE: Full cross-domain ctacte↔ctacte1 dedup requires raw_events.legacy_id (E3+).
  */
-import { isNotNull } from 'drizzle-orm'
+import { isNotNull, sql } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import {
   ctacte,
@@ -94,7 +98,22 @@ export function naturalKey(domain: Domain, payload: Record<string, unknown>): st
   return ''
 }
 
-/** Load existing natural keys already in master table (for dedup pre-check). */
+/**
+ * Load source_keys from raw_events where promoted_at IS NOT NULL (E2).
+ * Belt-and-suspenders secondary cross-check for ctacte/ctacte1.
+ * NOTE: Full ctacte↔ctacte1 cross-domain dedup requires raw_events.legacy_id (E3+).
+ */
+async function loadPromotedSourceKeys(db: Db, domain: Domain): Promise<Set<string>> {
+  const rows = (await db.execute(
+    sql`SELECT source_key FROM public.raw_events WHERE source_table = ${domain} AND promoted_at IS NOT NULL`,
+  )) as unknown as { rows: { source_key: string }[] }
+  return new Set(rows.rows.map((r) => r.source_key))
+}
+
+/** Load existing natural keys already in master table (for dedup pre-check).
+ *  E2: for ctacte/ctacte1, MERGES master.legacy_id keys with raw_events.promoted_at
+ *  source_keys as a secondary cross-check.
+ */
 export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<Set<string>> {
   if (domain === 'socios') {
     const rows = await db.select({ numeroSocio: socios.numeroSocio }).from(socios)
@@ -106,7 +125,13 @@ export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<S
       .select({ legacyId: ctacte.legacyId })
       .from(ctacte)
       .where(isNotNull(ctacte.legacyId))
-    return new Set(rows.map((r) => r.legacyId).filter((id): id is string => id !== null))
+    const legacyKeys = new Set(
+      rows.map((r) => r.legacyId).filter((id): id is string => id !== null),
+    )
+    // E2: merge raw_events.promoted_at source_keys as secondary cross-check
+    const promotedKeys = await loadPromotedSourceKeys(db, domain)
+    for (const k of promotedKeys) legacyKeys.add(k)
+    return legacyKeys
   }
   if (domain === 'ctacte1') {
     // Load existing legacy_ids for cross-run dedup
@@ -114,7 +139,13 @@ export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<S
       .select({ legacyId: ctacte1.legacyId })
       .from(ctacte1)
       .where(isNotNull(ctacte1.legacyId))
-    return new Set(rows.map((r) => r.legacyId).filter((id): id is string => id !== null))
+    const legacyKeys = new Set(
+      rows.map((r) => r.legacyId).filter((id): id is string => id !== null),
+    )
+    // E2: merge raw_events.promoted_at source_keys as secondary cross-check
+    const promotedKeys = await loadPromotedSourceKeys(db, domain)
+    for (const k of promotedKeys) legacyKeys.add(k)
+    return legacyKeys
   }
   if (domain === 'escuela') {
     const rows = await db

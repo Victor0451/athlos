@@ -207,6 +207,8 @@ export const rawEvents = pgTable(
      *  the scheduled job). Set by the pipeline on every insert. */
     importBatch: uuid('import_batch').notNull(),
     importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+    // NEW (E2): per-row promotion audit column. NULL = unpromoted; NOT NULL = promoted.
+    promotedAt: timestamp('promoted_at', { withTimezone: true }),
   },
   (table) => ({
     /** Idempotency key — re-importing identical content is a no-op. */
@@ -219,6 +221,8 @@ export const rawEvents = pgTable(
     importBatchIdx: index('idx_raw_events_import_batch').on(table.importBatch),
     /** For "latest event per source key" (lineage, projection rebuild). */
     sourceKeyIdx: index('idx_raw_events_source_key').on(table.sourceTable, table.sourceKey),
+    // NEW (E2): fast lookup for the per-row audit query
+    promotedAtIdx: index('raw_events_promoted_at_idx').on(table.promotedAt),
   }),
 )
 
