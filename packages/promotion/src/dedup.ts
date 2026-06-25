@@ -32,9 +32,18 @@ import {
   locacion,
   disciplinas,
   cajaMovimiento,
+  gastos,
 } from '@athlos/db/schema'
 
-export type Domain = 'socios' | 'ctacte' | 'ctacte1' | 'escuela' | 'deportes' | 'locacion' | 'caja'
+export type Domain =
+  | 'socios'
+  | 'ctacte'
+  | 'ctacte1'
+  | 'escuela'
+  | 'deportes'
+  | 'locacion'
+  | 'caja'
+  | 'gastos'
 
 /** Natural key extractor from VFP jsonb payload (used to derive legacy_id). */
 export function naturalKey(domain: Domain, payload: Record<string, unknown>): string {
@@ -70,6 +79,16 @@ export function naturalKey(domain: Domain, payload: Record<string, unknown>): st
       payload['CAJSECUENC'] ?? '',
       payload['CAJFECHA'] ?? '',
       payload['CAJHORA'] ?? '',
+    ].join('|')
+  }
+  if (domain === 'gastos') {
+    // NEW (E1b2b): 5-tuple (verified 100% unique; 3-tuple had 1,768 duplicates)
+    return [
+      payload['GASTIPGAST'] ?? '',
+      payload['GASCTAPRIN'] ?? '',
+      payload['GASSECUENC'] ?? '',
+      payload['GASFECHA'] ?? '',
+      payload['GASCOMPROB'] ?? '',
     ].join('|')
   }
   return ''
@@ -123,6 +142,13 @@ export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<S
       .select({ legacyId: cajaMovimiento.legacyId })
       .from(cajaMovimiento)
       .where(isNotNull(cajaMovimiento.legacyId))
+    return new Set(rows.map((r) => r.legacyId).filter((id): id is string => id !== null))
+  }
+  if (domain === 'gastos') {
+    const rows = await db
+      .select({ legacyId: gastos.legacyId })
+      .from(gastos)
+      .where(isNotNull(gastos.legacyId))
     return new Set(rows.map((r) => r.legacyId).filter((id): id is string => id !== null))
   }
   return new Set<string>()

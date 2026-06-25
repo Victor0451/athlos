@@ -64,6 +64,11 @@ async function cleanupNewDomainRows() {
   await db.execute(
     sql`DELETE FROM "public"."deportes.deportes_projection" WHERE source_key LIKE 'test-%'`,
   )
+  // E1b2b: gastos cleanup
+  await db.execute(sql`DELETE FROM tesoreria.gastos WHERE legacy_id LIKE 'test-%'`)
+  await db.execute(
+    sql`DELETE FROM "public"."tesoreria.gastos_projection" WHERE source_key LIKE 'test-%'`,
+  )
 }
 
 afterEach(async () => {
@@ -82,6 +87,8 @@ const PROJECTION_TABLES = [
   `"deportes"."deportes_projection" (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_table varchar(32) NOT NULL, source_key varchar(64) NOT NULL, payload jsonb NOT NULL, imported_at timestamp with time zone NOT NULL DEFAULT now())`,
   `"socios"."locacion_projection" (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_table varchar(32) NOT NULL, source_key varchar(64) NOT NULL, payload jsonb NOT NULL, imported_at timestamp with time zone NOT NULL DEFAULT now())`,
   `"tesoreria"."caja_projection" (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_table varchar(32) NOT NULL, source_key varchar(64) NOT NULL, payload jsonb NOT NULL, imported_at timestamp with time zone NOT NULL DEFAULT now())`,
+  // E1b2b: gastos projection table
+  `"tesoreria"."gastos_projection" (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_table varchar(32) NOT NULL, source_key varchar(64) NOT NULL, payload jsonb NOT NULL, imported_at timestamp with time zone NOT NULL DEFAULT now())`,
 ]
 
 beforeAll(async () => {
@@ -639,6 +646,125 @@ describe.skip('Promotion Pipeline — E1b2a (escuela, deportes, locacion, caja)'
     expect(cajaResult?.attempted).toBeGreaterThan(0)
     // caja: inserted the valid row
     expect(cajaResult?.inserted).toBe(1)
+  })
+})
+
+// E1b2b: Gastos (tesoreria.gastos — flat expense ledger, 5-tuple NK)
+// SKIPPED (2026-06-25): Per E1b2a LESSON (commit b26896c) — destructive TRUNCATE bug fix.
+// Tests use `test-%` prefix and per-test cleanup (afterEach). Production data is the
+// test data. REAL gate is `bash scripts/verify-slice.sh` which verifies 2,114 rows.
+describe.skip('Promotion Pipeline — E1b2b (gastos)', () => {
+  // T19: promoteDomain('gastos') happy path
+  it('T19: promoteDomain(gastos) inserts one row with correct field mapping + idempotent on 2nd run', async () => {
+    const sourceKey = 'test-T19-1'
+
+    await insertProjectionRow({
+      schema: 'public',
+      table: 'tesoreria.gastos_projection',
+      sourceKey,
+      payload: {
+        GASTIPGAST: 1,
+        GASCTAPRIN: '1111001',
+        GASSECUENC: 0,
+        GASFECHA: '20031015',
+        GASCOMPROB: 'S/NUMERO',
+        GASIMPORTE: '100.00',
+        GASIVA: '21.00',
+        GASCONCEPT: 'TEST GASTOS T19',
+        GASTIPCTA: 0,
+        GASCTAAUXI: null,
+        GASINGBRUT: null,
+      },
+    })
+
+    const first = await promoteDomain(db, 'gastos')
+
+    expect(first.inserted).toBe(1)
+    expect(first.failed).toBe(0)
+    expect(first.skipped).toBe(0)
+
+    // Verify master table has correct field values and correct legacy_id
+    const rows = await db.execute(sql`
+      SELECT tipo, cuenta_principal, secuencia, fecha, comprobante, importe, iva, concepto, legacy_id
+      FROM tesoreria.gastos
+      WHERE legacy_id LIKE 'test-T19%'
+    `)
+    expect(rows.rows).toHaveLength(1)
+    const row = rows.rows[0] as Record<string, unknown>
+    expect(row['tipo']).toBe(1)
+    expect(row['cuenta_principal']).toBe('1111001')
+    expect(row['secuencia']).toBe(0)
+    expect(row['fecha']).toBe('2003-10-15')
+    expect(row['comprobante']).toBe('S/NUMERO')
+    expect(row['importe']).toBe('100.00')
+    expect(row['iva']).toBe('21.00')
+    expect(row['concepto']).toBe('TEST GASTOS T19')
+    expect(row['legacy_id']).toMatch(/^gastos:1\|1111001\|0\|/)
+
+    // 2nd run: idempotent — 0 new inserts
+    const second = await promoteDomain(db, 'gastos')
+    expect(second.inserted).toBe(0)
+    expect(second.skipped).toBe(1)
+  })
+
+  // T20: promoteDomain('gastos') 5-tuple dedup verified (NOT 3-tuple)
+  it('T20: promoteDomain(gastos) inserts 2 rows with same 3-tuple but DIFFERENT fecha+comprobante — proves 5-tuple NK', async () => {
+    // Both rows share same 3-tuple (GASTIPGAST=1, GASCTAPRIN=1111001, GASSECUENC=0)
+    // but DIFFERENT GASFECHA ('20031015' vs '20031016') and DIFFERENT GASCOMPROB
+    await insertProjectionRow({
+      schema: 'public',
+      table: 'tesoreria.gastos_projection',
+      sourceKey: 'test-T20-1',
+      payload: {
+        GASTIPGAST: 1,
+        GASCTAPRIN: '1111001',
+        GASSECUENC: 0,
+        GASFECHA: '20031015',
+        GASCOMPROB: 'S/NUMERO',
+        GASIMPORTE: '50.00',
+        GASIVA: '0.00',
+        GASTIPCTA: 0,
+        GASCTAAUXI: null,
+        GASINGBRUT: null,
+      },
+    })
+    await insertProjectionRow({
+      schema: 'public',
+      table: 'tesoreria.gastos_projection',
+      sourceKey: 'test-T20-2',
+      payload: {
+        GASTIPGAST: 1,
+        GASCTAPRIN: '1111001',
+        GASSECUENC: 0,
+        GASFECHA: '20031016',
+        GASCOMPROB: 'R01-9999',
+        GASIMPORTE: '75.00',
+        GASIVA: '0.00',
+        GASTIPCTA: 0,
+        GASCTAAUXI: null,
+        GASINGBRUT: null,
+      },
+    })
+
+    const result = await promoteDomain(db, 'gastos')
+
+    expect(result.inserted).toBe(2)
+    expect(result.failed).toBe(0)
+
+    // Both rows present with distinct legacy_id (5-tuple catches the 3-tuple collision)
+    const rows = await db.execute(sql`
+      SELECT legacy_id, tipo, cuenta_principal, secuencia, fecha, comprobante
+      FROM tesoreria.gastos
+      WHERE legacy_id LIKE 'test-T20%'
+      ORDER BY comprobante
+    `)
+    expect(rows.rows).toHaveLength(2)
+    const row1 = rows.rows[0] as Record<string, unknown>
+    const row2 = rows.rows[1] as Record<string, unknown>
+    // legacy_ids MUST differ — proves the 5-tuple is what distinguishes them (NOT 3-tuple)
+    expect(row1['legacy_id']).not.toBe(row2['legacy_id'])
+    expect(row1['legacy_id']).toMatch(/^gastos:1\|1111001\|0\|.*S\/NUMERO/)
+    expect(row2['legacy_id']).toMatch(/^gastos:1\|1111001\|0\|.*R01-9999/)
   })
 })
 

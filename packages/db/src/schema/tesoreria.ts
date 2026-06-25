@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   date,
@@ -151,3 +152,49 @@ export const cajaMovimiento = tesoreriaSchema.table(
 
 export type CajaMovimiento = typeof cajaMovimiento.$inferSelect
 export type NewCajaMovimiento = typeof cajaMovimiento.$inferInsert
+
+/**
+ * Flat accounting expense ledger with 5-tuple NK
+ * (GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB).
+ * Scope correction #C2: 5-tuple verified 2114/2114 = 100% unique (3-tuple = 346 distinct = 84% dupes).
+ * No ctacte FK (#C7: GASCTAPRIN is accounting-plan code, NOT socio carnet).
+ * No socio_id FK in v1 (#C8: no source field; socio_id column reserved for future N16 backfill).
+ * Migration 0015 creates table + 3 UNIQUE INDEXes (legacy_id, 5-tuple, cuenta+fecha) + 1 partial socio_id index.
+ */
+export const gastos = tesoreriaSchema.table(
+  'gastos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tipo: integer('tipo').notNull(),
+    tipoCuenta: integer('tipo_cuenta').notNull(),
+    cuentaPrincipal: text('cuenta_principal').notNull(),
+    cuentaAuxiliar: integer('cuenta_auxiliar'),
+    secuencia: integer('secuencia').notNull().default(0),
+    comprobante: text('comprobante').notNull().default(''),
+    fecha: date('fecha').notNull(),
+    concepto: text('concepto'),
+    importe: text('importe').notNull().default('0.00'),
+    iva: text('iva').default('0.00').notNull(),
+    ingresoBruto: text('ingreso_bruto'),
+    socioId: uuid('socio_id'), // NULLABLE; FK constraint deferred to N16
+    legacyId: text('legacy_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    legacyIdUnique: uniqueIndex('gastos_legacy_id_unique').on(table.legacyId),
+    tupleUnique: uniqueIndex('gastos_5tuple_unique').on(
+      table.tipo,
+      table.cuentaPrincipal,
+      table.secuencia,
+      table.fecha,
+      table.comprobante,
+    ),
+    cuentaFechaIdx: index('gastos_cuenta_fecha_idx').on(table.cuentaPrincipal, table.fecha),
+    socioIdIdx: index('gastos_socio_id_idx')
+      .on(table.socioId)
+      .where(sql`${table.socioId} IS NOT NULL`),
+  }),
+)
+
+export type Gastos = typeof gastos.$inferSelect
+export type NewGastos = typeof gastos.$inferInsert
