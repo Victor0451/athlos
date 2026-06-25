@@ -61,15 +61,22 @@ export { jobRuns } from './job-runs'
 export type { JobRun, NewJobRun, JobRunStatus, JobTrigger } from './job-runs'
 
 // socios ───────────────────────────────────────────────────────
-export { sociosSchema, socioEstado, socios } from './socios'
-export type { Socio, NewSocio } from './socios'
+export { sociosSchema, socioEstado, socios, escuela, locacion } from './socios'
+export type { Socio, NewSocio, Escuela, NewEscuela, Locacion, NewLocacion } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
 export { contabilidadSchema } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
-export { tesoreriaSchema, ctacteTipo, ctacte, ctacte1 } from './tesoreria'
-export type { Ctacte, NewCtacte, Ctacte1, NewCtacte1 } from './tesoreria'
+export { tesoreriaSchema, ctacteTipo, ctacte, ctacte1, cajaMovimiento } from './tesoreria'
+export type {
+  Ctacte,
+  NewCtacte,
+  Ctacte1,
+  NewCtacte1,
+  CajaMovimiento,
+  NewCajaMovimiento,
+} from './tesoreria'
 
 // deportes ─────────────────────────────────────────────────────
 export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'

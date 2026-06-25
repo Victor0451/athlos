@@ -1,4 +1,14 @@
-import { date, pgSchema, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import {
+  date,
+  integer,
+  numeric,
+  pgSchema,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from 'drizzle-orm/pg-core'
 
 /**
  * `socios` schema — members (socios) of Club Atlético Gorriti.
@@ -54,3 +64,82 @@ export const socios = sociosSchema.table(
 
 export type Socio = typeof socios.$inferSelect
 export type NewSocio = typeof socios.$inferInsert
+
+/**
+ * Per-school master table (NO socio_id FK).
+ * Scope correction #C1: escuela is per-school master, NOT per-socio enrollment.
+ * The 66 distinct ESCCODIGO values = 100% unique NK.
+ * deporte_codigo is nullable integer with NO FK constraint (Q9 LOCKED).
+ */
+export const escuela = sociosSchema.table(
+  'escuela',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codigo: integer('codigo').notNull(),
+    nombre: text('nombre').notNull(),
+    deporteCodigo: integer('deporte_codigo'),
+    estado: varchar('estado', { length: 1 }).notNull(),
+    cuotaSocial: numeric('cuota_social', { precision: 14, scale: 2 }),
+    cobertura: numeric('cobertura', { precision: 14, scale: 2 }),
+    contribucion: numeric('contribucion', { precision: 14, scale: 2 }),
+    importeEscolar: numeric('importe_escolar', { precision: 14, scale: 2 }),
+    otroContrib: numeric('otro_contrib', { precision: 14, scale: 2 }),
+    claveInscripcion: numeric('clave_inscripcion', { precision: 14, scale: 2 }),
+    fechaEscolar: date('fecha_escolar'),
+    entrenadorCodigo: integer('entrenador_codigo'),
+    escuelaNumero: integer('escuela_numero'),
+    instructor: text('instructor'),
+    legacyId: text('legacy_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    codigoUnique: uniqueIndex('escuela_codigo_unique').on(table.codigo),
+    legacyIdUnique: uniqueIndex('escuela_legacy_id_unique').on(table.legacyId),
+  }),
+)
+
+export type Escuela = typeof escuela.$inferSelect
+export type NewEscuela = typeof escuela.$inferInsert
+
+/**
+ * Per-socio address/location with composite NK (LCNCTAPRIN, LCNNUMERO).
+ * 89 distinct composite values = 100% unique NK.
+ * 15/89 rows have empty LCNCTAPRIN promoted as '' sentinel (no FK constraint).
+ */
+export const locacion = sociosSchema.table(
+  'locacion',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cuentaPrincipal: text('cuenta_principal').notNull(),
+    cuentaSecundaria: text('cuenta_secundaria'),
+    numero: integer('numero').notNull(),
+    calle: text('calle'),
+    barrio: integer('barrio'),
+    piso: text('piso'),
+    puerta: integer('puerta'),
+    departamento: text('departamento'),
+    anexo1: integer('anexo1'),
+    anexo2: integer('anexo2'),
+    nombre: text('nombre').notNull(),
+    dni: integer('dni'),
+    cuit: integer('cuit'),
+    telefono: integer('telefono'),
+    fechaNacimiento: date('fecha_nacimiento'),
+    fechaBaja: date('fecha_baja'),
+    situacionIva: integer('situacion_iva'),
+    cuota: numeric('cuota', { precision: 14, scale: 2 }),
+    legacyId: text('legacy_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    cuentaPrincipalNumeroUnique: uniqueIndex('locacion_cuenta_principal_numero_unique').on(
+      table.cuentaPrincipal,
+      table.numero,
+    ),
+    legacyIdUnique: uniqueIndex('locacion_legacy_id_unique').on(table.legacyId),
+  }),
+)
+
+export type Locacion = typeof locacion.$inferSelect
+export type NewLocacion = typeof locacion.$inferInsert
