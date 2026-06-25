@@ -2,6 +2,7 @@ import {
   boolean,
   date,
   index,
+  integer,
   pgSchema,
   text,
   timestamp,
@@ -121,3 +122,32 @@ export const ctacte1 = tesoreriaSchema.table(
 
 export type Ctacte1 = typeof ctacte1.$inferSelect
 export type NewCtacte1 = typeof ctacte1.$inferInsert
+
+/**
+ * Cash movement header with 4-tuple NK (CAJNUMERO, CAJSECUENC, CAJFECHA, CAJHORA).
+ * Scope correction #C3: 4-tuple verified 8145/8145 = 100% unique (3-tuple yields 7957 — 188 silent losses).
+ * 122 detail columns (CAJCONCEP1..20, CAJIMPOR1..20, etc.) are discarded (deferred to N7).
+ */
+export const cajaMovimiento = tesoreriaSchema.table(
+  'caja_movimiento',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    numero: integer('numero').notNull(),
+    secuencia: integer('secuencia').notNull(),
+    fecha: date('fecha').notNull(),
+    hora: integer('hora').notNull(),
+    tip: integer('tip'),
+    descrip: text('descrip'),
+    legacyId: text('legacy_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    numeroSecuenciaFechaHoraUnique: uniqueIndex(
+      'caja_movimiento_numero_secuencia_fecha_hora_unique',
+    ).on(table.numero, table.secuencia, table.fecha, table.hora),
+    legacyIdUnique: uniqueIndex('caja_movimiento_legacy_id_unique').on(table.legacyId),
+  }),
+)
+
+export type CajaMovimiento = typeof cajaMovimiento.$inferSelect
+export type NewCajaMovimiento = typeof cajaMovimiento.$inferInsert
