@@ -610,3 +610,138 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 30. **Slice D NEW**: Destructive gate fails the PR check when the `db-destructive` label is present AND migration files changed AND no `*.sql.gz` backup artifact URL is in PR comments AND no `/backup-skipped` directive is in the PR body; the `/backup-skipped` override is logged in workflow output for post-mortem audit
 47. **E1b2b NEW**: `pnpm db:promote` against the test DB (`192.168.1.102:5432/athlos`) populates `tesoreria.gastos` with exactly **2,114 rows**; the CLI stdout shows `{domain: 'gastos', inserted: 2114, skipped: 0, failed: 0, errors: []}` in the per-domain JSON output. The row count of 2,114 (NOT 346) verifies the 5-tuple NK is correctly applied (per scope correction #C2; 3-tuple would yield 346 distinct via `legacy_id` UNIQUE collision).
 48. **E1b2b NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) after E1b2b lands — promotion works for all **8 domains** + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables). `scripts/verify-slice.sh` already includes `tesoreria.gastos` in `MASTER_TABLES` (updated in commit `061be50`).
+
+---
+
+## E2 Delta: Slice E Closure (Admin API + Per-row Audit + Runbook)
+
+> **ADDITIVE-ONLY ATOMIC SPEC SYNC (B1b LESSON #1, CRITICAL — closes Slice E permanently).** This delta adds 3 NEW requirements below. No existing requirement is modified, removed, or rewritten. The diff between this delta and the prior canonical spec SHALL be purely additive.
+
+---
+
+### Requirement: Admin Promotion Trigger (NEW in E2)
+
+The system SHALL provide a `POST /api/v1/promote/trigger` HTTP endpoint on the Fastify v5.2.0 API server that allows an authenticated operator with the `ADMIN` role to trigger a synchronous promotion run from the API surface (mirroring the existing `pnpm db:promote` CLI runner) without SSHing into the server. The endpoint SHALL be per-operator rate-limited to 1 request per 60 seconds via `@fastify/rate-limit`'s `keyGenerator` extracting the JWT operator subject (`request.operator.sub`). The endpoint SHALL emit exactly 1 `audit_events` row per successful trigger with `action: 'PROMOTE_TRIGGER'`, and SHALL guard against concurrent triggers via an in-memory `promotionInFlight` boolean flag on the `AppContainer` (auto-released in `finally`). The response body SHALL be JSON with `{ status, inserted, skipped, failed, durationMs, domains: PromotionResult[] }` and HTTP status 200 on completion.
+
+The endpoint SHALL be implemented in a new file `apps/api/src/routes/promote.ts` (~150 LoC), registered in `apps/api/src/server.ts` alongside `importRoutes`, and exposed via the `FastifyPluginCallback` pattern matching the existing import routes. The endpoint SHALL accept a request body `{ domain?: 'all' | Domain }` (default `'all'`) validated by a `zod` schema. The request SHALL have a 120-second timeout via `request.routeOptions.config.timeout = 120_000` to avoid NGINX `proxy_read_timeout 60s` mid-flight cut for full `domain: 'all'` promotions (~60-90s on live DB). The route SHALL also expose `GET /api/v1/promote/status` (ADMIN-only) returning the last 20 promotion runs read from `audit_events` where `action = 'PROMOTE_TRIGGER'`.
+
+#### Scenario: Admin trigger succeeds (sync HTTP, returns 200)
+
+- GIVEN the API server is running and connected to `192.168.1.102:5432/athlos`
+- AND an operator with `role: 'ADMIN'` is authenticated via JWT
+- WHEN the operator POSTs `/api/v1/promote/trigger` with body `{}` (defaults to `domain: 'all'`)
+- THEN the API SHALL call `promoteAll(container.db)` synchronously
+- AND the response HTTP status SHALL be 200
+- AND the response body SHALL be `{ status: 'completed' | 'failed', inserted: number, skipped: number, failed: number, durationMs: number, domains: PromotionResult[] }`
+- AND on a re-run after E1b2b (8 domains fully populated): `inserted` SHALL be 0 across all 8 domains (idempotent), `skipped` SHALL match the projected rows count (~613k total), and `failed` SHALL match the documented FK failures
+- AND exactly 1 `audit_events` row SHALL be inserted with `action: 'PROMOTE_TRIGGER'`, `entity_type: 'promotion'`, `entity_id: 'promotion-<timestamp>'`, and `new_value: { domain: 'all', totals, durationMs }`
+
+#### Scenario: Admin trigger rate-limited (returns 429)
+
+- GIVEN an ADMIN operator just triggered `POST /api/v1/promote/trigger` 10 seconds ago
+- WHEN they POST `/api/v1/promote/trigger` again
+- THEN the API SHALL return HTTP 429 (Too Many Requests)
+- AND the response SHALL include a `Retry-After` header indicating seconds until the window resets
+
+#### Scenario: Non-admin operator blocked (returns 403)
+
+- GIVEN an operator with `role: 'CONSULTA'` (NOT ADMIN) is authenticated via JWT
+- WHEN they POST `/api/v1/promote/trigger`
+- THEN the API SHALL return HTTP 403 (Forbidden) via `requireRole('ADMIN')` middleware
+
+#### Scenario: Unauthenticated request blocked (returns 401)
+
+- GIVEN no JWT is present in the `Authorization` header
+- WHEN a request is made to `POST /api/v1/promote/trigger`
+- THEN the API SHALL return HTTP 401 (Unauthorized) via `requireRole('ADMIN')` middleware chain
+
+#### Scenario: Concurrent trigger returns `already_running`
+
+- GIVEN `container.promotionInFlight` is `true` (a promotion is already executing from a previous trigger)
+- WHEN a second ADMIN operator POSTs `/api/v1/promote/trigger`
+- THEN the API SHALL return HTTP 200
+- AND the response body SHALL be `{ status: 'already_running' }`
+- AND the second promotion SHALL NOT execute
+
+#### Scenario: `GET /api/v1/promote/status` returns last 20 promotion runs
+
+- GIVEN an ADMIN operator is authenticated
+- WHEN they GET `/api/v1/promote/status`
+- THEN the API SHALL return HTTP 200
+- AND the response body SHALL be `{ runs: AuditEvent[] }` containing the last 20 `audit_events` rows where `action = 'PROMOTE_TRIGGER'`, ordered by `created_at DESC`
+
+---
+
+### Requirement: Per-row Promotion Audit (`promoted_at` column) (NEW in E2)
+
+The system SHALL provide a `raw_events.promoted_at timestamp with time zone` column for per-row promotion tracking at the source-event level (belt-and-suspenders with the `master.legacy_id` UNIQUE INDEX). The column SHALL be added via a new hand-written migration `packages/db/drizzle/0016_promoted_at.sql` applied via `psql` (NOT `drizzle-kit migrate` — per E1b1 LESSON re: `_journal.json` tracking mismatch). The migration SHALL also create an index `idx_raw_events_promoted_at` on `(promoted_at)` for fast `WHERE promoted_at IS NULL` queries, and SHALL include a best-effort backfill UPDATE for the `socios` source_table.
+
+The promotion algorithm (`packages/promotion/src/promote.ts`) SHALL filter the projection scan by `WHERE raw_events.promoted_at IS NULL` via JOIN `(source_table, source_key)`, and SHALL bulk-update `raw_events.promoted_at = now()` for all successfully inserted `(source_table, source_key)` pairs after `insertMasterBatch` completes for the domain.
+
+#### Scenario: Migration 0016 adds `promoted_at` column + INDEX (idempotent)
+
+- GIVEN the test DB `192.168.1.102:5432/athlos` is running and `raw_events` has 652,661 rows
+- WHEN `PGPASSWORD=athlos psql -h 192.168.1.102 -U athlos -d athlos -f packages/db/drizzle/0016_promoted_at.sql` is executed
+- THEN the migration SHALL add column `promoted_at timestamptz` to `public.raw_events` (nullable, no default)
+- AND the migration SHALL create index `idx_raw_events_promoted_at` on `public.raw_events(promoted_at)`
+- AND running the same SQL twice SHALL be a no-op (`ADD COLUMN IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` guards)
+
+#### Scenario: `socios` backfill marks ~16,383 raw_events rows as promoted
+
+- GIVEN migration 0016 has just been applied and `raw_events.promoted_at` is NULL for all rows
+- WHEN the best-effort backfill UPDATE runs
+- THEN approximately **16,383** `raw_events` rows SHALL be backfilled with `promoted_at = <migration timestamp>` (the count of `socios.socios` master rows verified live)
+- AND ctacte/ctacte1 raw_events rows SHALL remain `promoted_at IS NULL` post-backfill (TODO E3+)
+
+#### Scenario: `promote.ts` filters projection by `WHERE raw_events.promoted_at IS NULL`
+
+- GIVEN some `raw_events` rows have `promoted_at IS NULL` (unpromoted) and some have `promoted_at IS NOT NULL` (already promoted)
+- WHEN `promoteDomain(db, $domain)` runs against a projection table
+- THEN the projection scan query SHALL include a JOIN clause filtering by `re.promoted_at IS NULL`
+- AND only rows whose corresponding `raw_events` row has `promoted_at IS NULL` SHALL be considered for promotion
+
+#### Scenario: Successful INSERT stamps `promoted_at = now()` (bulk UPDATE)
+
+- GIVEN `promoteDomain` has just successfully inserted a batch of N rows into the master table
+- WHEN `insertMasterBatch` returns
+- THEN the handler SHALL execute a bulk UPDATE: `UPDATE public.raw_events SET promoted_at = now() WHERE source_table = $domain AND source_key = ANY($insertedKeys::varchar[])`
+
+#### Scenario: Per-row audit query surfaces promotion status
+
+- GIVEN the operator wants to inspect promotion coverage
+- WHEN they run `SELECT source_table, count(*) AS total, count(promoted_at) AS promoted FROM public.raw_events GROUP BY source_table ORDER BY source_table;`
+- THEN the result SHALL show per-source_table totals + promoted counts
+
+---
+
+### Requirement: Runbook Documentation (NEW in E2)
+
+The system SHALL provide operator-facing documentation in `docs/runbook.md` under a NEW top-level section "Promotion Pipeline" (placed between "Containerized Deploy" and "CI/CD"). The section SHALL explain how to trigger a promotion (CLI vs API), document the 8 master tables + their natural keys + `legacy_id` pattern, describe the `promoted_at` audit column semantics, document the cross-run idempotency contract, detail the admin API `POST /promote/trigger` endpoint, and document known limitations (N7/N8/N14/N16).
+
+#### Scenario: Runbook has "Promotion Pipeline" section with CLI + API examples
+
+- GIVEN the runbook has the new "Promotion Pipeline" section
+- WHEN an operator reads the "How to run promotion (CLI vs API)" sub-section
+- THEN they SHALL see the CLI example: `DATABASE_URL=... pnpm db:promote`
+- AND they SHALL see the API example: `curl -X POST http://localhost:3001/api/v1/promote/trigger -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" -d '{}'`
+- AND they SHALL see the verification command: `bash scripts/verify-slice.sh`
+
+#### Scenario: Runbook documents the 8 master tables + their natural keys
+
+- GIVEN the runbook has the "8 master tables + natural keys" sub-section
+- THEN they SHALL see a table mapping each `Domain` to its master table + natural key + `legacy_id` source
+- AND they SHALL see the `PROMOTION_ORDER` sequence: `socios → escuela → deportes → locacion → caja → gastos → ctacte → ctacte1`
+
+#### Scenario: Runbook documents known limitations
+
+- GIVEN the runbook has the "Known Limitations" sub-section
+- THEN they SHALL see a table documenting N7 (caja_detalle), N8 (deportes.inscripciones rebuild), N14 (stale `entity_uuids` → ctacte1 promotion rate stuck at ~61%), N16 (gastos FK to ctacte)
+- AND each limitation SHALL include a "Future slice" column
+
+---
+
+## Success Criteria (E2 additions)
+
+49. **E2 NEW**: `POST /api/v1/promote/trigger` (ADMIN JWT) returns 200 with `{ status: 'completed', inserted, skipped, failed, durationMs, domains: PromotionResult[] }` after running `promoteAll(db)` synchronously. On a re-run after E1b2b, `inserted` SHALL be 0 across all 8 domains (idempotent).
+50. **E2 NEW**: `SELECT count(*) FROM public.raw_events WHERE promoted_at IS NOT NULL` returns **~16,383** post-migration (the `socios` backfill count). ctacte/ctacte1 remain 0 (TODO E3+).
+51. **E2 NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) — promotion works + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables).

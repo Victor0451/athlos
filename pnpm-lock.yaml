@@ -83,6 +83,9 @@ importers:
       '@athlos/projection':
         specifier: workspace:*
         version: link:../../packages/projection
+      '@athlos/promotion':
+        specifier: workspace:*
+        version: link:../../packages/promotion
       '@athlos/scheduler':
         specifier: workspace:*
         version: link:../../packages/scheduler
