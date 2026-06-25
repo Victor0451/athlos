@@ -19,6 +19,7 @@ import {
   parseMonto,
   splitDebeHaber,
   splitApellidoNombre,
+  deterministicUuid,
 } from './transform-helpers.ts'
 import type { TransformHelpers } from './transform-helpers.ts'
 import { socios, ctacte, ctacte1 } from '@athlos/db/schema'
@@ -93,6 +94,7 @@ export async function promoteDomain(db: Db, domain: Domain): Promise<PromotionRe
       parseMonto,
       splitDebeHaber,
       splitApellidoNombre,
+      deterministicUuid,
     }
     for (const row of projectionRows) {
       try {
@@ -124,8 +126,17 @@ export async function promoteAll(db: Db): Promise<PromotionResult[]> {
   for (const domain of PROMOTION_ORDER) {
     const r = await promoteDomain(db, domain)
     results.push(r)
-    // FK cascade short-circuit: block dependents if upstream inserted zero rows AND had failures
-    if (FK_BLOCKING_DOMAINS.includes(domain) && r.inserted === 0 && r.failed > 0) {
+    // FK cascade short-circuit: block dependents if upstream was attempted but
+    // failed 100% (inserted === 0 AND failed === attempted AND attempted > 0).
+    // This means: don't short-circuit on RE-RUNS where all rows were skipped
+    // via dedup (attempted > 0 but skipped dominates) — re-runs should still
+    // attempt downstream domains in case new projection rows exist.
+    if (
+      FK_BLOCKING_DOMAINS.includes(domain) &&
+      r.inserted === 0 &&
+      r.failed > 0 &&
+      r.failed === r.attempted
+    ) {
       for (const downstream of PROMOTION_ORDER.slice(PROMOTION_ORDER.indexOf(domain) + 1)) {
         results.push({
           domain: downstream,

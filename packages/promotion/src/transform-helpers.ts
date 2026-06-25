@@ -1,6 +1,29 @@
 /**
  * Transform helpers — pure utility functions shared by all domain transforms.
  */
+import { createHash } from 'node:crypto'
+
+/**
+ * Deterministic UUID derived from a natural key.
+ *
+ * Uses SHA-256 hash of the natural key, formatted as a UUIDv5-like string
+ * (with version + variant bits set per RFC 4122 §4.3). The same natural
+ * key always produces the same UUID, enabling cross-run idempotency
+ * via UNIQUE INDEX — re-runs of `pnpm db:promote` ON CONFLICT DO NOTHING.
+ *
+ * This is NOT a true UUIDv5 (which requires a namespace UUID + name), but
+ * it produces a stable 128-bit hex string formatted as a UUID, which is
+ * sufficient for our purposes (uniqueness across re-imports of the same
+ * VFP natural key).
+ */
+export function deterministicUuid(naturalKey: string): string {
+  const hash = createHash('sha256').update(naturalKey).digest()
+  // Set version (5) in the high nibble of byte 6 and variant (10) in byte 8
+  hash[6] = (hash[6]! & 0x0f) | 0x50
+  hash[8] = (hash[8]! & 0x3f) | 0x80
+  const hex = hash.subarray(0, 16).toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+}
 
 /**
  * Parse a VFP date (YYYYMMDD compact string, ISO string, or Date instance)
@@ -72,4 +95,5 @@ export interface TransformHelpers {
   parseMonto: typeof parseMonto
   splitDebeHaber: typeof splitDebeHaber
   splitApellidoNombre: typeof splitApellidoNombre
+  deterministicUuid: typeof deterministicUuid
 }
