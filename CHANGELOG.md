@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3] — 2026-06-24
+
+### Added
+
+- **`packages/db/drizzle/0013_legacy_id_unique.sql`** — Combined migration: `ADD COLUMN cctcuenta text` + `ADD COLUMN legacy_id text` to `tesoreria.ctacte` + `tesoreria.ctacte1` + `CREATE UNIQUE INDEX` on cctcuenta (ctacte only) + legacy_id. Replaces E1b1/v0.5.2's separate 0013/0014 split. Enables cross-run idempotency via UNIQUE INDEX + ON CONFLICT DO NOTHING. Idempotent (ADD COLUMN IF NOT EXISTS + CREATE UNIQUE INDEX IF NOT EXISTS).
+- **`packages/db/src/schema/tesoreria.ts`** — `legacy_id: text('legacy_id')` column + `uniqueIndex('ctacte_legacy_id_unique')` for ctacte; same for ctacte1. `cctcuenta` column + index (from E1b1/v0.5.2).
+- **`packages/promotion/src/transform-helpers.ts`** — `deterministicUuid(naturalKey: string): string` helper. SHA-256 hash of natural key, formatted as UUIDv5-like string with version (5) + variant (10) bits set per RFC 4122 §4.3. Enables stable legacy_id across re-imports.
+
+### Changed
+
+- **`packages/promotion/src/transforms/ctacte.ts`** — Returns `cctcuenta: cuenta` (for FK lookup) + `legacyId: deterministicUuid(<5-tuple>)` (for cross-run idempotency).
+- **`packages/promotion/src/transforms/ctacte1.ts`** — Returns `legacyId: deterministicUuid(<5-tuple>)` (for cross-run idempotency).
+- **`packages/promotion/src/dedup.ts`** — `naturalKey` for ctacte1 now includes `CCTCUENTA` as 5th element of the 5-tuple. `loadExistingNaturalKeys` for ctacte/ctacte1 reads `legacy_id` from master (cross-run dedup, not just intra-batch).
+- **`packages/promotion/src/fk-lookup.ts`** — Replaces E1a entity_uuids JOIN (yielded 0 rows, stale UUIDs) with direct `SELECT DISTINCT ON (cctcuenta) cctcuenta, id FROM tesoreria.ctacte WHERE cctcuenta IS NOT NULL ORDER BY cctcuenta, id`. The DISTINCT ON approach returns the lexicographically smallest UUID per cctcuenta (equivalent to MIN(id) GROUP BY cctcuenta).
+- **`packages/promotion/src/promote.ts`** — Cascade short-circuit condition fixed: was `r.inserted === 0 && r.failed > 0` (incorrectly fired on re-runs where skipped dominated). Now `r.inserted === 0 && r.failed > 0 && r.failed === r.attempted` (only short-circuits when upstream was attempted but failed 100%, not on re-runs).
+
+### Spec
+
+- `openspec/specs/deployment-devops/spec.md` — atomic sync (B1b LESSON #1): removed CTACTE1 DEFERRED callout, updated "Domain promotion order respects FK dependencies" scenario to reflect true cross-run idempotency.
+
+### Smoke Test Results (3 runs against 192.168.1.102/athlos test DB)
+
+- **1st run**: socios 16,341 inserted, ctacte 197,521 inserted (cctcuenta + legacy_id populated), ctacte1 **150,129 inserted** (61% FK resolution).
+- **2nd run**: all 3 domains → 0 inserted (dedup via UNIQUE). Master counts UNCHANGED.
+- **3rd run**: all 3 domains → 0 inserted. Master counts UNCHANGED. **Idempotency verified.**
+
+### Out of scope (deferred)
+
+- Escuela, locacion, caja, gastos domains → E1b2 (v0.5.4)
+- Deportes scope (disciplinas + inscripciones rebuild) → N8
+- Caja detalle table (CAJCONCEPT1..20 etc.) → N7
+- Stale entity_uuids repopulation → N14
+
 ## [0.5.1] — 2026-06-24
 
 ### Added

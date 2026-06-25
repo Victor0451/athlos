@@ -1,6 +1,6 @@
 {
   "name": "athlos",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "private": true,
   "description": "Athlos — Club Atlético Gorriti operator console (monorepo)",
   "packageManager": "pnpm@9.15.9",
