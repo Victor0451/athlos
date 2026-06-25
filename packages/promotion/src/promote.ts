@@ -30,9 +30,18 @@ import {
   locacion,
   disciplinas,
   cajaMovimiento,
+  gastos,
 } from '@athlos/db/schema'
 
-export type Domain = 'socios' | 'ctacte' | 'ctacte1' | 'escuela' | 'deportes' | 'locacion' | 'caja'
+export type Domain =
+  | 'socios'
+  | 'ctacte'
+  | 'ctacte1'
+  | 'escuela'
+  | 'deportes'
+  | 'locacion'
+  | 'caja'
+  | 'gastos'
 
 export interface PromotionResult {
   domain: Domain
@@ -209,6 +218,12 @@ async function insertMasterBatch(db: Db, domain: Domain, rows: unknown[]): Promi
       .values(rows as unknown as never[])
       .onConflictDoNothing()
       .returning({ id: cajaMovimiento.id })
+  } else if (domain === 'gastos') {
+    inserted = await db
+      .insert(gastos)
+      .values(rows as unknown as never[])
+      .onConflictDoNothing()
+      .returning({ id: gastos.id })
   }
 
   return inserted.length
