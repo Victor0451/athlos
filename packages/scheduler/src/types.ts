@@ -123,6 +123,16 @@ export interface JobScheduler {
   /** Snapshot of registered job definitions — drives the admin health
    * endpoint and the boot reconciliation list. */
   list(): JobDefinition[]
+
+  /**
+   * Enable or disable a registered job. Idempotent: when transitioning
+   * disabled→enabled with a cron expression, the node-cron task is
+   * (re)created; when transitioning enabled→disabled, the existing task
+   * is stopped (no further ticks fire, but `runNow` continues to work).
+   *
+   * Throws on unknown job name (matches `runNow` semantics).
+   */
+  setEnabled(name: string, enabled: boolean): void
 }
 
 export interface ScheduleOptions {
