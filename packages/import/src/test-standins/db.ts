@@ -85,6 +85,8 @@ function makeRawEvent(v: NewRawEvent): RawEvent {
     payload: v.payload,
     importBatch: v.importBatch,
     importedAt: v.importedAt ?? new Date(),
+    promotedAt: v.promotedAt ?? null,
+    legacyId: v.legacyId ?? null,
   }
 }
 

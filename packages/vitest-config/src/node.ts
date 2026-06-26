@@ -14,6 +14,16 @@ export function nodePreset(): Partial<InlineConfig> {
     globals: false,
     include: ['src/**/*.{test,spec}.ts'],
     testTimeout: 10_000,
+    // Parallel test execution via worker threads (vitest default).
+    // Explicit config ensures it's not overridden by package-level configs
+    // that may set singleFork: true.
+    pool: 'threads',
+    poolOptions: {
+      threads: {
+        singleThread: false,
+        isolate: false,
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
