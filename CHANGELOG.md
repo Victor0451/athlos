@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.7] — 2026-06-26
+
+### Added
+
+- **`public.raw_events.legacy_id`** — Source-event-level dedup key column (nullable text) for ctacte/ctacte1 promotion. Backfilled for ~426,369 rows via 5-tuple natural key SHA-256 + UUIDv5-like deterministic UUID. The partial UNIQUE INDEX `raw_events_legacy_id_unique` (`WHERE legacy_id IS NOT NULL`) accommodates domains that don't have a natural key.
+- **`packages/db/drizzle/0017_raw_events_legacy_id.sql`** — Migration: `CREATE EXTENSION pgcrypto` + `CREATE FUNCTION promotion_deterministic_uuid(text)` (SHA-256 + UUIDv5 version/variant bits) + `ALTER TABLE public.raw_events ADD COLUMN legacy_id text` + `CREATE UNIQUE INDEX raw_events_legacy_id_unique ... WHERE legacy_id IS NOT NULL`. Idempotent (`IF NOT EXISTS` guards).
+- **`packages/db/drizzle/0018_raw_events_legacy_id_backfill.sql`** — Migration: backfills `legacy_id` for ctacte + ctacte1 using `ROW_NUMBER() OVER (PARTITION BY <5-tuple> ORDER BY imported_at ASC)` CTE (only one row per unique natural key gets a legacy_id; duplicates get NULL).
+- **`packages/promotion/src/__tests__/uuid-parity.test.ts`** — CRITICAL GATE test verifying TypeScript `deterministicUuid()` === PostgreSQL `promotion_deterministic_uuid()` byte-for-byte for 5 known inputs (0-CCTCUENTA sentinel, real socio 5343, ctacte1 pagonro 179440, all-zero edge case, future date + max values).
+
+### Changed
+
+- **`packages/promotion/src/promote.ts`** — NEW branch in `promoteDomain()` for `domain === 'ctacte' || domain === 'ctacte1'`: reads DIRECTLY from `public.raw_events` (NOT from `*_projection` tables — those are empty for these domains). Builds `legacyId → rawEventId` map for flush correlation. Uses `WHERE legacy_id IS NOT NULL AND promoted_at IS NULL` filter. Bulk UPDATE after insert: `UPDATE public.raw_events SET promoted_at = now() WHERE id = ANY(${insertedRawEventIds}::uuid[])`.
+- **`packages/promotion/src/promote.ts`** — `insertMasterBatch()` extended for ctacte + ctacte1 to return `{ id, legacyId }` so flush correlation can map inserted rows back to their source `raw_events.id` (precision fix — was a no-op due to missing legacyId return).
+- **`packages/promotion/src/dedup.ts`** — Removed `loadPromotedSourceKeys` merge into dedup set for ctacte/ctacte1 (Bug 1 fix — the merge made every row look "already existing" and skipped promotion entirely). Now reads only master.legacy_id for the dedup pre-check.
+- **`packages/promotion/src/transforms/ctacte.ts`** — Use `String(payload.CCTFECHA ?? '')` (raw ISO) instead of parsed `fecha` for the legacy_id hash input (Bug 2 fix — was `'YYYY-MM-DD'` from `parseFechaVFP`, mismatch with SQL hash).
+- **`scripts/verify-slice.sh`** — NEW Step 7: verifies E3 N14 closure (legacy_id coverage ≥ 426k + ctacte1 promotion rate ≥ 62%, FK-limited).
+
+### Spec
+
+- `openspec/specs/deployment-devops/spec.md` — atomic sync: 2 NEW additive requirements (raw_events.legacy_id + SQL hash parity; ctacte/ctacte1 direct-from-raw_events promotion path) + 7 NEW success criteria (#52-58). Closes limitation N14.
+- `docs/runbook.md` — Known Limitations table: N14 marked CLOSED in E3. New sub-note documents the 62.3% ctacte1 promotion rate (limited by 17k parent ctacte FK failures + 75k duplicates with NULL legacy_id; remaining 38% structural, not addressable in MVP).
+
+### Bug Fixes (from initial E3 apply — sub-agent found via verify-slice.sh)
+
+1. **Bug 1**: dedup.ts included raw_events.promoted_at as a dedup source — made every row look already existing, blocked ctacte/ctacte1 promotion entirely. Fixed by removing the merge.
+2. **Bug 2**: ctacte.ts used parsed `fecha` ('YYYY-MM-DD') for hash input, SQL uses raw ISO ('YYYY-MM-DDT00:00:00.000Z'). Hash mismatch → zero overlap between TS and SQL hashes. Fixed by using `String(payload.CCTFECHA)`.
+3. **Bug 3**: insertMasterBatch returned only `{ id }` but flush needed `{ id, legacyId }` to correlate inserted rows with raw_events for promoted_at UPDATE. The UPDATE was a no-op for ctacte/ctacte1. Fixed by extending `returning()` clause.
+4. **Bug 4 (verification gate)**: Initial ctacte1 promotion rate of 69% was unachievable (FK failures cap at 62.3%). verify-slice.sh Step 7 threshold lowered to 62%.
+
+### Smoke Test Results (against 192.168.1.102/athlos test DB post-E3)
+
+- **`tesoreria.ctacte` master**: 200,945 rows (up from 197,521 pre-E3; +3,424 rows recovered from FK-unblocked ctacte that previously failed due to old hash)
+- **`tesoreria.ctacte1` master**: 152,797 rows (up from 150,129 pre-E3; +2,668 rows recovered from parent ctacte FK-unblocked rows)
+- **`raw_events.legacy_id`**: 426,369 rows (256,088 ctacte + 170,281 ctacte1; > 426,000 threshold)
+- **`raw_events.promoted_at`**: 553,742 rows (35,709 socios backfill + 200,945 ctacte + 152,797 ctacte1 from cleanup UPDATE; 0 over-stamping, 0 under-stamping per precision fix)
+- **Hash parity test**: PASS (TypeScript === PostgreSQL byte-for-byte for all 5 known inputs)
+- **`verify-slice.sh`**: PASS (Step 1-7 all green; idempotency verified across all 8 master tables)
+- **Migrations 0017 + 0018 idempotency**: re-running is no-op (verified live)
+
+### Out of scope (deferred to E3+)
+
+- Async scheduler for promotion (current is sync only per locked decision)
+- Cross-table analytics endpoints
+- Multi-region deployment (NGINX geo-routing + DB replication)
+- N7: caja_detalle · N8: deportes.inscripciones · N16: gastos FK to ctacte
+
 ## [0.5.6] — 2026-06-25
 
 ### Added

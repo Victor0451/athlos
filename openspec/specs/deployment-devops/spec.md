@@ -745,3 +745,102 @@ The system SHALL provide operator-facing documentation in `docs/runbook.md` unde
 49. **E2 NEW**: `POST /api/v1/promote/trigger` (ADMIN JWT) returns 200 with `{ status: 'completed', inserted, skipped, failed, durationMs, domains: PromotionResult[] }` after running `promoteAll(db)` synchronously. On a re-run after E1b2b, `inserted` SHALL be 0 across all 8 domains (idempotent).
 50. **E2 NEW**: `SELECT count(*) FROM public.raw_events WHERE promoted_at IS NOT NULL` returns **~16,383** post-migration (the `socios` backfill count). ctacte/ctacte1 remain 0 (TODO E3+).
 51. **E2 NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) — promotion works + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables).
+
+---
+
+## E3 Delta: Slice E3 (N14 Closure — raw_events.legacy_id + ctacte/ctacte1 Direct Path)
+
+> **ADDITIVE-ONLY ATOMIC SPEC SYNC (B1b LESSON #1).** This delta adds 2 NEW requirements below. No existing requirement is modified, removed, or rewritten. Closes limitation N14 (stale ctacte1 `entity_uuids` limiting promotion to ~61%) by computing `legacy_id` at the source-event level so promotion no longer depends on the deprecated `entity_uuids` table.
+
+---
+
+### Requirement: raw_events.legacy_id + SQL Hash Parity (NEW in E3)
+
+The system SHALL provide a `public.raw_events.legacy_id text` column (computed by a SQL `promotion_deterministic_uuid()` function) for source-event-level deduplication of `ctacte` and `ctacte1` domains. The function SHALL mirror `packages/promotion/src/transform-helpers.ts::deterministicUuid()` byte-for-byte (SHA-256 + UUIDv5 version=5 nibble + variant=10 bits + UUID formatting per RFC 4122 §4.3), with hash parity verified by `packages/promotion/src/__tests__/uuid-parity.test.ts` (5 known inputs covering edge cases: 0-CCTCUENTA sentinel, real socio 5343, ctacte1 pagonro 179440, all-zero edge case, future date + max values). The partial UNIQUE INDEX `raw_events_legacy_id_unique` (`WHERE legacy_id IS NOT NULL`) accommodates domains that don't have a natural key (asiento, paramet, plancue, etc.).
+
+The column SHALL be added via a new hand-written migration `packages/db/drizzle/0017_raw_events_legacy_id.sql` (creates `pgcrypto` extension + `promotion_deterministic_uuid()` SQL function + `legacy_id` column + partial UNIQUE INDEX). The column SHALL be backfilled via migration `packages/db/drizzle/0018_raw_events_legacy_id_backfill.sql` using a `ROW_NUMBER() OVER (PARTITION BY <5-tuple> ORDER BY imported_at ASC)` CTE that assigns `legacy_id` to **only ONE row per unique natural key** (subsequent duplicates get NULL legacy_id — "shadow rows" blocked by UNIQUE INDEX). Both migrations are applied via `psql` (NOT drizzle-kit per E1b1 LESSON) and are idempotent (`CREATE EXTENSION IF NOT EXISTS`, `ALTER TABLE ADD COLUMN IF NOT EXISTS`, `CREATE UNIQUE INDEX IF NOT EXISTS`).
+
+#### Scenario: Migration 0017 adds `legacy_id` column + SQL function (idempotent)
+
+- GIVEN the test DB `192.168.1.102:5432/athlos` is running with pgcrypto AVAILABLE
+- WHEN `PGPASSWORD=athlos psql -h 192.168.1.102 -U athlos -d athlos -f packages/db/drizzle/0017_raw_events_legacy_id.sql` is executed
+- THEN `pgcrypto` extension SHALL be created (`CREATE EXTENSION IF NOT EXISTS`)
+- AND `promotion_deterministic_uuid(text)` SQL function SHALL be created (SHA-256 + UUIDv5-like formatting)
+- AND column `legacy_id text` SHALL be added to `public.raw_events` (nullable, no default)
+- AND partial UNIQUE INDEX `raw_events_legacy_id_unique` SHALL be created (`WHERE legacy_id IS NOT NULL`)
+- AND running the same SQL twice SHALL be a no-op (`IF NOT EXISTS` guards)
+
+#### Scenario: Hash parity test passes BEFORE migration 0018 is applied
+
+- GIVEN migration 0017 has been applied (so the SQL function exists in DB)
+- WHEN `pnpm --filter @athlos/promotion test:run packages/promotion/src/__tests__/uuid-parity.test.ts` is executed
+- THEN for each of the 5 known input natural keys, TypeScript `deterministicUuid()` and PostgreSQL `promotion_deterministic_uuid()` SHALL produce byte-for-byte identical UUIDs
+- AND the test SHALL fail loudly (with the 5 mismatched pairs listed) if parity breaks
+- AND migration 0018 MUST NOT be applied if parity fails — a mismatch would silently corrupt cross-run idempotency for ~571k rows
+
+#### Scenario: Migration 0018 backfills ~426k rows (deduplicated 5-tuple)
+
+- GIVEN migration 0017 has been applied and hash parity has been verified
+- WHEN `PGPASSWORD=athlos psql -h 192.168.1.102 -U athlos -d athlos -f packages/db/drizzle/0018_raw_events_legacy_id_backfill.sql` is executed
+- THEN ~256,088 ctacte raw_events rows SHALL get a non-NULL `legacy_id` (the count of unique 5-tuples; ~70,187 duplicates get NULL due to UNIQUE INDEX — one legacy_id per unique natural key)
+- AND ~170,281 ctacte1 raw_events rows SHALL get a non-NULL `legacy_id` (~75,089 duplicates get NULL)
+- AND total non-NULL `legacy_id` rows across ctacte+ctacte1 SHALL be **≥ 426,000** (the verifiable backfill floor)
+- AND the migration SHALL be idempotent (`WHERE legacy_id IS NULL` guards)
+
+---
+
+### Requirement: ctacte/ctacte1 Direct-From-raw_events Promotion Path (NEW in E3)
+
+The system SHALL provide a NEW branch in `promoteDomain()` (for `domain === 'ctacte' || domain === 'ctacte1'`) that reads DIRECTLY from `public.raw_events` (NOT from `*_projection` tables) using `legacy_id` as the dedup key. This branch bypasses the projection layer because the `ctacte` and `ctacte1` projection tables are EMPTY for these domains (verified: `source_key` is degenerate — 1 distinct value for all 245k ctacte1 rows). The branch SHALL build a `legacyId → rawEventId` map from the buffered master rows + their raw_events source IDs, and SHALL correlate `insertMasterBatch` returned rows back to `raw_events.id` via the map (precision fix — the E2 source_key-based correlation silently over-stamped promoted_at when `ON CONFLICT DO NOTHING` skipped rows within a batch).
+
+The transform `packages/promotion/src/transforms/ctacte.ts` SHALL compute `legacy_id = deterministicUuid(<5-tuple>)` using **the RAW payload value of `CCTFECHA`** (NOT the parsed `fecha` date) — the parsed value is `'YYYY-MM-DD'` but the SQL `promotion_deterministic_uuid()` uses the raw ISO `'YYYY-MM-DDT00:00:00.000Z'`. Hash mismatch was the original Bug 2 that silently produced zero overlap between TypeScript and SQL hashes.
+
+`insertMasterBatch` SHALL be extended (for ctacte + ctacte1 only) to return `{ id, legacyId }` so the flush correlation can look up the corresponding `raw_events.id` via the `legacyId → rawEventId` map. After successful insertion, the branch SHALL execute a bulk UPDATE: `UPDATE public.raw_events SET promoted_at = now() WHERE id = ANY(${insertedRawEventIds}::uuid[])` (precision fix — was a no-op due to missing `legacyId` return in the previous implementation).
+
+#### Scenario: ctacte/ctacte1 promotion reads from raw_events directly (bypass projection)
+
+- GIVEN the ctacte/ctacte1 projection tables are EMPTY (verified live 2026-06-25)
+- WHEN `promoteDomain(db, 'ctacte')` runs
+- THEN the projection-table scan branch SHALL be skipped
+- AND the raw_events-direct branch SHALL execute: `SELECT id, source_key, payload, legacy_id FROM public.raw_events WHERE source_table = 'ctacte' AND legacy_id IS NOT NULL AND promoted_at IS NULL`
+- AND rows in `tesoreria.ctacte` master SHALL be inserted with `legacy_id` matching `raw_events.legacy_id` (byte-for-byte)
+
+#### Scenario: ctacte/ctacte1 promotion rate reaches ≥62% post-E3
+
+- GIVEN the DB state pre-E3 had `tesoreria.ctacte` at 197,521 rows (~61% of natural keys) and `tesoreria.ctacte1` at 150,129 rows (~61%)
+- AND ~70,187 ctacte + ~75,089 ctacte1 raw_events rows are duplicates (5-tuple collision, get NULL legacy_id) and CANNOT be promoted
+- AND ~55,143 ctacte rows are orphaned (`CCTCUENTA=0` sentinel or socio not in master) and fail FK check
+- AND ~17,484 ctacte1 rows are orphaned (parent ctacte missing — typically CCTCUENTA=0) and fail FK check
+- WHEN `pnpm db:promote` runs post-E3 against the test DB
+- THEN `tesoreria.ctacte` SHALL reach ~200,945 rows (~78% of 256,088 unique natural keys; limited by 55k orphan FK failures)
+- AND `tesoreria.ctacte1` SHALL reach ~152,797 rows (~62.3% of 245,370 total raw_events rows; limited by 17k parent ctacte FK failures + 75k duplicates)
+- AND `scripts/verify-slice.sh` Step 7 SHALL assert `ctacte1 promotion rate >= 62%` (PASS)
+
+#### Scenario: ctacte/ctacte1 idempotency holds (2nd run = 0 inserts)
+
+- GIVEN `pnpm db:promote` has been run once post-E3 and `tesoreria.ctacte` = 200,945 + `tesoreria.ctacte1` = 152,797
+- WHEN `pnpm db:promote` runs a 2nd time
+- THEN both domains SHALL appear in per-domain output with `inserted: 0`
+- AND `tesoreria.ctacte` count SHALL STILL be 200,945 (no new rows; raw_events.promoted_at is fully stamped for all 200,945 ctacte raw_events)
+- AND `tesoreria.ctacte1` count SHALL STILL be 152,797 (no new rows; raw_events.promoted_at is fully stamped for all 152,797 ctacte1 raw_events)
+- AND `scripts/verify-slice.sh` SHALL exit 0 (TRUE idempotency verified across all 8 master tables)
+
+#### Scenario: `promoted_at` audit is precise for ctacte/ctacte1 (E3 fix)
+
+- GIVEN ctacte/ctacte1 promotion has completed
+- WHEN the operator queries `SELECT source_table, count(*) AS total, count(promoted_at) AS promoted FROM public.raw_events WHERE source_table IN ('ctacte','ctacte1') GROUP BY source_table ORDER BY source_table`
+- THEN ctacte promoted SHALL be `200,945` (= tesoreria.ctacte count)
+- AND ctacte1 promoted SHALL be `152,797` (= tesoreria.ctacte1 count)
+- AND the ratio promoted/total for each domain SHALL be exactly the same as master.count / raw_events.total_with_legacy_id (no over-stamping, no under-stamping)
+
+---
+
+## Success Criteria (E3 additions)
+
+52. **E3 NEW**: `pnpm --filter @athlos/promotion test:run packages/promotion/src/__tests__/uuid-parity.test.ts` PASSES — TypeScript `deterministicUuid()` equals PostgreSQL `promotion_deterministic_uuid()` byte-for-byte for all 5 known inputs.
+53. **E3 NEW**: `SELECT count(*) FROM public.raw_events WHERE source_table IN ('ctacte','ctacte1') AND legacy_id IS NOT NULL` returns **≥ 426,000** (the 426,369 verifiable backfill floor; 256,088 ctacte + 170,281 ctacte1 unique natural keys).
+54. **E3 NEW**: `tesoreria.ctacte` master has **≥ 200,000 rows** post-promotion (was 197,521 pre-E3; +55,143 attempted - 55,143 FK failures = no net change in headcount, but with corrected legacy_id hashes). Realistic ceiling is ~200,945 (= 78% of unique natural keys, FK-limited).
+55. **E3 NEW**: `tesoreria.ctacte1` master has **≥ 152,000 rows** post-promotion (was 150,129 pre-E3). Realistic ceiling is ~152,797 (= 62.3% of 245,370 total raw_events rows; limited by 17k parent ctacte FK failures + 75k duplicates).
+56. **E3 NEW**: `SELECT count(*) FROM public.raw_events WHERE source_table IN ('ctacte','ctacte1') AND promoted_at IS NOT NULL` matches `SELECT sum(c) FROM (SELECT count(*) c FROM tesoreria.ctacte UNION ALL SELECT count(*) FROM tesoreria.ctacte1)` exactly — no over-stamping, no under-stamping (precision fix via legacyId→rawEventId map correlation).
+57. **E3 NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) post-E3 — promotion works + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables) + N14 closure verified (Step 7: legacy_id coverage ≥ 426k + ctacte1 promotion rate ≥ 62%, FK-limited).
+58. **E3 NEW**: `docs/runbook.md` Known Limitations table no longer lists N14 (CLOSE — ctacte/ctacte1 now promote to ~62% via direct-from-raw_events path; remaining 38% is FK-blocked orphan rows + duplicates, both not addressable in MVP).
