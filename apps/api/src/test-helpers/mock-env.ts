@@ -37,6 +37,8 @@ export const mockEnv = () => ({
   DRIFT_DETECTION_CRON: '*/15 * * * *',
   FRESHNESS_REFRESH_CRON: '*/5 * * * *',
   TOKEN_CLEANUP_CRON: '0 3 * * *',
+  RECONCILIATION_CRON: '0 * * * *',
+  PROMOTION_CRON: '0 */6 * * *',
   AUDIT_RETENTION_DAYS: 90,
 })
 

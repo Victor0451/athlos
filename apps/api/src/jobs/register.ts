@@ -8,12 +8,13 @@ import {
   makeFreshnessRefreshHandler,
   makeReconciliationHandler,
   makeScheduledImportHandler,
+  makeScheduledPromotionHandler,
   makeTokenCleanupHandler,
 } from './index.ts'
 import { reconcileOrphanedRuns } from '@athlos/scheduler'
 import { rebuildProjection, DOMAIN_PROJECTION_TABLE, type Domain } from '@athlos/projection'
 import { detect, emitDriftAlert } from '@athlos/drift'
-import type { DriftService, ProjectionService } from '../container'
+import type { AppContainer, DriftService, ProjectionService } from '../container'
 
 /**
  * Build the scheduler instance + register all 5 default jobs. The
@@ -39,8 +40,9 @@ export async function buildScheduler(opts: {
   db: Db
   env: Env
   logger: never
+  container: AppContainer
 }): Promise<JobScheduler> {
-  const { db, env } = opts
+  const { db, env, container } = opts
 
   // 1. Boot reconciliation — run BEFORE scheduling so the new
   //    scheduler's `runningJobs` set starts empty. Idempotent.
@@ -73,6 +75,7 @@ export async function buildScheduler(opts: {
     { name: 'FRESHNESS_REFRESH_CRON', expr: env.FRESHNESS_REFRESH_CRON },
     { name: 'TOKEN_CLEANUP_CRON', expr: env.TOKEN_CLEANUP_CRON },
     { name: 'RECONCILIATION_CRON', expr: env.RECONCILIATION_CRON },
+    { name: 'PROMOTION_CRON', expr: env.PROMOTION_CRON },
   ]
   for (const { name, expr } of cronExprs) {
     if (expr && !validateCronExpression(expr)) {
@@ -113,6 +116,15 @@ export async function buildScheduler(opts: {
     '0 2 * * *',
     makeScheduledImportHandler(db),
     { timezone: 'America/Argentina/Buenos_Aires' },
+  )
+  // scheduled-promotion: async promotion via the in-process scheduler.
+  // Uses the same promotionInFlight flag as the sync POST /promote/trigger
+  // endpoint so the two paths never overlap. Timezone is UTC (node-cron
+  // default — user-locked decision).
+  scheduler.schedule(
+    'scheduled-promotion',
+    env.PROMOTION_CRON,
+    makeScheduledPromotionHandler(db, container),
   )
   if (env.RECONCILIATION_CRON) {
     scheduler.schedule(

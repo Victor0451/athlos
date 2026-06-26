@@ -1,6 +1,6 @@
 {
   "name": "@athlos/lineage",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "private": true,
   "description": "Athlos lineage tracker — query lineage chain + verify content hash. PR 7b.1a.",
   "type": "module",

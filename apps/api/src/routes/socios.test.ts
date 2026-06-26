@@ -32,6 +32,12 @@ function makeEnv(): Env {
     LEGACY_DB_PATH: '/tmp/legacy',
     CORS_ORIGINS: 'http://localhost:3000',
     FROM_ADDRESS: 'noreply@gorriti.app',
+    DRIFT_DETECTION_CRON: '*/15 * * * *',
+    FRESHNESS_REFRESH_CRON: '*/5 * * * *',
+    TOKEN_CLEANUP_CRON: '0 3 * * *',
+    RECONCILIATION_CRON: '0 * * * *',
+    PROMOTION_CRON: '0 */6 * * *',
+    AUDIT_RETENTION_DAYS: 90,
   } as Env
 }
 

@@ -253,6 +253,40 @@ export class InProcessScheduler implements JobScheduler {
   }
 
   /**
+   * Enable or disable a registered job.
+   *
+   * Idempotent: if the job is already in the desired state, this is a no-op.
+   *
+   * When `enabled: false`: stops the node-cron task if one exists
+   * (`entry.task.stop()`); `runNow` remains callable.
+   *
+   * When `enabled: true`: if the job has a `cronExpr` and no current task,
+   * re-creates the node-cron task via `startTask`.
+   *
+   * Throws `Error` if the job name is not registered.
+   */
+  setEnabled(name: string, enabled: boolean): void {
+    const entry = this.jobs.get(name)
+    if (!entry) {
+      throw new Error(`setEnabled: unknown job '${name}'`)
+    }
+    if (entry.def.enabled === enabled) {
+      // Idempotent: already in the desired state.
+      return
+    }
+    entry.def.enabled = enabled
+    if (enabled && !entry.task && entry.def.cronExpr) {
+      // Re-create the cron task.
+      this.startTask(name, entry.def)
+      this.log.info({ name }, 'job enabled — cron task (re)created')
+    } else if (!enabled && entry.task) {
+      entry.task.stop()
+      entry.task = null
+      this.log.info({ name }, 'job disabled — cron task stopped')
+    }
+  }
+
+  /**
    * Cron-tick path. Inserts the `pending` row, transitions to
    * `running`, calls the handler, then runs the result pipeline.
    */

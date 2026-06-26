@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.8] — 2026-06-26
+
+### Added
+
+- **Async promotion via in-process scheduler** — `packages/scheduler` v0.5.7 (already built with node-cron + retry 30s/120s/600s + DLQ + BullMQ-ready interface) is now wired into the API server. The `scheduled-promotion` JobHandler wraps `promoteAll(db)` and runs every 6 hours via the `PROMOTION_CRON` env var (default `0 */6 * * *`, UTC).
+- **3 admin scheduler endpoints** (ADMIN-only, rate-limited where applicable):
+  - `POST /api/v1/scheduler/jobs/:name/run-now` — manual trigger (1/min per operator)
+  - `GET /api/v1/scheduler/jobs` — last 20 runs from `job_runs` (ordered by `created_at DESC`)
+  - `PATCH /api/v1/scheduler/jobs/:name` with `{enabled: boolean}` — pause/resume future cron runs
+- **`PROMOTION_CRON` env var** in `packages/config/src/schema.ts` + `docker-compose.yml` + `.env.production.example`
+- **`JobScheduler.setEnabled(jobName, enabled, ctx)` interface method** — added to `packages/scheduler/src/types.ts` (preserves BullMQ swap-in compatibility)
+- **`scheduledPromotionHandler`** in `apps/api/src/jobs/scheduled-promotion.ts` — closure-captures `container.db` + `container.promotionInFlight` from E2; emits 1 `audit_events` row per trigger with `action: 'PROMOTE_TRIGGER'` (matches E2 sync pattern)
+
+### Changed
+
+- **`apps/api/src/server.ts`** — added `onReady` hook that starts the scheduler worker (`container.scheduler.start({cronOverrides: {'scheduled-promotion': env.PROMOTION_CRON}})`)
+- **`apps/api/src/container.ts`** — `buildContainer` now constructs `InProcessScheduler` with `scheduledPromotionHandler` registered
+- **`packages/scheduler/src/scheduler.ts`** — InProcessScheduler implements `setEnabled` (stops/restarts cron tasks; idempotent re-toggle)
+- **`scripts/verify-slice.sh`** — NEW Step 8 verifies scheduled-promotion job registered + admin endpoints accessible (SKIPs when `ADMIN_TOKEN` unset; requires running API server)
+- **`apps/api/src/routes/admin/jobs.ts`** — removed stale E2-era comment lines 146-149 referencing the future scheduler endpoint
+
+### Spec
+
+- `openspec/specs/scheduler-jobs/spec.md` — atomic sync (B1b LESSON #1): 2 NEW requirements (Scheduled Promotion, Admin Scheduler Endpoints) + 8 NEW scenarios. Closes the deferred-from-E2 scheduler-jobs spec gap.
+- `openspec/specs/deployment-devops/spec.md` — atomic sync: 1 NEW scenario under existing Promotion Pipeline + 4 NEW success criteria (#59-62). All additive.
+
+### Smoke Test Results (against 192.168.1.102/athlos test DB post-async-scheduler)
+
+- **All 8 verify-slice.sh steps**: PASS (Steps 1-7 unchanged; Step 8 SKIP — requires ADMIN_TOKEN + running API server)
+- **Test suite**: 213 API tests + 43 scheduler tests all pass
+- **Typecheck**: PASS
+- **No DB migrations needed** — `job_runs` (migration 0003) covers both job definitions and run history (verified via `\d public.job_runs`)
+
+### Out of scope (deferred to E5+)
+
+- BullMQ migration (interface preserved via `setEnabled` swap-in)
+- Web dashboard for run history
+- Per-domain parallel promotion
+- Sub-minute cadence (current min granularity: 1 minute via node-cron)
+- Multi-region job routing
+
 ## [0.5.7] — 2026-06-26
 
 ### Added

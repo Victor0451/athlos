@@ -193,6 +193,46 @@ describe('InProcessScheduler — shutdown', () => {
   })
 })
 
+describe('InProcessScheduler — setEnabled', () => {
+  it('disables a job and stops its cron task', () => {
+    const { scheduler } = makeScheduler()
+    const handler: JobHandler = async () => ({ status: 'succeeded' })
+    scheduler.schedule('drift-detection', '*/15 * * * *', handler)
+    scheduler.start()
+    expect(scheduler.list()[0]?.enabled).toBe(true)
+
+    scheduler.setEnabled('drift-detection', false)
+    expect(scheduler.list()[0]?.enabled).toBe(false)
+
+    // Re-enabling works without error
+    scheduler.setEnabled('drift-detection', true)
+    expect(scheduler.list()[0]?.enabled).toBe(true)
+  })
+
+  it('throws when setting enabled on an unknown job', () => {
+    const { scheduler } = makeScheduler()
+    expect(() => scheduler.setEnabled('unknown-job', true)).toThrow(/unknown job/)
+  })
+
+  it('is idempotent — re-setting the same state is a no-op', () => {
+    const { scheduler } = makeScheduler()
+    const handler: JobHandler = async () => ({ status: 'succeeded' })
+    scheduler.schedule('drift-detection', '*/15 * * * *', handler)
+    scheduler.start()
+
+    // No-op: true → true
+    scheduler.setEnabled('drift-detection', true)
+    expect(scheduler.list()[0]?.enabled).toBe(true)
+
+    // No-op: false → false
+    scheduler.setEnabled('drift-detection', false)
+    expect(scheduler.list()[0]?.enabled).toBe(false)
+
+    scheduler.setEnabled('drift-detection', false)
+    expect(scheduler.list()[0]?.enabled).toBe(false)
+  })
+})
+
 describe('estimateCadenceMinutes', () => {
   it('returns N for */N * * * *', () => {
     expect(estimateCadenceMinutes('*/5 * * * *')).toBe(5)

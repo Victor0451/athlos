@@ -38,6 +38,7 @@ export const envSchema = z.object({
   FRESHNESS_REFRESH_CRON: z.string().default('*/5 * * * *'),
   TOKEN_CLEANUP_CRON: z.string().default('0 3 * * *'),
   RECONCILIATION_CRON: z.string().optional(),
+  PROMOTION_CRON: z.string().default('0 */6 * * *'),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
 })
 
