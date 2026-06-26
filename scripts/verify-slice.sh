@@ -218,3 +218,109 @@ if [ "$(awk "BEGIN { print ($CTACTE1_PCT < $CTACTE1_LOWER) ? \"1\" : \"0\" }")" 
 fi
 
 echo "PASS: N14 closure verified (legacy_id backfill >= 426k + ctacte1 rate >= ${CTACTE1_LOWER}%, FK-limited)"
+# ─── Step 8: athlos-async-scheduler — admin scheduler endpoints ─────────────────
+
+echo
+hr
+echo "Step 8: Verify async-scheduler admin endpoints (scheduled-promotion job)"
+hr
+
+# Get an admin JWT token for testing
+# NOTE: In production this would be done via a real login. For verify-slice,
+# we use the service account credentials if configured, or skip if not available.
+ADMIN_TOKEN="${ADMIN_TOKEN:-}"
+API_BASE="${API_BASE:-http://localhost:3001}"
+
+if [ -z "$ADMIN_TOKEN" ]; then
+  echo "SKIP: ADMIN_TOKEN not set — Step 8 requires a valid admin JWT"
+  echo "  To run Step 8:"
+  echo "    ADMIN_TOKEN=\$(pnpm --filter @athlos/api exec node -e \"const {signAccessToken}=require('@athlos/auth'); console.log(signAccessToken({sub:'00000000-0000-4000-8000-000000000001',role:'ADMIN',permissions:{}},process.env))\")"
+  echo "  Or set API_BASE to point at a running instance."
+else
+
+# (a) GET /api/v1/admin/jobs/health — scheduled-promotion should be registered
+HEALTH_RESPONSE=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$API_BASE/api/v1/admin/jobs/health")
+SCHEDULED_PROMO=$(echo "$HEALTH_RESPONSE" | grep -c '"name":"scheduled-promotion"' || true)
+if [ "$SCHEDULED_PROMO" -lt 1 ]; then
+  echo "FAIL: scheduled-promotion not found in /admin/jobs/health response" >&2
+  echo "Response: $HEALTH_RESPONSE" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "scheduled-promotion registered in health" "PASS"
+
+# (b) POST /api/v1/scheduler/jobs/scheduled-promotion/run-now — should return 200 + jobRunId
+RUN_NOW_RESPONSE=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -X POST "$API_BASE/api/v1/scheduler/jobs/scheduled-promotion/run-now")
+RUN_NOW_STATUS=$(echo "$RUN_NOW_RESPONSE" | grep -c '"jobRunId"' || true)
+if [ "$RUN_NOW_STATUS" -lt 1 ]; then
+  echo "FAIL: POST /run-now did not return jobRunId" >&2
+  echo "Response: $RUN_NOW_RESPONSE" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "POST /scheduler/jobs/scheduled-promotion/run-now" "PASS"
+
+# (c) GET /api/v1/scheduler/jobs — should return 200 with items array
+JOBS_RESPONSE=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$API_BASE/api/v1/scheduler/jobs")
+HAS_ITEMS=$(echo "$JOBS_RESPONSE" | grep -c '"items"' || true)
+if [ "$HAS_ITEMS" -lt 1 ]; then
+  echo "FAIL: GET /scheduler/jobs did not return items array" >&2
+  echo "Response: $JOBS_RESPONSE" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "GET /scheduler/jobs returns items" "PASS"
+
+# (d) PATCH enable=false
+PATCH_DISABLE_RESP=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -X PATCH "$API_BASE/api/v1/scheduler/jobs/scheduled-promotion" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false}')
+PATCH_DISABLE_STATUS=$(echo "$PATCH_DISABLE_RESP" | grep -c '"enabled":false' || true)
+if [ "$PATCH_DISABLE_STATUS" -lt 1 ]; then
+  echo "FAIL: PATCH {enabled:false} did not return enabled:false" >&2
+  echo "Response: $PATCH_DISABLE_RESP" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "PATCH {enabled:false} returns enabled:false" "PASS"
+
+# (e) PATCH enable=true
+PATCH_ENABLE_RESP=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -X PATCH "$API_BASE/api/v1/scheduler/jobs/scheduled-promotion" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}')
+PATCH_ENABLE_STATUS=$(echo "$PATCH_ENABLE_RESP" | grep -c '"enabled":true' || true)
+if [ "$PATCH_ENABLE_STATUS" -lt 1 ]; then
+  echo "FAIL: PATCH {enabled:true} did not return enabled:true" >&2
+  echo "Response: $PATCH_ENABLE_RESP" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "PATCH {enabled:true} returns enabled:true" "PASS"
+
+# (f) Non-admin operator → 403
+OPERATOR_TOKEN="${OPERATOR_TOKEN:-}"
+if [ -n "$OPERATOR_TOKEN" ]; then
+  NON_ADMIN_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $OPERATOR_TOKEN" \
+    -X POST "$API_BASE/api/v1/scheduler/jobs/scheduled-promotion/run-now")
+  if [ "$NON_ADMIN_RESP" != "403" ]; then
+    echo "FAIL: Non-admin got $NON_ADMIN_RESP, expected 403" >&2
+    exit 1
+  fi
+  printf "  %-60s %s\n" "Non-admin operator gets 403" "PASS"
+else
+  printf "  %-60s %s\n" "Non-admin 403 test" "SKIP (no operator token)"
+fi
+
+# (g) Unknown job → 404
+UNKNOWN_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -X POST "$API_BASE/api/v1/scheduler/jobs/nonexistent-job/run-now")
+if [ "$UNKNOWN_RESP" != "404" ]; then
+  echo "FAIL: Unknown job got $UNKNOWN_RESP, expected 404" >&2
+  exit 1
+fi
+printf "  %-60s %s\n" "Unknown job returns 404" "PASS"
+
+echo "PASS: Step 8 — async-scheduler admin endpoints verified"
+fi

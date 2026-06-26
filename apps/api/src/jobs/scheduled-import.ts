@@ -29,7 +29,9 @@ export function makeScheduledImportHandler(db: Db): JobHandler {
     const batch = await runImport(db, {
       trigger: ctx.triggeredBy === 'manual' ? 'manual' : 'scheduled',
       batchId: ctx.jobRunId,
-      basePath: process.env['LEGACY_DB_PATH'],
+      ...(process.env['LEGACY_DB_PATH'] !== undefined
+        ? { basePath: process.env['LEGACY_DB_PATH'] }
+        : {}),
     })
 
     // Post-import: rebuild projections for domains that had imports.

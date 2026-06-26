@@ -46,7 +46,7 @@ export const promoteRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     '/api/v1/promote/trigger',
     {
       preHandler: requireRole('ADMIN'),
-      config: { timeout: 120_000 },
+      config: { timeout: 120_000 } as never,
     },
     async (request, reply) => {
       const body = triggerBodySchema.parse(request.body ?? {})
