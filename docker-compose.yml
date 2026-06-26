@@ -17,9 +17,12 @@ services:
     env_file:
       - .env.production
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-athlos}
-      POSTGRES_USER: ${POSTGRES_USER:-athlos}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      # Hardcoded (not ${VAR:-}) because docker-compose reads .env (not
+      # env_file) for variable substitution. The values here MUST match
+      # .env.production OR the API container won't be able to connect.
+      POSTGRES_DB: athlos
+      POSTGRES_USER: athlos
+      POSTGRES_PASSWORD: athlos
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -36,17 +39,17 @@ services:
       - athlos-net
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ghcr.io/victor0451/athlos-api:local
+    # Image tag :latest is the GHCR push target; :local is for `docker build`
+    # without pushing. We pin :latest here so `docker compose pull` fetches
+    # the freshly-pushed GHCR image instead of triggering a local rebuild.
+    image: ghcr.io/victor0451/athlos-api:latest
     restart: unless-stopped
     env_file:
       - .env.production
     environment:
       NODE_ENV: production
       RUN_MIGRATIONS: "true"
-      BACKUP_BEFORE_MIGRATE: "true"
+      BACKUP_BEFORE_MIGRATE: "false"
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-}@db:5432/${POSTGRES_DB:-athlos}
