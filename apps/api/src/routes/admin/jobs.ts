@@ -143,10 +143,6 @@ export const adminJobsRoutes: FastifyPluginCallback = (fastify, _opts, done) => 
     })
   })
 
-  // (Reserved for future POST /api/v1/admin/jobs/:name/run-now — see
-  // PR 6a design §"Manual Run" + jobs/register.ts#jobNotFoundError.
-  // Wiring deferred to PR 7 when the import-batch is the first
-  // non-scheduler trigger.)
   void idParamSchema
 
   done()
