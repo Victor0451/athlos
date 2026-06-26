@@ -233,16 +233,25 @@ export function createImportStandinDb(): ImportStandinDb & {
         }
       }
       return {
-        values(v: NewRawEvent) {
+        values(v: NewRawEvent | NewRawEvent[]) {
+          // Drizzle's values() accepts either a single object or an
+          // array of objects for batched inserts. The pipeline uses
+          // the batched path (insertRawEventBatch), so the standin
+          // must accept arrays too.
+          const rows = Array.isArray(v) ? v : [v]
           return {
             onConflictDoNothing(opts: { target: unknown }) {
               const cols = applyConflictTarget(opts.target)
               return {
                 returning(_cols?: unknown): Promise<RawEvent[]> {
-                  if (isDup(state, v, cols)) return Promise.resolve([])
-                  const row = makeRawEvent(v)
-                  state.rows.push(row)
-                  return Promise.resolve([row])
+                  const inserted: RawEvent[] = []
+                  for (const row of rows) {
+                    if (isDup(state, row, cols)) continue
+                    const event = makeRawEvent(row)
+                    state.rows.push(event)
+                    inserted.push(event)
+                  }
+                  return Promise.resolve(inserted)
                 },
               }
             },
