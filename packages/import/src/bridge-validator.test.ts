@@ -42,6 +42,8 @@ async function seedRawEvent(
     payload: args.payload,
     importBatch: '00000000-0000-4000-8000-000000000001',
     importedAt: args.importedAt,
+    promotedAt: null,
+    legacyId: null,
   })
 }
 
