@@ -316,17 +316,20 @@ async function insertMasterBatch(
       .onConflictDoNothing()
       .returning({ id: socios.id })
   } else if (domain === 'ctacte') {
+    // Return legacyId for flush correlation (E3: ctacte raw_events-direct path uses
+    // legacyId→rawEventId map to stamp promoted_at precisely)
     inserted = await db
       .insert(ctacte)
       .values(rows as unknown as never[])
       .onConflictDoNothing()
-      .returning({ id: ctacte.id })
+      .returning({ id: ctacte.id, legacyId: ctacte.legacyId })
   } else if (domain === 'ctacte1') {
+    // Return legacyId for flush correlation (E3: ctacte1 raw_events-direct path)
     inserted = await db
       .insert(ctacte1)
       .values(rows as unknown as never[])
       .onConflictDoNothing()
-      .returning({ id: ctacte1.id })
+      .returning({ id: ctacte1.id, legacyId: ctacte1.legacyId })
   } else if (domain === 'escuela') {
     inserted = await db
       .insert(escuela)
