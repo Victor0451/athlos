@@ -101,7 +101,6 @@ export function naturalKey(domain: Domain, payload: Record<string, unknown>): st
 /**
  * Load source_keys from raw_events where promoted_at IS NOT NULL (E2).
  * Belt-and-suspenders secondary cross-check for ctacte/ctacte1.
- * NOTE: Full ctacte↔ctacte1 cross-domain dedup requires raw_events.legacy_id (E3+).
  */
 async function loadPromotedSourceKeys(db: Db, domain: Domain): Promise<Set<string>> {
   const rows = (await db.execute(
@@ -111,8 +110,8 @@ async function loadPromotedSourceKeys(db: Db, domain: Domain): Promise<Set<strin
 }
 
 /** Load existing natural keys already in master table (for dedup pre-check).
- *  E2: for ctacte/ctacte1, MERGES master.legacy_id keys with raw_events.promoted_at
- *  source_keys as a secondary cross-check.
+ *  E3: for ctacte/ctacte1, MERGES master.legacy_id + raw_events.legacy_id + raw_events.promoted_at.
+ *  A row is "existing" if EITHER layer says so (union of all three sources).
  */
 export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<Set<string>> {
   if (domain === 'socios') {
@@ -120,7 +119,7 @@ export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<S
     return new Set(rows.map((r) => r.numeroSocio))
   }
   if (domain === 'ctacte') {
-    // Load existing legacy_ids (deterministic UUIDs) for cross-run dedup
+    // Load existing legacy_ids from master (primary dedup layer)
     const rows = await db
       .select({ legacyId: ctacte.legacyId })
       .from(ctacte)
@@ -134,7 +133,7 @@ export async function loadExistingNaturalKeys(db: Db, domain: Domain): Promise<S
     return legacyKeys
   }
   if (domain === 'ctacte1') {
-    // Load existing legacy_ids for cross-run dedup
+    // Load existing legacy_ids from master (primary dedup layer)
     const rows = await db
       .select({ legacyId: ctacte1.legacyId })
       .from(ctacte1)

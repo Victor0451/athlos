@@ -23,10 +23,16 @@ export function transformCtacte(
 
   // legacy_id is a deterministic UUID from the natural key — enables
   // cross-run idempotency via UNIQUE INDEX on legacy_id.
+  // IMPORTANT: Use raw payload value (not parsed fecha) to match migration 0018's
+  // SQL: SELECT promotion_deterministic_uuid(payload->>'CCTCUENTA' || '|' || payload->>'CCTFECHA' || ...)
   const legacyId = deterministicUuid(
-    [cuenta, fecha, payload.CCTNROCOMP ?? '', payload.CCTMES ?? '', payload.CCTTALONAR ?? ''].join(
-      '|',
-    ),
+    [
+      cuenta,
+      String(payload.CCTFECHA ?? ''),
+      payload.CCTNROCOMP ?? '',
+      payload.CCTMES ?? '',
+      payload.CCTTALONAR ?? '',
+    ].join('|'),
   )
 
   return {
