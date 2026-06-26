@@ -844,3 +844,61 @@ The transform `packages/promotion/src/transforms/ctacte.ts` SHALL compute `legac
 56. **E3 NEW**: `SELECT count(*) FROM public.raw_events WHERE source_table IN ('ctacte','ctacte1') AND promoted_at IS NOT NULL` matches `SELECT sum(c) FROM (SELECT count(*) c FROM tesoreria.ctacte UNION ALL SELECT count(*) FROM tesoreria.ctacte1)` exactly — no over-stamping, no under-stamping (precision fix via legacyId→rawEventId map correlation).
 57. **E3 NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) post-E3 — promotion works + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables) + N14 closure verified (Step 7: legacy_id coverage ≥ 426k + ctacte1 promotion rate ≥ 62%, FK-limited).
 58. **E3 NEW**: `docs/runbook.md` Known Limitations table no longer lists N14 (CLOSE — ctacte/ctacte1 now promote to ~62% via direct-from-raw_events path; remaining 38% is FK-blocked orphan rows + duplicates, both not addressable in MVP).
+
+---
+
+## E-Future Delta: Slice athlos-async-scheduler (Scheduled Promotion + Admin Endpoints)
+
+> **ADDITIVE-ONLY ATOMIC SPEC SYNC (B1b LESSON #1).** This delta adds 1 NEW requirement below. No existing requirement is modified, removed, or rewritten. Closes the deferred async-promotion scope from E2 (sync-only) by adding a scheduled cron trigger + 3 admin endpoints for operator control.
+
+---
+
+### Requirement: Scheduled Promotion (NEW in athlos-async-scheduler)
+
+The system SHALL run `promoteAll(db)` automatically every 6 hours via the in-process `@athlos/scheduler` (node-cron + DB-persisted `job_runs` + retry + dead-letter). The schedule SHALL be configurable via the `PROMOTION_CRON` environment variable (default `0 */6 * * *`, UTC timezone — node-cron default). The scheduler worker SHALL be started at API server startup. The slice also adds 3 admin endpoints under `/api/v1/scheduler/jobs` for operator-controlled manual trigger, status read, and enable/disable of registered jobs.
+
+#### Scenario: scheduled promotion runs every 6 hours via PROMOTION_CRON
+
+- GIVEN `PROMOTION_CRON=0 */6 * * *` is set in the API container env
+- AND `@athlos/scheduler` is started in `apps/api/src/server.ts` after `buildScheduler(...)` returns
+- WHEN the cron expression triggers (every 6h at minute 0)
+- THEN the `scheduled-promotion` JobHandler SHALL execute
+- AND it SHALL call `promoteAll(container.db)` synchronously inside the handler
+- AND the result SHALL be persisted to `job_runs` with `status='succeeded' | 'failed'`
+- AND 1 `audit_events` row SHALL be inserted with `action: 'PROMOTE_TRIGGER'`
+
+#### Scenario: PROMOTION_CRON env var defaults to `0 */6 * * *` if unset
+
+- GIVEN `PROMOTION_CRON` is NOT set in the API container env
+- WHEN the API boots and `@athlos/config` parses `envSchema`
+- THEN `env.PROMOTION_CRON` SHALL default to the string `'0 */6 * * *'`
+- AND `validateCronExpression(env.PROMOTION_CRON)` SHALL pass at boot
+- AND the scheduler SHALL register `scheduled-promotion` with that cron
+
+#### Scenario: scheduler worker starts at API server startup
+
+- GIVEN the API container starts and `apps/api/src/server.ts` boots
+- WHEN `buildScheduler(...)` returns AND `app.listen()` is called
+- THEN `app.scheduler.start()` SHALL have been called (registers all node-cron tasks)
+- AND `GET /api/v1/admin/jobs/health` SHALL include `scheduled-promotion` with `scheduled: true`
+- AND the registered job list SHALL contain 6 jobs (5 existing + 1 NEW `scheduled-promotion`)
+
+#### Scenario: SIGTERM mid-promotion aborts cleanly (handler respects ctx.signal)
+
+- GIVEN the API process receives SIGTERM mid-promotion (during a 60-90s `promoteAll` call)
+- WHEN the scheduler's 30-second graceful shutdown window starts
+- THEN the handler SHALL observe `ctx.signal.aborted === true` at the next domain boundary
+- AND the in-flight `job_runs` row SHALL be marked `failed` with `error_message='process shutdown'`
+- AND no orphaned `running` rows SHALL remain after the process exits
+- AND the next boot SHALL call `reconcileOrphanedRuns()` to verify no leftover `running` rows
+
+---
+
+## Success Criteria (E-Future additions)
+
+59. **E-Future NEW**: `POST /api/v1/scheduler/jobs/scheduled-promotion/run-now` (ADMIN JWT) returns 200 with `{ jobRunId, status }`. Per-operator rate limit 1/min via `@fastify/rate-limit`. A 2nd POST within 60s from the same operator SHALL return 429 with `Retry-After`.
+60. **E-Future NEW**: `GET /api/v1/scheduler/jobs` returns last 20 runs from `job_runs` table, ordered by `started_at DESC`, each entry with `{ jobName, status, startedAt, finishedAt, durationMs, attempt, totals? }`.
+61. **E-Future NEW**: `PATCH /api/v1/scheduler/jobs/scheduled-promotion` with `{ enabled: false }` stops future cron runs (in-flight jobs complete); re-enabling re-creates the node-cron task. `scheduler.setEnabled` is idempotent.
+62. **E-Future NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) post-async-scheduler — scheduled-promotion visible in `/admin/jobs/health` + admin endpoints return 200/403/404 + audit row emitted on every trigger.
+63. **E-Future NEW**: `JobScheduler.setEnabled(jobName, enabled)` is part of the public interface — BullMQ adapter (deferred E5+) SHALL implement the same contract without changing call sites.
+64. **E-Future NEW**: Spec diff is ADDITIVE ONLY — no existing requirements in `deployment-devops/spec.md` or `scheduler-jobs/spec.md` are modified.
