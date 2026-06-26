@@ -38,6 +38,9 @@ RUN addgroup -g 1001 athlos && adduser -D -G athlos -u 1001 athlos
 
 # Copy workspace structure from builder
 COPY --from=builder --chown=athlos:athlos /app/node_modules ./node_modules
+COPY --from=builder --chown=athlos:athlos /app/package.json ./package.json
+COPY --from=builder --chown=athlos:athlos /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder --chown=athlos:athlos /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder --chown=athlos:athlos /app/apps ./apps
 COPY --from=builder --chown=athlos:athlos /app/packages ./packages
 COPY --from=builder --chown=athlos:athlos /app/packages/db ./packages/db
