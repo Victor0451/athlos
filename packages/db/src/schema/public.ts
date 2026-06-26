@@ -209,6 +209,10 @@ export const rawEvents = pgTable(
     importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
     // NEW (E2): per-row promotion audit column. NULL = unpromoted; NOT NULL = promoted.
     promotedAt: timestamp('promoted_at', { withTimezone: true }),
+    // NEW (E3): source-level dedup key for ctacte/ctacte1 (UUIDv5-like, SHA-256).
+    // Partial UNIQUE INDEX in migration 0017 (WHERE legacy_id IS NOT NULL).
+    // NULL for non-ctacte/ctacte1 rows and for duplicate 5-tuple ctacte/ctacte1 rows.
+    legacyId: text('legacy_id'),
   },
   (table) => ({
     /** Idempotency key — re-importing identical content is a no-op. */
@@ -223,6 +227,8 @@ export const rawEvents = pgTable(
     sourceKeyIdx: index('idx_raw_events_source_key').on(table.sourceTable, table.sourceKey),
     // NEW (E2): fast lookup for the per-row audit query
     promotedAtIdx: index('raw_events_promoted_at_idx').on(table.promotedAt),
+    // NEW (E3): partial UNIQUE INDEX for ctacte/ctacte1 dedup (only one row per natural key)
+    legacyIdIdx: uniqueIndex('raw_events_legacy_id_unique').on(table.legacyId),
   }),
 )
 

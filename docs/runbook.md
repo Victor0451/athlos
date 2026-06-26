@@ -414,16 +414,22 @@ Three layers of protection:
 
 ### Known Limitations
 
-| ID  | Description                                                                   | Future slice |
-| --- | ----------------------------------------------------------------------------- | ------------ |
-| N7  | `caja_detalle` has 122 wide columns — deferred to future slice                | N7           |
-| N8  | `deportes.inscripciones` rebuild needs a `*_inscripciones_projection` table   | N8           |
-| N14 | ~107k ctacte1 orphan rows stuck at ~61% promotion rate (stale `entity_uuids`) | N14 (E3+)    |
-| N16 | `gastos` has no FK to `ctacte` via `cctcuenta` (flat ledger in v1)            | N16          |
+| ID      | Description                                                                       | Future slice              |
+| ------- | --------------------------------------------------------------------------------- | ------------------------- |
+| N7      | `caja_detalle` has 122 wide columns — deferred to future slice                    | N7                        |
+| N8      | `deportes.inscripciones` rebuild needs a `*_inscripciones_projection` table       | N8                        |
+| ~~N14~~ | ~~~107k ctacte1 orphan rows stuck at ~61% promotion rate (stale `entity_uuids`)~~ | **CLOSED in E3 (v0.5.7)** |
+| N16     | `gastos` has no FK to `ctacte` via `cctcuenta` (flat ledger in v1)                | N16                       |
 
-**N14 detail**: The `ctacte1` promotion rate is stuck at ~61% because `entity_uuids` has stale entries for ~107k orphan rows. When those are repopulated (future work), re-running promotion will insert the missing rows.
+**N14 CLOSED in E3 (v0.5.7)**: ctacte/ctacte1 now promote directly from `raw_events` via `legacy_id` (a deterministic UUIDv5-like from the 5-tuple natural key). Promotion rate:
+
+- `tesoreria.ctacte`: 200,945 rows (~78% of 256,088 unique natural keys; 55k FK-blocked by orphan socio)
+- `tesoreria.ctacte1`: 152,797 rows (~62.3% of 245,370 total raw_events; limited by 17k parent ctacte FK failures + 75k duplicates with NULL legacy_id)
+- Remaining ~38% ctacte1 gap is structural: 75k duplicate 5-tuples (UNIQUE INDEX allows one legacy_id per natural key) + 17k orphan parents (CCTCUENTA=0 sentinel or socio not in master) — neither is addressable in MVP without importing additional data.
 
 **N16 detail**: `gastos` intentionally has no `socio_id` or `ctacte` FK in v1. The ledger is flat — each `gastos` row stands alone. FK reconstruction is deferred.
+
+**E3 NEW**: `raw_events.legacy_id` is the source-of-truth dedup key for ctacte/ctacte1. The `entity_uuids` table is no longer consulted for these domains. The legacy_id is computed at-import time by the SQL `promotion_deterministic_uuid()` function (mirrors the TypeScript `deterministicUuid()` byte-for-byte; verified by `uuid-parity.test.ts`). The partial UNIQUE INDEX (`WHERE legacy_id IS NOT NULL`) accommodates domains that don't have a natural key.
 
 ---
 
