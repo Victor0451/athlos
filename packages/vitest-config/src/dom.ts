@@ -7,12 +7,17 @@ import type { InlineConfig } from 'vitest'
  *
  * Default `include` covers both `.test.ts` and `.test.tsx` — React component
  * tests are the most common consumer of this preset.
+ *
+ * Setup file `vitest.setup.ts` is loaded if present in the consuming
+ * package root. It is responsible for registering `@testing-library/jest-dom`
+ * matchers and any global test polyfills.
  */
 export function domPreset(): Partial<InlineConfig> {
   return {
     environment: 'jsdom',
     globals: false,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    setupFiles: ['vitest.setup.ts'],
     testTimeout: 10_000,
     coverage: {
       provider: 'v8',
@@ -23,6 +28,7 @@ export function domPreset(): Partial<InlineConfig> {
         '**/.next/**',
         '**/*.config.ts',
         '**/*.config.cjs',
+        '**/*.config.mts',
         '**/*.test.ts',
         '**/*.test.tsx',
         '**/*.spec.ts',
