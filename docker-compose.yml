@@ -52,7 +52,10 @@ services:
       BACKUP_BEFORE_MIGRATE: "false"
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-athlos}:${POSTGRES_PASSWORD:-}@db:5432/${POSTGRES_DB:-athlos}
+      # Hardcoded for the same reason as the db service: docker-compose
+      # reads .env (not env_file) for variable substitution. Values MUST
+      # match the db service above so drizzle-kit can authenticate.
+      DATABASE_URL: postgresql://athlos:athlos@db:5432/athlos
       PROMOTION_CRON: ${PROMOTION_CRON:-0 */6 * * *}
     depends_on:
       db:
