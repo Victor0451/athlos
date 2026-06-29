@@ -1,0 +1,267 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+/**
+ * Ctacte detail page tests (TASK-025, PR 8b.2).
+ *
+ * `/ctacte/[cuenta]` shows a socio's cuenta-corriente ledger:
+ *   - Header: socio name + "Volver al selector" link
+ *   - Summary strip: Total Debe | Total Haber | Saldo (es-AR)
+ *   - `MovementList` component with the first page of movimientos
+ *   - Pagination footer (Anterior / Siguiente) when more pages exist
+ *   - Loading skeleton while the ctacte query is pending
+ *   - "Cuenta no encontrada" error state on 404
+ *   - "Próximamente" placeholder for the deferred write actions
+ *
+ * The page reads the dynamic segment via `useParams()` from
+ * `next/navigation` (same pattern as the socio detail page in
+ * PR 8b.1 — works in jsdom without a Suspense wrapper).
+ */
+
+const pushMock = vi.fn()
+const replaceMock = vi.fn()
+const useParamsMock = vi.fn()
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: pushMock, replace: replaceMock, back: vi.fn() }),
+  usePathname: () => '/ctacte/abc',
+  useSearchParams: () => new URLSearchParams(),
+  useParams: <T,>() => useParamsMock() as T,
+}))
+
+const getCtacteMock = vi.fn()
+const getMovimientosMock = vi.fn()
+const getSocioMock = vi.fn()
+
+vi.mock('@/lib/api/ctacte', () => ({
+  getCtacte: (...args: unknown[]) => getCtacteMock(...args),
+  getMovimientos: (...args: unknown[]) => getMovimientosMock(...args),
+}))
+
+vi.mock('@/lib/api/socios', () => ({
+  getSocio: (...args: unknown[]) => getSocioMock(...args),
+}))
+
+const useAuthMock = vi.fn()
+vi.mock('@/lib/use-auth', () => ({
+  useAuth: () => useAuthMock(),
+}))
+
+const { default: CtacteDetailPage } = await import('./page')
+
+function makeAdminUser() {
+  return {
+    user: {
+      operator_id: 'op-admin',
+      role: 'ADMIN' as const,
+      username: 'admin',
+      permissions: { can_reprint: true, can_anulate: true },
+    },
+    token: 'fake.jwt',
+    isAuthenticated: true,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
+  }
+}
+
+const SAMPLE_SOCIO = {
+  id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  numero_socio: '00001',
+  nombre: 'Juan',
+  apellido: 'García',
+  dni: '12345678',
+  fecha_alta: '2020-03-15',
+  estado: 'activo' as const,
+  categoria: 'TITULAR',
+  direccion: null,
+  telefono: null,
+  email: null,
+  created_at: '2020-03-15T12:00:00.000Z',
+  updated_at: '2026-01-15T08:00:00.000Z',
+  deleted_at: null,
+}
+
+const SAMPLE_CTACTE = {
+  socioId: SAMPLE_SOCIO.id,
+  saldo: '500.00',
+  saldo_calculado_at: '2026-06-29T12:00:00.000Z',
+  movimientos: [
+    {
+      id: 'mv-1',
+      socio_id: SAMPLE_SOCIO.id,
+      fecha: '2026-01-15',
+      tipo: 'DEBITO' as const,
+      concepto: 'Cuota enero',
+      debe: '1500.00',
+      haber: '0.00',
+      anulado: false,
+      anulado_at: null,
+      anulado_motivo: null,
+      monto: '1500.00',
+      saldo_resultante: null,
+      created_at: '2026-01-15T12:00:00.000Z',
+    },
+    {
+      id: 'mv-2',
+      socio_id: SAMPLE_SOCIO.id,
+      fecha: '2026-01-20',
+      tipo: 'CREDITO' as const,
+      concepto: 'Pago',
+      debe: '0.00',
+      haber: '1000.00',
+      anulado: false,
+      anulado_at: null,
+      anulado_motivo: null,
+      monto: '-1000.00',
+      saldo_resultante: null,
+      created_at: '2026-01-20T10:00:00.000Z',
+    },
+  ],
+  page: 1,
+  limit: 20,
+  total: 2,
+  has_more: false,
+}
+
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <CtacteDetailPage />
+    </QueryClientProvider>,
+  )
+}
+
+describe('Ctacte detail page', () => {
+  beforeEach(() => {
+    pushMock.mockReset()
+    replaceMock.mockReset()
+    useParamsMock.mockReset()
+    useParamsMock.mockReturnValue({ cuenta: SAMPLE_SOCIO.id })
+    useAuthMock.mockReset()
+    useAuthMock.mockReturnValue(makeAdminUser())
+    getCtacteMock.mockReset()
+    getMovimientosMock.mockReset()
+    getSocioMock.mockReset()
+
+    getCtacteMock.mockResolvedValue(SAMPLE_CTACTE)
+    getSocioMock.mockResolvedValue(SAMPLE_SOCIO)
+    getMovimientosMock.mockResolvedValue({
+      items: SAMPLE_CTACTE.movimientos,
+      page: 1,
+      limit: 20,
+      total: 2,
+      has_more: false,
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('renders the page header + "Volver al selector" link', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /volver/i })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('link', { name: /volver/i })).toHaveAttribute('href', '/ctacte')
+  })
+
+  it('renders the socio name in the heading', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/garcía.*juan/i)
+    })
+  })
+
+  it('calls getCtacte with the dynamic segment id', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(getCtacteMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id)
+    })
+  })
+
+  it('renders the summary strip with Total Debe + Total Haber + Saldo', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-summary')).toBeInTheDocument()
+    })
+    const summary = screen.getByTestId('ctacte-summary')
+    expect(summary).toHaveTextContent(/total debe/i)
+    expect(summary).toHaveTextContent(/total haber/i)
+    expect(summary).toHaveTextContent(/saldo/i)
+  })
+
+  it('renders the MovementList with the movimientos from the API', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText('Cuota enero')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Pago')).toBeInTheDocument()
+  })
+
+  it('renders the "Próximamente" placeholder for write actions', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/próximamente/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows a loading skeleton while the query is pending', () => {
+    getCtacteMock.mockReturnValue(new Promise(() => {}))
+    renderPage()
+    expect(screen.getByText(/cargando/i)).toBeInTheDocument()
+  })
+
+  it('renders a "Cuenta no encontrada" error state when the API rejects', async () => {
+    getCtacteMock.mockRejectedValue(new Error('NOT_FOUND: socio no encontrado'))
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/cuenta no encontrada/i)).toBeInTheDocument()
+    })
+  })
+
+  it('renders pagination controls when there are multiple pages', async () => {
+    getCtacteMock.mockResolvedValueOnce({
+      ...SAMPLE_CTACTE,
+      total: 60,
+      has_more: true,
+    })
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /anterior/i })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /siguiente/i })).toBeInTheDocument()
+    expect(screen.getByText(/página 1 de 3/i)).toBeInTheDocument()
+  })
+
+  it('calls getMovimientos when the user navigates to page 2', async () => {
+    getCtacteMock.mockResolvedValueOnce({
+      ...SAMPLE_CTACTE,
+      total: 60,
+      has_more: true,
+    })
+    getMovimientosMock.mockResolvedValueOnce({
+      items: [SAMPLE_CTACTE.movimientos[0]!],
+      page: 2,
+      limit: 20,
+      total: 60,
+      has_more: true,
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /siguiente/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /siguiente/i }))
+
+    await waitFor(() => {
+      expect(getMovimientosMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, { page: 2, limit: 20 })
+    })
+  })
+})
