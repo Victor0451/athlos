@@ -34,6 +34,7 @@ vi.mock('next/navigation', () => ({
 const getCtacteMock = vi.fn()
 const getMovimientosMock = vi.fn()
 const getSocioMock = vi.fn()
+const getCtacteGastosLinksMock = vi.fn()
 
 vi.mock('@/lib/api/ctacte', () => ({
   getCtacte: (...args: unknown[]) => getCtacteMock(...args),
@@ -42,6 +43,10 @@ vi.mock('@/lib/api/ctacte', () => ({
 
 vi.mock('@/lib/api/socios', () => ({
   getSocio: (...args: unknown[]) => getSocioMock(...args),
+}))
+
+vi.mock('@/lib/api/gastos-ctacte', () => ({
+  getCtacteGastosLinks: (...args: unknown[]) => getCtacteGastosLinksMock(...args),
 }))
 
 const useAuthMock = vi.fn()
@@ -148,6 +153,7 @@ describe('Ctacte detail page', () => {
     getCtacteMock.mockReset()
     getMovimientosMock.mockReset()
     getSocioMock.mockReset()
+    getCtacteGastosLinksMock.mockReset()
 
     getCtacteMock.mockResolvedValue(SAMPLE_CTACTE)
     getSocioMock.mockResolvedValue(SAMPLE_SOCIO)
@@ -158,6 +164,7 @@ describe('Ctacte detail page', () => {
       total: 2,
       has_more: false,
     })
+    getCtacteGastosLinksMock.mockResolvedValue({ items: [] })
   })
 
   afterEach(() => {
@@ -205,11 +212,36 @@ describe('Ctacte detail page', () => {
     expect(screen.getByText('Pago')).toBeInTheDocument()
   })
 
-  it('renders the "Próximamente" placeholder for write actions', async () => {
+  it('does NOT render the "Próximamente" placeholder (TASK-013: replaced by Gastos vinculados panel)', async () => {
     renderPage()
     await waitFor(() => {
-      expect(screen.getByText(/próximamente/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument()
     })
+    expect(screen.queryByText(/próximamente/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the "Gastos vinculados" panel below the movements list (TASK-013)', async () => {
+    getCtacteGastosLinksMock.mockResolvedValueOnce({
+      items: [
+        {
+          linkId: 'link-1',
+          gastoId: 'g-1',
+          ctacteId: SAMPLE_SOCIO.id,
+          montoCubierto: '1500.00',
+          motivo: 'manual' as const,
+          anulado: false,
+          gastoFecha: '2026-01-15',
+          gastoImporte: '1500.00',
+          gastoConcepto: 'Sueldos únicos',
+          gastoCuentaPrincipal: '6003009',
+        },
+      ],
+    })
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('gastos-vinculados')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('gastos-vinculado-row-link-1')).toBeInTheDocument()
   })
 
   it('shows a loading skeleton while the query is pending', () => {
