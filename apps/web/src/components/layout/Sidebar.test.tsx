@@ -75,30 +75,34 @@ describe('Sidebar', () => {
     expect(within(nav).getByRole('link', { name: /padrones/i })).toBeInTheDocument()
   })
 
-  it('shows Scheduler and Settings for ADMIN', () => {
+  it('shows Scheduler, Approvals and Settings for ADMIN', () => {
     seedUser('ADMIN')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
     expect(within(nav).getByRole('link', { name: /scheduler/i })).toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /settings/i })).toBeInTheDocument()
   })
 
-  it('hides Scheduler and Settings for non-ADMIN roles', () => {
+  it('hides Scheduler, Approvals and Settings for non-ADMIN roles', () => {
     seedUser('CONSULTA')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
     expect(within(nav).queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
   })
 
-  it('hides Scheduler and Settings for TESORERO and OPERADOR too', () => {
+  it('hides Scheduler, Approvals and Settings for TESORERO and OPERADOR too', () => {
     seedUser('TESORERO')
     render(<Sidebar />)
     expect(screen.queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
 
     authState.user = { ...authState.user!, role: 'OPERADOR' }
     render(<Sidebar />)
     expect(screen.queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
   })
 
   it('marks the active item with aria-current="page"', () => {

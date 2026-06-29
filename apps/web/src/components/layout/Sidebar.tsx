@@ -33,6 +33,7 @@ const ITEMS: NavItem[] = [
   { href: '/ctacte', label: 'Ctacte' },
   { href: '/padrones', label: 'Padrones' },
   { href: '/admin/scheduler', label: 'Scheduler', roles: ['ADMIN'] },
+  { href: '/admin/approvals', label: 'Approvals', roles: ['ADMIN'] },
   { href: '/admin/settings', label: 'Settings', roles: ['ADMIN'] },
 ]
 
