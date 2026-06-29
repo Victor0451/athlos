@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.14] — 2026-06-29
+
+### Added
+
+- **`apps/web` Socios list + detail + DataTable (PR 8b.1 in 5 stacked sub-PRs: 8b.1a + 8b.1b + 8b.1c + 8b.1d + 8b.1e)** — operator can now browse 16,383 socios
+  - `lib/api/socios.ts` — typed fetch wrapper for `/api/v1/socios` (list + detail)
+  - `components/tables/DataTable.tsx` — generic sort + paginate primitive (reusable for future lists: ctacte, padrones, etc.)
+  - `app/(authed)/socios/page.tsx` — list view with search input (filters by nombre/apellido/dni in real-time via nuqs URL state)
+  - `app/(authed)/socios/[id]/page.tsx` — read-only detail view
+  - `app/(authed)/socios/page.test.tsx` + `socios/[id]/page.test.tsx` — page tests
+  - `lib/api/socios.test.ts` — API client tests
+  - `components/tables/DataTable.test.tsx` — table primitive tests
+  - `components/socios/SocioRow.tsx` + test — row component
+- **34 NEW tests** across 5 files (socios 7, DataTable 10, socios page 10, socio detail 7) — all passing with strict TDD
+- **NuqsAdapter** integrated for URL state (search, page, filter params)
+
+### Compliance
+
+- **LoC budget**: PR 8b.1 shipped as 5 stacked sub-PRs (8b.1a=248 / 8b.1b=396 / 8b.1c=333 / 8b.1d=206 / 8b.1e=219 LoC), each strictly under 400-line review budget. Total 1,402 LoC across 9 files. **No size:exception** required (5-commit split pattern, consistent with 8a.3's 4-commit pattern).
+- **Strict TDD**: RED first → GREEN → TRIANGULATE per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+- **Consistent with 8a.3 pattern**: tests split into separate commit (8b.1e = 219 LoC) per the LESSON that test files were 260 LoC for ~10 test cases (high test-to-code ratio).
+
+### Verification
+
+- 102/102 new tests passing (34 from 8b.1 + 68 from 8a.1+8a.2+8a.3)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### LESSONs (from apply phase)
+
+- **5 LESSONs captured in engram**:
+  1. `Promise.resolve()` inside Suspense doesn't work in jsdom 25 — use `useEffect` + state for testing
+  2. `useParams()` is test-friendly; `use(params)` requires Suspense boundary at page level
+  3. `exactOptionalPropertyTypes: true` (tsconfig) needs spread-with-conditionals, not direct undefined
+  4. `DataTable` requires `rowKey` prop (avoid index-based keys for sorting)
+  5. `queryByText` is preferred over `getByText` for negative assertions (e.g., "should NOT show X")
+
+### Out of scope (deferred to PR 8b.2 or Slice 9+)
+
+- Socios CREATE/UPDATE/DELETE UI (read-only for 8b.1; admin can use API directly for now)
+- CSV export
+- Ctacte workflows (PR 8b.2)
+- Padrones (PR 8b.3)
+- Scheduler dashboard (PR 8c.1)
+- Approvals queue + Settings (PR 8c.2)
+
 ## [0.5.13] — 2026-06-29
 
 ### Added
