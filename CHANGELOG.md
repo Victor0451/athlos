@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.11] — 2026-06-26
+
+### Added
+
+- **`apps/web` operator console foundation (PR 8a.1)** — Next.js 16.2.9 + React 19 + Tailwind CSS scaffold
+  - `lib/auth.ts` — memory-only JWT state (access token in JS, refresh token via httpOnly cookie) + login/logout/refresh
+  - `lib/api.ts` — typed `fetch` wrapper with single-flight refresh Promise (avoids concurrent 401 race)
+  - `app/login/page.tsx` — login form with react-hook-form + zodResolver (40/60 split layout)
+  - `providers/{Query,Auth}Provider.tsx` — TanStack Query v5 + Zustand context
+  - `vitest.config.mts` + `vitest.setup.ts` — strict TDD infrastructure
+- **3 NEW capability specs** under `openspec/changes/athlos-ui/specs/`:
+  - `web-frontend` — operator console end-to-end (auth + routing + AppShell + Dashboard + design system)
+  - `auth-cookies` — httpOnly refresh cookie transport contract (backend slice deferred)
+  - `scheduler-ui` — operator surface for scheduler admin
+- **8 NEW dependency** in `apps/web/package.json`: TanStack Query v5, Zustand, react-hook-form, zod, nuqs, jwt-decode, @hookform/resolvers, jsdom 25, @vitejs/plugin-react@^4.3.0
+- **vitest-config dom preset** extended with `setupFiles: ['vitest.setup.ts']` for jsdom + localStorage shim
+
+### Changed
+
+- **PR 8a.1 LoC**: ~1,855 lines (780 production + 644 tests + 429 lockfile) — **size:exception accepted** for this PR (forecast HIGH 400-line risk; chained PRs confirmed but auth/api/login are a single coherent TDD unit)
+- **apps/web/package.json** — bumped 0.5.0 → 0.5.11 (PR 8a.1 adds new files; version was stale since Slice B0)
+- **`openspec/specs/scheduler-jobs/spec.md`** — NOT modified (additive-only per B1b LESSON #1; scheduler-ui is a NEW spec, not an edit)
+
+### Out of scope (deferred to Slice 9+)
+
+- 7 backend gaps (Caja/Gastos read routes, file storage, receipt reprint, approval executor, reconcile/rollback) — UI shows "Próximamente" placeholders
+- Caja + Gastos domains — Slice 8 = socios + ctacte + scheduler + admin (no teal/expenses in MVP)
+- Backend auth-cookies implementation — web PR 8a.1 ships body-based refresh fallback; PR 8a.2 migrates to cookie-only when backend slice lands
+- E2E Playwright tests (Slice 10b)
+- Mobile-first responsive design (Slice 8 is desktop-first)
+- PWA install prompt (Slice 10)
+
+### Verification
+
+- 29/29 new tests passing across 3 files (auth, api, login)
+- 213/213 API tests still passing (no regressions)
+- `pnpm typecheck` clean (zero errors across workspace)
+- 4 environment-level bugs found and fixed in test infrastructure (vitest ESM config, jsdom 25 missing localStorage, plugin-react version compatibility, lint rule removal)
+
+### LESSONs
+
+- Apply sub-agent over-shot 400-line budget per PR (782 prod LoC vs 400) — accepted with `size:exception` because strict TDD + auth/api/login coherence required keeping the trio as one PR. Future apply batches should re-evaluate at task-planning time per the original forecast warning.
+- 4 environment-level bugs in vitest setup were pre-existing; fixed in this PR (vitest.config.mts + vitest.setup.ts).
+
 ## [0.5.8] — 2026-06-26
 
 ### Added
