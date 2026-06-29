@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.12] — 2026-06-29
+
+### Added
+
+- **`apps/web` AppShell + Protected Routing (PR 8a.2 in 3 stacked sub-PRs: 8a.2a + 8a.2b + 8a.2c)** — operator console foundation continues
+  - `lib/use-auth.ts` — React hook wrapping auth state (login/logout/refresh/current user)
+  - `lib/protected-route.tsx` — HOC for client-side route protection
+  - `app/(authed)/layout.tsx` — server-side auth wrapper, redirects to /login if refresh cookie absent
+  - `app/(authed)/dashboard/page.tsx` — placeholder (real cards in PR 8a.3)
+  - `components/AppShell.tsx` — main layout (Topbar + Sidebar slot)
+  - `components/layout/Topbar.tsx` — user info (username + role badge) + logout button
+  - `components/layout/Sidebar.tsx` — collapsible nav (Dashboard, Socios, Ctacte, Padrones, Admin > Scheduler, Settings)
+- **17 NEW tests** (4 use-auth + 3 AppShell + 4 Topbar + 6 Sidebar) — all passing with strict TDD
+
+### Changed
+
+- **`apps/web/src/lib/auth.ts`** — added TODO comment for cookie-based refresh migration (deferred to separate backend `auth-cookies` slice). Current behavior stays body-based per v0.5.8 contract.
+- **`apps/web/src/app/login/page.tsx`** — redirect target updated from `/` to `/dashboard` after successful login
+
+### Compliance
+
+- **LoC budget**: PR 8a.2 shipped as 3 stacked sub-PRs (8a.2a=351 / 8a.2b=397 / 8a.2c=194), each strictly under 400-line review budget. Total 932 LoC across 11 files. **No size:exception** required (LESSON from PR 8a.1: split, don't exception).
+- **Strict TDD**: RED first → GREEN → REFACTOR per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+
+### Verification
+
+- 46/46 new tests passing (4 use-auth + 3 AppShell + 4 Topbar + 6 Sidebar + 12 auth + 9 api + 8 login)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### Out of scope (deferred to Slice 9+)
+
+- Cookie-based refresh (requires `auth-cookies` backend slice)
+- Mobile sidebar drawer (desktop-first)
+- "Mi Perfil" dropdown + change-password (PR 8c.2)
+
+### LESSONs
+
+- Apply sub-agent SELF-SPLIT into 3 sub-PRs when total would exceed 400 LoC. This is the correct behavior (no size:exception for 8a.2). Future apply batches should do the same.
+- The 3-stacked-commit model works for chained PRs but increases orchestrator merge work 3x. Trade-off accepted per user decision.
+
 ## [0.5.11] — 2026-06-26
 
 ### Added
