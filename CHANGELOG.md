@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.15] — 2026-06-29
+
+### Added
+
+- **`apps/web` Ctacte workflows + CSV export (PR 8b.2 in 7 stacked sub-PRs: 8b.2a + 8b.2b + 8b.2c + 8b.2d + 8b.2e + 8b.2f + 8b.2g)** — operator can now browse 200,945 ctacte records
+  - `lib/api/ctacte.ts` — typed fetch wrapper for `/api/v1/socios/:id/cuenta-corriente` (NOTE: actual API path differs from brief — see LESSON below)
+  - `lib/csv-export.ts` — generic CSV export utility (reusable for future data exports)
+  - `components/ledger/MovementList.tsx` — chronological list of debit/credit movements with es-AR currency formatting
+  - `app/(authed)/ctacte/page.tsx` — socio-selector list view (no standalone ctacte list endpoint exists; drives to detail)
+  - `app/(authed)/ctacte/[cuenta]/page.tsx` — detail view with movements ledger + "Download as CSV" button
+  - `components/ctacte/CtacteRow.tsx` — (skipped to stay under budget; single-use, no extraction needed)
+- **46 NEW tests** across 5 test files (ctacte API 7, csv-export 6, MovementList 12, ctacte list 10, ctacte detail 11) — all passing with strict TDD
+
+### Changed
+
+- **API path correction**: original brief specified `/api/v1/ctacte` and `/api/v1/ctacte/:id` but the actual backend v0.5.10 exposes `/api/v1/socios/:id/cuenta-corriente` (per-socio ctacte lookup). The /ctacte UI is a socio-selector that drives the operator to /ctacte/[id] (the socio's account). Sub-agent trusted the codebase over the brief per the prompt's instruction.
+
+### Compliance
+
+- **LoC budget**: PR 8b.2 shipped as 7 stacked sub-PRs (8b.2a=366 / 8b.2b=256 / 8b.2c=393 / 8b.2d=184 / 8b.2e=254 / 8b.2f=226 / 8b.2g=267 LoC), each strictly under 400-line review budget. Total 1,946 LoC across 10 files. **No size:exception** required (7-commit split pattern, consistent with 8a.3 / 8b.1).
+- **Strict TDD**: RED first → GREEN → REFACTOR per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+- **Read-only scope**: no create/update/delete UI in 8b.2 — "Próximamente" placeholders on both pages
+
+### Verification
+
+- 148/148 new tests passing (46 from 8b.2 + 102 from 8a.1+8a.2+8a.3+8b.1)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### LESSONs (from apply phase)
+
+- **Orchestrator brief's API paths were wrong**: brief said `/api/v1/ctacte` + `/api/v1/ctacte/:id` but actual is `/api/v1/socios/:id/cuenta-corriente`. Sub-agent trusted the codebase + tasks.md over the brief (correct decision). Future briefs: VERIFY against `apps/api/src/routes/*.ts` before launching.
+- **`Intl.NumberFormat` es-ARS quirk**: produces `$ 0,00` (with non-breaking space, U+00A0) not `$0,00`. Future tests in this codebase should always use `\$\s*<digits>` regexes for ARS currency assertions. Noted in `MovementList.tsx` docstring.
+- **Test-fixture jsdom warnings** for anchor `.click()` on file downloads: harmless noise (jsdom doesn't implement file-download navigation). Tests still pass because the prototype-click spy captures the call.
+
+### Out of scope (deferred)
+
+- Ctacte CREATE/UPDATE/DELETE UI (read-only for 8b.2)
+- Date filters `desde`/`hasta` + "Incluir anuladas" toggle on detail page (skipped to stay under budget; API wrapper supports params; UI controls can be added in follow-up)
+- Padrones (PR 8b.3)
+- Scheduler dashboard (PR 8c.1)
+- Approvals queue + Settings (PR 8c.2)
+
 ## [0.5.14] — 2026-06-29
 
 ### Added
