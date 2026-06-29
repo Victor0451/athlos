@@ -1,6 +1,6 @@
 {
   "name": "@athlos/config",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "private": true,
   "description": "Athlos environment loader — Zod schema + dotenv, frozen typed Env object.",
   "type": "module",
