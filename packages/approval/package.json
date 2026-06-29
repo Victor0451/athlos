@@ -1,6 +1,6 @@
 {
   "name": "@athlos/approval",
-  "version": "0.5.16",
+  "version": "0.5.17",
   "private": true,
   "description": "Athlos approval link service — opaque tokens, single-use + expiry, scoped to a target action.",
   "type": "module",
