@@ -1,72 +1,16 @@
-# docker-compose.yml — Athlos production stack (Slice C)
-#
-# Services:
-#   db  — Postgres 17 Alpine, persisted via named volume pgdata.
-#   api — Node 22 Alpine multi-stage build, runs migrations + backup in entrypoint.
-#
-# Usage:
-#   cp .env.example .env.production && vim .env.production
-#   docker compose up -d
-#   docker compose ps
-#   curl http://localhost:3001/health/ready
-
 services:
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    env_file:
-      - .env.production
-    environment:
-      # Hardcoded (not ${VAR:-}) because docker-compose reads .env (not
-      # env_file) for variable substitution. The values here MUST match
-      # .env.production OR the API container won't be able to connect.
-      POSTGRES_DB: athlos
-      POSTGRES_USER: athlos
-      POSTGRES_PASSWORD: athlos
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-athlos} -d ${POSTGRES_DB:-athlos}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - athlos-net
-
   api:
-    # Image tag :latest is the GHCR push target; :local is for `docker build`
-    # without pushing. We pin :latest here so `docker compose pull` fetches
-    # the freshly-pushed GHCR image instead of triggering a local rebuild.
     image: ghcr.io/victor0451/athlos-api:latest
     restart: unless-stopped
     env_file:
       - .env.production
-    environment:
-      NODE_ENV: production
-      RUN_MIGRATIONS: "true"
-      BACKUP_BEFORE_MIGRATE: "false"
-      POSTGRES_HOST: db
-      POSTGRES_PORT: "5432"
-      # Hardcoded for the same reason as the db service: docker-compose
-      # reads .env (not env_file) for variable substitution. Values MUST
-      # match the db service above so drizzle-kit can authenticate.
-      DATABASE_URL: postgresql://athlos:athlos@db:5432/athlos
-      PROMOTION_CRON: ${PROMOTION_CRON:-0 */6 * * *}
-    depends_on:
-      db:
-        condition: service_healthy
     ports:
-      - "3001:3001"
+      - "4000:3001"
     volumes:
       - ./backups:/var/backups/athlos
-      - ./legacy:/legacy:ro
+      - /tmp/legacy-placeholder:/legacy:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health/ready"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -76,12 +20,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - athlos-net
 
 volumes:
-  pgdata:
-
-networks:
-  athlos-net:
-    driver: bridge
+  backups:
