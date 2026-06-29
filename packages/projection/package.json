@@ -1,6 +1,6 @@
 {
   "name": "@athlos/projection",
-  "version": "0.5.19",
+  "version": "0.5.20",
   "private": true,
   "description": "Athlos projection engine — rebuild domain projections + compute saldo. PR 7b.1a.",
   "type": "module",
