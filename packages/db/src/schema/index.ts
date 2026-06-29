@@ -68,7 +68,16 @@ export type { Socio, NewSocio, Escuela, NewEscuela, Locacion, NewLocacion } from
 export { contabilidadSchema } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
-export { tesoreriaSchema, ctacteTipo, ctacte, ctacte1, cajaMovimiento, gastos } from './tesoreria'
+export {
+  tesoreriaSchema,
+  ctacteTipo,
+  ctacte,
+  ctacte1,
+  cajaMovimiento,
+  gastos,
+  gastosCtacteMapping,
+  GASTOS_CTACTE_LINK_MOTIVOS,
+} from './tesoreria'
 export type {
   Ctacte,
   NewCtacte,
@@ -78,6 +87,9 @@ export type {
   NewCajaMovimiento,
   Gastos,
   NewGastos,
+  GastosCtacteMapping,
+  NewGastosCtacteMapping,
+  GastosCtacteLinkMotivo,
 } from './tesoreria'
 
 // deportes ─────────────────────────────────────────────────────

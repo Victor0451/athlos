@@ -2,6 +2,8 @@ import { and, eq, isNull, gt, type SQL } from 'drizzle-orm'
 import type {
   ApprovalToken,
   AuditEvent,
+  Gastos,
+  GastosCtacteMapping,
   JobRun,
   Notification,
   Operator,
@@ -53,6 +55,8 @@ type InscripcionRow = Inscripcion
 type AuditEventRow = AuditEvent
 type NotificationRow = Notification
 type JobRunRow = JobRun
+type GastoRow = Gastos
+type GastosCtacteMappingRow = GastosCtacteMapping
 
 type Row =
   | OperatorRow
@@ -66,6 +70,8 @@ type Row =
   | AuditEventRow
   | NotificationRow
   | JobRunRow
+  | GastoRow
+  | GastosCtacteMappingRow
 
 interface StandinState {
   operators: OperatorRow[]
@@ -79,6 +85,8 @@ interface StandinState {
   auditEvents: AuditEventRow[]
   notifications: NotificationRow[]
   jobRuns: JobRunRow[]
+  gastos: GastoRow[]
+  gastosCtacteMapping: GastosCtacteMappingRow[]
 }
 
 export interface StandinDb {
@@ -167,6 +175,8 @@ const CTACTE_SQL_TO_JS: Record<string, keyof CtacteRow> = {
   anulado: 'anulado',
   anulado_at: 'anuladoAt',
   anulado_motivo: 'anuladoMotivo',
+  cctcuenta: 'cctcuenta',
+  legacy_id: 'legacyId',
   created_at: 'createdAt',
 }
 
@@ -237,6 +247,40 @@ const JOB_RUN_SQL_TO_JS: Record<string, keyof JobRunRow> = {
   triggered_by: 'triggeredBy',
 }
 
+const GASTOS_SQL_TO_JS: Record<string, keyof GastoRow> = {
+  id: 'id',
+  tipo: 'tipo',
+  tipo_cuenta: 'tipoCuenta',
+  cuenta_principal: 'cuentaPrincipal',
+  cuenta_auxiliar: 'cuentaAuxiliar',
+  secuencia: 'secuencia',
+  comprobante: 'comprobante',
+  fecha: 'fecha',
+  concepto: 'concepto',
+  importe: 'importe',
+  iva: 'iva',
+  ingreso_bruto: 'ingresoBruto',
+  socio_id: 'socioId',
+  legacy_id: 'legacyId',
+  anulado: 'anulado',
+  anulado_at: 'anuladoAt',
+  anulado_motivo: 'anuladoMotivo',
+  created_at: 'createdAt',
+}
+
+const GASTOS_CTACTE_MAPPING_SQL_TO_JS: Record<string, keyof GastosCtacteMappingRow> = {
+  id: 'id',
+  gasto_id: 'gastoId',
+  ctacte_id: 'ctacteId',
+  monto_cubierto: 'montoCubierto',
+  motivo: 'motivo',
+  anulado: 'anulado',
+  anulado_at: 'anuladoAt',
+  anulado_motivo: 'anuladoMotivo',
+  created_by: 'createdBy',
+  created_at: 'createdAt',
+}
+
 const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   operators: OPERATOR_SQL_TO_JS,
   refresh_tokens: REFRESH_SQL_TO_JS,
@@ -249,6 +293,8 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   audit_events: AUDIT_SQL_TO_JS,
   notifications: NOTIFICATION_SQL_TO_JS,
   job_runs: JOB_RUN_SQL_TO_JS,
+  gastos: GASTOS_SQL_TO_JS,
+  gastos_ctacte_mapping: GASTOS_CTACTE_MAPPING_SQL_TO_JS,
 }
 
 function jsColumn(tableName: string, sqlName: string): string | null {
@@ -339,20 +385,22 @@ function isCountProjection(projection: Record<string, unknown> | undefined): boo
   if (keys.length !== 1) return false
   const value = projection[keys[0]!]
   if (value === null || typeof value !== 'object') return false
-  // The SQL fragment's `queryChunks` is an array; one of the chunks
-  // is a StringChunk with `value: ['count(*)::int']` or similar.
-  // We scan every chunk — the position varies by Drizzle version.
-  const sql = value as { queryChunks?: Array<{ value?: string[] | string }> }
-  for (const chunk of sql.queryChunks ?? []) {
-    if (Array.isArray(chunk.value)) {
-      for (const s of chunk.value) {
-        if (typeof s === 'string' && s.toLowerCase().includes('count(*)')) return true
-      }
-    } else if (typeof chunk.value === 'string' && chunk.value.toLowerCase().includes('count(*)')) {
-      return true
+  const flat: string[] = []
+  function walk(node: unknown): void {
+    if (!node || typeof node !== 'object') return
+    const obj = node as { value?: string[] | string; queryChunks?: unknown[] }
+    if (Array.isArray(obj.value)) {
+      for (const s of obj.value) if (typeof s === 'string') flat.push(s)
+    } else if (typeof obj.value === 'string') {
+      flat.push(obj.value)
+    }
+    if (Array.isArray(obj.queryChunks)) {
+      for (const child of obj.queryChunks) walk(child)
     }
   }
-  return false
+  walk(value)
+  const joined = flat.join('').toLowerCase()
+  return joined.includes('count(*)')
 }
 
 /**
@@ -511,6 +559,8 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'audit_events') return state.auditEvents
     if (tname === 'notifications') return state.notifications
     if (tname === 'job_runs') return state.jobRuns
+    if (tname === 'gastos') return state.gastos
+    if (tname === 'gastos_ctacte_mapping') return state.gastosCtacteMapping
     return []
   }
 
@@ -649,6 +699,42 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         triggeredBy: (v['triggeredBy'] as JobRunRow['triggeredBy']) ?? 'scheduler',
       } as JobRunRow
     }
+    if (tname === 'gastos') {
+      return {
+        id: id as string,
+        tipo: v['tipo']!,
+        tipoCuenta: v['tipoCuenta']!,
+        cuentaPrincipal: v['cuentaPrincipal']!,
+        cuentaAuxiliar: (v['cuentaAuxiliar'] as number | null) ?? null,
+        secuencia: (v['secuencia'] as number) ?? 0,
+        comprobante: (v['comprobante'] as string) ?? '',
+        fecha: v['fecha']!,
+        concepto: (v['concepto'] as string | null) ?? null,
+        importe: (v['importe'] as string) ?? '0.00',
+        iva: (v['iva'] as string) ?? '0.00',
+        ingresoBruto: (v['ingresoBruto'] as string | null) ?? null,
+        socioId: (v['socioId'] as string | null) ?? null,
+        legacyId: (v['legacyId'] as string | null) ?? null,
+        anulado: (v['anulado'] as boolean) ?? false,
+        anuladoAt: (v['anuladoAt'] as Date | null) ?? null,
+        anuladoMotivo: (v['anuladoMotivo'] as string | null) ?? null,
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+      } as GastoRow
+    }
+    if (tname === 'gastos_ctacte_mapping') {
+      return {
+        id: id as string,
+        gastoId: v['gastoId']!,
+        ctacteId: v['ctacteId']!,
+        montoCubierto: v['montoCubierto']!,
+        motivo: v['motivo']!,
+        anulado: (v['anulado'] as boolean) ?? false,
+        anuladoAt: (v['anuladoAt'] as Date | null) ?? null,
+        anuladoMotivo: (v['anuladoMotivo'] as string | null) ?? null,
+        createdBy: (v['createdBy'] as string | null) ?? null,
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+      } as GastosCtacteMappingRow
+    }
     // Default catch-all: audit_events and any future INSERT-only
     // tables. The standin doesn't enforce column constraints
     // here, so the caller is responsible for passing a value
@@ -709,6 +795,34 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       // match the production index (non-unique).
       return false
     }
+    if (tname === 'gastos') {
+      // The standin enforces the 5-tuple UNIQUE for gastos (NK
+      // verified 2114/2114 distinct = 100% unique per scope
+      // correction #C2). Anulado rows still count for the UNIQUE
+      // check because we want hard DELETE to be the only way to
+      // free the tuple (mirrors the production schema).
+      return rows.some(
+        (r) =>
+          (r as GastoRow).tipo === v['tipo'] &&
+          (r as GastoRow).cuentaPrincipal === v['cuentaPrincipal'] &&
+          (r as GastoRow).secuencia === v['secuencia'] &&
+          (r as GastoRow).fecha === v['fecha'] &&
+          (r as GastoRow).comprobante === v['comprobante'],
+      )
+    }
+    if (tname === 'gastos_ctacte_mapping') {
+      // PARTIAL UNIQUE INDEX `WHERE anulado = false` — only ACTIVE
+      // links block a new INSERT for the same (gasto_id, ctacte_id)
+      // pair. Once a previous link is soft-anulada, a fresh link
+      // for the same pair is allowed (returns 201 not 409). This
+      // matches the migration's `WHERE anulado = false` clause.
+      return rows.some(
+        (r) =>
+          (r as GastosCtacteMappingRow).anulado === false &&
+          (r as GastosCtacteMappingRow).gastoId === v['gastoId'] &&
+          (r as GastosCtacteMappingRow).ctacteId === v['ctacteId'],
+      )
+    }
     return false
   }
 
@@ -745,36 +859,90 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         return {
           innerJoin: (table2: unknown, _on: unknown) => {
             const tname2 = tableName(table2)
+            // The builder tracks an ordered list of joined tables
+            // so chained .innerJoin() calls can be replayed against
+            // the merged row. Each step merges the new right-side
+            // table into the joined row by FK match.
+            const joinsSoFar: Array<{ tname: string; right: Row[] }> = [
+              { tname: realTname, right: getRows(realTname) },
+              { tname: tname2, right: getRows(tname2) },
+            ]
+            const resolveJoin = (
+              filters: Clause[],
+              offset: number,
+              n: number,
+            ): Promise<unknown[]> => {
+              let merged: Array<Record<string, unknown>> = joinsSoFar[0]!.right.map(
+                (r) => rAny(r) as Record<string, unknown>,
+              )
+              for (let i = 1; i < joinsSoFar.length; i++) {
+                const j = joinsSoFar[i]!
+                const rightRows = j.right
+                const next: Array<Record<string, unknown>> = []
+                for (const leftRow of merged) {
+                  const fkCandidates: Array<{ fk: string; fkValue: unknown }> = []
+                  for (const [key, value] of Object.entries(leftRow)) {
+                    if (value && typeof value === 'object' && !Array.isArray(value)) {
+                      for (const [innerKey, innerValue] of Object.entries(
+                        value as Record<string, unknown>,
+                      )) {
+                        fkCandidates.push({ fk: innerKey, fkValue: innerValue })
+                      }
+                    } else {
+                      if (i === 1) {
+                        fkCandidates.push({ fk: key, fkValue: value })
+                      }
+                    }
+                  }
+                  let chosenValue: unknown = undefined
+                  let chosen = false
+                  for (const c of fkCandidates) {
+                    if (
+                      (j.tname === 'socios' && c.fk === 'socioId') ||
+                      (j.tname === 'disciplinas' && c.fk === 'disciplinaId') ||
+                      (j.tname === 'ejercicios' && c.fk === 'ejercicioId') ||
+                      (j.tname === 'gastos' && c.fk === 'gastoId') ||
+                      (j.tname === 'ctacte' && c.fk === 'ctacteId') ||
+                      (j.tname === 'gastos_ctacte_mapping' &&
+                        (c.fk === 'gastoId' || c.fk === 'ctacteId'))
+                    ) {
+                      chosenValue = c.fkValue
+                      chosen = true
+                      break
+                    }
+                  }
+                  if (!chosen) continue
+                  for (const r of rightRows) {
+                    const rAsRecord: Record<string, unknown> = rAny(r) as Record<string, unknown>
+                    if (chosenValue === rAsRecord['id']) {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      next.push((mergeJoinRow as any)(leftRow, rAsRecord, projection))
+                    }
+                  }
+                }
+                merged = next
+              }
+              if (filters.length > 0) {
+                merged = merged.filter((row) => filters.every((f) => clauseMatchesJoined(row, f)))
+              }
+              return Promise.resolve(merged.slice(offset, offset + n))
+            }
             const builder = {
+              innerJoin: (table3: unknown, _on2: unknown) => {
+                const tname3 = tableName(table3)
+                joinsSoFar.push({ tname: tname3, right: getRows(tname3) })
+                return builder
+              },
               where: (cond: unknown) => {
                 const filters = normalizeFilters(cond)
-                const resolveJoin = (offset: number, n: number): Promise<unknown[]> => {
-                  const left = applyFilters(getRows(realTname), filters, realTname)
-                  const rightRows = getRows(tname2)
-                  const joined = left.flatMap((l) => {
-                    const lAny = l as unknown as Record<string, unknown>
-                    const fkCandidates: Array<keyof typeof lAny> = []
-                    for (const k of Object.keys(lAny)) {
-                      if (tname2 === 'socios' && k === 'socioId') fkCandidates.push(k)
-                      if (tname2 === 'disciplinas' && k === 'disciplinaId') fkCandidates.push(k)
-                      if (tname2 === 'ejercicios' && k === 'ejercicioId') fkCandidates.push(k)
-                    }
-                    return rightRows
-                      .filter((r) => {
-                        const rAny = r as unknown as Record<string, unknown>
-                        return fkCandidates.some((fk) => lAny[fk] === rAny['id'])
-                      })
-                      .map((r) => mergeJoinRow(lAny, rAny(r), projection))
-                  })
-                  return Promise.resolve(joined.slice(offset, offset + n))
-                }
                 return {
                   orderBy: (_sort: unknown) => ({
-                    limit: (n: number) => makeLimitResult((o) => resolveJoin(o, n)),
+                    limit: (n: number) => makeLimitResult((o) => resolveJoin(filters, o, n)),
                   }),
-                  limit: (n: number) => makeLimitResult((o) => resolveJoin(o, n)),
+                  limit: (n: number) => makeLimitResult((o) => resolveJoin(filters, o, n)),
                 }
               },
+              limit: (n: number) => makeLimitResult((o) => resolveJoin([], o, n)),
             }
             return builder
           },
@@ -832,10 +1000,31 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     return r as unknown as Record<string, unknown>
   }
 
+  /**
+   * Apply a WHERE clause to a JOINED row (shape:
+   * `{ <tableName>: { ...row } }`). Iterates every nested table and
+   * checks if the clause's column matches any of them. This is a
+   * loose interpretation — production SQL is exact, but the standin
+   * just needs to filter enough rows for the route tests to be
+   * meaningful.
+   */
+  function clauseMatchesJoined(row: Record<string, unknown>, c: Clause): boolean {
+    if (isOrGroup(c)) {
+      return c.or.some((f) => clauseMatchesJoined(row, f))
+    }
+    for (const [tname, value] of Object.entries(row)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const nested = value as Record<string, unknown>
+        if (matches(nested as Row, c as Filter, tname)) return true
+      }
+    }
+    return false
+  }
+
   function mergeJoinRow(
     left: Record<string, unknown>,
     right: Record<string, unknown>,
-    projection: Record<string, unknown> | undefined,
+    projection?: Record<string, unknown>,
   ): unknown {
     if (!projection || Object.keys(projection).length === 0) {
       // Drizzle's real client returns nested objects keyed by
@@ -846,7 +1035,21 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       const leftTname = tnameOf(left)
       const rightTname = tnameOf(right)
       const out: Record<string, unknown> = {}
-      if (leftTname) out[leftTname] = left
+      // For chained joins, the LEFT may already be a nested
+      // object like `{gastos_ctacte_mapping: {...}, ctacte: {...}}`.
+      // Spread its nested tables into the output so we don't lose
+      // them when we add the next right-side table.
+      if (leftTname === null) {
+        for (const [k, v] of Object.entries(left)) {
+          if (v && typeof v === 'object' && !Array.isArray(v)) {
+            out[k] = v
+          } else {
+            out[k] = v
+          }
+        }
+      } else if (leftTname) {
+        out[leftTname] = left
+      }
       if (rightTname) out[rightTname] = right
       // If we couldn't resolve a table name for either side,
       // fall back to a flat merge (the previous behavior) so
@@ -898,6 +1101,10 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if ('entityType' in row) return 'audit_events'
     if ('channel' in row && 'body' in row) return 'notifications'
     if ('jobName' in row && 'attempt' in row) return 'job_runs'
+    if ('cuentaPrincipal' in row && 'importe' in row) return 'gastos'
+    if ('gastoId' in row && 'ctacteId' in row && 'montoCubierto' in row) {
+      return 'gastos_ctacte_mapping'
+    }
     return null
   }
 
@@ -1016,7 +1223,12 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
 }
 
 function cryptoRandomId(): string {
-  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`
+  // Generate a v4-shaped UUID using Math.random so the standin
+  // doesn't depend on `crypto.randomUUID` (Node-only). The shape
+  // is enough to pass zod's `uuid()` validator in route tests.
+  const hex = (n: number) =>
+    Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${hex(3)}-${hex(12)}`
 }
 
 /**
@@ -1066,6 +1278,8 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     auditEvents: [],
     notifications: [],
     jobRuns: [],
+    gastos: [],
+    gastosCtacteMapping: [],
   }
   return {
     state,
@@ -1081,6 +1295,8 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.auditEvents.length = 0
       state.notifications.length = 0
       state.jobRuns.length = 0
+      state.gastos.length = 0
+      state.gastosCtacteMapping.length = 0
     },
     drizzle: buildDrizzleInterface(state),
   }
