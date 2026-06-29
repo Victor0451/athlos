@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.16] — 2026-06-29
+
+### Added
+
+- **`apps/web` Padrones list + detail (PR 8b.3 in 6 stacked sub-PRs: 8b.3a + 8b.3b + 8b.3c + 8b.3d + 8b.3e + 8b.3f)** — operator can now browse padrones (consolidated reports)
+  - `lib/api/padrones.ts` — typed fetch wrapper for `/api/v1/padrones` + DTOs (getPadrones + getPadron)
+  - `components/padrones/PadronRow.tsx` — clickable card row with estado badge (activa/pendiente/baja)
+  - `app/(authed)/padrones/page.tsx` — list view with filter form (disciplina + fecha desde/hasta) + roster + CSV export
+  - `app/(authed)/padrones/[id]/page.tsx` — slug-decoded detail view (e.g., `/padrones/NATACION-2026`) with movement breakdown
+- **35 NEW tests** across 4 test files (padrones API 6, PadronRow 8, padrones list 11, padrones detail 10) — all passing with strict TDD
+
+### Compliance
+
+- **LoC budget**: PR 8b.3 shipped as 6 stacked sub-PRs (8b.3a=300 / 8b.3b=195 / 8b.3c=304 / 8b.3d=312 / 8b.3e=263 / 8b.3f=241 LoC), each strictly under 400-line review budget. Total 1,615 LoC across 8 files. **No size:exception** required (6-commit split pattern, consistent with 8a.3 / 8b.1 / 8b.2).
+- **Strict TDD**: RED first → GREEN → REFACTOR per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+- **Read-only scope**: no create/update/delete UI in 8b.3
+
+### Verification
+
+- 183/183 new tests passing (35 from 8b.3 + 148 from 8a.1+8a.2+8a.3+8b.1+8b.2)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+- `pnpm build` succeeds — /padrones and /padrones/[id] routes registered
+
+### LESSONs (from apply phase)
+
+- **Slug-based detail URL**: disciplina codes like "FUTBOL-7-2026" (multi-segment) handled by splitting on the LAST dash. Documented in page header.
+- **Spec-API mismatch**: padron metadata columns (ID, Nombre, Descripcion, Cantidad Socios, Ultima Actualizacion) from the spec DON'T EXIST in the actual API response. The wire shape is per-member inscripcion rows (exploration §4.6). Sub-agent flagged this in deviations.
+- **Backend doesn't expose `GET /api/v1/disciplinas`**: disciplina options are hard-coded in the page (NATACION, FUTBOL, HOCKEY, TENIS, GIMNASIA, BASQUET, VOLEY, PATIN). Operators can still type any codigo via backend's string validation.
+- **Housekeeping commits**: 2 commits (425b694 chore + 6c032b5 revert) that net to zero changes are in the branch. They don't affect the merge result but are harmless noise. Future: sub-agent should skip the untracked-files git operations entirely.
+
+### Out of scope (deferred)
+
+- Padrones CREATE/UPDATE/DELETE UI (read-only for 8b.3)
+- Disciplinas endpoint (backend gap; hard-coded list for now)
+- Scheduler dashboard (PR 8c.1)
+- Approvals queue + Settings (PR 8c.2)
+
 ## [0.5.15] — 2026-06-29
 
 ### Added

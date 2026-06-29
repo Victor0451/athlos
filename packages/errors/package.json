@@ -1,6 +1,6 @@
 {
   "name": "@athlos/errors",
-  "version": "0.5.15",
+  "version": "0.5.16",
   "private": true,
   "description": "Athlos error primitives — typed business/technical errors, Zod adapter, PII redaction.",
   "type": "module",
