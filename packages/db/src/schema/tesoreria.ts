@@ -1,15 +1,18 @@
 import { sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   date,
   index,
   integer,
+  numeric,
   pgSchema,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+import { operators } from './operators.ts'
 import { socios } from './socios.ts'
 
 /**
@@ -160,6 +163,12 @@ export type NewCajaMovimiento = typeof cajaMovimiento.$inferInsert
  * No ctacte FK (#C7: GASCTAPRIN is accounting-plan code, NOT socio carnet).
  * No socio_id FK in v1 (#C8: no source field; socio_id column reserved for future N16 backfill).
  * Migration 0015 creates table + 3 UNIQUE INDEXes (legacy_id, 5-tuple, cuenta+fecha) + 1 partial socio_id index.
+ *
+ * N16 (athlos-n16-gastos-ctacte-fk) adds 3 soft-delete audit columns
+ * (`anulado`, `anulado_at`, `anulado_motivo`) via migration 0019 to
+ * mirror the ctacte pattern. Hard DELETE on a gasto cascades to its
+ * `gastos_ctacte_mapping` rows; `anular` does NOT cascade (spec Q5:
+ * soft warning, no cascade).
  */
 export const gastos = tesoreriaSchema.table(
   'gastos',
@@ -178,6 +187,10 @@ export const gastos = tesoreriaSchema.table(
     ingresoBruto: text('ingreso_bruto'),
     socioId: uuid('socio_id'), // NULLABLE; FK constraint deferred to N16
     legacyId: text('legacy_id'),
+    /** Soft-delete marker. Default false; never UPDATEd from app code paths other than the anulación endpoint (PR N16). */
+    anulado: boolean('anulado').notNull().default(false),
+    anuladoAt: timestamp('anulado_at', { withTimezone: true }),
+    anuladoMotivo: text('anulado_motivo'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -198,3 +211,76 @@ export const gastos = tesoreriaSchema.table(
 
 export type Gastos = typeof gastos.$inferSelect
 export type NewGastos = typeof gastos.$inferInsert
+
+/**
+ * Reason an operator attached a gasto to a ctacte movement.
+ *   - `manual`: human chose the pair explicitly via the UI form
+ *   - `heuristic-pending`: surfaced by the heuristic view, awaiting
+ *     operator confirmation. Once the operator confirms, the row is
+ *     re-INSERTed (or UPDATEd) with motivo='manual' — heuristic-pending
+ *     rows are never the source of truth.
+ *   - `auto`: reserved for future use (e.g. nightly import pipeline)
+ */
+export type GastosCtacteLinkMotivo = 'manual' | 'heuristic-pending' | 'auto'
+
+export const GASTOS_CTACTE_LINK_MOTIVOS = [
+  'manual',
+  'heuristic-pending',
+  'auto',
+] as const satisfies readonly GastosCtacteLinkMotivo[]
+
+/**
+ * N16 gastos ↔ ctacte mapping table.
+ *
+ * Manual many-to-many bridge between `tesoreria.gastos` (accounting-plan
+ * code) and `tesoreria.ctacte` (socio carnet). The two namespaces do
+ * not intersect (verified live 2026-06-29), so this is an explicit
+ * table rather than a FK constraint.
+ *
+ * CRITICAL: the PARTIAL UNIQUE INDEX `gastos_ctacte_mapping_active_uniq`
+ * excludes rows where `anulado = false`. This is the spec's Re-link
+ * scenario — once a previous link is soft-anulada, a fresh link for
+ * the same (gasto_id, ctacte_id) pair is allowed (returns 201 not 409).
+ *
+ * ON DELETE CASCADE on both FKs mirrors the spec: hard-deleting a
+ * gasto wipes its links; hard-deleting a ctacte row wipes its links.
+ * Soft annulment on either side does NOT cascade — the link row stays
+ * as audit trail (spec Q5).
+ */
+export const gastosCtacteMapping = tesoreriaSchema.table(
+  'gastos_ctacte_mapping',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    gastoId: uuid('gasto_id')
+      .notNull()
+      .references(() => gastos.id, { onDelete: 'cascade' }),
+    ctacteId: uuid('ctacte_id')
+      .notNull()
+      .references(() => ctacte.id, { onDelete: 'cascade' }),
+    montoCubierto: numeric('monto_cubierto', { precision: 14, scale: 2 }).notNull(),
+    motivo: text('motivo').notNull().$type<GastosCtacteLinkMotivo>(),
+    anulado: boolean('anulado').notNull().default(false),
+    anuladoAt: timestamp('anulado_at', { withTimezone: true }),
+    anuladoMotivo: text('anulado_motivo'),
+    createdBy: uuid('created_by').references(() => operators.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    gastoIdx: index('gastos_ctacte_mapping_gasto_idx').on(table.gastoId),
+    ctacteIdx: index('gastos_ctacte_mapping_ctacte_idx').on(table.ctacteId),
+    motivoCheck: check(
+      'gastos_ctacte_mapping_motivo_check',
+      sql`${table.motivo} IN ('manual','heuristic-pending','auto')`,
+    ),
+    montoCheck: check(
+      'gastos_ctacte_mapping_monto_positive_check',
+      sql`${table.montoCubierto} > 0`,
+    ),
+    activeUniq: uniqueIndex('gastos_ctacte_mapping_active_uniq')
+      .on(table.gastoId, table.ctacteId)
+      .where(sql`${table.anulado} = false`),
+  }),
+)
+
+export type GastosCtacteMapping = typeof gastosCtacteMapping.$inferSelect
+export type NewGastosCtacteMapping = typeof gastosCtacteMapping.$inferInsert
