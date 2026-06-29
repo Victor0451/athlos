@@ -1,6 +1,6 @@
 {
   "name": "@athlos/auth",
-  "version": "0.5.8",
+  "version": "0.5.11",
   "private": true,
   "description": "Athlos auth primitives — bcrypt password hashing, JWT sign/verify, Fastify RBAC middleware.",
   "type": "module",
