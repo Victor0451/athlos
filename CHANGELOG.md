@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.21] — 2026-06-29
+
+### Added
+
+- **`apps/web` Admin gastos list + detail + ctacte vinculados + Sidebar link (PR n16b-web final: 4 sub-PRs n16b3..n16b5, v0.5.21)** — completes n16b-web (the 4 remaining tasks of N16 frontend)
+  - `app/(authed)/admin/gastos/page.tsx` — list page with link counts + filter by anulado + ADMIN-only gate (TASK-011)
+  - `app/(authed)/admin/gastos/[id]/page.tsx` — detail page with linked ctacte list + add/remove links + anulación + heuristic candidates (TASK-012)
+  - `app/(authed)/ctacte/[cuenta]/page.tsx` (modified) — "Gastos vinculados" panel (replaces "Próximamente" placeholder for gastos) (TASK-013)
+  - `components/layout/Sidebar.tsx` (modified) — "Tesorería > Gastos" link under Admin section (TASK-014)
+  - 10 NEW tests across 2 new files + modifications to 2 existing files
+
+### Compliance
+
+- **LoC budget**: 7 stacked sub-PRs (n16b3=301, n16b3=189, n16b4=360, n16b4=257, n16b5=98, n16b5=5, n16b5=12 LoC) each strictly under 400-line review budget. **NO size:exception** — all commits ≤400 LoC.
+- **Strict TDD**: RED → GREEN → TRIANGULATE per orchestrator protocol
+- **0 Co-Authored-By** (orchestrator strips via filter-branch per LESSON)
+- **Per-file commit pattern** (Slice 8 LESSON): production + tests in separate commits
+
+### Verification
+
+- 365 tests passing (10 new + 355 unchanged)
+- `pnpm typecheck` clean
+
+### LESSONs (from apply phase)
+
+- **6 stacked sub-PRs (not the 4 originally planned)** because each task was further split (production + tests) to stay under 400 LoC. This is the most aggressive split pattern yet — only 2-3 files per commit.
+- **TASK-012 page missing "Agregar enlace" manual link entry button** (spec mentioned it). Heuristic candidate Confirmar covers the same use case pre-filled. Non-blocking; can ship v0.5.21 and add TASK-012b in a follow-up.
+
+### N16 closed
+
+- N16 TOTAL: 14/14 tasks complete
+- Backend (n16a): 12 ADMIN-only routes + migration 0019 (v0.5.19)
+- Frontend (n16b): 6 sub-PRs (n16b1..n16b5) covering 6 files + 4 modifications (v0.5.20 + v0.5.21)
+- **N16 SHIPS**: admin can now navigate to /admin/gastos from Sidebar, see list of all 2,114 gastos with link counts, click into detail to manage ctacte links, anulate or hard-delete per link; ctacte detail page shows linked gastos
+
 ## [0.5.20] — 2026-06-29
 
 ### Added
