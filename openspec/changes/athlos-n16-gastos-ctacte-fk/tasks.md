@@ -253,6 +253,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/lib/api/gastos.ts` + `.test.ts`
 **Dependencies**: TASK-007 (n16a deployed)
 **LoC estimate**: ~50
+**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
 
 **Action**:
 1. Create `apps/web/src/lib/api/gastos.ts` with typed functions: `getGastos(params)`, `getGastoById(id)`, `createGasto(data)`, `updateGasto(id, data)`, `deleteGasto(id)`, `anularGasto(id, motivo)`
@@ -274,6 +275,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/lib/api/gastos-ctacte.ts` + `.test.ts`
 **Dependencies**: TASK-007 (n16a deployed)
 **LoC estimate**: ~40
+**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
 
 **Action**:
 1. Create `gastos-ctacte.ts` with typed functions: `getGastoLinks(gastoId, active?)`, `createLink(gastoId, data)`, `deleteLink(linkId)`, `anularLink(linkId, motivo)`, `getCtacteGastosLinks(cuenta)`, `getCandidates(gastoId)`
@@ -293,6 +295,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/app/(authed)/admin/gastos/page.tsx` + `.test.tsx`
 **Dependencies**: TASK-009
 **LoC estimate**: ~80
+**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
 
 **Action**:
 1. Create `page.tsx` with `useQuery(getGastos, ...)` + filters: cuenta_principal text input, date-range picker (fecha_desde, fecha_hasta), anulado toggle
