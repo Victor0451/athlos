@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.19] — 2026-06-29
+
+### Added
+
+- **`gastos` ↔ `ctacte` mapping + gastos CRUD (PR n16a-backend, v0.5.19)** — closes the deferred Slice E1b2a scope correction #C7 + #C8 (gastos had no FK to ctacte)
+  - New migration `0019_gastos_ctacte_mapping.sql` — creates `tesoreria.gastos_ctacte_mapping` table with PARTIAL UNIQUE INDEX `(gasto_id, ctacte_id) WHERE anulado = false` (allows re-link after `anular`)
+  - Adds `anulado boolean DEFAULT false` column to `gastos` table
+  - 12 NEW ADMIN-only Fastify routes (5 gastos CRUD + 5 gastos-ctacte mapping + 1 heuristic candidates + 1 ctacte-gastos-links list)
+  - `apps/api/src/modules/gastos/repository.ts` — 13 repository functions with 50+ tests
+  - `apps/api/src/db/functions/gastos_ctacte_heuristic.ts` — LATERAL heuristic (never auto-persists, `motivo='heuristic-pending'`)
+  - Heuristic discovery: date proximity ±7 days + amount match + socio_id match
+
+### Compliance
+
+- **LoC budget**: PR n16a-backend shipped as **1 commit (size:exception accepted)** with 21 files, 4,809 total insertions. Production code ~1,623 LoC vs 400 budget (~3x over). User explicitly accepted exception per their decision.
+- **Strict TDD**: RED → GREEN → TRIANGULATE per orchestrator protocol (24 new tests, all passing; 263 total green)
+- **PARTIAL UNIQUE INDEX** (per Q1 user decision: many-to-many)
+- **ADMIN-only** (per Q3 user decision)
+- **Soft warning no cascade** (per Q5 user decision)
+- **Additive-only** per B1b LESSON #1 (2 new capabilities + 2 modified)
+
+### Verification
+
+- 263 tests passing (24 new for N16 + 239 unchanged)
+- `pnpm typecheck` clean across 24 workspace packages
+- Live DB sanity: drizzle.\_\_drizzle_migrations last id = 18 (0019 is next)
+- Migration SQL manually reviewed: idempotent (IF NOT EXISTS throughout), PARTIAL UNIQUE INDEX syntax verified
+
+### LESSONs (from apply phase)
+
+- **Production code 3x over budget** (~1,623 LoC vs 400): 12 routes + 13 repository functions + 5-tuple UNIQUE + tests + standin extension = significant LoC. Future N-style slices need more aggressive TDD scaffolding budget per LoC estimate.
+- **Pre-existing standin limitation** (`apps/api/src/test-standins/db.ts`): `count(*)` SQL projection requires recursive chunk-walk to detect (Drizzle splits the fragment across nested chunks). Tested via vitest, working. No production impact.
+- **Standin extension added `cctcuenta` to CTACTE_SQL_TO_JS map** (256 LoC): missing since E1b1 added the column. Pre-existing bug fixed incidentally; no production impact.
+
+### Out of scope (deferred to PR n16b-web)
+
+- Web UI: typed fetch wrappers + 2 new pages (`/admin/gastos` list, `/admin/gastos/[id]` detail) + ctacte detail page integration + Sidebar entry
+- Approvals executor backend (separate slice)
+- Caja read routes
+- File storage + receipt reprint
+- Cookie-based refresh (separate auth-cookies slice)
+
 ## [0.5.18] — 2026-06-29
 
 ### Added

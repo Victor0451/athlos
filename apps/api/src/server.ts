@@ -32,6 +32,9 @@ import { lineageRoutes } from './routes/lineage.ts'
 import { driftRoutes } from './routes/drift.ts'
 import { freshnessRoutes } from './routes/freshness.ts'
 import { auditRoutes } from './routes/audit.ts'
+// 9. N16 (athlos-n16-gastos-ctacte-fk): admin gastos CRUD + mapping routes
+import { gastosAdminRoutes } from './routes/admin/gastos.ts'
+import { gastosCtacteAdminRoutes } from './routes/admin/gastos-ctacte.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -217,6 +220,12 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 
   // 20. Audit route (PR 7b.2 TASK-089): GET /api/v1/audit (ADMIN OR data_steward)
   await app.register(auditRoutes)
+
+  // 20b. N16 gastos + gastos-ctacte admin routes (athlos-n16-gastos-ctacte-fk).
+  //      ADMIN-only. 12 new endpoints total: 6 gastos CRUD +
+  //      6 gastos↔ctacte mapping (link create/delete/anular, candidates).
+  await app.register(gastosAdminRoutes)
+  await app.register(gastosCtacteAdminRoutes)
 
   // 21. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without
