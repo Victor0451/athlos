@@ -1,6 +1,6 @@
 {
   "name": "@athlos/scheduler",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "private": true,
   "description": "Athlos in-process job scheduler — node-cron backed, DB-persisted job runs, retry + dead-letter, swap-in interface for future BullMQ migration.",
   "type": "module",
