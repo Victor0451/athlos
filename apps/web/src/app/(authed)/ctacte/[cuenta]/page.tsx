@@ -6,10 +6,11 @@ import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { getCtacte, getMovimientos, type Movimiento } from '@/lib/api/ctacte'
 import { getSocio } from '@/lib/api/socios'
+import { getCtacteGastosLinks, type GastoLinkForCuenta } from '@/lib/api/gastos-ctacte'
 import { MovementList } from '@/components/ledger/MovementList'
 
 /**
- * Ctacte detail page — `/ctacte/[cuenta]` (TASK-025, PR 8b.2).
+ * Ctacte detail page — `/ctacte/[cuenta]` (TASK-025 + TASK-013).
  *
  * Per the orchestrator brief, this PR is **read-only**:
  *   - The page fetches `getCtacte(id)` for the summary (saldo +
@@ -17,8 +18,10 @@ import { MovementList } from '@/components/ledger/MovementList'
  *     header card
  *   - For page 2+, `getMovimientos(id, { page })` is queried so
  *     we don't re-fetch the saldo (which is stable across pages)
- *   - No create / update / delete UI — write affordances land
- *     in a later slice once the backend surfaces the endpoints
+ *   - TASK-013 (PR n16b-web): the page now renders a "Gastos
+ *     vinculados" panel below MovementList that lists the active
+ *     `gastos_ctacte_mapping` rows for this cuenta. The previous
+ *     "Próximamente" placeholder is removed.
  *   - Money formatted via the `MovementList` component (es-AR ARS)
  *
  * The summary strip computes `Total Debe` + `Total Haber` from the
@@ -61,6 +64,14 @@ export default function CtacteDetailPage() {
     queryKey: ['ctacte-movimientos', cuenta, { page, limit: PAGE_LIMIT }],
     queryFn: () => getMovimientos(cuenta, { page, limit: PAGE_LIMIT }),
     enabled: page > 1,
+  })
+
+  // TASK-013: linked gastos from the gastos_ctacte_mapping table.
+  // Admin-only data, but rendered for every authed role (per spec —
+  // no role gate at the panel level). Zero-state renders nothing.
+  const gastosVinculadosQuery = useQuery({
+    queryKey: ['ctacte-gastos-links', cuenta],
+    queryFn: () => getCtacteGastosLinks(cuenta),
   })
 
   // Loading state — wait on the first-page ctacte query + the socio
@@ -213,13 +224,57 @@ export default function CtacteDetailPage() {
       </nav>
 
       <section
-        aria-label="Próximamente"
-        data-testid="ctacte-detail-proximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
+        aria-label="Gastos vinculados"
+        data-testid="gastos-vinculados"
+        className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
-        <p className="font-body text-sm text-ink-500">
-          Próximamente — crear, editar y anular movimientos disponibles en una próxima versión.
-        </p>
+        <h2 className="font-display text-lg font-semibold text-ink-900">Gastos vinculados</h2>
+        {gastosVinculadosQuery.isPending ? (
+          <div className="mt-3 h-12 animate-pulse rounded bg-surface-sunken" />
+        ) : (gastosVinculadosQuery.data?.items ?? []).length === 0 ? null : (
+          <table className="mt-3 w-full">
+            <thead className="bg-surface-sunken">
+              <tr>
+                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Cuenta
+                </th>
+                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Concepto
+                </th>
+                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Fecha
+                </th>
+                <th className="px-4 py-3 text-right font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Importe
+                </th>
+                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Motivo
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {(gastosVinculadosQuery.data?.items ?? []).map((g: GastoLinkForCuenta) => (
+                <tr
+                  key={g.linkId}
+                  data-testid={`gastos-vinculado-row-${g.linkId}`}
+                  className="border-t border-ink-100"
+                >
+                  <td className="px-4 py-3 font-mono text-sm text-ink-900">
+                    {g.gastoCuentaPrincipal}
+                  </td>
+                  <td className="px-4 py-3 font-body text-sm text-ink-700">
+                    {g.gastoConcepto ?? '—'}
+                  </td>
+                  <td className="px-4 py-3 font-body text-sm text-ink-700">{g.gastoFecha}</td>
+                  <td className="px-4 py-3 text-right font-body text-sm tabular-nums text-ink-900">
+                    {g.gastoImporte}
+                  </td>
+                  <td className="px-4 py-3 font-body text-sm text-ink-700">{g.motivo}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
     </div>
   )
