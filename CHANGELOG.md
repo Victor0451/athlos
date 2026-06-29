@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.17] — 2026-06-29
+
+### Added
+
+- **`apps/web` Scheduler dashboard (PR 8c.1 in 14 stacked sub-PRs: 8c.1a + 8c.1b + 8c.1c + 8c.1d + 8c.1e + 8c.1f + 8c.1g + 8c.1h + 8c.1i + 8c.1j + 8c.1k + 8c.1l + 8c.1m + 8c.1n)** — operator can now see and trigger scheduler jobs
+  - `lib/api/scheduler.ts` — typed fetch wrapper for `/api/v1/scheduler/jobs` (list, detail, run-now, enable/disable) — all ADMIN-gated
+  - `components/scheduler/JobCard.tsx` — job card with status badge + last run time + trigger button
+  - `components/scheduler/RunList.tsx` — recent runs list with status, duration, attempt count, error message
+  - `components/scheduler/TriggerButton.tsx` — confirm dialog + trigger action ("Confirmar" → "Disparando…" while pending)
+  - `components/scheduler/EnableToggle.tsx` — enable/disable toggle
+  - `app/(authed)/admin/scheduler/page.tsx` — 6 jobs list with status badges (drift-detection, freshness-refresh, token-cleanup, scheduled-import, scheduled-promotion, reconciliation)
+  - `app/(authed)/admin/scheduler/[name]/page.tsx` — job detail + recent runs + trigger + enable/disable
+- **70 NEW tests** across 7 test files (scheduler API 10, JobCard 9, RunList 10, TriggerButton 8, EnableToggle 8, list page 11, detail page 14) — all passing with strict TDD
+
+### Changed
+
+- **Sidebar's `Admin > Scheduler` link** (shipped in 8a.2) now links to a fully functional scheduler dashboard. Sidebar's Admin section NOT yet collapsible via `<details>` (deferred to UI polish).
+
+### Compliance
+
+- **LoC budget**: PR 8c.1 shipped as **14 stacked sub-PRs** (largest 253 LoC), each strictly under 400-line review budget. Total 2,348 LoC across 14 files. **No size:exception** required (14-commit split pattern, consistent with 8b.3's 6-commit split).
+- **Strict TDD**: RED first → GREEN → TRIANGULATE per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+- **Admin-only routes**: all 4 endpoints require `requireRole('ADMIN')` per backend contract
+
+### Verification
+
+- 253/253 new tests passing (70 from 8c.1 + 183 from 8a.1+8a.2+8a.3+8b.1+8b.2+8b.3)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### LESSONs (from apply phase)
+
+- **duck-typed `err.status` check** (not `instanceof ApiError`) — works for both real `ApiError` and test `Object.assign` mocks. Future tests should use this pattern.
+- **es-AR `dateStyle: 'short'` quirk**: produces "D/M/YY" not "DD/MM/YYYY". Tests use `/27\/6/` regex pattern.
+- **TriggerButton text change**: "Confirmar" → "Disparando…" while pending. Tests use `data-testid` instead of text matching.
+- **14 sub-PRs vs orchestrator's suggested 5**: apply sub-agent self-split aggressively to honor the 400 LoC per-PR budget. The 5-sub-PR suggestion from the brief was the original plan; the actual sub-PR count adapts to the work being done.
+- **6 job names hardcoded** (sourced from `apps/api/src/jobs/register.ts`) — no `GET /api/v1/scheduler/job-names` endpoint exists. Acceptable for MVP (6 names rarely change).
+
+### Out of scope (deferred)
+
+- Sidebar Admin section collapsible via `<details>` (UI polish — ship in 8c.2 or follow-up)
+- Sidebar > Admin > Approvals link (deferred to PR 8c.2)
+- Sidebar > Admin > Settings link (deferred to PR 8c.2)
+
 ## [0.5.16] — 2026-06-29
 
 ### Added
