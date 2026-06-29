@@ -6,10 +6,17 @@
  * it has ≤15 min of damage before the JWT expires. The refresh token is
  * stored next to the access token here ONLY because the v0.5.8 backend
  * accepts body-based refresh (`auth-cookies/spec.md` Scenario: Backend
- * slice not yet shipped). Once the cookie-transport backend slice lands
- * (PR 8a.2), `refreshAccessToken()` will drop the body and call
- * `/api/auth/refresh` with `credentials: 'include'` only — `refreshToken`
- * disappears entirely.
+ * slice not yet shipped).
+ *
+ * TODO(PR 9 — auth-cookies backend slice): Once the cookie-transport
+ * backend slice lands, `refreshAccessToken()` will drop the body and
+ * call `/api/auth/refresh` with `credentials: 'include'` only. At that
+ * point the module-scope `refreshToken` variable disappears entirely
+ * and the (authed)/layout server component can read the opaque cookie
+ * to gate requests before any client JS runs. The web client currently
+ * ships with body-based refresh (v0.5.8 contract) as a fallback; this
+ * fallback is documented in the `auth-cookies` spec under "Backend
+ * slice not yet shipped".
  *
  * Tab close = logout, because the module-scope variable dies with the
  * tab. This is the documented trade-off for a 3–5 person console.
@@ -39,6 +46,19 @@ interface ApiErrorBody {
   retryAfterMinutes?: number
 }
 
+/**
+ * Profile of the authenticated operator, lifted from the
+ * `LoginResponse` body. Held in module-scope memory alongside the
+ * tokens so that the React UI (Sidebar role gating, Topbar greeting)
+ * can read role/username without a server round-trip.
+ */
+export interface CurrentUser {
+  operator_id: string
+  role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
+  username: string
+  permissions: { can_reprint: boolean; can_anulate: boolean }
+}
+
 /** Error thrown by the auth module when the API rejects the request. */
 export class AuthError extends Error {
   readonly code: string
@@ -59,6 +79,7 @@ export class AuthError extends Error {
 // Module-scope token state. NEVER exported directly.
 let accessToken: string | null = null
 let refreshToken: string | null = null
+let currentUser: CurrentUser | null = null
 
 /** Read the current access token, or `null` if not authenticated. */
 export function getAccessToken(): string | null {
@@ -84,6 +105,17 @@ function setRefreshToken(token: string | null): void {
 export function clearAccessToken(): void {
   accessToken = null
   refreshToken = null
+  currentUser = null
+}
+
+/** Read the current user profile, or `null` if not authenticated. */
+export function getCurrentUser(): CurrentUser | null {
+  return currentUser
+}
+
+/** Replace the in-memory user profile. Internal helper, used by login(). */
+function setCurrentUser(user: CurrentUser | null): void {
+  currentUser = user
 }
 
 async function parseError(res: Response): Promise<AuthError> {
@@ -122,6 +154,12 @@ export async function login(username: string, password: string): Promise<LoginRe
   const body = (await res.json()) as LoginResponse
   setAccessToken(body.access_token)
   setRefreshToken(body.refresh_token)
+  setCurrentUser({
+    operator_id: body.operator_id,
+    role: body.role,
+    username,
+    permissions: body.permissions,
+  })
   return body
 }
 
@@ -130,8 +168,11 @@ export async function login(username: string, password: string): Promise<LoginRe
  * the new access token is stored and returned. On failure, the in-memory
  * token is cleared so the UI bounces the operator to `/login`.
  *
- * Body-based for v0.5.8; will become cookie-only in PR 8a.2 once the
- * `auth-cookies` backend slice lands.
+ * Body-based transport until the `auth-cookies` backend slice ships
+ * (see file-level TODO and `auth-cookies/spec.md`). Once the backend
+ * honors the `athlos_refresh` httpOnly cookie this function will drop
+ * the body and call with `credentials: 'include'` only; the
+ * module-scope `refreshToken` variable disappears at that point.
  */
 export async function refreshAccessToken(): Promise<string> {
   const currentRefresh = getRefreshToken()
