@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import AppShell from '@/components/AppShell'
 
 /**
  * Server-component layout for the `(authed)` route group.
@@ -8,17 +9,12 @@ import type { ReactNode } from 'react'
  * cookie from the incoming request and either calls the API to refresh
  * the session or redirects to `/login?from=...`.
  *
- * PR 8a.2a status: this is a pass-through that renders children. The
- * actual auth gate ships in PR 8a.2b via the client-side `AppShell`,
- * which performs a silent body-based refresh and redirects to `/login`
- * on failure. PR 8a.2c keeps the same pass-through and adds the
- * `<AppShell>` wrapper.
- *
- * TODO(PR 9 — auth-cookies backend slice): when the backend cookie
- * slice lands, this layout will own the cookie check (server component
- * reads the `athlos_refresh` cookie + forwards to the API) and the
+ * PR 8a.2 status: the backend cookie slice is deferred (see TODO in
+ * `lib/auth.ts`). The auth gate runs client-side in `AppShell`
+ * (silent body-based refresh + redirect on failure). When the backend
+ * cookie slice ships, this layout will own the cookie check and the
  * `AppShell` will keep a fallback path for tab-restore scenarios.
  */
 export default function AuthedLayout({ children }: { children: ReactNode }) {
-  return <>{children}</>
+  return <AppShell>{children}</AppShell>
 }
