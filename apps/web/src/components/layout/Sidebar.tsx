@@ -35,6 +35,7 @@ const ITEMS: NavItem[] = [
   { href: '/admin/scheduler', label: 'Scheduler', roles: ['ADMIN'] },
   { href: '/admin/approvals', label: 'Approvals', roles: ['ADMIN'] },
   { href: '/admin/settings', label: 'Settings', roles: ['ADMIN'] },
+  { href: '/admin/gastos', label: 'Gastos', roles: ['ADMIN'] },
 ]
 
 export default function Sidebar() {

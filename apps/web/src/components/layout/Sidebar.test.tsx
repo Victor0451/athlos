@@ -75,22 +75,24 @@ describe('Sidebar', () => {
     expect(within(nav).getByRole('link', { name: /padrones/i })).toBeInTheDocument()
   })
 
-  it('shows Scheduler, Approvals and Settings for ADMIN', () => {
+  it('shows Scheduler, Approvals, Settings and Gastos for ADMIN', () => {
     seedUser('ADMIN')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
     expect(within(nav).getByRole('link', { name: /scheduler/i })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /settings/i })).toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
   })
 
-  it('hides Scheduler, Approvals and Settings for non-ADMIN roles', () => {
+  it('hides Scheduler, Approvals, Settings and Gastos for non-ADMIN roles', () => {
     seedUser('CONSULTA')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
     expect(within(nav).queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /gastos/i })).not.toBeInTheDocument()
   })
 
   it('hides Scheduler, Approvals and Settings for TESORERO and OPERADOR too', () => {
