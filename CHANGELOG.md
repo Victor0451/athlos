@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.20] — 2026-06-29
+
+### Added
+
+- **`apps/web` gastos + gastos-ctacte typed fetch wrappers (PR n16b-web partial: n16b1 + n16b2, v0.5.20)** — first 2 of 4 sub-PRs for n16b-web
+  - `lib/api/gastos.ts` — typed fetch wrapper for `/api/v1/gastos` CRUD (5 endpoints, all ADMIN-only)
+  - `lib/api/gastos-ctacte.ts` — typed fetch wrapper for `/api/v1/gastos-ctacte` mapping (5 endpoints) + 1 heuristic candidates endpoint
+  - 14 NEW tests across 2 files — all passing with strict TDD
+
+### Pending (n16b-web sub-PRs 3 + 4, future apply)
+
+- `app/(authed)/admin/gastos/page.tsx` — list page (not shipped yet)
+- `app/(authed)/admin/gastos/[id]/page.tsx` — detail page (not shipped yet)
+- `app/(authed)/ctacte/[cuenta]/page.tsx` — linked gastos section (not shipped yet)
+- `components/layout/Sidebar.tsx` — Tesorería > Gastos link (not shipped yet)
+
+### Compliance
+
+- **LoC budget**: 4 stacked sub-PRs (n16b1=369, n16b2=240 LoC) each strictly under 400-line review budget. NO size:exception. Per Slice 8 LESSON (split, don't exception).
+- **Strict TDD**: RED → GREEN → REFACTOR per orchestrator protocol
+- **0 Co-Authored-By** (orchestrator strips via filter-branch per LESSON)
+
+### Verification
+
+- 355 tests passing (14 new + 341 unchanged)
+- `pnpm typecheck` clean
+
+### LESSONs (from apply phase)
+
+- **Production code 3x over budget** in n16a-backend (1,623 LoC vs 400): user accepted size:exception for backend only
+- **Frontend n16b can fit 400 LoC** when split into 1-file-per-commit: TASK-009 prod (171) + tests (198) = 369; TASK-010 prod (108) + tests (132) = 240
+- **Each sub-PR ≤200 LoC** when split production/tests in separate commits (cleaner than the 8b.2-8b.3 pattern that allowed ~250-350 LoC per commit)
+
+### Out of scope (deferred to next apply batch)
+
+- 4 remaining tasks for n16b-web (TASK-011 list page, TASK-012 detail, TASK-013 ctacte mod, TASK-014 Sidebar mod)
+- Approvals executor backend (separate slice)
+- Caja read routes (separate slice)
+
 ## [0.5.19] — 2026-06-29
 
 ### Added
