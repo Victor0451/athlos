@@ -253,7 +253,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/lib/api/gastos.ts` + `.test.ts`
 **Dependencies**: TASK-007 (n16a deployed)
 **LoC estimate**: ~50
-**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
+**Status (v0.5.20 merge, 2026-06-29)**: [x] DONE — shipped as PR n16b1 (commit 9288a5b prod + eb80fe4 tests), merged to main as v0.5.20. 7 vitest tests pass.
 
 **Action**:
 1. Create `apps/web/src/lib/api/gastos.ts` with typed functions: `getGastos(params)`, `getGastoById(id)`, `createGasto(data)`, `updateGasto(id, data)`, `deleteGasto(id)`, `anularGasto(id, motivo)`
@@ -275,7 +275,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/lib/api/gastos-ctacte.ts` + `.test.ts`
 **Dependencies**: TASK-007 (n16a deployed)
 **LoC estimate**: ~40
-**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
+**Status (v0.5.20 merge, 2026-06-29)**: [x] DONE — shipped as PR n16b2 (commit a916d17 prod + 51a4796 tests), merged to main as v0.5.20. 7 vitest tests pass.
 
 **Action**:
 1. Create `gastos-ctacte.ts` with typed functions: `getGastoLinks(gastoId, active?)`, `createLink(gastoId, data)`, `deleteLink(linkId)`, `anularLink(linkId, motivo)`, `getCtacteGastosLinks(cuenta)`, `getCandidates(gastoId)`
@@ -295,7 +295,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/app/(authed)/admin/gastos/page.tsx` + `.test.tsx`
 **Dependencies**: TASK-009
 **LoC estimate**: ~80
-**Status (n16b-web apply, 2026-06-29)**: [x] DONE — implementation present on `feat/athlos-n16b-web`, but BLOCKED on LoC budget for the full n16b-web PR (1095 LoC after 3 of 6 tasks). Will need a split decision before shipping — see apply-progress #2678.
+**Status (n16b-web-cont apply, 2026-06-29)**: [x] DONE — shipped on `feat/athlos-n16b-web-cont` as 2 commits (prod 301 LoC + tests 189 LoC), each individually under 400 LoC budget. 9 RTL tests pass. See apply-progress #2678.
 
 **Action**:
 1. Create `page.tsx` with `useQuery(getGastos, ...)` + filters: cuenta_principal text input, date-range picker (fecha_desde, fecha_hasta), anulado toggle
@@ -318,6 +318,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/app/(authed)/admin/gastos/[id]/page.tsx` + `.test.tsx`
 **Dependencies**: TASK-010
 **LoC estimate**: ~70
+**Status (n16b-web-cont apply, 2026-06-29)**: [x] DONE — shipped on `feat/athlos-n16b-web-cont` as 2 commits (prod 360 LoC + tests 257 LoC), each individually under 400 LoC budget. 9 RTL tests pass (strict TDD: RED→GREEN). See apply-progress #2678.
 
 **Action**:
 1. Create `[id]/page.tsx` with gasto header (cuenta_principal, fecha, importe, concepto)
@@ -340,6 +341,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/app/(authed)/ctacte/[cuenta]/page.tsx`
 **Dependencies**: TASK-010
 **LoC estimate**: ~30
+**Status (n16b-web-cont apply, 2026-06-29)**: [x] DONE — shipped on `feat/athlos-n16b-web-cont` as 1 commit (page.tsx + test.tsx, 109 net LoC). Strict TDD: removed Próximamente assertion + added Gastos vinculados assertion (RED→GREEN). See apply-progress #2678.
 
 **Action**:
 1. In `ctacte/[cuenta]/page.tsx`: after the `MovementList` section, add "Gastos vinculados" panel
@@ -361,6 +363,7 @@ TASK-009 (web gastos API wrapper + tests)
 **File(s)**: `apps/web/src/components/layout/Sidebar.tsx`
 **Dependencies**: TASK-011
 **LoC estimate**: ~5
+**Status (n16b-web-cont apply, 2026-06-29)**: [x] DONE — shipped on `feat/athlos-n16b-web-cont` as 1 commit (Sidebar.tsx + test.tsx, 7 net LoC). Strict TDD: added ADMIN-only Gastos link assertion (RED→GREEN). See apply-progress #2678.
 
 **Action**:
 1. In `Sidebar.tsx`: add `{href: '/admin/gastos', label: 'Gastos', roles: ['ADMIN']}` to the `ITEMS` array under the Admin group
@@ -391,9 +394,9 @@ TASK-009 (web gastos API wrapper + tests)
 - [ ] ≥5 vitest per backend file, all pass
 
 ### n16b-web
-- [ ] `lib/api/gastos.ts` and `lib/api/gastos-ctacte.ts` typed and importable
-- [ ] `/admin/gastos` renders paginated table with filters; ADMIN-only
-- [ ] `/admin/gastos/[id]` shows gasto + links table + candidates section
-- [ ] `/ctacte/[cuenta]` renders "Gastos vinculados" panel (no "Próximamente")
-- [ ] Sidebar shows "Gastos" only for ADMIN
-- [ ] ≥3 RTL tests per page, all pass
+- [x] `lib/api/gastos.ts` and `lib/api/gastos-ctacte.ts` typed and importable
+- [x] `/admin/gastos` renders paginated table with filters; ADMIN-only
+- [x] `/admin/gastos/[id]` shows gasto + links table + candidates section
+- [x] `/ctacte/[cuenta]` renders "Gastos vinculados" panel (no "Próximamente")
+- [x] Sidebar shows "Gastos" only for ADMIN
+- [x] ≥3 RTL tests per page, all pass
