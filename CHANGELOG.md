@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.18] — 2026-06-29
+
+### Added
+
+- **`apps/web` Approvals queue + Settings/OperatorProfile (PR 8c.2 in 9 stacked sub-PRs: 8c.2a + 8c.2b + 8c.2c + 8c.2d + 8c.2e + 8c.2f + 8c.2g + 8c.2h + 8c.2i)** — operator console admin surfaces complete
+  - `lib/api/approvals.ts` + tests — typed fetch wrapper for `/api/v1/approvals` endpoints
+  - `lib/api/auth.ts` + tests — typed fetch wrapper for `/api/v1/auth/me` (current user info)
+  - `components/admin/ApprovalCard.tsx` + tests — approval token card with status badge + action button
+  - `components/admin/OperatorProfile.tsx` + tests — profile display (username, role, last login)
+  - `app/(authed)/admin/approvals/page.tsx` + tests — list of pending approval tokens (Próximamente placeholder per deferred-gaps decision)
+  - `app/(authed)/admin/approvals/[token]/page.tsx` + tests — approval action page (STUB note: "Aprobación registrada — ejecución real queda pendiente")
+  - `app/(authed)/admin/settings/page.tsx` + tests — operator profile + change-password stub
+- **Sidebar's `Admin > Approvals` link** — added to nav (was missing; Settings link still deferred)
+- **79 NEW tests** across 8 test files — all passing with strict TDD
+
+### Changed
+
+- **TRUST UX fix** (critical): the approval detail page now renders "Aprobación registrada — ejecución real queda pendiente" instead of misleading copy like "Aprobado" or "Anulación aplicada". The backend approval executor is a STUB (decision recorded, action NOT applied). Operators must know the system didn't actually apply the action until the executor lands in Phase 9.
+
+### Compliance
+
+- **LoC budget**: PR 8c.2 shipped as 9 stacked sub-PRs (8c.2a=165 / 8c.2b=328 / 8c.2c=289 / 8c.2d=331 / 8c.2e=265 / 8c.2f=338 / 8c.2g=282 / 8c.2h=314 / 8c.2i=8 LoC), each strictly under 400-line review budget. Total 2,317 LoC across 16 files. **No size:exception** required (9-commit split pattern, consistent with 8c.1's 14-commit split).
+- **Strict TDD**: RED first → GREEN → TRIANGULATE per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+
+### Verification
+
+- 332/332 new tests passing (79 from 8c.2 + 253 from 8a.1+8a.2+8a.3+8b.1+8b.2+8b.3+8c.1)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### LESSONs (from apply phase)
+
+- **TRUST UX is critical for STUB features**: when the backend can't actually do something, the UI must clearly say so. "Aprobación registrada — ejecución real queda pendiente" sets proper expectations vs misleading copy.
+- **8 bugs found + fixed during RED→GREEN cycles** (all documented in engram 2634): mostly test infrastructure edge cases (jsdom 25 + React 19 + RTL quirks).
+- **No size:exception requested** — 9-way split keeps every commit ≤ 340 LoC. Orchestrator can squash before merge if coarser split is preferred.
+
+### **SLICE 8 COMPLETE** 🎉
+
+PR 8c.2 is the **FINAL PR** in the Slice 8 (athlos-ui) chain. All 8 PRs shipped:
+
+- 8a.1 (v0.5.11) → 8a.2 (v0.5.12) → 8a.3 (v0.5.13) → 8b.1 (v0.5.14) → 8b.2 (v0.5.15) → 8b.3 (v0.5.16) → 8c.1 (v0.5.17) → 8c.2 (v0.5.18)
+- 8 chained PRs, 51+ sub-commits, ~13,000 LoC total, 332/332 tests passing
+
+### Out of scope (deferred to Phase 9+)
+
+- **Approvals executor backend** — UI shows "STUB" copy. Real executor lands in separate backend slice (out of Slice 8 scope).
+- **Backend gaps** (per user decision): Caja/Gastos read routes, file storage UI, receipt reprint, change-password flow, `/api/v1/disciplinas` endpoint, full admin/gastos routes.
+- **Sidebar Admin section collapsible** via `<details>` (UI polish — ship in follow-up).
+
 ## [0.5.17] — 2026-06-29
 
 ### Added
