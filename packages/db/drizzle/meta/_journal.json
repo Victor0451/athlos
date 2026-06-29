@@ -134,6 +134,13 @@
       "when": 1782342100000,
       "tag": "0018_raw_events_legacy_id_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1782342200000,
+      "tag": "0019_gastos_ctacte_mapping",
+      "breakpoints": true
     }
   ]
 }
