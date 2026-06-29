@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.13] — 2026-06-29
+
+### Added
+
+- **`apps/web` Dashboard + Health cards (PR 8a.3 in 4 stacked sub-PRs: 8a.3a1 + 8a.3a2 + 8a.3b1 + 8a.3b2)** — operator console MVP
+  - `lib/api/health.ts` — typed fetch wrapper for `GET /health` endpoint (no auth)
+  - `components/cards/MetricCard.tsx` — reusable card with label + value + sublabel + variant (default/success/warning/danger)
+  - `components/cards/StatusBadge.tsx` — pill-shaped semantic badge (ok/degraded/down)
+  - `app/(authed)/dashboard/page.tsx` — 4-card layout with TanStack Query auto-refresh every 30s:
+    - **API Health** card (status + version + uptime from /health)
+    - **Master Table Counts** card (8 tables from v0.5.7 promotion pipeline)
+    - **Scheduler Status** card (6 jobs from v0.5.8 E-Future)
+    - **Recent Runs** card (last 5 across all jobs)
+- **22 NEW tests** for dashboard + cards + health API — all passing with strict TDD
+
+### Changed
+
+- **`apps/web/src/providers/QueryProvider.tsx`** — added stale time + refetch interval config per resource type (30s for dashboard cards, 60s for master data, 5min for stable)
+
+### Compliance
+
+- **LoC budget**: PR 8a.3 shipped as 4 stacked sub-PRs (8a.3a1=185 / 8a.3a2=223 / 8a.3b1=285 / 8a.3b2=260 LoC), each strictly under 400-line review budget. Total 953 LoC across 8 files. **No size:exception** required (consistent with PR 8a.2 split policy).
+- **Strict TDD**: RED first → GREEN → REFACTOR per orchestrator protocol
+- **ADITIVE-ONLY**: no modifications to existing capability specs (B1b LESSON #1)
+
+### Verification
+
+- 68/68 new tests passing (22 dashboard + cards + health + 46 from 8a.1+8a.2)
+- `pnpm typecheck` clean
+- `pnpm lint` clean
+
+### Out of scope (deferred)
+
+- Cards requiring backend endpoints not yet shipped (scheduler status details, recent runs pagination) — show "Próximamente" placeholder when API returns 404
+- Caja + Gastos domains (deferred to Slice 9)
+- Mobile sidebar drawer
+- "Mi Perfil" dropdown + change-password (PR 8c.2)
+
+### LESSONs
+
+- The dashboard test file was 260 LoC for ~10 test cases — high test-to-code ratio. Future dashboard expansions should consider per-feature test files (e.g., `HealthCard.test.tsx`, `SchedulerStatusCard.test.tsx`) to keep tests under 400 LoC.
+- Per-PR LoC budget: 4-commit split is the new pattern for slices >400 LoC total. Better than size:exception (which the user explicitly rejected for 8a.2 onwards).
+
 ## [0.5.12] — 2026-06-29
 
 ### Added
