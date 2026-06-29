@@ -1,6 +1,6 @@
 {
   "name": "@athlos/validation",
-  "version": "0.5.8",
+  "version": "0.5.11",
   "private": true,
   "description": "Athlos validation primitives — Zod schemas for ids, pagination, amounts, legacy keys, and per-resource contracts.",
   "type": "module",
