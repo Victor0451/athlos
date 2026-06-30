@@ -13,9 +13,9 @@ import {
  *
  * Covers the contract from `web-frontend/spec.md`:
  *   - access token is held in module-scope memory (never localStorage/sessionStorage)
- *   - login() POSTs `/api/auth/login` and stores the returned access token
- *   - logout() POSTs `/api/auth/logout` and clears the in-memory token
- *   - refreshAccessToken() rotates via `/api/auth/refresh` (body-based for v0.5.8)
+ *   - login() POSTs `/api/v1/auth/login` and stores the returned access token
+ *   - logout() POSTs `/api/v1/auth/logout` and clears the in-memory token
+ *   - refreshAccessToken() rotates via `/api/v1/auth/refresh` (body-based for v0.5.8)
  *   - when the refresh token is missing or rejected, refreshAccessToken() rejects
  *     and clears the in-memory token (caller will redirect to /login)
  */
@@ -59,7 +59,7 @@ describe('auth module', () => {
   })
 
   describe('login()', () => {
-    it('POSTs to /api/auth/login with credentials and stores the access token', async () => {
+    it('POSTs to /api/v1/auth/login with credentials and stores the access token', async () => {
       const fetchMock = vi.fn().mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -79,7 +79,7 @@ describe('auth module', () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-      expect(url).toBe('/api/auth/login')
+      expect(url).toBe('/api/v1/auth/login')
       expect(init.method).toBe('POST')
       expect(JSON.parse(init.body as string)).toEqual({
         username: 'admin',
@@ -128,7 +128,7 @@ describe('auth module', () => {
   })
 
   describe('refreshAccessToken()', () => {
-    it('POSTs /api/auth/refresh with the stored refresh token and updates the access token', async () => {
+    it('POSTs /api/v1/auth/refresh with the stored refresh token and updates the access token', async () => {
       // Seed: previous login stored both tokens.
       const fetchMock = vi
         .fn()
@@ -165,7 +165,7 @@ describe('auth module', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2)
 
       const refreshCall = fetchMock.mock.calls[1] as [string, RequestInit]
-      expect(refreshCall[0]).toBe('/api/auth/refresh')
+      expect(refreshCall[0]).toBe('/api/v1/auth/refresh')
       expect(JSON.parse(refreshCall[1].body as string)).toEqual({
         refresh_token: 'first.refresh.token',
       })
@@ -192,7 +192,7 @@ describe('auth module', () => {
   })
 
   describe('logout()', () => {
-    it('POSTs /api/auth/logout, clears the access token, and resolves', async () => {
+    it('POSTs /api/v1/auth/logout, clears the access token, and resolves', async () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValueOnce(
@@ -222,7 +222,7 @@ describe('auth module', () => {
       await logout()
 
       const logoutCall = fetchMock.mock.calls[1] as [string, RequestInit]
-      expect(logoutCall[0]).toBe('/api/auth/logout')
+      expect(logoutCall[0]).toBe('/api/v1/auth/logout')
       expect(logoutCall[1].method).toBe('POST')
       expect(getAccessToken()).toBeNull()
     })

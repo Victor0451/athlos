@@ -10,7 +10,7 @@
  *
  * TODO(PR 9 — auth-cookies backend slice): Once the cookie-transport
  * backend slice lands, `refreshAccessToken()` will drop the body and
- * call `/api/auth/refresh` with `credentials: 'include'` only. At that
+ * call `/api/v1/auth/refresh` with `credentials: 'include'` only. At that
  * point the module-scope `refreshToken` variable disappears entirely
  * and the (authed)/layout server component can read the opaque cookie
  * to gate requests before any client JS runs. The web client currently
@@ -134,13 +134,13 @@ async function parseError(res: Response): Promise<AuthError> {
 }
 
 /**
- * Authenticate against the first-party proxy `/api/auth/login`, which in
+ * Authenticate against the first-party proxy `/api/v1/auth/login`, which in
  * turn forwards to `${API_BASE_URL}/api/v1/auth/login`. Stores both
  * tokens in module-scope memory and returns the full login response so
  * the caller can read `operator_id`, `role`, and `permissions`.
  */
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  const res = await fetch('/api/auth/login', {
+  const res = await fetch('/api/v1/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'include',
@@ -164,7 +164,7 @@ export async function login(username: string, password: string): Promise<LoginRe
 }
 
 /**
- * Rotate the refresh token by calling `/api/auth/refresh`. On success,
+ * Rotate the refresh token by calling `/api/v1/auth/refresh`. On success,
  * the new access token is stored and returned. On failure, the in-memory
  * token is cleared so the UI bounces the operator to `/login`.
  *
@@ -181,7 +181,7 @@ export async function refreshAccessToken(): Promise<string> {
     throw new AuthError('NO_REFRESH_TOKEN', 0, 'No refresh token in memory')
   }
 
-  const res = await fetch('/api/auth/refresh', {
+  const res = await fetch('/api/v1/auth/refresh', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'include',
@@ -208,7 +208,7 @@ export async function logout(): Promise<void> {
   const currentRefresh = getRefreshToken()
   try {
     if (currentRefresh) {
-      await fetch('/api/auth/logout', {
+      await fetch('/api/v1/auth/logout', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
