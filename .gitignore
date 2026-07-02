@@ -42,3 +42,6 @@ legacy-test/
 
 # Backups (never tracked)
 *.bak
+
+# CodeGraph index (regenerated locally, never tracked)
+.codegraph/
