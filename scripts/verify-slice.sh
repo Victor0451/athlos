@@ -10,7 +10,7 @@
 #   ./scripts/verify-slice.sh
 #
 # Required env:
-#   DATABASE_URL — defaults to postgresql://athlos:athlos@192.168.1.102:5432/athlos
+#   DATABASE_URL — defaults to postgresql://athlos:athlos@100.78.95.34:5432/athlos
 #
 # Exit codes:
 #   0 = PASS (promotion works + idempotency verified)
@@ -23,7 +23,7 @@ set -euo pipefail
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-DB_URL="${DATABASE_URL:-postgresql://athlos:athlos@192.168.1.102:5432/athlos}"
+DB_URL="${DATABASE_URL:-postgresql://athlos:athlos@100.78.95.34:5432/athlos}"
 PSQL="psql ${DB_URL} -t -A -c"
 MASTER_TABLES=(
   "socios.socios"

@@ -4,7 +4,7 @@
  * E1a: 7 test cases T1–T7 for socios + ctacte + ctacte1 promotion.
  * E1b2a: 6 test cases T13–T18 for escuela + deportes + locacion + caja promotion.
  *
- * Tests use the production test DB (192.168.1.102/athlos).
+ * Tests use the production test DB (100.78.95.34/athlos).
  * Per-test cleanup uses `legacy_id LIKE 'test-%'` prefix.
  */
 import { afterEach, afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -14,8 +14,7 @@ import { promoteDomain, promoteAll } from '../index'
 
 // ─── Test DB setup ───────────────────────────────────────────────────────────
 
-const connStr =
-  process.env['DATABASE_URL'] ?? 'postgresql://athlos:athlos@192.168.1.102:5432/athlos'
+const connStr = process.env['DATABASE_URL'] ?? 'postgresql://athlos:athlos@100.78.95.34:5432/athlos'
 
 const { db, pool } = createDb({ connectionString: connStr })
 

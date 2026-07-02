@@ -8,7 +8,7 @@
  * cross-run idempotency for ~571k rows.
  *
  * CI behavior: this test connects to PostgreSQL via `DATABASE_URL` (defaults
- * to the local dev server at 192.168.1.102). When the DB is unreachable
+ * to the local dev server at 100.78.95.34). When the DB is unreachable
  * (e.g. GitHub Actions runner without an ephemeral postgres service), the
  * test skips gracefully — the parity check is a LOCAL pre-merge gate, not
  * a CI gate. CI catches the parity check via the deploy workflow's
@@ -37,7 +37,7 @@ const PARITY_INPUTS: Array<{ input: string; label: string }> = [
 
 /**
  * Parse DATABASE_URL into psql command-line args. Default to the local dev
- * server (192.168.1.102) so local runs work without env config.
+ * server (100.78.95.34) so local runs work without env config.
  */
 function parseDatabaseUrl(): {
   host: string
@@ -46,7 +46,7 @@ function parseDatabaseUrl(): {
   password: string
   db: string
 } {
-  const url = process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@192.168.1.102:5432/athlos'
+  const url = process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@100.78.95.34:5432/athlos'
   const m = url.match(/^postgresql:\/\/([^:]+):([^@]+)@([^:/]+)(?::(\d+))?\/(.+)$/)
   if (!m) throw new Error(`Cannot parse DATABASE_URL: ${url}`)
   return {
