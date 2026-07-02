@@ -2,13 +2,12 @@
  * promote-cli.ts — CLI runner for the promotion pipeline.
  *
  * Usage: pnpm db:promote
- * Requires DATABASE_URL env var (defaults to 192.168.1.102/athlos).
+ * Requires DATABASE_URL env var (defaults to 100.78.95.34/athlos).
  */
 import { createDb } from '@athlos/db'
 import { promoteAll } from './promote.ts'
 
-const connStr =
-  process.env['DATABASE_URL'] ?? 'postgresql://athlos:athlos@192.168.1.102:5432/athlos'
+const connStr = process.env['DATABASE_URL'] ?? 'postgresql://athlos:athlos@100.78.95.34:5432/athlos'
 
 const { db, pool } = createDb({ connectionString: connStr })
 
