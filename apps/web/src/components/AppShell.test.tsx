@@ -52,6 +52,21 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
 }))
 
+// NotificationBell (rendered by Topbar) uses TanStack Query hooks. The
+// AppShell test only asserts layout (banner + complementary), so we
+// stub the notifications module to avoid needing a QueryClient.
+vi.mock('@/lib/api/notifications', () => ({
+  useUnreadCount: () => ({ data: { count: 0 } }) as never,
+  useNotifications: () =>
+    ({
+      data: { items: [], page: 1, limit: 20, total: 0, has_more: false },
+      isPending: false,
+      isError: false,
+      error: null,
+    }) as never,
+  useMarkNotificationAsRead: () => ({ mutate: vi.fn() }) as never,
+}))
+
 const { default: AppShell } = await import('./AppShell.tsx')
 
 describe('AppShell', () => {

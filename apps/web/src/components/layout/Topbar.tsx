@@ -1,6 +1,7 @@
 'use client'
 
 import { useAuth } from '@/lib/use-auth'
+import NotificationBell from '@/components/notifications/NotificationBell'
 
 /**
  * Topbar — the dark chrome strip at the top of every authed page.
@@ -56,6 +57,7 @@ export default function Topbar() {
           >
             {ROLE_LABEL[user.role]}
           </span>
+          <NotificationBell />
           <button
             type="button"
             onClick={() => {
