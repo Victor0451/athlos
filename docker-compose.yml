@@ -10,7 +10,7 @@ services:
       - ./backups:/var/backups/athlos
       - /tmp/legacy-placeholder:/legacy:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:3001/health"]
       interval: 30s
       timeout: 5s
       retries: 5
