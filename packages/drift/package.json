@@ -1,6 +1,6 @@
 {
   "name": "@athlos/drift",
-  "version": "0.5.20",
+  "version": "0.5.21",
   "private": true,
   "description": "Athlos drift detector — compares content hashes against stored snapshots. PR 7b.1b.",
   "type": "module",
