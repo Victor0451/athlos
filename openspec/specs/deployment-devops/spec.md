@@ -299,7 +299,7 @@ The migration creating this table (`packages/db/drizzle/0015_gastos.sql`) SHALL 
 - AND `public."tesoreria.gastos_projection"` contains 2,114 rows
 - WHEN `pnpm db:promote` runs the `gastos` domain (6th in PROMOTION_ORDER)
 - THEN ~2,114 rows SHALL be inserted into `tesoreria.gastos` (1:1 with projection — no FK failures possible)
-- AND `legacy_id` SHALL be a deterministic UUID5 from the 5-tuple `(GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB)` via `deterministicUuid('gastos:tipo|cuenta|secuencia|stadium|comprob')`
+- AND `legacy_id` SHALL be a deterministic UUID5 from the 5-tuple `(GASTIPGAST, GASCTAPRIN, GASSECUENC, GASFECHA, GASCOMPROB)` via `deterministicUuid('gastos:tipo|cuenta|secuencia|fecha|comprob')`
 - AND `SELECT count(DISTINCT legacy_id) FROM tesoreria.gastos` SHALL return 2,114 (100% unique — 5-tuple NK verified live)
 - AND `SELECT count(*) FROM tesoreria.gastos WHERE socio_id IS NOT NULL` SHALL return 0 (no source field; per scope correction #C8)
 - AND `errors[]` SHALL be empty (no FK failures possible)
