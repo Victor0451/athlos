@@ -39,3 +39,6 @@ pgdata/
 # LLM tooling (cache, never tracked)
 .atl/
 legacy-test/
+
+# Backups (never tracked)
+*.bak
