@@ -303,7 +303,7 @@ The promotion pipeline moves data from VFP source files → `raw_events` → `*_
 **CLI** (full `domain: 'all'`, ~60–90s on live DB):
 
 ```bash
-DATABASE_URL=postgresql://athlos:athlos@192.168.1.102:5432/athlos pnpm db:promote
+DATABASE_URL=postgresql://athlos:athlos@100.78.95.34:5432/athlos pnpm db:promote
 ```
 
 **API** (single-domain or full, ADMIN role required):
@@ -450,7 +450,7 @@ Push to `main` → GitHub Actions `deploy.yml` runs:
 
 | Secret           | Purpose                                                                                         | Rotation            |
 | ---------------- | ----------------------------------------------------------------------------------------------- | ------------------- |
-| `DEPLOY_HOST`    | Server IP (current: `192.168.1.102`; switch when prod host is provisioned)                      | When server changes |
+| `DEPLOY_HOST`    | Server IP (current: `100.78.95.34`; switch when prod host is provisioned)                       | When server changes |
 | `DEPLOY_SSH_KEY` | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs | Quarterly           |
 | `GITHUB_TOKEN`   | Automatic (used for GHCR push)                                                                  | Automatic           |
 
