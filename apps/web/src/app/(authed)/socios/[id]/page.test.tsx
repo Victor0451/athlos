@@ -283,12 +283,15 @@ describe('Socio detail page', () => {
     fireEvent.click(screen.getByTestId('socio-form-submit'))
 
     await waitFor(() => {
+      // The form now strips the immutable legacy keys
+      // (numero_socio + fecha_alta) before submitting to PATCH — the
+      // backend's updateBodySchema is .strict() so a full-update
+      // payload was being rejected with VALIDATION_ERROR. See
+      // SocioForm.tsx → formValuesToUpdateInput.
       expect(updateSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, {
-        numero_socio: '00001',
         nombre: 'Juan',
         apellido: 'García',
         dni: '12345678',
-        fecha_alta: '2020-03-15',
         estado: 'activo',
         categoria: 'TITULAR',
         email: 'juan@example.com',
