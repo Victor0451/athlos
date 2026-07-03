@@ -3,7 +3,7 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import type { CreateSocioInput, Socio } from '@/lib/api/socios'
+import type { CreateSocioInput, Socio, UpdateSocioInput } from '@/lib/api/socios'
 
 /**
  * SocioForm — shared create + edit form (PR 8b.2, 2026-07-02).
@@ -86,12 +86,41 @@ function formValuesToInput(values: SocioFormValues): CreateSocioInput {
   return input
 }
 
+/**
+ * `formValuesToUpdateInput` — strip the immutable legacy keys
+ * (`numero_socio`, `fecha_alta`) before submitting to PATCH. The
+ * backend's `updateBodySchema` is `.strict()` so any extra key is
+ * a 400 VALIDATION_ERROR; the disabled inputs in the form still come
+ * through RHF's value with the pre-filled data, but the server will
+ * reject them. Hiding them client-side matches the server contract.
+ */
+function formValuesToUpdateInput(values: SocioFormValues): UpdateSocioInput {
+  const input: UpdateSocioInput = {}
+  if (values.nombre) input.nombre = values.nombre
+  if (values.apellido) input.apellido = values.apellido
+  if (values.dni) input.dni = values.dni
+  if (values.estado) input.estado = values.estado
+  if (values.categoria) input.categoria = values.categoria
+  if (values.direccion) input.direccion = values.direccion
+  if (values.telefono) input.telefono = values.telefono
+  if (values.email) input.email = values.email
+  return input
+}
+
 interface SocioFormProps {
   mode: 'create' | 'edit'
   /** Edit mode only. When set, the form is pre-filled and the two
    *  immutable fields (numero_socio, fecha_alta) are read-only. */
   initialValue?: Partial<Socio>
-  onSubmit: (data: CreateSocioInput) => void
+  /**
+   * Create mode: receives a full `CreateSocioInput` (with the
+   * immutable keys included — POST accepts them).
+   * Edit mode: receives an `UpdateSocioInput` (without the
+   * immutable keys — PATCH's strict schema would 400 if we sent
+   * them). The form's submit handler picks the right helper per
+   * `mode`.
+   */
+  onSubmit: (data: CreateSocioInput | UpdateSocioInput) => void
   onCancel: () => void
   isSubmitting: boolean
   /** Error from the parent (e.g., API 409 CONFLICT on duplicate
@@ -126,7 +155,11 @@ export default function SocioForm({
   })
 
   function onValidSubmit(values: SocioFormValues) {
-    onSubmit(formValuesToInput(values))
+    if (mode === 'edit') {
+      onSubmit(formValuesToUpdateInput(values))
+    } else {
+      onSubmit(formValuesToInput(values))
+    }
   }
 
   function onInvalidSubmit() {

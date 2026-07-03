@@ -9,7 +9,7 @@ import {
   deleteSocio,
   getSocio,
   updateSocio,
-  type CreateSocioInput,
+  type UpdateSocioInput,
   type Socio,
 } from '@/lib/api/socios'
 import SocioForm from '@/components/socios/SocioForm'
@@ -105,7 +105,7 @@ export default function SocioDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const updateMutation = useMutation({
-    mutationFn: (input: CreateSocioInput) => updateSocio(id, input),
+    mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['socio', id] })
       queryClient.invalidateQueries({ queryKey: ['socios'] })
