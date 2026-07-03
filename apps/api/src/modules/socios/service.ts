@@ -28,7 +28,14 @@ export type SortDir = repo.ListSociosSortDir
 export interface ListSociosInput {
   page: number
   limit: number
-  filters?: { estado?: SocioEstado; search?: string }
+  filters?: {
+    estado?: SocioEstado
+    search?: string
+    categoria?: string
+    fechaDesde?: string
+    fechaHasta?: string
+    hasEmail?: 'true' | 'false'
+  }
   sortBy?: SortBy
   sortDir?: SortDir
 }

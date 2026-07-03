@@ -110,7 +110,7 @@ export default function NewSocioPage() {
         <SocioForm
           mode="create"
           isSubmitting={createMutation.isPending}
-          onSubmit={handleSubmit}
+          onSubmit={(input) => handleSubmit(input as Parameters<typeof handleSubmit>[0])}
           onCancel={() => router.push('/socios')}
         />
       </section>

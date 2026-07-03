@@ -260,13 +260,14 @@ export default function SocioDetailPage() {
               )}
             </>
           ) : null}
-          <Link
-            href="/socios"
+          <button
+            type="button"
+            onClick={() => router.back()}
             className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
             data-testid="socio-detail-back"
           >
             Volver al listado
-          </Link>
+          </button>
         </div>
       </header>
 

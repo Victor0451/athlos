@@ -198,12 +198,16 @@ describe('Socio detail page', () => {
     })
   })
 
-  it('renders a "Volver al listado" link back to /socios', async () => {
+  it('renders a "Volver al listado" button that calls router.back()', async () => {
+    // After Slice B: the back control is a <button>, not a <Link> —
+    // it calls router.back() so the user returns to whatever filtered
+    // list they came from (preserves the search params in the URL).
+    // No href: the button has no destination of its own.
     renderPage()
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: /volver/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /volver/i })).toBeInTheDocument()
     })
-    expect(screen.getByRole('link', { name: /volver/i })).toHaveAttribute('href', '/socios')
+    expect(screen.queryByRole('link', { name: /volver/i })).not.toBeInTheDocument()
   })
 
   /* ── CtacteTab (PR 8b.2 second slice) ────────────────────────────── */

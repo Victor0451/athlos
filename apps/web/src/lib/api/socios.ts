@@ -60,6 +60,14 @@ export interface SocioListParams {
   limit?: number
   search?: string
   estado?: 'activo' | 'suspendido' | 'baja'
+  /** Exact match on the `categoria` column (free-form, max 40 chars). */
+  categoria?: string
+  /** `fecha_alta` ≥ `fechaDesde` (inclusive). YYYY-MM-DD. */
+  fechaDesde?: string
+  /** `fecha_alta` < `fechaHasta` (exclusive). YYYY-MM-DD. */
+  fechaHasta?: string
+  /** `'true'` keeps only rows with a non-null email. */
+  hasEmail?: 'true' | 'false'
   /**
    * Sort column. Mirrors the backend's `sortBy` enum (snake_case on
    * the wire). When omitted, the backend applies the default
