@@ -1,29 +1,35 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
-import { getSocio } from '@/lib/api/socios'
+import { useParams, useRouter } from 'next/navigation'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/lib/use-auth'
+import {
+  deleteSocio,
+  getSocio,
+  updateSocio,
+  type CreateSocioInput,
+  type Socio,
+} from '@/lib/api/socios'
+import SocioForm from '@/components/socios/SocioForm'
 
 /**
- * Socio detail page — `/socios/[id]` (TASK-021, PR 8b.1).
+ * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2, 2026-07-02).
  *
- * Per the orchestrator brief, PR 8b.1 is **read-only**: this page
- * renders a socio's profile and a "Volver al listado" link. No
- * create / update / delete actions yet — those land in PR 8b.1b
- * (or 8b.2) behind ADMIN role gating.
+ * Per the orchestrator brief, PR 8b.1 shipped the read-only view
+ * (TASK-021). PR 8b.2 layers the ADMIN-gated create / update / delete
+ * surface on top:
+ *   - "Editar" button (visible only to ADMIN) opens a modal with
+ *     <SocioForm mode="edit" /> pre-filled from the current socio.
+ *   - "Eliminar" button (ADMIN only) opens a confirmation modal.
+ *     On confirm, the server soft-deletes (sets `estado='baja'`) and
+ *     we navigate back to the list.
+ *   - Both mutations invalidate the `['socio', id]` and `['socios']`
+ *     query keys so the list and detail refetch with fresh data.
  *
- * Field grid mirrors the backend `Socio` DTO (`apps/api/src/routes/socios.ts`)
- * snake_case → camelCase unchanged for the web client (the wire
- * shape is snake_case). Null / empty fields render as "—" (em dash)
- * so the layout doesn't shift when a socio has no email.
- *
- * We use `useParams()` from `next/navigation` rather than the
- * `use(params)` React 19 pattern because (a) `useParams()` works in
- * tests without a Suspense wrapper — it's plain read from Next's
- * router context, not a thenable — and (b) it survives future Next
- * versions without refactoring. Both patterns are documented as
- * supported in the Next.js 16 App Router.
+ * "Próximamente" placeholder for the Ctacte / Deportes / Cuotas tabs
+ * is left as-is — that's the next slice (B).
  */
 
 const FIELD_LABEL: Record<string, string> = {
@@ -42,7 +48,6 @@ const FIELD_LABEL: Record<string, string> = {
 function formatValue(key: string, value: string | null): string {
   if (value === null || value === '') return '—'
   if (key === 'fecha_alta') {
-    // YYYY-MM-DD → DD/MM/YYYY (es-AR)
     const [y, m, d] = value.split('-')
     if (y && m && d) return `${d}/${m}/${y}`
   }
@@ -51,11 +56,44 @@ function formatValue(key: string, value: string | null): string {
 
 export default function SocioDetailPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const id = params.id
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'ADMIN'
 
   const socioQuery = useQuery({
     queryKey: ['socio', id],
     queryFn: () => getSocio(id),
+  })
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const updateMutation = useMutation({
+    mutationFn: (input: CreateSocioInput) => updateSocio(id, input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['socio', id] })
+      queryClient.invalidateQueries({ queryKey: ['socios'] })
+      setEditOpen(false)
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteSocio(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['socio', id] })
+      queryClient.invalidateQueries({ queryKey: ['socios'] })
+      router.push('/socios')
+    },
+    onError: (err) => {
+      setDeleteError(
+        err instanceof Error
+          ? `${err.message}. Intentá de nuevo.`
+          : 'No se pudo eliminar el socio. Intentá de nuevo.',
+      )
+    },
   })
 
   if (socioQuery.isPending) {
@@ -102,8 +140,8 @@ export default function SocioDetailPage() {
     )
   }
 
-  const socio = socioQuery.data
-  const fields: Array<{ key: keyof typeof socio; value: string | null }> = [
+  const socio = socioQuery.data as Socio
+  const fields: Array<{ key: keyof Socio; value: string | null }> = [
     { key: 'numero_socio', value: socio.numero_socio },
     { key: 'nombre', value: socio.nombre },
     { key: 'apellido', value: socio.apellido },
@@ -118,19 +156,45 @@ export default function SocioDetailPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between">
+      <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-bold text-ink-900">
             {socio.apellido}, {socio.nombre}
           </h1>
           <p className="mt-1 font-mono text-xs text-ink-500">DNI {socio.dni}</p>
         </div>
-        <Link
-          href="/socios"
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-        >
-          Volver al listado
-        </Link>
+        <div className="flex items-center gap-2">
+          {isAdmin ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+                data-testid="socio-detail-edit"
+              >
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteError(null)
+                  setConfirmDeleteOpen(true)
+                }}
+                className="rounded-md border border-danger bg-surface px-3 py-1 font-body text-sm text-danger transition-colors duration-fast hover:bg-danger hover:text-white"
+                data-testid="socio-detail-delete"
+              >
+                Eliminar
+              </button>
+            </>
+          ) : null}
+          <Link
+            href="/socios"
+            className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+            data-testid="socio-detail-back"
+          >
+            Volver al listado
+          </Link>
+        </div>
       </header>
 
       <section
@@ -159,6 +223,99 @@ export default function SocioDetailPage() {
           Próximamente — pestañas de Ctacte, Deportes y Cuotas disponibles en una próxima versión.
         </p>
       </section>
+
+      {/* Edit modal — ADMIN only */}
+      {isAdmin && editOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="socio-edit-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
+          data-testid="socio-edit-modal"
+        >
+          <div className="w-full max-w-2xl rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+            <h2
+              id="socio-edit-modal-title"
+              className="mb-4 font-display text-lg font-semibold text-ink-900"
+            >
+              Editar socio
+            </h2>
+            <SocioForm
+              mode="edit"
+              initialValue={socio}
+              isSubmitting={updateMutation.isPending}
+              errorMessage={updateMutation.error?.message}
+              onSubmit={(input) => updateMutation.mutate(input)}
+              onCancel={() => {
+                if (!updateMutation.isPending) setEditOpen(false)
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {/* Delete confirmation modal — ADMIN only */}
+      {isAdmin && confirmDeleteOpen ? (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="socio-delete-modal-title"
+          aria-describedby="socio-delete-modal-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
+          data-testid="socio-delete-modal"
+        >
+          <div className="w-full max-w-md rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+            <h2
+              id="socio-delete-modal-title"
+              className="font-display text-lg font-semibold text-ink-900"
+            >
+              Eliminar socio
+            </h2>
+            <p id="socio-delete-modal-desc" className="mt-2 font-body text-sm text-ink-500">
+              ¿Eliminar definitivamente a{' '}
+              <strong>
+                {socio.apellido}, {socio.nombre}
+              </strong>{' '}
+              (DNI {socio.dni})? El socio se marca como &quot;baja&quot; y no aparecerá en el
+              listado por defecto.
+            </p>
+            {deleteError ? (
+              <p
+                role="alert"
+                className="mt-3 rounded-md border border-danger bg-danger/10 px-3 py-2 font-body text-sm text-danger"
+                data-testid="socio-delete-error"
+              >
+                {deleteError}
+              </p>
+            ) : null}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!deleteMutation.isPending) {
+                    setConfirmDeleteOpen(false)
+                    setDeleteError(null)
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="socio-delete-cancel"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+                className="rounded-md bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="socio-delete-confirm"
+              >
+                {deleteMutation.isPending ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
