@@ -46,15 +46,36 @@ describe('auth module', () => {
       expect(getAccessToken()).toBeNull()
     })
 
-    it('never writes the token to localStorage or sessionStorage', () => {
+    it('persists the access token to localStorage so F5 keeps the operator signed in', () => {
       setAccessToken('abc.def.ghi')
+      // Single JSON entry under the project's STORAGE_KEY
+      const raw = localStorage.getItem('athlos.auth')
+      expect(raw).not.toBeNull()
+      const parsed = JSON.parse(raw as string) as { accessToken: string | null }
+      expect(parsed.accessToken).toBe('abc.def.ghi')
+      // No stray entries under the old per-token keys
       expect(localStorage.getItem('access_token')).toBeNull()
       expect(localStorage.getItem('token')).toBeNull()
-      expect(sessionStorage.getItem('access_token')).toBeNull()
-      expect(sessionStorage.getItem('token')).toBeNull()
-      clearAccessToken()
-      expect(localStorage.length).toBe(0)
       expect(sessionStorage.length).toBe(0)
+    })
+
+    it('clears the localStorage entry on clearAccessToken', () => {
+      setAccessToken('abc.def.ghi')
+      expect(localStorage.getItem('athlos.auth')).not.toBeNull()
+      clearAccessToken()
+      expect(localStorage.getItem('athlos.auth')).toBeNull()
+    })
+
+    it('hydrates the access token from localStorage on module load', async () => {
+      // Simulate a fresh page load: clear module-scope cache, set
+      // localStorage, then re-import the module.
+      vi.resetModules()
+      localStorage.setItem(
+        'athlos.auth',
+        JSON.stringify({ accessToken: 'persisted.token', refreshToken: null, currentUser: null }),
+      )
+      const reimported = await import('./auth')
+      expect(reimported.getAccessToken()).toBe('persisted.token')
     })
   })
 
