@@ -23,7 +23,12 @@ import { CtacteTab } from '@/components/socios/CtacteTab'
  * update / delete surface on top:
  *   - "Editar" button (ADMIN only) opens a modal with
  *     <SocioForm mode="edit" /> pre-filled from the current socio.
- *   - "Eliminar" button (ADMIN only) opens a confirmation modal.
+ *   - "Dar baja" button (ADMIN only) opens a confirmation modal. The
+ *     server soft-deletes (`estado='baja'` + `deletedAt`); the row
+ *     stays in the table for the audit trail.
+ *   - "Reactivar" button (ADMIN only, visible only when `estado='baja'`)
+ *     PATCHes the row with `estado='activo'`. Single-click with
+ *     confirmation modal.
  *     On confirm, the server soft-deletes (sets `estado='baja'`) and
  *     we navigate back to the list.
  *   - Both mutations invalidate `['socio', id]` and `['socios']`
@@ -103,6 +108,7 @@ export default function SocioDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [confirmReactivateOpen, setConfirmReactivateOpen] = useState(false)
 
   const updateMutation = useMutation({
     mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
@@ -124,8 +130,17 @@ export default function SocioDetailPage() {
       setDeleteError(
         err instanceof Error
           ? `${err.message}. Intentá de nuevo.`
-          : 'No se pudo eliminar el socio. Intentá de nuevo.',
+          : 'No se pudo dar de baja al socio. Intentá de nuevo.',
       )
+    },
+  })
+
+  const reactivateMutation = useMutation({
+    mutationFn: () => updateSocio(id, { estado: 'activo' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['socio', id] })
+      queryClient.invalidateQueries({ queryKey: ['socios'] })
+      setConfirmReactivateOpen(false)
     },
   })
 
@@ -221,17 +236,28 @@ export default function SocioDetailPage() {
               >
                 Editar
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDeleteError(null)
-                  setConfirmDeleteOpen(true)
-                }}
-                className="rounded-md border border-danger bg-surface px-3 py-1 font-body text-sm text-danger transition-colors duration-fast hover:bg-danger hover:text-white"
-                data-testid="socio-detail-delete"
-              >
-                Eliminar
-              </button>
+              {socio.estado === 'baja' ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmReactivateOpen(true)}
+                  className="rounded-md border border-success bg-surface px-3 py-1 font-body text-sm text-success transition-colors duration-fast hover:bg-success hover:text-white"
+                  data-testid="socio-detail-reactivate"
+                >
+                  Reactivar
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteError(null)
+                    setConfirmDeleteOpen(true)
+                  }}
+                  className="rounded-md border border-danger bg-surface px-3 py-1 font-body text-sm text-danger transition-colors duration-fast hover:bg-danger hover:text-white"
+                  data-testid="socio-detail-delete"
+                >
+                  Dar baja
+                </button>
+              )}
             </>
           ) : null}
           <Link
@@ -309,15 +335,16 @@ export default function SocioDetailPage() {
               id="socio-delete-modal-title"
               className="font-display text-lg font-semibold text-ink-900"
             >
-              Eliminar socio
+              Dar baja al socio
             </h2>
             <p id="socio-delete-modal-desc" className="mt-2 font-body text-sm text-ink-500">
-              ¿Eliminar definitivamente a{' '}
+              ¿Dar de baja a{' '}
               <strong>
                 {socio.apellido}, {socio.nombre}
               </strong>{' '}
-              (DNI {socio.dni})? El socio se marca como &quot;baja&quot; y no aparecerá en el
-              listado por defecto.
+              (DNI {socio.dni})? El row se marca como &quot;baja&quot; pero NO se borra de la base
+              de datos — se preserva para el audit trail. El socio no aparece en el listado por
+              defecto.
             </p>
             {deleteError ? (
               <p
@@ -350,7 +377,59 @@ export default function SocioDetailPage() {
                 className="rounded-md bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="socio-delete-confirm"
               >
-                {deleteMutation.isPending ? 'Eliminando…' : 'Eliminar'}
+                {deleteMutation.isPending ? 'Dando de baja…' : 'Confirmar baja'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Reactivate confirmation modal — ADMIN only, shown only when
+          estado='baja' (the Reactivar button in the header sets this). */}
+      {isAdmin && confirmReactivateOpen ? (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="socio-reactivate-modal-title"
+          aria-describedby="socio-reactivate-modal-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
+          data-testid="socio-reactivate-modal"
+        >
+          <div className="w-full max-w-md rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+            <h2
+              id="socio-reactivate-modal-title"
+              className="font-display text-lg font-semibold text-ink-900"
+            >
+              Reactivar socio
+            </h2>
+            <p id="socio-reactivate-modal-desc" className="mt-2 font-body text-sm text-ink-500">
+              ¿Reactivar a{' '}
+              <strong>
+                {socio.apellido}, {socio.nombre}
+              </strong>{' '}
+              (DNI {socio.dni})? El socio volverá a estar activo y aparecerá en el listado por
+              defecto.
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!reactivateMutation.isPending) setConfirmReactivateOpen(false)
+                }}
+                disabled={reactivateMutation.isPending}
+                className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="socio-reactivate-cancel"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => reactivateMutation.mutate()}
+                disabled={reactivateMutation.isPending}
+                className="rounded-md bg-success px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-success/80 disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="socio-reactivate-confirm"
+              >
+                {reactivateMutation.isPending ? 'Reactivando…' : 'Confirmar reactivación'}
               </button>
             </div>
           </div>

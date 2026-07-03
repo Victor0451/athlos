@@ -235,7 +235,7 @@ describe('Socio detail page', () => {
 
   /* ── Write surface (PR 8b.2) ─────────────────────────────────────── */
 
-  it('renders Editar + Eliminar buttons when the user is ADMIN', async () => {
+  it('renders Editar + Dar baja buttons when the user is ADMIN', async () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     renderPage()
     await waitFor(() => {
@@ -315,7 +315,7 @@ describe('Socio detail page', () => {
 
     // The delete confirmation modal appears
     expect(await screen.findByTestId('socio-delete-modal')).toBeInTheDocument()
-    expect(screen.getByText(/eliminar definitivamente a/i)).toBeInTheDocument()
+    expect(screen.getByText(/dar de baja a/i)).toBeInTheDocument()
 
     // Cancel keeps the modal open... no actually, Cancel closes it
     fireEvent.click(screen.getByTestId('socio-delete-cancel'))
