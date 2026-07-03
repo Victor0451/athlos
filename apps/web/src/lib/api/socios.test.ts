@@ -24,7 +24,7 @@ vi.mock('@/lib/api', () => ({
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
 
-const { getSocios, getSocio } = await import('./socios')
+const { getSocios, getSocio, createSocio, updateSocio, deleteSocio } = await import('./socios')
 
 const SAMPLE_SOCIO = {
   id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -155,6 +155,82 @@ describe('socios API', () => {
 
       expect(result.id).toBe(uuid)
       expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    })
+  })
+
+  /* ── Write surface (PR 8b.2) ─────────────────────────────────────── */
+
+  const CREATE_INPUT = {
+    numero_socio: '00042',
+    nombre: 'María',
+    apellido: 'García',
+    dni: '40123456',
+    fecha_alta: '2026-07-02',
+    estado: 'activo' as const,
+    categoria: 'TITULAR',
+    email: 'maria@example.com',
+  }
+  const CREATED_SOCIO = {
+    ...SAMPLE_SOCIO,
+    ...CREATE_INPUT,
+    id: '99999999-9999-9999-9999-999999999999',
+    created_at: '2026-07-02T12:00:00.000Z',
+    updated_at: '2026-07-02T12:00:00.000Z',
+  }
+
+  describe('createSocio()', () => {
+    it('calls POST /api/v1/socios with the input as the request body', async () => {
+      apiFetchMock.mockResolvedValueOnce(CREATED_SOCIO)
+
+      const result = await createSocio(CREATE_INPUT)
+
+      expect(apiFetchMock).toHaveBeenCalledTimes(1)
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/socios', {
+        method: 'POST',
+        body: CREATE_INPUT,
+      })
+      expect(result).toEqual(CREATED_SOCIO)
+    })
+
+    it('returns the newly created socio with its server-assigned id', async () => {
+      apiFetchMock.mockResolvedValueOnce(CREATED_SOCIO)
+
+      const result = await createSocio(CREATE_INPUT)
+
+      expect(result.id).toBe('99999999-9999-9999-9999-999999999999')
+    })
+  })
+
+  describe('updateSocio()', () => {
+    it('calls PATCH /api/v1/socios/<id> with the patch as the request body', async () => {
+      const patch = { telefono: '+5491100000000' }
+      apiFetchMock.mockResolvedValueOnce({ ...SAMPLE_SOCIO, telefono: '+5491100000000' })
+
+      await updateSocio(SAMPLE_SOCIO.id, patch)
+
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/socios/' + SAMPLE_SOCIO.id, {
+        method: 'PATCH',
+        body: patch,
+      })
+    })
+  })
+
+  describe('deleteSocio()', () => {
+    it('calls DELETE /api/v1/socios/<id> (no body)', async () => {
+      const softDeleted = {
+        ...SAMPLE_SOCIO,
+        estado: 'baja' as const,
+        deleted_at: '2026-07-02T12:00:00.000Z',
+      }
+      apiFetchMock.mockResolvedValueOnce(softDeleted)
+
+      const result = await deleteSocio(SAMPLE_SOCIO.id)
+
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/socios/' + SAMPLE_SOCIO.id, {
+        method: 'DELETE',
+      })
+      expect(result.estado).toBe('baja')
+      expect(result.deleted_at).toBe('2026-07-02T12:00:00.000Z')
     })
   })
 })

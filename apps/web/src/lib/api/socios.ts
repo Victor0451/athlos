@@ -80,3 +80,52 @@ export function getSocios(params: SocioListParams = {}): Promise<SocioListRespon
 export function getSocio(id: string): Promise<Socio> {
   return apiFetch<Socio>('/api/v1/socios/' + id, { query: {} })
 }
+
+/* ── Write surface (PR 8b.2, 2026-07-02) ────────────────────────────── */
+
+/** Input shape for `createSocio`. Mirrors the backend's
+ *  `createBodySchema` (`apps/api/src/routes/socios.ts:37`). Optional
+ *  fields are omitted from the wire payload (apiFetch serialises
+ *  `undefined` as "not sent" via the buildUrl helper). */
+export interface CreateSocioInput {
+  numero_socio: string
+  nombre: string
+  apellido: string
+  dni: string
+  /** YYYY-MM-DD */
+  fecha_alta: string
+  estado?: 'activo' | 'suspendido' | 'baja'
+  categoria?: string
+  direccion?: string
+  telefono?: string
+  email?: string
+}
+
+/** PATCH payload for `updateSocio`. `numero_socio` and `fecha_alta` are
+ *  intentionally immutable (legacy business keys per backend's
+ *  `updateBodySchema`). Backend enforces `.strict()` and "≥1 field"
+ *  — we mirror that constraint in the form (no empty submits). */
+export type UpdateSocioInput = Partial<Omit<CreateSocioInput, 'numero_socio' | 'fecha_alta'>>
+
+/** `createSocio(input)` — POST /api/v1/socios (ADMIN only). Returns the
+ *  newly created socio (HTTP 201 → mapped to 200 by the apiFetch
+ *  status check). Throws `ApiError(409 CONFLICT)` if `numero_socio` or
+ *  `dni` collides with an existing row. */
+export async function createSocio(input: CreateSocioInput): Promise<Socio> {
+  return apiFetch<Socio>('/api/v1/socios', { method: 'POST', body: input })
+}
+
+/** `updateSocio(id, patch)` — PATCH /api/v1/socios/:id (ADMIN only).
+ *  Backend enforces ≥1 field via Zod `.refine`. */
+export async function updateSocio(id: string, patch: UpdateSocioInput): Promise<Socio> {
+  return apiFetch<Socio>('/api/v1/socios/' + id, { method: 'PATCH', body: patch })
+}
+
+/** `deleteSocio(id)` — DELETE /api/v1/socios/:id (ADMIN only).
+ *  Soft-delete on the server: returns the updated row with
+ *  `estado: 'baja'` and `deleted_at: ISO`. Throws `ApiError(404)` for
+ *  unknown / cross-operator ids (the two cases are intentionally
+ *  indistinguishable to avoid leaking row existence). */
+export async function deleteSocio(id: string): Promise<Socio> {
+  return apiFetch<Socio>('/api/v1/socios/' + id, { method: 'DELETE' })
+}

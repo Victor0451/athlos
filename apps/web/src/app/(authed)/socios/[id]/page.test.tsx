@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
@@ -37,10 +37,19 @@ vi.mock('next/navigation', () => ({
 }))
 
 const getSocioMock = vi.fn()
+const updateSocioMock = vi.fn()
+const deleteSocioMock = vi.fn()
 
 vi.mock('@/lib/api/socios', () => ({
   getSocio: (...args: unknown[]) => getSocioMock(...args),
+  createSocio: vi.fn(),
+  updateSocio: (...args: unknown[]) => updateSocioMock(...args),
+  deleteSocio: (...args: unknown[]) => deleteSocioMock(...args),
 }))
+// The mock must export every name the page imports so partial mocks
+// don't trip TS on the page side — hence `createSocio` is included
+// even though the page itself doesn't call it directly (the test
+// uses it as a "mutation hooks library" placeholder).
 
 const useAuthMock = vi.fn()
 vi.mock('@/lib/use-auth', () => ({
@@ -56,6 +65,22 @@ function makeAdminUser() {
       role: 'ADMIN' as const,
       username: 'admin',
       permissions: { can_reprint: true, can_anulate: true },
+    },
+    token: 'fake.jwt',
+    isAuthenticated: true,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
+  }
+}
+
+function makeOperadorUser() {
+  return {
+    user: {
+      operator_id: 'op-1',
+      role: 'OPERADOR' as const,
+      username: 'operador',
+      permissions: { can_reprint: false, can_anulate: false },
     },
     token: 'fake.jwt',
     isAuthenticated: true,
@@ -165,5 +190,103 @@ describe('Socio detail page', () => {
       expect(screen.getByRole('link', { name: /volver/i })).toBeInTheDocument()
     })
     expect(screen.getByRole('link', { name: /volver/i })).toHaveAttribute('href', '/socios')
+  })
+
+  /* ── Write surface (PR 8b.2) ─────────────────────────────────────── */
+
+  it('renders Editar + Eliminar buttons when the user is ADMIN', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-detail-edit')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('socio-detail-delete')).toBeInTheDocument()
+  })
+
+  it('hides Editar + Eliminar buttons when the user is not ADMIN', async () => {
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-detail-back')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('socio-detail-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('socio-detail-delete')).not.toBeInTheDocument()
+  })
+
+  it('opens the edit modal when Editar is clicked, and submits the update', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    updateSocioMock.mockResolvedValueOnce(SAMPLE_SOCIO)
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-edit'))
+    fireEvent.click(screen.getByTestId('socio-detail-edit'))
+
+    // The edit modal contains the form
+    expect(await screen.findByTestId('socio-edit-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('socio-form-edit')).toBeInTheDocument()
+
+    // The form is pre-filled with the current socio (numero_socio + fecha_alta are read-only)
+    expect((screen.getByTestId('socio-form-numero') as HTMLInputElement).value).toBe('00001')
+    expect(screen.getByTestId('socio-form-numero')).toBeDisabled()
+    expect(screen.getByTestId('socio-form-fecha-alta')).toBeDisabled()
+
+    // Submit after editing a field. Because the form is pre-filled with
+    // the existing socio, the onSubmit payload includes ALL fields, with
+    // the changed telefono overriding the original. The backend's PATCH
+    // accepts any subset, so this is a "full update" rather than a
+    // "diff update" — acceptable behaviour for v1 (future PR can
+    // implement diff-aware submission if needed).
+    fireEvent.input(screen.getByTestId('socio-form-telefono'), {
+      target: { value: '+5491100000000' },
+    })
+    fireEvent.click(screen.getByTestId('socio-form-submit'))
+
+    await waitFor(() => {
+      expect(updateSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, {
+        numero_socio: '00001',
+        nombre: 'Juan',
+        apellido: 'García',
+        dni: '12345678',
+        fecha_alta: '2020-03-15',
+        estado: 'activo',
+        categoria: 'TITULAR',
+        email: 'juan@example.com',
+        direccion: 'Av. Siempre Viva 742',
+        telefono: '+5491100000000',
+      })
+    })
+  })
+
+  it('opens the delete confirmation modal, then calls deleteSocio + navigates to /socios', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    deleteSocioMock.mockResolvedValueOnce({
+      ...SAMPLE_SOCIO,
+      estado: 'baja',
+      deleted_at: '2026-07-02T12:00:00.000Z',
+    })
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(screen.getByTestId('socio-detail-delete'))
+
+    // The delete confirmation modal appears
+    expect(await screen.findByTestId('socio-delete-modal')).toBeInTheDocument()
+    expect(screen.getByText(/eliminar definitivamente a/i)).toBeInTheDocument()
+
+    // Cancel keeps the modal open... no actually, Cancel closes it
+    fireEvent.click(screen.getByTestId('socio-delete-cancel'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('socio-delete-modal')).not.toBeInTheDocument()
+    })
+    expect(deleteSocioMock).not.toHaveBeenCalled()
+
+    // Re-open and confirm
+    fireEvent.click(screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(await screen.findByTestId('socio-delete-confirm'))
+
+    await waitFor(() => {
+      expect(deleteSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id)
+      expect(pushMock).toHaveBeenCalledWith('/socios')
+    })
   })
 })
