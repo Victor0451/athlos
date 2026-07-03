@@ -25,7 +25,7 @@ RUN pnpm --filter @athlos/db generate
 # --- Stage 2: runner ---
 FROM node:22-alpine AS runner
 
-RUN apk add --no-cache tini bash postgresql-client
+RUN apk add --no-cache tini bash postgresql-client curl
 
 # Pin pnpm + install tsx. Both as root (USER athlos below can't write to
 # /usr/local/lib). corepack prepare activates the pinned version so the
