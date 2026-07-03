@@ -60,17 +60,44 @@ export interface SocioListParams {
   limit?: number
   search?: string
   estado?: 'activo' | 'suspendido' | 'baja'
+  /**
+   * Sort column. Mirrors the backend's `sortBy` enum (snake_case on
+   * the wire). When omitted, the backend applies the default
+   * `apellido ASC` order.
+   */
+  sortBy?: 'apellido' | 'nombre' | 'numero_socio' | 'dni' | 'fecha_alta' | 'estado'
+  /** `asc` (default) or `desc`. */
+  sortDir?: 'asc' | 'desc'
+}
+
+/** Wire shape of `GET /api/v1/socios?aggregate=1`. */
+export interface SocioAggregate {
+  activos: number
+  suspendidos: number
+  baja: number
+  total: number
 }
 
 /**
  * `getSocios(params?)` — paginated list of socios. The backend caps
  * `limit` at 100 (default 20). The `search` filter is
- * case-insensitive on `nombre + apellido + dni`.
+ * case-insensitive on `nombre + apellido + dni`. The optional
+ * `sortBy` / `sortDir` flow through to the wire (`sortBy=apellido&sortDir=asc`).
  */
 export function getSocios(params: SocioListParams = {}): Promise<SocioListResponse> {
   return apiFetch<SocioListResponse>('/api/v1/socios', {
     query: { ...params },
   })
+}
+
+/**
+ * `getSociosAggregate()` — count of socios per estado + total, fetched
+ * in a single round-trip. Drives the summary cards on the Socios
+ * list page (`PR 8b.2 second slice`). Returns `{ activos, suspendidos,
+ * baja, total }`.
+ */
+export function getSociosAggregate(): Promise<SocioAggregate> {
+  return apiFetch<SocioAggregate>('/api/v1/socios', { query: { aggregate: '1' } })
 }
 
 /**

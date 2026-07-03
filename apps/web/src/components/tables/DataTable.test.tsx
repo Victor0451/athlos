@@ -44,6 +44,22 @@ const DATA: Row[] = [
   { id: '3', name: 'Carla', age: 27 },
 ]
 
+/**
+ * Sortable variant for the sort-contract tests below. `name` + `age`
+ * are sortable; `id` stays plain so we can verify that non-sortable
+ * headers remain plain `<th>` cells without a button or `aria-sort`.
+ */
+const COLUMNS_SORTABLE: ColumnDef<Row>[] = [
+  { key: 'id', header: 'ID' },
+  { key: 'name', header: 'Nombre', sortable: true },
+  {
+    key: 'age',
+    header: 'Edad',
+    sortable: true,
+    accessor: (row) => `${row.age} años`,
+  },
+]
+
 describe('DataTable', () => {
   it('renders one header cell per column', () => {
     render(<DataTable<Row> columns={COLUMNS} data={DATA} rowKey={(r) => r.id} />)
@@ -172,5 +188,123 @@ describe('DataTable', () => {
     )
     expect(screen.getByRole('button', { name: /siguiente/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /anterior/i })).toBeEnabled()
+  })
+
+  /* ── Sort contract (PR 8b.2 second slice) ─────────────────────── */
+
+  it('renders a plain header (no button, no aria-sort) for non-sortable columns', () => {
+    render(<DataTable<Row> columns={COLUMNS} data={DATA} rowKey={(r) => r.id} />)
+    // `ID` is not sortable — its accessible name is the literal text,
+    // not "Sort by ID". Using getAllByRole columnheader keeps the
+    // assertion array-based for ordering check too.
+    expect(screen.getByRole('columnheader', { name: 'ID' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /sort by id/i })).not.toBeInTheDocument()
+  })
+
+  it('renders a sort button + aria-sort="none" for a sortable column with no active sort', () => {
+    render(<DataTable<Row> columns={COLUMNS_SORTABLE} data={DATA} rowKey={(r) => r.id} />)
+    // The sort control exposes its action via the button's aria-label
+    const btn = screen.getByRole('button', { name: /sort by nombre/i })
+    expect(btn).toBeInTheDocument()
+    // The `<th>` parent carries the aria-sort attribute per WAI-ARIA.
+    const th = btn.closest('th')
+    expect(th).toHaveAttribute('aria-sort', 'none')
+  })
+
+  it('renders aria-sort="ascending" when sortBy matches the column + sortDir="asc"', () => {
+    render(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        sortBy="name"
+        sortDir="asc"
+      />,
+    )
+    const btn = screen.getByRole('button', { name: /sort by nombre/i })
+    expect(btn.closest('th')).toHaveAttribute('aria-sort', 'ascending')
+  })
+
+  it('renders aria-sort="descending" when sortBy matches + sortDir="desc"', () => {
+    render(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        sortBy="age"
+        sortDir="desc"
+      />,
+    )
+    const btn = screen.getByRole('button', { name: /sort by edad/i })
+    expect(btn.closest('th')).toHaveAttribute('aria-sort', 'descending')
+  })
+
+  it('calls onSortChange with the column key when its header is clicked', () => {
+    const onSortChange = vi.fn()
+    render(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        onSortChange={onSortChange}
+      />,
+    )
+    screen.getByRole('button', { name: /sort by nombre/i }).click()
+    expect(onSortChange).toHaveBeenCalledTimes(1)
+    expect(onSortChange).toHaveBeenCalledWith('name')
+
+    screen.getByRole('button', { name: /sort by edad/i }).click()
+    expect(onSortChange).toHaveBeenCalledTimes(2)
+    expect(onSortChange).toHaveBeenLastCalledWith('age')
+  })
+
+  it('does not call onSortChange when a non-sortable header is clicked', () => {
+    const onSortChange = vi.fn()
+    render(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        onSortChange={onSortChange}
+      />,
+    )
+    // The `ID` cell is a plain `<th>` — no button to click.
+    expect(screen.queryByRole('button', { name: /sort by id/i })).not.toBeInTheDocument()
+    // Sanity: clicking the sort buttons wired to onSortChange does fire.
+    screen.getByRole('button', { name: /sort by edad/i }).click()
+    expect(onSortChange).toHaveBeenCalledWith('age')
+  })
+
+  it('renders the appropriate indicator (asc / desc / inactive) based on sortBy + sortDir', () => {
+    const { rerender } = render(
+      <DataTable<Row> columns={COLUMNS_SORTABLE} data={DATA} rowKey={(r) => r.id} />,
+    )
+    // Inactive: indicator for sortable columns is the neutral ↕.
+    const btnNombre = screen.getByRole('button', { name: /sort by nombre/i })
+    expect(btnNombre.querySelector('[aria-hidden="true"]')?.textContent).toBe('↕')
+
+    rerender(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        sortBy="name"
+        sortDir="asc"
+      />,
+    )
+    const btnAsc = screen.getByRole('button', { name: /sort by nombre/i })
+    expect(btnAsc.querySelector('[aria-hidden="true"]')?.textContent).toBe('▾')
+
+    rerender(
+      <DataTable<Row>
+        columns={COLUMNS_SORTABLE}
+        data={DATA}
+        rowKey={(r) => r.id}
+        sortBy="name"
+        sortDir="desc"
+      />,
+    )
+    const btnDesc = screen.getByRole('button', { name: /sort by nombre/i })
+    expect(btnDesc.querySelector('[aria-hidden="true"]')?.textContent).toBe('▴')
   })
 })

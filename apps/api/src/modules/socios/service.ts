@@ -21,10 +21,24 @@ import * as repo from './repository.ts'
 
 export type SocioEstado = Socio['estado']
 
+/** Sort column + direction (mirrors the repository layer). */
+export type SortBy = repo.ListSociosSortBy
+export type SortDir = repo.ListSociosSortDir
+
 export interface ListSociosInput {
   page: number
   limit: number
   filters?: { estado?: SocioEstado; search?: string }
+  sortBy?: SortBy
+  sortDir?: SortDir
+}
+
+/** Wire shape returned by `aggregate()` / `GET /socios?aggregate=1`. */
+export interface SocioAggregate {
+  activos: number
+  suspendidos: number
+  baja: number
+  total: number
 }
 
 export interface CreateSocioInput {
@@ -76,7 +90,22 @@ export async function list(
     page: input.page,
     limit: input.limit,
     ...(input.filters ? { filters: input.filters } : {}),
+    ...(input.sortBy ? { sortBy: input.sortBy } : {}),
+    ...(input.sortDir ? { sortDir: input.sortDir } : {}),
   })
+}
+
+/**
+ * `aggregate(db)` — count by `estado` in a single round-trip. Returns
+ * the four buckets the summary cards on the Socios list need:
+ * activos / suspendidos / baja / total.
+ *
+ * Implementation lives in the repository; this is the service-layer
+ * facade so the route can depend on `service.ts` only (matches the
+ * other routes).
+ */
+export async function aggregate(db: Db): Promise<SocioAggregate> {
+  return repo.countByEstado(db)
 }
 
 /**
