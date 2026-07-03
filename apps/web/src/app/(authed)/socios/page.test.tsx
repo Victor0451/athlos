@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -152,15 +152,16 @@ describe('Socios list page', () => {
     expect(screen.getByRole('searchbox', { name: /buscar/i })).toBeInTheDocument()
   })
 
-  it('renders the estado filter dropdown with "Todos" as the default', () => {
+  it('renders the estado filter as a tab strip with "Todos" as the default', () => {
     renderPage()
-    const select = screen.getByRole('combobox', { name: /estado/i }) as HTMLSelectElement
-    expect(select).toBeInTheDocument()
-    expect(select.value).toBe('')
-    expect(within(select).getByRole('option', { name: 'Todos' })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: 'Activo' })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: 'Baja' })).toBeInTheDocument()
-    expect(within(select).getByRole('option', { name: 'Suspendido' })).toBeInTheDocument()
+    const todosTab = screen.getByTestId('socios-estado-tab-all') as HTMLButtonElement
+    expect(todosTab).toBeInTheDocument()
+    expect(todosTab.textContent).toBe('Todos')
+    expect(todosTab).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTestId('socios-estado-tab-activo')).toHaveTextContent('Activos')
+    expect(screen.getByTestId('socios-estado-tab-suspendido')).toHaveTextContent('Suspendidos')
+    expect(screen.getByTestId('socios-estado-tab-baja')).toHaveTextContent('Dados de baja')
+    expect(screen.queryByRole('combobox', { name: /estado/i })).not.toBeInTheDocument()
   })
 
   it('calls getSocios on mount with the current URL state', async () => {
@@ -273,8 +274,7 @@ describe('Socios list page', () => {
     renderPage()
     const input = screen.getByRole('searchbox', { name: /buscar/i }) as HTMLInputElement
     expect(input.value).toBe('garcia')
-    const select = screen.getByRole('combobox', { name: /estado/i }) as HTMLSelectElement
-    expect(select.value).toBe('activo')
+    expect(screen.getByTestId('socios-estado-tab-activo')).toHaveAttribute('aria-current', 'page')
   })
 
   /* ── Aggregate cards (PR 8b.2 second slice) ─────────────────────── */

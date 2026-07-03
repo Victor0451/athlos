@@ -282,6 +282,39 @@ export default function SociosListPage() {
         />
       </section>
 
+      <nav
+        aria-label="Filtro por estado"
+        data-testid="socios-estado-tabs"
+        className="flex flex-wrap gap-2 border-b border-ink-100"
+      >
+        {(
+          [
+            { value: '', label: 'Todos' },
+            { value: 'activo', label: 'Activos' },
+            { value: 'suspendido', label: 'Suspendidos' },
+            { value: 'baja', label: 'Dados de baja' },
+          ] as const
+        ).map((tab) => {
+          const active = estado === tab.value
+          return (
+            <button
+              key={tab.value || 'all'}
+              type="button"
+              onClick={() => onEstadoChange(tab.value)}
+              aria-current={active ? 'page' : undefined}
+              data-testid={`socios-estado-tab-${tab.value || 'all'}`}
+              className={
+                active
+                  ? 'border-b-2 border-accent px-3 py-2 font-display text-sm font-semibold text-ink-900'
+                  : 'border-b-2 border-transparent px-3 py-2 font-display text-sm font-medium text-ink-500 transition-colors duration-fast hover:text-ink-700'
+              }
+            >
+              {tab.label}
+            </button>
+          )
+        })}
+      </nav>
+
       <form
         role="search"
         onSubmit={onSearchSubmit}
@@ -304,26 +337,6 @@ export default function SociosListPage() {
             onChange={(e) => setSearchDraft(e.target.value)}
             className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           />
-        </div>
-        <div>
-          <label
-            htmlFor="estado-filter"
-            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-          >
-            Estado
-          </label>
-          <select
-            id="estado-filter"
-            name="estado"
-            value={estado}
-            onChange={(e) => onEstadoChange(e.target.value)}
-            className="mt-1 block rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option value="">Todos</option>
-            <option value="activo">Activo</option>
-            <option value="suspendido">Suspendido</option>
-            <option value="baja">Baja</option>
-          </select>
         </div>
         <button
           type="submit"
