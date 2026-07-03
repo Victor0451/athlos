@@ -41,6 +41,28 @@ const listQuerySchema = z.object({
    * without paying for the full pagination shape.
    */
   aggregate: z.union([z.literal('1'), z.literal('0')]).optional(),
+  /** Exact-match filter on `categoria` (free-form, max 40 chars). */
+  categoria: z.string().min(1).max(40).optional(),
+  /**
+   * `fecha_alta` range. Inclusive lower / exclusive upper — matches
+   * the convention used elsewhere for date-window queries. YYYY-MM-DD.
+   */
+  fechaDesde: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'fechaDesde must be YYYY-MM-DD')
+    .optional(),
+  fechaHasta: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'fechaHasta must be YYYY-MM-DD')
+    .optional(),
+  /**
+   * Boolean filter on the `email` column: `'true'` keeps only
+   * rows with a non-null email; `'false'` keeps only null-email rows.
+   * Implemented as `'true'`/`'false'` literals (not a plain bool) for
+   * parity with the existing `incluir_anuladas` literal in the
+   * Ctacte module — the API contract stays literal-string-typed.
+   */
+  hasEmail: z.union([z.literal('true'), z.literal('false')]).optional(),
 })
 
 const createBodySchema = z.object({
@@ -128,16 +150,18 @@ export const sociosRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     const result = await list(container.db, {
       page: q.page ?? 1,
       limit: q.limit ?? 20,
-      ...(q.estado || q.search
+      ...(q.estado || q.search || q.categoria || q.fechaDesde || q.fechaHasta || q.hasEmail
         ? {
             filters: {
               ...(q.estado ? { estado: q.estado } : {}),
               ...(q.search ? { search: q.search } : {}),
+              ...(q.categoria ? { categoria: q.categoria } : {}),
+              ...(q.fechaDesde ? { fechaDesde: q.fechaDesde } : {}),
+              ...(q.fechaHasta ? { fechaHasta: q.fechaHasta } : {}),
+              ...(q.hasEmail ? { hasEmail: q.hasEmail } : {}),
             },
           }
         : {}),
-      ...(q.sortBy ? { sortBy: q.sortBy } : {}),
-      ...(q.sortDir ? { sortDir: q.sortDir } : {}),
     })
     return reply.code(200).send({
       items: result.items.map(toSocioDTO),

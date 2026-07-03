@@ -37,6 +37,14 @@ export type ListSociosSortDir = 'asc' | 'desc'
 export interface ListSociosFilters {
   estado?: SocioEstado
   search?: string
+  /** Exact-match filter on `categoria` (free-form, max 40 chars). */
+  categoria?: string
+  /** `fecha_alta` ≥ `fechaDesde` (inclusive). YYYY-MM-DD. */
+  fechaDesde?: string
+  /** `fecha_alta` < `fechaHasta` (exclusive). YYYY-MM-DD. */
+  fechaHasta?: string
+  /** `'true'` keeps only rows with a non-null email. */
+  hasEmail?: 'true' | 'false'
 }
 
 export interface ListSociosInput {
@@ -97,6 +105,27 @@ export async function list(db: Db, input: ListSociosInput): Promise<ListSociosRe
     conds.push(
       or(ilike(socios.apellido, term), ilike(socios.nombre, term), ilike(socios.dni, term)),
     )
+  }
+  if (input.filters?.categoria) {
+    // Exact match. categoria is free-form (max 40 chars) per the
+    // backend Zod schema; an exact match is the most useful semantic
+    // for a dropdown-style filter.
+    conds.push(eq(socios.categoria, input.filters.categoria))
+  }
+  if (input.filters?.fechaDesde) {
+    // Inclusive lower bound on fecha_alta. The DB column is a DATE,
+    // so string compare (YYYY-MM-DD) is monotonic.
+    conds.push(sql`${socios.fechaAlta} >= ${input.filters.fechaDesde}`)
+  }
+  if (input.filters?.fechaHasta) {
+    // Exclusive upper bound — matches the standard date-window
+    // convention where "hasta 2026-12-31" means "before 2027-01-01".
+    conds.push(sql`${socios.fechaAlta} < ${input.filters.fechaHasta}`)
+  }
+  if (input.filters?.hasEmail === 'true') {
+    conds.push(sql`${socios.email} IS NOT NULL`)
+  } else if (input.filters?.hasEmail === 'false') {
+    conds.push(sql`${socios.email} IS NULL`)
   }
   const where =
     conds.length > 0 ? and(...conds.filter((c): c is SQL => c !== undefined)) : undefined

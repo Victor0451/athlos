@@ -52,6 +52,10 @@ const PAGE_LIMIT = 20
 const urlStateSchema = {
   search: parseAsString.withDefault(''),
   estado: parseAsString.withDefault(''),
+  categoria: parseAsString.withDefault(''),
+  fechaDesde: parseAsString.withDefault(''),
+  fechaHasta: parseAsString.withDefault(''),
+  hasEmail: parseAsString.withDefault(''),
   page: parseAsInteger.withDefault(1),
   sortBy: parseAsString.withDefault(''),
   sortDir: parseAsString.withDefault(''),
@@ -60,6 +64,10 @@ const urlStateSchema = {
 interface UrlState {
   search: string
   estado: string
+  categoria: string
+  fechaDesde: string
+  fechaHasta: string
+  hasEmail: string
   page: number
   sortBy: string
   sortDir: string
@@ -95,7 +103,10 @@ const AGGREGATE_EMPTY: SocioAggregate = { activos: 0, suspendidos: 0, baja: 0, t
 
 export default function SociosListPage() {
   const router = useRouter()
-  const [{ search, estado, page, sortBy, sortDir }, setUrlState] = useQueryStates(urlStateSchema)
+  const [
+    { search, estado, categoria, fechaDesde, fechaHasta, hasEmail, page, sortBy, sortDir },
+    setUrlState,
+  ] = useQueryStates(urlStateSchema)
   const [searchDraft, setSearchDraft] = useState(search)
   const { user } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
@@ -106,6 +117,10 @@ export default function SociosListPage() {
   const listParams: {
     search?: string
     estado?: 'activo' | 'suspendido' | 'baja'
+    categoria?: string
+    fechaDesde?: string
+    fechaHasta?: string
+    hasEmail?: 'true' | 'false'
     page: number
     sortBy?: ListSortBy
     sortDir?: SortDirValue
@@ -116,6 +131,10 @@ export default function SociosListPage() {
   if (estado === 'activo' || estado === 'suspendido' || estado === 'baja') {
     listParams.estado = estado
   }
+  if (categoria) listParams.categoria = categoria
+  if (fechaDesde) listParams.fechaDesde = fechaDesde
+  if (fechaHasta) listParams.fechaHasta = fechaHasta
+  if (hasEmail === 'true' || hasEmail === 'false') listParams.hasEmail = hasEmail
   if (isListSortBy(sortBy)) listParams.sortBy = sortBy
   if (isSortDirValue(sortDir)) listParams.sortDir = sortDir
 
@@ -318,10 +337,10 @@ export default function SociosListPage() {
       <form
         role="search"
         onSubmit={onSearchSubmit}
-        className="flex flex-col gap-3 sm:flex-row sm:items-end"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
         data-testid="socios-search-form"
       >
-        <div className="flex-1">
+        <div className="sm:col-span-2 lg:col-span-1">
           <label
             htmlFor="socios-search"
             className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
@@ -338,12 +357,84 @@ export default function SociosListPage() {
             className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
-        <button
-          type="submit"
-          className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
-        >
-          Buscar
-        </button>
+        <div>
+          <label
+            htmlFor="socios-filter-categoria"
+            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+          >
+            Categoría
+          </label>
+          <input
+            id="socios-filter-categoria"
+            name="categoria"
+            type="text"
+            placeholder="Ej: TITULAR"
+            value={categoria}
+            onChange={(e) => setUrlState({ categoria: e.target.value, page: 1 })}
+            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor="socios-filter-fecha-desde"
+            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+          >
+            Fecha alta desde
+          </label>
+          <input
+            id="socios-filter-fecha-desde"
+            name="fechaDesde"
+            type="date"
+            value={fechaDesde}
+            onChange={(e) => setUrlState({ fechaDesde: e.target.value, page: 1 })}
+            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+        <div>
+          <label
+            htmlFor="socios-filter-fecha-hasta"
+            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+          >
+            Fecha alta hasta
+          </label>
+          <input
+            id="socios-filter-fecha-hasta"
+            name="fechaHasta"
+            type="date"
+            value={fechaHasta}
+            onChange={(e) => setUrlState({ fechaHasta: e.target.value, page: 1 })}
+            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+        <div className="flex items-end">
+          <label
+            htmlFor="socios-filter-has-email"
+            className="inline-flex items-center gap-2 font-body text-sm text-ink-700"
+          >
+            <input
+              id="socios-filter-has-email"
+              name="hasEmail"
+              type="checkbox"
+              checked={hasEmail === 'true'}
+              onChange={(e) =>
+                setUrlState({
+                  hasEmail: e.target.checked ? 'true' : '',
+                  page: 1,
+                })
+              }
+              className="h-4 w-4 rounded border-ink-200 text-accent focus:ring-accent"
+            />
+            Solo con email
+          </label>
+        </div>
+        <div className="flex items-end">
+          <button
+            type="submit"
+            className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          >
+            Buscar
+          </button>
+        </div>
       </form>
 
       <DataTable<Socio>

@@ -387,3 +387,50 @@ describe('Socios list page', () => {
     expect(screen.getByTestId('socios-table-th-estado')).toHaveAttribute('aria-sort', 'none')
   })
 })
+
+/* ── Advanced filters (categoria / fechaDesde / fechaHasta / hasEmail) ─ */
+
+it('renders the 4 advanced filter inputs with empty defaults', () => {
+  useAuthMock.mockReturnValue(makeAdminUser())
+  renderPage()
+  expect(screen.getByLabelText(/categoría/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/fecha alta desde/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/fecha alta hasta/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/solo con email/i)).toBeInTheDocument()
+})
+
+it('fires getSocios with categoria, fechaDesde, fechaHasta, and hasEmail when set in URL state', async () => {
+  useAuthMock.mockReturnValue(makeAdminUser())
+  currentUrlState = {
+    ...urlStateDefaults,
+    categoria: 'TITULAR',
+    fechaDesde: '2020-01-01',
+    fechaHasta: '2026-12-31',
+    hasEmail: 'true',
+  }
+  renderPage()
+  await waitFor(() => {
+    expect(getSociosMock).toHaveBeenCalledWith({
+      categoria: 'TITULAR',
+      fechaDesde: '2020-01-01',
+      fechaHasta: '2026-12-31',
+      hasEmail: 'true',
+      page: 1,
+    })
+  })
+})
+
+it('omits empty filter values from the getSocios payload (clean URL contract)', async () => {
+  useAuthMock.mockReturnValue(makeAdminUser())
+  currentUrlState = { ...urlStateDefaults, categoria: '' }
+  renderPage()
+  await waitFor(() => {
+    const call = getSociosMock.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(call).toBeDefined()
+    // Empty-string filters should NOT be passed to the API.
+    expect('categoria' in call!).toBe(false)
+    expect('fechaDesde' in call!).toBe(false)
+    expect('fechaHasta' in call!).toBe(false)
+    expect('hasEmail' in call!).toBe(false)
+  })
+})
