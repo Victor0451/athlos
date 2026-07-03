@@ -3,26 +3,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * Socio detail page tests (TASK-021, PR 8b.1).
- *
- * Read-only view at `/socios/[id]`. The orchestrator brief calls
- * out: list + detail + search **only** — no create/update/delete UI
- * in PR 8b.1 (those land in 8b.1b or 8b.2 with ADMIN role gating).
- *
- * Contract:
- *   - Renders the socio name + DNI in a heading + the estado badge
- *   - Renders the field grid (nombre, apellido, dni, email, telefono,
- *     fecha_alta, estado, categoria, numero_socio)
- *   - Shows a loading skeleton while the query is pending
- *   - Shows a "Socio no encontrado" error state on 404
- *   - "Volver al listado" link points to /socios
- *   - The page calls `getSocio(id)` with the route's dynamic segment
+ * Socio detail page tests (TASK-021, PR 8b.1; second-slice: sectioned
+ * layout + CtacteTab, PR 8b.2 second slice).
  *
  * The dynamic segment is read via `useParams()` from `next/navigation`,
  * which the test mocks to return `{ id: SAMPLE_SOCIO.id }`. We use
  * `useParams` (not `use(params)`) so the test doesn't need a
  * Suspense boundary — `useParams` is plain read from Next's router
  * context and works in jsdom.
+ *
+ * The CtacteTab child is exercised via the mocked `getCtacte` wrapper
+ * — we keep the assertions on the page shell rather than the inner
+ * tab (full CtacteTab coverage lives in `CtacteTab.test.tsx`).
  */
 
 const pushMock = vi.fn()
@@ -50,6 +42,12 @@ vi.mock('@/lib/api/socios', () => ({
 // don't trip TS on the page side — hence `createSocio` is included
 // even though the page itself doesn't call it directly (the test
 // uses it as a "mutation hooks library" placeholder).
+
+const getCtacteMock = vi.fn()
+vi.mock('@/lib/api/ctacte', () => ({
+  getCtacte: (...args: unknown[]) => getCtacteMock(...args),
+  getMovimientos: vi.fn(),
+}))
 
 const useAuthMock = vi.fn()
 vi.mock('@/lib/use-auth', () => ({
@@ -107,6 +105,17 @@ const SAMPLE_SOCIO = {
   deleted_at: null,
 }
 
+const SAMPLE_CTACTE = {
+  socioId: SAMPLE_SOCIO.id,
+  saldo: '1500.00',
+  saldo_calculado_at: '2026-06-29T12:00:00.000Z',
+  movimientos: [],
+  page: 1,
+  limit: 20,
+  total: 0,
+  has_more: false,
+}
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -128,6 +137,8 @@ describe('Socio detail page', () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     getSocioMock.mockReset()
     getSocioMock.mockResolvedValue(SAMPLE_SOCIO)
+    getCtacteMock.mockReset()
+    getCtacteMock.mockResolvedValue(SAMPLE_CTACTE)
   })
 
   afterEach(() => {
@@ -156,13 +167,16 @@ describe('Socio detail page', () => {
     })
   })
 
-  it('renders the socio fields (email, telefono, fecha_alta, numero_socio)', async () => {
+  it('renders the sectioned fields (Datos personales + Contacto)', async () => {
     renderPage()
     await waitFor(() => {
-      expect(screen.getByText('juan@example.com')).toBeInTheDocument()
+      expect(screen.getByTestId('socio-section-datos-personales')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('socio-section-contacto')).toBeInTheDocument()
+    // The previously-flat grid still renders per-field testids.
+    expect(screen.getByTestId('socio-field-email')).toBeInTheDocument()
+    expect(screen.getByText('juan@example.com')).toBeInTheDocument()
     expect(screen.getByText('+5491155555555')).toBeInTheDocument()
-    // fecha_alta is rendered as DD/MM/YYYY (es-AR)
     expect(screen.getByText('15/03/2020')).toBeInTheDocument()
     expect(screen.getByText('00001')).toBeInTheDocument()
   })
@@ -190,6 +204,33 @@ describe('Socio detail page', () => {
       expect(screen.getByRole('link', { name: /volver/i })).toBeInTheDocument()
     })
     expect(screen.getByRole('link', { name: /volver/i })).toHaveAttribute('href', '/socios')
+  })
+
+  /* ── CtacteTab (PR 8b.2 second slice) ────────────────────────────── */
+
+  it('renders the CtacteTab with the socio id', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(getCtacteMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, { limit: 20 })
+    })
+    // The tab component renders the saldo + an empty-state message
+    // when there are no movimientos (matches the SAMPLE_CTACTE shape).
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-tab-saldo')).toBeInTheDocument()
+    })
+  })
+
+  it('passes the dynamic segment id to the CtacteTab', async () => {
+    const otherId = 'b2c3d4e5-f6a7-8901-bcde-f23456789012'
+    useParamsMock.mockReturnValue({ id: otherId })
+    getCtacteMock.mockResolvedValueOnce({
+      ...SAMPLE_CTACTE,
+      socioId: otherId,
+    })
+    renderPage()
+    await waitFor(() => {
+      expect(getCtacteMock).toHaveBeenCalledWith(otherId, { limit: 20 })
+    })
   })
 
   /* ── Write surface (PR 8b.2) ─────────────────────────────────────── */

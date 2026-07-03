@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { socios, type Socio, type NewSocio } from '@athlos/db/schema'
 import { BusinessError, ErrorCode } from '@athlos/errors'
@@ -19,6 +19,21 @@ import { BusinessError, ErrorCode } from '@athlos/errors'
 
 export type SocioEstado = Socio['estado']
 
+/**
+ * Wire-facing sort keys. The route's Zod schema uses these literal
+ * strings so the API contract is stable even when the underlying
+ * Drizzle column names (`apellido`, `numeroSocio`, …) change.
+ */
+export type ListSociosSortBy =
+  | 'apellido'
+  | 'nombre'
+  | 'numero_socio'
+  | 'dni'
+  | 'fecha_alta'
+  | 'estado'
+
+export type ListSociosSortDir = 'asc' | 'desc'
+
 export interface ListSociosFilters {
   estado?: SocioEstado
   search?: string
@@ -28,6 +43,16 @@ export interface ListSociosInput {
   page: number
   limit: number
   filters?: ListSociosFilters
+  sortBy?: ListSociosSortBy
+  sortDir?: ListSociosSortDir
+}
+
+/** Counts returned by `countByEstado`. */
+export interface SocioEstadoCounts {
+  activos: number
+  suspendidos: number
+  baja: number
+  total: number
 }
 
 export interface ListSociosResult {
@@ -86,10 +111,66 @@ export async function list(db: Db, input: ListSociosInput): Promise<ListSociosRe
     .select()
     .from(socios)
     .where(where)
-    .orderBy(asc(socios.apellido), asc(socios.nombre), asc(socios.id))
+    .orderBy(...buildOrderBy(input.sortBy, input.sortDir))
     .limit(limit)
     .offset(offset)
   return { items: rows, total, page, limit }
+}
+
+/**
+ * Build a stable ORDER BY clause from the optional `sortBy` / `sortDir`
+ * inputs. The primary sort key uses the requested column; the remaining
+ * keys stay fixed (`apellido, nombre, id`) so the page boundary is
+ * deterministic across calls — required for reliable offset
+ * pagination. When `sortBy` is absent, the default `apellido ASC` is
+ * preserved (matches the pre-sort behaviour the UI was tested against).
+ */
+function buildOrderBy(
+  sortBy: ListSociosSortBy | undefined,
+  sortDir: ListSociosSortDir | undefined,
+) {
+  const dir = sortDir === 'desc' ? desc : asc
+  const tail = [asc(socios.apellido), asc(socios.nombre), asc(socios.id)]
+  switch (sortBy) {
+    case 'apellido':
+      return [dir(socios.apellido), ...tail]
+    case 'nombre':
+      return [dir(socios.nombre), ...tail]
+    case 'numero_socio':
+      return [dir(socios.numeroSocio), ...tail]
+    case 'dni':
+      return [dir(socios.dni), ...tail]
+    case 'fecha_alta':
+      return [dir(socios.fechaAlta), ...tail]
+    case 'estado':
+      return [dir(socios.estado), ...tail]
+    default:
+      return tail
+  }
+}
+
+/**
+ * `countByEstado` — single round-trip count by `estado`. Returns the
+ * four buckets the summary cards need: activos / suspendidos / baja /
+ * total. Counts ALL rows regardless of `deletedAt` (a "baja'd" row is
+ * still part of the master table for reporting purposes).
+ *
+ * Implemented as a single `GROUP BY` query so the work is O(1) db
+ * round-trips even as the master table grows past 16k rows.
+ */
+export async function countByEstado(db: Db): Promise<SocioEstadoCounts> {
+  const rows = await db
+    .select({ estado: socios.estado, n: sql<number>`count(*)::int` })
+    .from(socios)
+    .groupBy(socios.estado)
+  const counts: SocioEstadoCounts = { activos: 0, suspendidos: 0, baja: 0, total: 0 }
+  for (const { estado, n } of rows) {
+    counts.total += n
+    if (estado === 'activo') counts.activos += n
+    else if (estado === 'suspendido') counts.suspendidos += n
+    else if (estado === 'baja') counts.baja += n
+  }
+  return counts
 }
 
 /**

@@ -2,11 +2,12 @@ import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 
 /**
- * DataTable — generic table primitive (TASK-019, PR 8b.1).
+ * DataTable — generic table primitive (TASK-019, PR 8b.1; sort
+ * added in PR 8b.2 second slice).
  *
- * Drives the Socios list (8b.1) and will be reused by Ctacte (8b.2)
- * + Padrones (8b.3). Pure presentation — pagination, sort, and
- * row navigation are parent concerns (URL search/filter state,
+ * Drives the Socios list (8b.1 / 8b.2) and will be reused by Ctacte
+ * (8b.2) + Padrones (8b.3). Pure presentation — pagination, sort,
+ * and row navigation are parent concerns (URL search/filter state,
  * click handlers); this component just renders and emits callbacks.
  *
  * Visual contract (Gorriti Premium tokens):
@@ -15,7 +16,11 @@ import { useMemo } from 'react'
  *   - Empty state copy "Sin resultados para los filtros seleccionados"
  *   - Loading skeleton: 5 pulse rows
  *   - Pagination footer: "Anterior / Página N de M / Siguiente"
+ *   - Sortable header: 12px indicator span + button text
+ *     (WAI-ARIA `aria-sort` on the `<th>`)
  */
+
+export type SortDirection = 'asc' | 'desc'
 
 export interface ColumnDef<T> {
   /** Stable column key — used as React `key` and the cell fallback. */
@@ -30,6 +35,13 @@ export interface ColumnDef<T> {
   accessor?: (row: T) => ReactNode
   /** Optional Tailwind classes applied to the `<td>`. Escape hatch. */
   className?: string
+  /**
+   * When `true`, the column header is clickable to sort. The
+   * DataTable renders a ▲/▼ indicator next to the header based on
+   * the current `sortDir`. The parent owns the sort state and
+   * passes it back via `onSortChange` + `sortBy` / `sortDir` props.
+   */
+  sortable?: boolean
 }
 
 export interface PaginationProps {
@@ -55,10 +67,68 @@ export interface DataTableProps<T> {
   rowKey: (row: T) => string
   /** test-id root. Pass `testId="socios-table"` to scope queries. */
   testId?: string
+  /**
+   * Currently active sort column key. `null` / `undefined` means
+   * no sort is active. The owning component owns this state
+   * (typically by reading from nuqs URL params).
+   */
+  sortBy?: string | null
+  /** Current sort direction. Required when `sortBy` is set. */
+  sortDir?: SortDirection | null
+  /**
+   * Called when a sortable header is clicked. The DataTable does not
+   * toggle direction internally — the parent computes the next
+   * `{ sortBy, sortDir }` (toggle on same key, reset to asc on new)
+   * and updates URL state.
+   */
+  onSortChange?: (key: string) => void
 }
 
 /** Empty-state copy (Spanish — design system default for empty lists). */
 const EMPTY_MESSAGE = 'Sin resultados para los filtros seleccionados'
+
+/**
+ * Resolve the WAI-ARIA `aria-sort` value for a sortable header based
+ * on the current `sortBy` / `sortDir`. Returns `undefined` for
+ * non-sortable columns or when no sort is active.
+ */
+function ariaSortFor(
+  column: ColumnDef<unknown>,
+  sortBy: string | null | undefined,
+  sortDir: SortDirection | null | undefined,
+): 'ascending' | 'descending' | 'none' | undefined {
+  if (!column.sortable) return undefined
+  if (sortBy !== column.key) return 'none'
+  return sortDir === 'desc' ? 'descending' : 'ascending'
+}
+
+/**
+ * Render the sort indicator glyph. The indicator itself is hidden
+ * from screen readers (`aria-hidden`); the parent button's
+ * `aria-label` describes the sort action.
+ */
+function SortIndicator({
+  active,
+  dir,
+}: {
+  active: boolean
+  dir: SortDirection | null | undefined
+}): ReactNode {
+  if (!active) {
+    // Sortable but inactive — show a muted up/down hint.
+    return (
+      <span aria-hidden="true" className="text-[12px] text-ink-500">
+        ↕
+      </span>
+    )
+  }
+  const glyph = dir === 'desc' ? '▴' : '▾'
+  return (
+    <span aria-hidden="true" className="text-[12px] text-ink-700">
+      {glyph}
+    </span>
+  )
+}
 
 export function DataTable<T>({
   columns,
@@ -68,6 +138,9 @@ export function DataTable<T>({
   onRowClick,
   rowKey,
   testId,
+  sortBy,
+  sortDir,
+  onSortChange,
 }: DataTableProps<T>) {
   const totalPages = useMemo(() => {
     if (!pagination) return 0
@@ -135,15 +208,39 @@ export function DataTable<T>({
       <table className="w-full">
         <thead className="bg-surface-sunken">
           <tr>
-            {columns.map((c) => (
-              <th
-                key={c.key}
-                scope="col"
-                className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-              >
-                {c.header}
-              </th>
-            ))}
+            {columns.map((c) => {
+              const ariaSort = ariaSortFor(c as ColumnDef<unknown>, sortBy, sortDir)
+              const isActiveSort = c.sortable && sortBy === c.key
+              const ariaLabel = c.sortable ? `Sort by ${c.header}` : undefined
+              const headerCellClass = c.sortable
+                ? 'px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-700'
+                : 'px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500'
+              return (
+                <th
+                  key={c.key}
+                  scope="col"
+                  aria-sort={ariaSort}
+                  data-testid={testId ? `${testId}-th-${c.key}` : undefined}
+                  data-sort-active={isActiveSort ? 'true' : undefined}
+                  className={headerCellClass}
+                >
+                  {c.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSortChange?.(c.key)}
+                      aria-label={ariaLabel}
+                      data-testid={testId ? `${testId}-sort-${c.key}` : undefined}
+                      className="inline-flex items-center gap-1.5"
+                    >
+                      <span>{c.header}</span>
+                      <SortIndicator active={Boolean(isActiveSort)} dir={sortDir} />
+                    </button>
+                  ) : (
+                    c.header
+                  )}
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>

@@ -13,24 +13,36 @@ import {
   type Socio,
 } from '@/lib/api/socios'
 import SocioForm from '@/components/socios/SocioForm'
+import { CtacteTab } from '@/components/socios/CtacteTab'
 
 /**
- * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2, 2026-07-02).
+ * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; second
+ * slice: sectioned layout + CtacteTab, PR 8b.2 second slice).
  *
- * Per the orchestrator brief, PR 8b.1 shipped the read-only view
- * (TASK-021). PR 8b.2 layers the ADMIN-gated create / update / delete
- * surface on top:
- *   - "Editar" button (visible only to ADMIN) opens a modal with
+ * Read-only view at PR 8b.1. PR 8b.2 layered the ADMIN-gated create /
+ * update / delete surface on top:
+ *   - "Editar" button (ADMIN only) opens a modal with
  *     <SocioForm mode="edit" /> pre-filled from the current socio.
  *   - "Eliminar" button (ADMIN only) opens a confirmation modal.
  *     On confirm, the server soft-deletes (sets `estado='baja'`) and
  *     we navigate back to the list.
- *   - Both mutations invalidate the `['socio', id]` and `['socios']`
+ *   - Both mutations invalidate `['socio', id]` and `['socios']`
  *     query keys so the list and detail refetch with fresh data.
  *
- * "Próximamente" placeholder for the Ctacte / Deportes / Cuotas tabs
- * is left as-is — that's the next slice (B).
+ * PR 8b.2 second slice — visual + functional polish:
+ *   - Fields are grouped into "Datos personales" / "Contacto"
+ *     sections (each its own `<section>` + h2), per the
+ *     design-system "sectioned detail view" pattern.
+ *   - The "Próximamente" placeholder is replaced with the live
+ *     <CtacteTab socioId={id} /> component so the saldo + the
+ *     first page of movimientos render in place.
+ *
+ * Future tabs (Deportes / Cuotas) follow the same section pattern
+ * once they ship — the orchestrator scope caps this slice to the
+ * Ctacte only.
  */
+
+const SECTION_HEADING = 'text-base font-semibold uppercase tracking-wide text-ink-700'
 
 const FIELD_LABEL: Record<string, string> = {
   numero_socio: 'N° Socio',
@@ -53,6 +65,27 @@ function formatValue(key: string, value: string | null): string {
   }
   return value
 }
+
+interface FieldRow {
+  key: keyof Socio
+  value: string | null
+}
+
+const DATOS_PERSONALES_FIELDS: FieldRow[] = [
+  { key: 'numero_socio', value: null },
+  { key: 'apellido', value: null },
+  { key: 'nombre', value: null },
+  { key: 'dni', value: null },
+  { key: 'fecha_alta', value: null },
+  { key: 'estado', value: null },
+  { key: 'categoria', value: null },
+]
+
+const CONTACTO_FIELDS: FieldRow[] = [
+  { key: 'direccion', value: null },
+  { key: 'telefono', value: null },
+  { key: 'email', value: null },
+]
 
 export default function SocioDetailPage() {
   const params = useParams<{ id: string }>()
@@ -141,24 +174,38 @@ export default function SocioDetailPage() {
   }
 
   const socio = socioQuery.data as Socio
-  const fields: Array<{ key: keyof Socio; value: string | null }> = [
-    { key: 'numero_socio', value: socio.numero_socio },
-    { key: 'nombre', value: socio.nombre },
-    { key: 'apellido', value: socio.apellido },
-    { key: 'dni', value: socio.dni },
-    { key: 'fecha_alta', value: socio.fecha_alta },
-    { key: 'estado', value: socio.estado },
-    { key: 'categoria', value: socio.categoria },
-    { key: 'direccion', value: socio.direccion },
-    { key: 'telefono', value: socio.telefono },
-    { key: 'email', value: socio.email },
-  ]
+
+  function renderFieldRows(fields: FieldRow[]) {
+    return (
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        {fields.map((row) => (
+          <div key={row.key} data-testid={`socio-field-${row.key}`}>
+            <dt className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+              {FIELD_LABEL[row.key] ?? row.key}
+            </dt>
+            <dd className="mt-1 font-body text-sm text-ink-700">
+              {formatValue(row.key, socio[row.key])}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+
+  const datosPersonales: FieldRow[] = DATOS_PERSONALES_FIELDS.map((f) => ({
+    key: f.key,
+    value: socio[f.key],
+  }))
+  const contacto: FieldRow[] = CONTACTO_FIELDS.map((f) => ({ key: f.key, value: socio[f.key] }))
 
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink-900">
+          <h1
+            className="font-display text-2xl font-bold text-ink-900"
+            data-testid="socio-detail-h1"
+          >
             {socio.apellido}, {socio.nombre}
           </h1>
           <p className="mt-1 font-mono text-xs text-ink-500">DNI {socio.dni}</p>
@@ -198,31 +245,24 @@ export default function SocioDetailPage() {
       </header>
 
       <section
-        aria-label="Datos del socio"
+        aria-label="Datos personales"
         className="rounded-lg border border-ink-100 bg-surface p-6 shadow-sm"
-        data-testid="socio-detail-fields"
+        data-testid="socio-section-datos-personales"
       >
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-          {fields.map(({ key, value }) => (
-            <div key={key} data-testid={`socio-field-${key}`}>
-              <dt className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                {FIELD_LABEL[key] ?? key}
-              </dt>
-              <dd className="mt-1 font-body text-sm text-ink-700">{formatValue(key, value)}</dd>
-            </div>
-          ))}
-        </dl>
+        <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Datos personales</h2>
+        {renderFieldRows(datosPersonales)}
       </section>
 
       <section
-        aria-label="Próximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
-        data-testid="socio-detail-proximamente"
+        aria-label="Contacto"
+        className="rounded-lg border border-ink-100 bg-surface p-6 shadow-sm"
+        data-testid="socio-section-contacto"
       >
-        <p className="font-body text-sm text-ink-500">
-          Próximamente — pestañas de Ctacte, Deportes y Cuotas disponibles en una próxima versión.
-        </p>
+        <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Contacto</h2>
+        {renderFieldRows(contacto)}
       </section>
+
+      <CtacteTab socioId={id} />
 
       {/* Edit modal — ADMIN only */}
       {isAdmin && editOpen ? (

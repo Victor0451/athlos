@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { idSchema, socioEstadoSchema } from '@athlos/validation'
 import { throwIfInvalid } from '@athlos/errors'
 import { requireAuth, requireRole } from '@athlos/auth'
-import { create, getById, list, softDelete, update } from '../modules/socios/service.ts'
+import { aggregate, create, getById, list, softDelete, update } from '../modules/socios/service.ts'
 import type { AppContainer } from '../container.ts'
 
 /**
@@ -32,6 +32,15 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   estado: socioEstadoSchema.optional(),
   search: z.string().min(1).max(80).optional(),
+  sortBy: z.enum(['apellido', 'nombre', 'numero_socio', 'dni', 'fecha_alta', 'estado']).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
+  /**
+   * `aggregate=1` short-circuits the list query and returns just the
+   * count-by-estado summary (`{ activos, suspendidos, baja, total }`).
+   * Lets the Socios page populate its summary cards in one round-trip
+   * without paying for the full pagination shape.
+   */
+  aggregate: z.union([z.literal('1'), z.literal('0')]).optional(),
 })
 
 const createBodySchema = z.object({
@@ -112,6 +121,10 @@ export const sociosRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   // GET /api/v1/socios
   fastify.get('/api/v1/socios', AUTH, async (request, reply) => {
     const q = throwIfInvalid(listQuerySchema, request.query, 'query')
+    if (q.aggregate === '1') {
+      const counts = await aggregate(container.db)
+      return reply.code(200).send(counts)
+    }
     const result = await list(container.db, {
       page: q.page ?? 1,
       limit: q.limit ?? 20,
@@ -123,6 +136,8 @@ export const sociosRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
             },
           }
         : {}),
+      ...(q.sortBy ? { sortBy: q.sortBy } : {}),
+      ...(q.sortDir ? { sortDir: q.sortDir } : {}),
     })
     return reply.code(200).send({
       items: result.items.map(toSocioDTO),

@@ -4,10 +4,13 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * Socios list page tests (TASK-020 + TASK-022, PR 8b.1).
- * Covers: heading + search + filter, DataTable rows, empty/loading
- * states, row click → detail navigation, pagination, nuqs URL state
- * (search submission + pre-population from ?search=).
+ * Socios list page tests (TASK-020 + TASK-022, PR 8b.1; second
+ * slice: cards + monogram + sort, PR 8b.2 second slice).
+ * Covers: heading + search + filter, summary cards, monogram,
+ * DataTable rows, empty/loading states, row click → detail
+ * navigation, pagination, sort toggle, the ADMIN-only "+ Nuevo"
+ * link, and nuqs URL state (search submission + pre-population +
+ * sort).
  */
 
 const pushMock = vi.fn()
@@ -20,8 +23,14 @@ vi.mock('next/navigation', () => ({
 }))
 
 // nuqs mock — test controls URL state explicitly via the variables below.
-type UrlState = { search: string; estado: string; page: number }
-const urlStateDefaults: UrlState = { search: '', estado: '', page: 1 }
+type UrlState = { search: string; estado: string; page: number; sortBy: string; sortDir: string }
+const urlStateDefaults: UrlState = {
+  search: '',
+  estado: '',
+  page: 1,
+  sortBy: '',
+  sortDir: '',
+}
 let currentUrlState: UrlState = { ...urlStateDefaults }
 const setUrlStateMock = vi.fn()
 
@@ -37,8 +46,10 @@ vi.mock('@/lib/use-auth', () => ({
 }))
 
 const getSociosMock = vi.fn()
+const getSociosAggregateMock = vi.fn()
 vi.mock('@/lib/api/socios', () => ({
   getSocios: (...args: unknown[]) => getSociosMock(...args),
+  getSociosAggregate: (...args: unknown[]) => getSociosAggregateMock(...args),
 }))
 
 const { default: SociosListPage } = await import('./page')
@@ -50,6 +61,22 @@ function makeAdminUser() {
       role: 'ADMIN' as const,
       username: 'admin',
       permissions: { can_reprint: true, can_anulate: true },
+    },
+    token: 'fake.jwt',
+    isAuthenticated: true,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
+  }
+}
+
+function makeOperadorUser() {
+  return {
+    user: {
+      operator_id: 'op-1',
+      role: 'OPERADOR' as const,
+      username: 'operador',
+      permissions: { can_reprint: false, can_anulate: false },
     },
     token: 'fake.jwt',
     isAuthenticated: true,
@@ -76,6 +103,13 @@ const SAMPLE_SOCIO = {
   deleted_at: null,
 }
 
+const SAMPLE_AGGREGATE = {
+  activos: 12_345,
+  suspendidos: 234,
+  baja: 567,
+  total: 13_146,
+}
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -94,6 +128,7 @@ describe('Socios list page', () => {
     useAuthMock.mockReset()
     useAuthMock.mockReturnValue(makeAdminUser())
     getSociosMock.mockReset()
+    getSociosAggregateMock.mockReset()
     currentUrlState = { ...urlStateDefaults }
     setUrlStateMock.mockReset()
 
@@ -104,6 +139,7 @@ describe('Socios list page', () => {
       total: 1,
       has_more: false,
     })
+    getSociosAggregateMock.mockResolvedValue(SAMPLE_AGGREGATE)
   })
 
   afterEach(() => {
@@ -128,7 +164,7 @@ describe('Socios list page', () => {
   })
 
   it('calls getSocios on mount with the current URL state', async () => {
-    currentUrlState = { search: 'garcia', estado: 'activo', page: 1 }
+    currentUrlState = { ...urlStateDefaults, search: 'garcia', estado: 'activo', page: 1 }
     renderPage()
     await waitFor(() => {
       expect(getSociosMock).toHaveBeenCalledWith({
@@ -139,13 +175,31 @@ describe('Socios list page', () => {
     })
   })
 
-  it('renders one row per socio from the API response', async () => {
+  it('forwards sortBy + sortDir to getSocios when present in the URL', async () => {
+    currentUrlState = {
+      ...urlStateDefaults,
+      sortBy: 'apellido',
+      sortDir: 'desc',
+    }
+    renderPage()
+    await waitFor(() => {
+      expect(getSociosMock).toHaveBeenCalledWith({
+        page: 1,
+        sortBy: 'apellido',
+        sortDir: 'desc',
+      })
+    })
+  })
+
+  it('renders one row per socio from the API response, with the monogram in the name cell', async () => {
     renderPage()
     await waitFor(() => {
       expect(screen.getByText('García, Juan')).toBeInTheDocument()
     })
     expect(screen.getByText('00001')).toBeInTheDocument()
     expect(screen.getByText('12345678')).toBeInTheDocument()
+    // Monogram testid derives from the socio id
+    expect(screen.getByTestId('monogram-' + SAMPLE_SOCIO.id)).toBeInTheDocument()
   })
 
   it('shows the empty state when the API returns no socios', async () => {
@@ -165,7 +219,8 @@ describe('Socios list page', () => {
   it('shows the loading skeleton while the query is pending', () => {
     getSociosMock.mockReturnValue(new Promise(() => {}))
     renderPage()
-    expect(screen.getByText(/cargando/i)).toBeInTheDocument()
+    // The DataTable loading container carries data-testid="socios-table-loading"
+    expect(screen.getByTestId('socios-table-loading')).toBeInTheDocument()
   })
 
   it('navigates to /socios/<id> when a row is clicked', async () => {
@@ -209,11 +264,126 @@ describe('Socios list page', () => {
   })
 
   it('pre-populates the search input from ?search= (URL deep-link)', () => {
-    currentUrlState = { search: 'garcia', estado: 'activo', page: 2 }
+    currentUrlState = {
+      ...urlStateDefaults,
+      search: 'garcia',
+      estado: 'activo',
+      page: 2,
+    }
     renderPage()
     const input = screen.getByRole('searchbox', { name: /buscar/i }) as HTMLInputElement
     expect(input.value).toBe('garcia')
     const select = screen.getByRole('combobox', { name: /estado/i }) as HTMLSelectElement
     expect(select.value).toBe('activo')
+  })
+
+  /* ── Aggregate cards (PR 8b.2 second slice) ─────────────────────── */
+
+  it('fires getSociosAggregate in parallel with getSocios', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(getSociosMock).toHaveBeenCalled()
+      expect(getSociosAggregateMock).toHaveBeenCalled()
+    })
+  })
+
+  it('renders the four aggregate cards with the resolved counts', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socios-aggregate-activo-value')).toHaveTextContent(/12\.345/i)
+    })
+    expect(screen.getByTestId('socios-aggregate-suspendido-value')).toHaveTextContent(/234/i)
+    expect(screen.getByTestId('socios-aggregate-baja-value')).toHaveTextContent(/567/i)
+    expect(screen.getByTestId('socios-aggregate-total-value')).toHaveTextContent(/13\.146/i)
+  })
+
+  it('renders a skeleton placeholder per card while the aggregate query is pending', () => {
+    getSociosAggregateMock.mockReturnValue(new Promise(() => {}))
+    renderPage()
+    expect(screen.getByTestId('socios-aggregate-activo')).toBeInTheDocument()
+    // The numeric value is not yet rendered.
+    expect(screen.queryByTestId('socios-aggregate-activo-value')).not.toBeInTheDocument()
+  })
+
+  /* ── ADMIN "+ Nuevo" link (PR 8b.2 second slice) ────────────────── */
+
+  it('renders the "+ Nuevo" button for ADMIN users', () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    renderPage()
+    const link = screen.getByTestId('socios-new-button')
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('href', '/socios/new')
+  })
+
+  it('hides the "+ Nuevo" button for non-ADMIN users', () => {
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderPage()
+    expect(screen.queryByTestId('socios-new-button')).not.toBeInTheDocument()
+  })
+
+  /* ── Sort toggle (PR 8b.2 second slice) ─────────────────────────── */
+
+  it('sets sortBy + sortDir=asc when a sortable header is clicked for the first time', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socios-table-sort-numero_socio')).toBeInTheDocument()
+    })
+    screen.getByTestId('socios-table-sort-numero_socio').click()
+    const lastCall = setUrlStateMock.mock.calls.at(-1)?.[0] as Partial<UrlState>
+    expect(lastCall.sortBy).toBe('numero_socio')
+    expect(lastCall.sortDir).toBe('asc')
+  })
+
+  it('flips to desc when the same sortable header is clicked a second time', async () => {
+    currentUrlState = {
+      ...urlStateDefaults,
+      sortBy: 'numero_socio',
+      sortDir: 'asc',
+    }
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socios-table-sort-numero_socio')).toBeInTheDocument()
+    })
+    screen.getByTestId('socios-table-sort-numero_socio').click()
+    const lastCall = setUrlStateMock.mock.calls.at(-1)?.[0] as Partial<UrlState>
+    expect(lastCall.sortBy).toBe('numero_socio')
+    expect(lastCall.sortDir).toBe('desc')
+  })
+
+  it('resets to asc when a DIFFERENT sortable header is clicked', async () => {
+    currentUrlState = {
+      ...urlStateDefaults,
+      sortBy: 'numero_socio',
+      sortDir: 'desc',
+    }
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socios-table-sort-estado')).toBeInTheDocument()
+    })
+    screen.getByTestId('socios-table-sort-estado').click()
+    const lastCall = setUrlStateMock.mock.calls.at(-1)?.[0] as Partial<UrlState>
+    expect(lastCall.sortBy).toBe('estado')
+    expect(lastCall.sortDir).toBe('asc')
+  })
+
+  it('reflects the active sort with aria-sort on the matching header', async () => {
+    currentUrlState = {
+      ...urlStateDefaults,
+      sortBy: 'numero_socio',
+      sortDir: 'desc',
+    }
+    renderPage()
+    // Wait for the list query to resolve so the full table (with
+    // <th data-testid=...> cells) is on screen, not the loading
+    // skeleton where those test-ids are absent.
+    await waitFor(() => {
+      expect(screen.getByTestId('socios-table-th-numero_socio')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('socios-table-th-numero_socio')).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    )
+    // An inactive sortable header carries aria-sort="none"
+    expect(screen.getByTestId('socios-table-th-estado')).toHaveAttribute('aria-sort', 'none')
   })
 })

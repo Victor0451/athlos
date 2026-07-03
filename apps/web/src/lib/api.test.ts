@@ -48,16 +48,21 @@ describe('api client', () => {
           }),
         ),
       )
-      // The original source imports NEXT_PUBLIC_API_BASE_URL at module load.
-      // We can't change it dynamically, but the production code falls back
-      // to 'http://localhost:4001' when the env is undefined.
+      // As of the catch-all proxy (apps/web/src/app/api/v1/[...path]/route.ts),
+      // the browser calls '/api/v1/health' (relative, same origin) and the
+      // Next.js route forwards to the API. apiFetch's `API_BASE_URL` env
+      // var is only used as a non-empty override. When unset, the
+      // fetch URL is relative (no scheme/host).
 
       const result = await apiFetch<{ id: number; name: string }>('/api/v1/health')
 
       const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
-      expect(url).toMatch(/^https?:\/\/[^/]+\/api\/v1\/health$/)
+      // apiFetch uses the relative path when API_BASE_URL is empty (the
+      // production default post-proxy). Override URL is set elsewhere
+      // in the test suite for the absolute-URL case.
+      expect(url).toBe('/api/v1/health')
 
       expect(result).toEqual({ id: 1, name: 'admin' })
     })
@@ -192,7 +197,7 @@ describe('api client', () => {
       expect(fetchMock).toHaveBeenCalledTimes(4)
       const calls = fetchMock.mock.calls.map((c) => c[0])
       expect(calls[1]).toMatch(/\/api\/v1\/me$/)
-      expect(calls[2]).toBe('/api/auth/refresh')
+      expect(calls[2]).toBe('/api/v1/auth/refresh')
       expect(calls[3]).toMatch(/\/api\/v1\/me$/)
     })
 
@@ -302,7 +307,7 @@ describe('api client', () => {
       ])
 
       expect(results.map((r) => r.ok).sort()).toEqual([1, 2, 3, 4, 5])
-      const refreshCalls = fetchMock.mock.calls.filter((c) => c[0] === '/api/auth/refresh')
+      const refreshCalls = fetchMock.mock.calls.filter((c) => c[0] === '/api/v1/auth/refresh')
       expect(refreshCalls).toHaveLength(1)
     })
 
