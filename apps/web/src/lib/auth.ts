@@ -1,25 +1,35 @@
 /**
- * In-memory access + refresh token state for the operator console.
+ * Auth state for the operator console — tokens + current user profile.
  *
- * Per the `web-frontend/spec.md` (Operator Login and Logout requirement),
- * the access token lives ONLY in module-scope memory. Any XSS that reads
- * it has ≤15 min of damage before the JWT expires. The refresh token is
- * stored next to the access token here ONLY because the v0.5.8 backend
- * accepts body-based refresh (`auth-cookies/spec.md` Scenario: Backend
- * slice not yet shipped).
+ * **Provisional fix (2026-07-02): localStorage persistence.**
+ * Originally the tokens lived ONLY in module-scope memory per the
+ * `web-frontend/spec.md` design (Trade-off: tab close = logout for
+ * a 3–5 person console). That made F5 / page refresh send the
+ * operator back to `/login` — a real UX bug once the auth proxy
+ * (commit df0af6a) made the login flow reliable.
  *
- * TODO(PR 9 — auth-cookies backend slice): Once the cookie-transport
- * backend slice lands, `refreshAccessToken()` will drop the body and
- * call `/api/v1/auth/refresh` with `credentials: 'include'` only. At that
- * point the module-scope `refreshToken` variable disappears entirely
- * and the (authed)/layout server component can read the opaque cookie
- * to gate requests before any client JS runs. The web client currently
- * ships with body-based refresh (v0.5.8 contract) as a fallback; this
- * fallback is documented in the `auth-cookies` spec under "Backend
- * slice not yet shipped".
+ * The fix persists `accessToken`, `refreshToken`, and `currentUser` to
+ * a single `localStorage` entry (`athlos.auth`, JSON-encoded) on every
+ * set, and hydrates from it on module-load. This means F5, full reload,
+ * and tab restore all keep the operator signed in. Only an explicit
+ * `logout()` (or the operator clicking "Salir") clears the entry.
  *
- * Tab close = logout, because the module-scope variable dies with the
- * tab. This is the documented trade-off for a 3–5 person console.
+ * **XSS risk accepted**: a successful XSS in the operator console can
+ * now read the tokens until the user logs out (or the access token
+ * expires in ≤15 min and the refresh-token rotation is revoked).
+ * Documented as a temporary measure for the 3–5 person console
+ * operator surface. The correct architectural fix is the cookie
+ * slice (`auth-cookies/spec.md`) — when the backend ships httpOnly
+ * cookies + `athlos_refresh` rotation, this whole module-scope +
+ * localStorage layer disappears and the (authed)/layout server
+ * component reads the cookie to gate requests before any client JS
+ * runs.
+ *
+ * Migration plan when the cookie slice lands:
+ *   1. Drop the `athlos.auth` localStorage write/read.
+ *   2. Drop the `refreshToken` body transport in `refreshAccessToken`.
+ *   3. Switch `auth.ts` to be a thin client-side `useAuth()` facade
+ *      that reads `useMe()` from the layout's server-fetched context.
  */
 
 /** Shape of the JSON body returned by POST /api/v1/auth/login. */
@@ -76,19 +86,79 @@ export class AuthError extends Error {
   }
 }
 
-// Module-scope token state. NEVER exported directly.
-let accessToken: string | null = null
-let refreshToken: string | null = null
-let currentUser: CurrentUser | null = null
+// ─── localStorage persistence (provisional, 2026-07-02) ────────────
+//
+// On module load we hydrate the three pieces of state from a single
+// `localStorage` entry. Every set mirrors the new value to disk so a
+// page refresh (F5) and a tab restore both keep the operator signed in.
+// The writes are best-effort: if `localStorage` is unavailable
+// (private mode, quota exceeded, SSR), we silently fall back to the
+// original module-scope behaviour.
+
+const STORAGE_KEY = 'athlos.auth'
+
+interface PersistedAuth {
+  accessToken: string | null
+  refreshToken: string | null
+  currentUser: CurrentUser | null
+}
+
+function readStorage(): PersistedAuth {
+  if (typeof window === 'undefined') {
+    return { accessToken: null, refreshToken: null, currentUser: null }
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { accessToken: null, refreshToken: null, currentUser: null }
+    const parsed = JSON.parse(raw) as Partial<PersistedAuth>
+    return {
+      accessToken: typeof parsed.accessToken === 'string' ? parsed.accessToken : null,
+      refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
+      currentUser:
+        parsed.currentUser && typeof parsed.currentUser === 'object'
+          ? (parsed.currentUser as CurrentUser)
+          : null,
+    }
+  } catch {
+    return { accessToken: null, refreshToken: null, currentUser: null }
+  }
+}
+
+function writeStorage(state: PersistedAuth): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // Quota exceeded or storage disabled — degrade to module-scope.
+  }
+}
+
+function clearStorage(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+// Module-scope token state, hydrated from localStorage on first import.
+const _hydrated = readStorage()
+let accessToken: string | null = _hydrated.accessToken
+let refreshToken: string | null = _hydrated.refreshToken
+let currentUser: CurrentUser | null = _hydrated.currentUser
 
 /** Read the current access token, or `null` if not authenticated. */
 export function getAccessToken(): string | null {
   return accessToken
 }
 
-/** Replace the in-memory access token. Internal helper, used by login() and refreshAccessToken(). */
+/** Replace the access token (and mirror to localStorage so F5 / tab
+ *  restore keep the operator signed in). Internal helper, used by
+ *  `login()` and `refreshAccessToken()`. */
 export function setAccessToken(token: string | null): void {
   accessToken = token
+  writeStorage({ accessToken, refreshToken, currentUser })
 }
 
 /** Read the current refresh token, or `null` if not authenticated. Internal helper. */
@@ -96,9 +166,10 @@ function getRefreshToken(): string | null {
   return refreshToken
 }
 
-/** Replace the in-memory refresh token. */
+/** Replace the refresh token (and mirror to localStorage). */
 function setRefreshToken(token: string | null): void {
   refreshToken = token
+  writeStorage({ accessToken, refreshToken, currentUser })
 }
 
 /** Drop both tokens. Used by logout() and after a failed refresh. */
@@ -106,6 +177,7 @@ export function clearAccessToken(): void {
   accessToken = null
   refreshToken = null
   currentUser = null
+  clearStorage()
 }
 
 /** Read the current user profile, or `null` if not authenticated. */
@@ -113,9 +185,10 @@ export function getCurrentUser(): CurrentUser | null {
   return currentUser
 }
 
-/** Replace the in-memory user profile. Internal helper, used by login(). */
+/** Replace the in-memory user profile (and mirror to localStorage). */
 function setCurrentUser(user: CurrentUser | null): void {
   currentUser = user
+  writeStorage({ accessToken, refreshToken, currentUser })
 }
 
 async function parseError(res: Response): Promise<AuthError> {
