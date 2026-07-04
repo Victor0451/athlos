@@ -24,7 +24,8 @@ vi.mock('@/lib/api', () => ({
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
 
-const { getSocios, getSocio, createSocio, updateSocio, deleteSocio } = await import('./socios')
+const { getSocios, getSocio, createSocio, updateSocio, deleteSocio, getSociosAggregate } =
+  await import('./socios')
 
 const SAMPLE_SOCIO = {
   id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
@@ -131,6 +132,37 @@ describe('socios API', () => {
       expect(result.limit).toBe(20)
       expect(result.total).toBe(42)
       expect(result.has_more).toBe(true)
+    })
+
+    it('forwards sortBy + sortDir to the wire (PR 8b.2 second slice)', async () => {
+      apiFetchMock.mockResolvedValueOnce({
+        items: [],
+        page: 1,
+        limit: 20,
+        total: 0,
+        has_more: false,
+      })
+
+      await getSocios({ sortBy: 'apellido', sortDir: 'desc' })
+
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/socios', {
+        query: { sortBy: 'apellido', sortDir: 'desc' },
+      })
+    })
+  })
+
+  describe('getSociosAggregate()', () => {
+    it('calls GET /api/v1/socios?aggregate=1 (short-circuit branch)', async () => {
+      const payload = { activos: 10, suspendidos: 2, baja: 3, total: 15 }
+      apiFetchMock.mockResolvedValueOnce(payload)
+
+      const result = await getSociosAggregate()
+
+      expect(apiFetchMock).toHaveBeenCalledTimes(1)
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/socios', {
+        query: { aggregate: '1' },
+      })
+      expect(result).toEqual(payload)
     })
   })
 

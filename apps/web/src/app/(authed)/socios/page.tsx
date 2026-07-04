@@ -14,6 +14,7 @@ import {
 } from '@/lib/api/socios'
 import { DataTable, type ColumnDef } from '@/components/tables/DataTable'
 import { Monogram } from '@/components/ui/Monogram'
+import { Badge } from '@/components/ui/Badge'
 import { useAuth } from '@/lib/use-auth'
 
 /**
@@ -108,6 +109,14 @@ export default function SociosListPage() {
     setUrlState,
   ] = useQueryStates(urlStateSchema)
   const [searchDraft, setSearchDraft] = useState(search)
+  // Collapsible advanced filters — open by default when any advanced
+  // filter is already set (e.g. the user opens a deep link with
+  // ?categoria=...); collapsed otherwise to keep the search form
+  // visually quiet (per the design system: 95% white/black, rojo only
+  // for accent / action moments).
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(
+    Boolean(categoria || fechaDesde || fechaHasta || hasEmail),
+  )
   const { user } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
 
@@ -230,19 +239,11 @@ export default function SociosListPage() {
       key: 'estado',
       header: 'Estado',
       sortable: true,
-      accessor: (row) => (
-        <span
-          className={
-            row.estado === 'activo'
-              ? 'font-display text-[10px] font-semibold uppercase tracking-widest text-success'
-              : row.estado === 'baja'
-                ? 'font-display text-[10px] font-semibold uppercase tracking-widest text-danger'
-                : 'font-display text-[10px] font-semibold uppercase tracking-widest text-warning'
-          }
-        >
-          {row.estado}
-        </span>
-      ),
+      accessor: (row) => {
+        const variant =
+          row.estado === 'activo' ? 'success' : row.estado === 'baja' ? 'danger' : 'warning'
+        return <Badge variant={variant}>{row.estado}</Badge>
+      },
     },
   ]
 
@@ -337,106 +338,196 @@ export default function SociosListPage() {
       <form
         role="search"
         onSubmit={onSearchSubmit}
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        className="space-y-3"
         data-testid="socios-search-form"
       >
-        <div className="sm:col-span-2 lg:col-span-1">
-          <label
-            htmlFor="socios-search"
-            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-          >
-            Buscar
-          </label>
-          <input
-            id="socios-search"
-            name="search"
-            type="search"
-            placeholder="Nombre, apellido o DNI"
-            value={searchDraft}
-            onChange={(e) => setSearchDraft(e.target.value)}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="socios-filter-categoria"
-            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-          >
-            Categoría
-          </label>
-          <input
-            id="socios-filter-categoria"
-            name="categoria"
-            type="text"
-            placeholder="Ej: TITULAR"
-            value={categoria}
-            onChange={(e) => setUrlState({ categoria: e.target.value, page: 1 })}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="socios-filter-fecha-desde"
-            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-          >
-            Fecha alta desde
-          </label>
-          <input
-            id="socios-filter-fecha-desde"
-            name="fechaDesde"
-            type="date"
-            value={fechaDesde}
-            onChange={(e) => setUrlState({ fechaDesde: e.target.value, page: 1 })}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="socios-filter-fecha-hasta"
-            className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
-          >
-            Fecha alta hasta
-          </label>
-          <input
-            id="socios-filter-fecha-hasta"
-            name="fechaHasta"
-            type="date"
-            value={fechaHasta}
-            onChange={(e) => setUrlState({ fechaHasta: e.target.value, page: 1 })}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-        <div className="flex items-end">
-          <label
-            htmlFor="socios-filter-has-email"
-            className="inline-flex items-center gap-2 font-body text-sm text-ink-700"
-          >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div>
+            <label
+              htmlFor="socios-search"
+              className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+            >
+              Buscar
+            </label>
             <input
-              id="socios-filter-has-email"
-              name="hasEmail"
-              type="checkbox"
-              checked={hasEmail === 'true'}
-              onChange={(e) =>
-                setUrlState({
-                  hasEmail: e.target.checked ? 'true' : '',
-                  page: 1,
-                })
-              }
-              className="h-4 w-4 rounded border-ink-200 text-accent focus:ring-accent"
+              id="socios-search"
+              name="search"
+              type="search"
+              placeholder="Nombre, apellido o DNI"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
             />
-            Solo con email
-          </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              aria-expanded={showAdvanced}
+              aria-controls="socios-advanced-filters"
+              data-testid="socios-advanced-toggle"
+              className="rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+            >
+              {showAdvanced ? 'Ocultar filtros' : 'Más filtros'}
+            </button>
+            <button
+              type="submit"
+              className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+            >
+              Buscar
+            </button>
+          </div>
         </div>
-        <div className="flex items-end">
-          <button
-            type="submit"
-            className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
-          >
-            Buscar
-          </button>
-        </div>
-      </form>
 
+        {showAdvanced ? (
+          <div
+            id="socios-advanced-filters"
+            data-testid="socios-advanced-filters"
+            className="grid grid-cols-1 gap-3 border-t border-ink-100 pt-3 sm:grid-cols-2 lg:grid-cols-4 sm:items-end"
+          >
+            <div>
+              <label
+                htmlFor="socios-filter-categoria"
+                className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+              >
+                Categoría
+              </label>
+              <input
+                id="socios-filter-categoria"
+                name="categoria"
+                type="text"
+                placeholder="Ej: TITULAR"
+                value={categoria}
+                onChange={(e) => setUrlState({ categoria: e.target.value, page: 1 })}
+                className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="socios-filter-fecha-desde"
+                className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+              >
+                Fecha alta desde
+              </label>
+              <input
+                id="socios-filter-fecha-desde"
+                name="fechaDesde"
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => setUrlState({ fechaDesde: e.target.value, page: 1 })}
+                className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="socios-filter-fecha-hasta"
+                className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500"
+              >
+                Fecha alta hasta
+              </label>
+              <input
+                id="socios-filter-fecha-hasta"
+                name="fechaHasta"
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => setUrlState({ fechaHasta: e.target.value, page: 1 })}
+                className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+            <div className="flex items-end pb-0.5">
+              <label
+                htmlFor="socios-filter-has-email"
+                className="inline-flex items-center gap-2 font-body text-sm text-ink-700"
+              >
+                <input
+                  id="socios-filter-has-email"
+                  name="hasEmail"
+                  type="checkbox"
+                  checked={hasEmail === 'true'}
+                  onChange={(e) =>
+                    setUrlState({
+                      hasEmail: e.target.checked ? 'true' : '',
+                      page: 1,
+                    })
+                  }
+                  className="h-4 w-4 rounded border-ink-200 text-accent focus:ring-accent"
+                />
+                Solo con email
+              </label>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Filter chips — pill for each active filter, with × to clear.
+            Per the design system, active filters are pills with a
+            border and accent-soft text-accent (the same as Badge
+            success), reinforcing "you've narrowed the list" without
+            shouting. The clear button stays text-only (no shadow). */}
+        {(categoria || fechaDesde || fechaHasta || hasEmail) && (
+          <ul data-testid="socios-filter-chips" className="flex flex-wrap items-center gap-2">
+            {categoria && (
+              <li>
+                <span className="inline-flex items-center gap-1 rounded border border-ink-200 bg-accent-soft px-2 py-0.5 font-body text-xs font-medium text-accent">
+                  Categoría: {categoria}
+                  <button
+                    type="button"
+                    onClick={() => setUrlState({ categoria: '', page: 1 })}
+                    aria-label={`Quitar filtro categoría ${categoria}`}
+                    className="ml-0.5 font-bold text-accent hover:text-accent-hover"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            )}
+            {fechaDesde && (
+              <li>
+                <span className="inline-flex items-center gap-1 rounded border border-ink-200 bg-accent-soft px-2 py-0.5 font-body text-xs font-medium text-accent">
+                  Desde: {fechaDesde}
+                  <button
+                    type="button"
+                    onClick={() => setUrlState({ fechaDesde: '', page: 1 })}
+                    aria-label="Quitar filtro fecha desde"
+                    className="ml-0.5 font-bold text-accent hover:text-accent-hover"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            )}
+            {fechaHasta && (
+              <li>
+                <span className="inline-flex items-center gap-1 rounded border border-ink-200 bg-accent-soft px-2 py-0.5 font-body text-xs font-medium text-accent">
+                  Hasta: {fechaHasta}
+                  <button
+                    type="button"
+                    onClick={() => setUrlState({ fechaHasta: '', page: 1 })}
+                    aria-label="Quitar filtro fecha hasta"
+                    className="ml-0.5 font-bold text-accent hover:text-accent-hover"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            )}
+            {hasEmail && (
+              <li>
+                <span className="inline-flex items-center gap-1 rounded border border-ink-200 bg-accent-soft px-2 py-0.5 font-body text-xs font-medium text-accent">
+                  Con email
+                  <button
+                    type="button"
+                    onClick={() => setUrlState({ hasEmail: '', page: 1 })}
+                    aria-label="Quitar filtro con email"
+                    className="ml-0.5 font-bold text-accent hover:text-accent-hover"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            )}
+          </ul>
+        )}
+      </form>
       <DataTable<Socio>
         testId="socios-table"
         columns={columns}
