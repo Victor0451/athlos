@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "chunks": [
+    {
+      "id": "12cab2b5",
+      "created_by": "vlongo",
+      "created_at": "2026-07-04T15:50:33Z",
+      "sessions": 43,
+      "memories": 246,
+      "prompts": 252
+    }
+  ]
+}
