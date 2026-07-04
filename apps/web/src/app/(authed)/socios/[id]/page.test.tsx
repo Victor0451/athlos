@@ -163,22 +163,34 @@ describe('Socio detail page', () => {
   it('renders the estado badge with the right copy', async () => {
     renderPage()
     await waitFor(() => {
-      expect(screen.getByText('activo')).toBeInTheDocument()
+      expect(screen.getByTestId('socio-detail-estado')).toHaveTextContent('activo')
     })
   })
 
   it('renders the sectioned fields (Datos personales + Contacto)', async () => {
     renderPage()
+    // Default tab is Datos personales.
     await waitFor(() => {
       expect(screen.getByTestId('socio-section-datos-personales')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('socio-section-contacto')).toBeInTheDocument()
+    // Datos personales panel shows the legacy keys (numero_socio + fecha_alta)
+    // + the flat field grid.
+    expect(screen.getByTestId('socio-field-numero_socio')).toBeInTheDocument()
+    expect(screen.getByText('00001')).toBeInTheDocument()
+    expect(screen.getByTestId('socio-field-fecha_alta')).toBeInTheDocument()
+    expect(screen.getByText('15/03/2020')).toBeInTheDocument()
+    // Contacto panel is rendered only when its tab is active (tabs
+    // are rendered lazily for performance — no reason to mount 3
+    // query hooks on page load).
+    expect(screen.queryByTestId('socio-section-contacto')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /contacto/i }))
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-section-contacto')).toBeInTheDocument()
+    })
     // The previously-flat grid still renders per-field testids.
     expect(screen.getByTestId('socio-field-email')).toBeInTheDocument()
     expect(screen.getByText('juan@example.com')).toBeInTheDocument()
     expect(screen.getByText('+5491155555555')).toBeInTheDocument()
-    expect(screen.getByText('15/03/2020')).toBeInTheDocument()
-    expect(screen.getByText('00001')).toBeInTheDocument()
   })
 
   it('shows a loading skeleton while the query is pending', () => {
@@ -214,6 +226,12 @@ describe('Socio detail page', () => {
 
   it('renders the CtacteTab with the socio id', async () => {
     renderPage()
+    // The CtacteTab mounts only when its tab is active — the tab
+    // click triggers the query (lazy mount + lazy fetch).
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /cuenta corriente/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('tab', { name: /cuenta corriente/i }))
     await waitFor(() => {
       expect(getCtacteMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, { limit: 20 })
     })
@@ -232,6 +250,11 @@ describe('Socio detail page', () => {
       socioId: otherId,
     })
     renderPage()
+    // The CtacteTab is lazy-mounted: the tab click triggers the query.
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /cuenta corriente/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('tab', { name: /cuenta corriente/i }))
     await waitFor(() => {
       expect(getCtacteMock).toHaveBeenCalledWith(otherId, { limit: 20 })
     })

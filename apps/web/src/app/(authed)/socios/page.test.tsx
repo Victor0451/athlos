@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -23,10 +23,24 @@ vi.mock('next/navigation', () => ({
 }))
 
 // nuqs mock — test controls URL state explicitly via the variables below.
-type UrlState = { search: string; estado: string; page: number; sortBy: string; sortDir: string }
+type UrlState = {
+  search: string
+  estado: string
+  categoria: string
+  fechaDesde: string
+  fechaHasta: string
+  hasEmail: string
+  page: number
+  sortBy: string
+  sortDir: string
+}
 const urlStateDefaults: UrlState = {
   search: '',
   estado: '',
+  categoria: '',
+  fechaDesde: '',
+  fechaHasta: '',
+  hasEmail: '',
   page: 1,
   sortBy: '',
   sortDir: '',
@@ -390,9 +404,15 @@ describe('Socios list page', () => {
 
 /* ── Advanced filters (categoria / fechaDesde / fechaHasta / hasEmail) ─ */
 
-it('renders the 4 advanced filter inputs with empty defaults', () => {
+it('renders the 4 advanced filter inputs after clicking "Más filtros"', () => {
   useAuthMock.mockReturnValue(makeAdminUser())
   renderPage()
+  // The advanced filters are collapsed behind a toggle by default.
+  // The advanced input fields are not in the DOM until the user
+  // opens the panel — this matches the design system (95% white/black,
+  // rojo only on intent moments — don't over-stuff the search form).
+  expect(screen.queryByLabelText(/categoría/i)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('socios-advanced-toggle'))
   expect(screen.getByLabelText(/categoría/i)).toBeInTheDocument()
   expect(screen.getByLabelText(/fecha alta desde/i)).toBeInTheDocument()
   expect(screen.getByLabelText(/fecha alta hasta/i)).toBeInTheDocument()
@@ -401,6 +421,8 @@ it('renders the 4 advanced filter inputs with empty defaults', () => {
 
 it('fires getSocios with categoria, fechaDesde, fechaHasta, and hasEmail when set in URL state', async () => {
   useAuthMock.mockReturnValue(makeAdminUser())
+  // When any advanced filter is in the URL, the page opens the
+  // advanced panel automatically (per useState initial value).
   currentUrlState = {
     ...urlStateDefaults,
     categoria: 'TITULAR',

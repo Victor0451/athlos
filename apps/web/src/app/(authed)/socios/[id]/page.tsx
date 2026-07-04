@@ -14,6 +14,8 @@ import {
 } from '@/lib/api/socios'
 import SocioForm from '@/components/socios/SocioForm'
 import { CtacteTab } from '@/components/socios/CtacteTab'
+import { Tabs } from '@/components/ui/Tabs'
+import { Badge } from '@/components/ui/Badge'
 
 /**
  * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; second
@@ -109,6 +111,10 @@ export default function SocioDetailPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [confirmReactivateOpen, setConfirmReactivateOpen] = useState(false)
+  // Tabbed sections: Datos / Contacto / Cuenta. Each panel renders
+  // independently under the same tab strip — switching is O(1) and
+  // preserves scroll position inside each panel.
+  const [activeTab, setActiveTab] = useState<'datos' | 'contacto' | 'cuenta'>('datos')
 
   const updateMutation = useMutation({
     mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
@@ -224,6 +230,24 @@ export default function SocioDetailPage() {
             {socio.apellido}, {socio.nombre}
           </h1>
           <p className="mt-1 font-mono text-xs text-ink-500">DNI {socio.dni}</p>
+          {/* Estado badge below the title — matches the rest of the
+              system. Gives the operator at-a-glance state without
+              requiring a tab switch. */}
+          <div className="mt-2">
+            <Badge
+              variant={
+                socio.estado === 'activo'
+                  ? 'success'
+                  : socio.estado === 'baja'
+                    ? 'danger'
+                    : 'warning'
+              }
+              ariaLabel={`Estado: ${socio.estado}`}
+              dataTestid="socio-detail-estado"
+            >
+              {socio.estado}
+            </Badge>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {isAdmin ? (
@@ -271,25 +295,57 @@ export default function SocioDetailPage() {
         </div>
       </header>
 
-      <section
-        aria-label="Datos personales"
-        className="rounded-lg border border-ink-100 bg-surface p-6 shadow-sm"
-        data-testid="socio-section-datos-personales"
-      >
-        <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Datos personales</h2>
-        {renderFieldRows(datosPersonales)}
-      </section>
+      <Tabs<'datos' | 'contacto' | 'cuenta'>
+        items={[
+          { key: 'datos', label: 'Datos personales', panelId: 'panel-datos' },
+          { key: 'contacto', label: 'Contacto', panelId: 'panel-contacto' },
+          { key: 'cuenta', label: 'Cuenta corriente', panelId: 'panel-cuenta' },
+        ]}
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        dataTestid="socio-detail-tabs"
+      />
 
-      <section
-        aria-label="Contacto"
-        className="rounded-lg border border-ink-100 bg-surface p-6 shadow-sm"
-        data-testid="socio-section-contacto"
-      >
-        <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Contacto</h2>
-        {renderFieldRows(contacto)}
-      </section>
+      {activeTab === 'datos' ? (
+        <section
+          id="panel-datos"
+          role="tabpanel"
+          aria-labelledby="tab-datos"
+          aria-label="Datos personales"
+          className="rounded-lg border border-ink-100 bg-surface p-6"
+          data-testid="socio-section-datos-personales"
+        >
+          <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Datos personales</h2>
+          {renderFieldRows(datosPersonales)}
+        </section>
+      ) : null}
 
-      <CtacteTab socioId={id} />
+      {activeTab === 'contacto' ? (
+        <section
+          id="panel-contacto"
+          role="tabpanel"
+          aria-labelledby="tab-contacto"
+          aria-label="Contacto"
+          className="rounded-lg border border-ink-100 bg-surface p-6"
+          data-testid="socio-section-contacto"
+        >
+          <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Contacto</h2>
+          {renderFieldRows(contacto)}
+        </section>
+      ) : null}
+
+      {activeTab === 'cuenta' ? (
+        <section
+          id="panel-cuenta"
+          role="tabpanel"
+          aria-labelledby="tab-cuenta"
+          aria-label="Cuenta corriente"
+          className="rounded-lg border border-ink-100 bg-surface p-6"
+          data-testid="socio-section-cuenta"
+        >
+          <CtacteTab socioId={id} />
+        </section>
+      ) : null}
 
       {/* Edit modal — ADMIN only */}
       {isAdmin && editOpen ? (
