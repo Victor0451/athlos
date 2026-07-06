@@ -126,6 +126,14 @@ interface SocioFormProps {
   /** Error from the parent (e.g., API 409 CONFLICT on duplicate
    *  numero_socio). Rendered above the submit button. */
   errorMessage?: string | undefined
+  /**
+   * Hide the default action buttons (Cancel + Submit). When true,
+   * the parent renders its own (e.g., inside a sticky modal footer
+   * that lives outside the form's scroll container). The form
+   * keeps its <form> wrapper so external buttons can use the
+   * `form="<id>"` attribute to submit. Default false.
+   */
+  hideActions?: boolean
 }
 
 const inputClass =
@@ -142,6 +150,7 @@ export default function SocioForm({
   onCancel,
   isSubmitting,
   errorMessage,
+  hideActions = false,
 }: SocioFormProps) {
   const isEdit = mode === 'edit'
   const {
@@ -173,6 +182,7 @@ export default function SocioForm({
 
   return (
     <form
+      id={`socio-form-${mode}`}
       onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
       noValidate
       className="space-y-4"
@@ -398,25 +408,27 @@ export default function SocioForm({
         </p>
       ) : null}
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={isSubmitting}
-          className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
-          data-testid="socio-form-cancel"
-        >
-          Cancelar
-        </button>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
-          data-testid="socio-form-submit"
-        >
-          {isSubmitting ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear socio'}
-        </button>
-      </div>
+      {hideActions ? null : (
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="socio-form-cancel"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="socio-form-submit"
+          >
+            {isSubmitting ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear socio'}
+          </button>
+        </div>
+      )}
     </form>
   )
 }

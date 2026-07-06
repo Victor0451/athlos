@@ -31,6 +31,7 @@ import SocioForm from '@/components/socios/SocioForm'
 import { CtacteTab } from '@/components/socios/CtacteTab'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
 
 /**
  * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; PR 8b.3
@@ -455,151 +456,151 @@ export default function SocioDetailPage() {
         </section>
       ) : null}
 
-      {/* Edit modal — ADMIN only */}
-      {isAdmin && editOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="socio-edit-modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
-          data-testid="socio-edit-modal"
-        >
-          <div className="w-full max-w-2xl rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
-            <h2
-              id="socio-edit-modal-title"
-              className="mb-4 font-display text-lg font-semibold text-ink-900"
-            >
-              Editar socio
-            </h2>
-            <SocioForm
-              mode="edit"
-              initialValue={socio}
-              isSubmitting={updateMutation.isPending}
-              errorMessage={updateMutation.error?.message}
-              onSubmit={(input) => updateMutation.mutate(input)}
-              onCancel={() => {
+      {/* Edit modal — ADMIN only. Body holds the SocioForm (with
+          hideActions), footer holds the action buttons. The submit
+          button uses `form="socio-form-edit"` to associate with the
+          inner form so the action stays in the sticky footer. */}
+      <Modal
+        open={isAdmin && editOpen}
+        title="Editar socio"
+        size="xl"
+        dataTestid="socio-edit-modal"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => {
                 if (!updateMutation.isPending) setEditOpen(false)
               }}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {/* Delete confirmation modal — ADMIN only */}
-      {isAdmin && confirmDeleteOpen ? (
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="socio-delete-modal-title"
-          aria-describedby="socio-delete-modal-desc"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
-          data-testid="socio-delete-modal"
-        >
-          <div className="w-full max-w-md rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
-            <h2
-              id="socio-delete-modal-title"
-              className="font-display text-lg font-semibold text-ink-900"
+              disabled={updateMutation.isPending}
+              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-edit-cancel"
             >
-              Dar baja al socio
-            </h2>
-            <p id="socio-delete-modal-desc" className="mt-2 font-body text-sm text-ink-500">
-              ¿Dar de baja a{' '}
-              <strong>
-                {socio.apellido}, {socio.nombre}
-              </strong>{' '}
-              (DNI {socio.dni})? El row se marca como &quot;baja&quot; pero NO se borra de la base
-              de datos — se preserva para el audit trail. El socio no aparece en el listado por
-              defecto.
-            </p>
-            {deleteError ? (
-              <p
-                role="alert"
-                className="mt-3 rounded-md border border-danger bg-danger/10 px-3 py-2 font-body text-sm text-danger"
-                data-testid="socio-delete-error"
-              >
-                {deleteError}
-              </p>
-            ) : null}
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!deleteMutation.isPending) {
-                    setConfirmDeleteOpen(false)
-                    setDeleteError(null)
-                  }
-                }}
-                disabled={deleteMutation.isPending}
-                className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid="socio-delete-cancel"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
-                className="rounded-[10px] bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid="socio-delete-confirm"
-              >
-                {deleteMutation.isPending ? 'Dando de baja…' : 'Confirmar baja'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="socio-form-edit"
+              disabled={updateMutation.isPending}
+              className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-edit-submit"
+            >
+              {updateMutation.isPending ? 'Guardando…' : 'Guardar cambios'}
+            </button>
+          </>
+        }
+      >
+        <SocioForm
+          mode="edit"
+          initialValue={socio}
+          isSubmitting={updateMutation.isPending}
+          errorMessage={updateMutation.error?.message}
+          onSubmit={(input) => updateMutation.mutate(input)}
+          onCancel={() => {
+            if (!updateMutation.isPending) setEditOpen(false)
+          }}
+          hideActions
+        />
+      </Modal>
+
+      {/* Delete confirmation modal — ADMIN only. alertdialog + description
+          so screen readers announce the destructive intent. */}
+      <Modal
+        open={isAdmin && confirmDeleteOpen}
+        title="Dar baja al socio"
+        role="alertdialog"
+        descriptionId="socio-delete-modal-desc"
+        size="md"
+        dataTestid="socio-delete-modal"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                if (!deleteMutation.isPending) {
+                  setConfirmDeleteOpen(false)
+                  setDeleteError(null)
+                }
+              }}
+              disabled={deleteMutation.isPending}
+              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-delete-cancel"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+              className="rounded-[10px] bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-delete-confirm"
+            >
+              {deleteMutation.isPending ? 'Dando de baja…' : 'Confirmar baja'}
+            </button>
+          </>
+        }
+      >
+        <p id="socio-delete-modal-desc" className="font-body text-sm text-ink-500">
+          ¿Dar de baja a{' '}
+          <strong>
+            {socio.apellido}, {socio.nombre}
+          </strong>{' '}
+          (DNI {socio.dni})? El row se marca como &quot;baja&quot; pero NO se borra de la base de
+          datos — se preserva para el audit trail. El socio no aparece en el listado por defecto.
+        </p>
+        {deleteError ? (
+          <p
+            role="alert"
+            className="mt-3 rounded-md border border-danger bg-danger/10 px-3 py-2 font-body text-sm text-danger"
+            data-testid="socio-delete-error"
+          >
+            {deleteError}
+          </p>
+        ) : null}
+      </Modal>
 
       {/* Reactivate confirmation modal — ADMIN only, shown only when
           estado='baja' (the Reactivar button in the header sets this). */}
-      {isAdmin && confirmReactivateOpen ? (
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="socio-reactivate-modal-title"
-          aria-describedby="socio-reactivate-modal-desc"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
-          data-testid="socio-reactivate-modal"
-        >
-          <div className="w-full max-w-md rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
-            <h2
-              id="socio-reactivate-modal-title"
-              className="font-display text-lg font-semibold text-ink-900"
+      <Modal
+        open={isAdmin && confirmReactivateOpen}
+        title="Reactivar socio"
+        role="alertdialog"
+        descriptionId="socio-reactivate-modal-desc"
+        size="md"
+        dataTestid="socio-reactivate-modal"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                if (!reactivateMutation.isPending) setConfirmReactivateOpen(false)
+              }}
+              disabled={reactivateMutation.isPending}
+              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-reactivate-cancel"
             >
-              Reactivar socio
-            </h2>
-            <p id="socio-reactivate-modal-desc" className="mt-2 font-body text-sm text-ink-500">
-              ¿Reactivar a{' '}
-              <strong>
-                {socio.apellido}, {socio.nombre}
-              </strong>{' '}
-              (DNI {socio.dni})? El socio volverá a estar activo y aparecerá en el listado por
-              defecto.
-            </p>
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!reactivateMutation.isPending) setConfirmReactivateOpen(false)
-                }}
-                disabled={reactivateMutation.isPending}
-                className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid="socio-reactivate-cancel"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => reactivateMutation.mutate()}
-                disabled={reactivateMutation.isPending}
-                className="rounded-[10px] bg-success px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-success/80 disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid="socio-reactivate-confirm"
-              >
-                {reactivateMutation.isPending ? 'Reactivando…' : 'Confirmar reactivación'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => reactivateMutation.mutate()}
+              disabled={reactivateMutation.isPending}
+              className="rounded-[10px] bg-success px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-success/80 disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="socio-reactivate-confirm"
+            >
+              {reactivateMutation.isPending ? 'Reactivando…' : 'Confirmar reactivación'}
+            </button>
+          </>
+        }
+      >
+        <p id="socio-reactivate-modal-desc" className="font-body text-sm text-ink-500">
+          ¿Reactivar a{' '}
+          <strong>
+            {socio.apellido}, {socio.nombre}
+          </strong>{' '}
+          (DNI {socio.dni})? El socio volverá a estar activo y aparecerá en el listado por defecto.
+        </p>
+      </Modal>
     </div>
   )
 }
