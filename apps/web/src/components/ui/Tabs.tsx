@@ -68,8 +68,8 @@ export function Tabs<TKey extends string>({
             data-testid={`tab-${item.key}`}
             className={
               active
-                ? 'border-b-2 border-accent px-4 py-2 font-display text-sm font-semibold text-ink-900'
-                : 'border-b-2 border-transparent px-4 py-2 font-display text-sm font-medium text-ink-500 transition-colors duration-fast hover:text-ink-700'
+                ? 'border-b-[3px] border-accent px-4 py-3 font-display text-sm font-semibold text-ink-900 transition-colors duration-fast'
+                : 'border-b-[3px] border-transparent px-4 py-3 font-display text-sm font-medium text-ink-500 transition-colors duration-fast hover:text-ink-700'
             }
           >
             {item.label}

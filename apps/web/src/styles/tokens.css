@@ -13,9 +13,12 @@
   --surface: #ffffff;
   --surface-elevated: #fafafa;
   --surface-sunken: #f4f4f4;
+  /* Page background — distinct from cards so they pop. */
+  --surface-page: #f8fafc;
 
   /* ── Ink scale (text + borders) ──────────────────────────── */
   --ink-100: #e8e8e8;
+  --ink-150: #e5e7eb;
   --ink-200: #d4d4d4;
   --ink-300: #9a9a9a;
   --ink-500: #4a4a4a;

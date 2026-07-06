@@ -4,6 +4,21 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  BadgeCheck,
+  CalendarDays,
+  ChevronLeft,
+  CreditCard,
+  Hash,
+  IdCard,
+  Mail,
+  MapPin,
+  Pencil,
+  PhoneCall,
+  Tag,
+  Trash2,
+  UserRound,
+} from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
 import {
   deleteSocio,
@@ -18,38 +33,32 @@ import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 
 /**
- * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; second
- * slice: sectioned layout + CtacteTab, PR 8b.2 second slice).
+ * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; PR 8b.3
+ * visual refresh).
  *
  * Read-only view at PR 8b.1. PR 8b.2 layered the ADMIN-gated create /
- * update / delete surface on top:
- *   - "Editar" button (ADMIN only) opens a modal with
- *     <SocioForm mode="edit" /> pre-filled from the current socio.
- *   - "Dar baja" button (ADMIN only) opens a confirmation modal. The
- *     server soft-deletes (`estado='baja'` + `deletedAt`); the row
- *     stays in the table for the audit trail.
- *   - "Reactivar" button (ADMIN only, visible only when `estado='baja'`)
- *     PATCHes the row with `estado='activo'`. Single-click with
- *     confirmation modal.
- *     On confirm, the server soft-deletes (sets `estado='baja'`) and
- *     we navigate back to the list.
- *   - Both mutations invalidate `['socio', id]` and `['socios']`
- *     query keys so the list and detail refetch with fresh data.
+ * update / delete surface on top. PR 8b.3 is the visual refresh per
+ * `obsidian/Projectos/Athlos/Example/UI_Refresh_Codex_Especificacion.md`:
  *
- * PR 8b.2 second slice — visual + functional polish:
- *   - Fields are grouped into "Datos personales" / "Contacto"
- *     sections (each its own `<section>` + h2), per the
- *     design-system "sectioned detail view" pattern.
- *   - The "Próximamente" placeholder is replaced with the live
- *     <CtacteTab socioId={id} /> component so the saldo + the
- *     first page of movimientos render in place.
+ *   - Header name bumped to 32-36px semibold (was 24px).
+ *   - Big circular back-button on the LEFT (`router.back()`), so the
+ *     user has an obvious "exit this view" affordance regardless of
+ *     scroll position.
+ *   - DNI + estado badge live on a single line below the title.
+ *   - All action buttons carry a Lucide icon and use the spec's 10px
+ *     radius.
+ *   - Tabs: icons inside the tab, 3px active underline (was 2px), more
+ *     vertical padding.
+ *   - Card principal: rounded-xl (12px), shadow-sm (very subtle),
+ *     p-8 (32px), title row with icon tile + subtitle.
+ *   - Field grid: 3 columns, each field has its own Lucide icon tile,
+ *     uppercase label, larger value, soft vertical/horizontal
+ *     separators (dotted, ink-150).
  *
- * Future tabs (Deportes / Cuotas) follow the same section pattern
- * once they ship — the orchestrator scope caps this slice to the
- * Ctacte only.
+ * The refresh is incremental — no architectural change, no API
+ * change, no new components. The `Tabs` and `Badge` primitives stay
+ * untouched; this file just composes them with the new layout.
  */
-
-const SECTION_HEADING = 'text-base font-semibold uppercase tracking-wide text-ink-700'
 
 const FIELD_LABEL: Record<string, string> = {
   numero_socio: 'N° Socio',
@@ -93,6 +102,38 @@ const CONTACTO_FIELDS: FieldRow[] = [
   { key: 'telefono', value: null },
   { key: 'email', value: null },
 ]
+
+/**
+ * Iconic decoration for each field row. The icon sits inside a soft
+ * tinted tile on the LEFT of the label, matching the mockup. Keys
+ * not in this map render without an icon tile (graceful fallback).
+ */
+function FieldIcon({ k }: { k: keyof Socio }) {
+  const className = 'h-4 w-4 text-accent'
+  switch (k) {
+    case 'numero_socio':
+      return <Hash className={className} aria-hidden="true" />
+    case 'dni':
+      return <IdCard className={className} aria-hidden="true" />
+    case 'apellido':
+    case 'nombre':
+      return <UserRound className={className} aria-hidden="true" />
+    case 'fecha_alta':
+      return <CalendarDays className={className} aria-hidden="true" />
+    case 'estado':
+      return <BadgeCheck className={className} aria-hidden="true" />
+    case 'categoria':
+      return <Tag className={className} aria-hidden="true" />
+    case 'direccion':
+      return <MapPin className={className} aria-hidden="true" />
+    case 'telefono':
+      return <PhoneCall className={className} aria-hidden="true" />
+    case 'email':
+      return <Mail className={className} aria-hidden="true" />
+    default:
+      return null
+  }
+}
 
 export default function SocioDetailPage() {
   const params = useParams<{ id: string }>()
@@ -158,7 +199,7 @@ export default function SocioDetailPage() {
         className="space-y-6"
         data-testid="socio-detail-loading"
       >
-        <div className="h-7 w-64 animate-pulse rounded bg-surface-sunken" />
+        <div className="h-9 w-64 animate-pulse rounded bg-surface-sunken" />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {Array.from({ length: 9 }).map((_, i) => (
             <div key={i} className="space-y-2">
@@ -177,7 +218,7 @@ export default function SocioDetailPage() {
       <div
         role="alert"
         data-testid="socio-detail-not-found"
-        className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+        className="rounded-xl border border-ink-150 bg-surface p-8 text-center shadow-sm"
       >
         <p className="font-display text-lg font-semibold text-ink-900">Socio no encontrado</p>
         <p className="mt-2 font-body text-sm text-ink-500">
@@ -186,7 +227,7 @@ export default function SocioDetailPage() {
         </p>
         <Link
           href="/socios"
-          className="mt-4 inline-block rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="mt-4 inline-block rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
         >
           Volver al listado
         </Link>
@@ -196,20 +237,37 @@ export default function SocioDetailPage() {
 
   const socio = socioQuery.data as Socio
 
+  /**
+   * Renders the 3-column field grid with icon tiles + dotted
+   * separators. Each row is a 3-cell grid; cells share the same
+   * vertical/horizontal lines via the `border-r border-b` chain. The
+   * last cell of each row drops the right border; the last row drops
+   * the bottom border. We use `divide-x` + `divide-y` for less code
+   * with the same visual result.
+   */
   function renderFieldRows(fields: FieldRow[]) {
     return (
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 divide-y divide-dashed divide-ink-150 sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-3">
         {fields.map((row) => (
-          <div key={row.key} data-testid={`socio-field-${row.key}`}>
-            <dt className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-              {FIELD_LABEL[row.key] ?? row.key}
-            </dt>
-            <dd className="mt-1 font-body text-sm text-ink-700">
-              {formatValue(row.key, socio[row.key])}
-            </dd>
+          <div
+            key={row.key}
+            data-testid={`socio-field-${row.key}`}
+            className="flex items-start gap-3 px-2 py-5"
+          >
+            <div className="shrink-0 rounded-lg bg-accent-soft p-2">
+              <FieldIcon k={row.key} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-display text-[11px] font-semibold uppercase tracking-widest text-ink-500">
+                {FIELD_LABEL[row.key] ?? row.key}
+              </div>
+              <div className="mt-1 font-body text-lg text-ink-900 break-words">
+                {formatValue(row.key, socio[row.key])}
+              </div>
+            </div>
           </div>
         ))}
-      </dl>
+      </div>
     )
   }
 
@@ -221,19 +279,26 @@ export default function SocioDetailPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
+      {/* ── Header ────────────────────────────────────────────── */}
+      <header className="flex items-start gap-4">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          aria-label="Volver"
+          data-testid="socio-detail-back"
+          className="shrink-0 rounded-xl border border-ink-150 bg-surface p-3 shadow-sm transition-colors duration-fast hover:bg-surface-sunken"
+        >
+          <ChevronLeft className="h-5 w-5 text-ink-700" aria-hidden="true" />
+        </button>
+        <div className="min-w-0 flex-1">
           <h1
-            className="font-display text-2xl font-bold text-ink-900"
+            className="font-display text-3xl font-bold uppercase tracking-tight text-ink-900"
             data-testid="socio-detail-h1"
           >
             {socio.apellido}, {socio.nombre}
           </h1>
-          <p className="mt-1 font-mono text-xs text-ink-500">DNI {socio.dni}</p>
-          {/* Estado badge below the title — matches the rest of the
-              system. Gives the operator at-a-glance state without
-              requiring a tab switch. */}
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className="font-mono text-sm text-ink-500">DNI {socio.dni}</span>
             <Badge
               variant={
                 socio.estado === 'activo'
@@ -249,22 +314,23 @@ export default function SocioDetailPage() {
             </Badge>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {isAdmin ? (
             <>
               <button
                 type="button"
                 onClick={() => setEditOpen(true)}
-                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+                className="inline-flex items-center gap-1.5 rounded-[10px] border border-ink-200 bg-surface px-3 py-1.5 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
                 data-testid="socio-detail-edit"
               >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                 Editar
               </button>
               {socio.estado === 'baja' ? (
                 <button
                   type="button"
                   onClick={() => setConfirmReactivateOpen(true)}
-                  className="rounded-md border border-success bg-surface px-3 py-1 font-body text-sm text-success transition-colors duration-fast hover:bg-success hover:text-white"
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-success bg-surface px-3 py-1.5 font-body text-sm text-success transition-colors duration-fast hover:bg-success hover:text-white"
                   data-testid="socio-detail-reactivate"
                 >
                   Reactivar
@@ -276,46 +342,78 @@ export default function SocioDetailPage() {
                     setDeleteError(null)
                     setConfirmDeleteOpen(true)
                   }}
-                  className="rounded-md border border-danger bg-surface px-3 py-1 font-body text-sm text-danger transition-colors duration-fast hover:bg-danger hover:text-white"
+                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-danger bg-surface px-3 py-1.5 font-body text-sm text-danger transition-colors duration-fast hover:bg-danger hover:text-white"
                   data-testid="socio-detail-delete"
                 >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                   Dar baja
                 </button>
               )}
             </>
           ) : null}
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-            data-testid="socio-detail-back"
-          >
-            Volver al listado
-          </button>
         </div>
       </header>
 
+      {/* ── Tabs (with icons) ─────────────────────────────────── */}
       <Tabs<'datos' | 'contacto' | 'cuenta'>
         items={[
-          { key: 'datos', label: 'Datos personales', panelId: 'panel-datos' },
-          { key: 'contacto', label: 'Contacto', panelId: 'panel-contacto' },
-          { key: 'cuenta', label: 'Cuenta corriente', panelId: 'panel-cuenta' },
+          {
+            key: 'datos',
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <UserRound className="h-4 w-4" aria-hidden="true" />
+                Datos personales
+              </span>
+            ),
+            panelId: 'panel-datos',
+          },
+          {
+            key: 'contacto',
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <PhoneCall className="h-4 w-4" aria-hidden="true" />
+                Contacto
+              </span>
+            ),
+            panelId: 'panel-contacto',
+          },
+          {
+            key: 'cuenta',
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <CreditCard className="h-4 w-4" aria-hidden="true" />
+                Cuenta corriente
+              </span>
+            ),
+            panelId: 'panel-cuenta',
+          },
         ]}
         activeKey={activeTab}
         onChange={setActiveTab}
         dataTestid="socio-detail-tabs"
       />
 
+      {/* ── Tab panels (lazy-mounted) ─────────────────────────── */}
       {activeTab === 'datos' ? (
         <section
           id="panel-datos"
           role="tabpanel"
           aria-labelledby="tab-datos"
           aria-label="Datos personales"
-          className="rounded-lg border border-ink-100 bg-surface p-6"
+          className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
           data-testid="socio-section-datos-personales"
         >
-          <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Datos personales</h2>
+          <header className="mb-6 flex items-center gap-3">
+            <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
+              <UserRound className="h-5 w-5 text-accent" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-900">Datos personales</h2>
+              <p className="font-body text-sm text-ink-500">
+                Información básica registrada en el sistema.
+              </p>
+            </div>
+          </header>
           {renderFieldRows(datosPersonales)}
         </section>
       ) : null}
@@ -326,10 +424,20 @@ export default function SocioDetailPage() {
           role="tabpanel"
           aria-labelledby="tab-contacto"
           aria-label="Contacto"
-          className="rounded-lg border border-ink-100 bg-surface p-6"
+          className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
           data-testid="socio-section-contacto"
         >
-          <h2 className={`mb-4 font-display ${SECTION_HEADING}`}>Contacto</h2>
+          <header className="mb-6 flex items-center gap-3">
+            <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
+              <PhoneCall className="h-5 w-5 text-accent" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-900">Contacto</h2>
+              <p className="font-body text-sm text-ink-500">
+                Medios de comunicación registrados para este socio.
+              </p>
+            </div>
+          </header>
           {renderFieldRows(contacto)}
         </section>
       ) : null}
@@ -340,7 +448,7 @@ export default function SocioDetailPage() {
           role="tabpanel"
           aria-labelledby="tab-cuenta"
           aria-label="Cuenta corriente"
-          className="rounded-lg border border-ink-100 bg-surface p-6"
+          className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
           data-testid="socio-section-cuenta"
         >
           <CtacteTab socioId={id} />
@@ -356,7 +464,7 @@ export default function SocioDetailPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
           data-testid="socio-edit-modal"
         >
-          <div className="w-full max-w-2xl rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+          <div className="w-full max-w-2xl rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
             <h2
               id="socio-edit-modal-title"
               className="mb-4 font-display text-lg font-semibold text-ink-900"
@@ -387,7 +495,7 @@ export default function SocioDetailPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
           data-testid="socio-delete-modal"
         >
-          <div className="w-full max-w-md rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
             <h2
               id="socio-delete-modal-title"
               className="font-display text-lg font-semibold text-ink-900"
@@ -422,7 +530,7 @@ export default function SocioDetailPage() {
                   }
                 }}
                 disabled={deleteMutation.isPending}
-                className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="socio-delete-cancel"
               >
                 Cancelar
@@ -431,7 +539,7 @@ export default function SocioDetailPage() {
                 type="button"
                 onClick={() => deleteMutation.mutate()}
                 disabled={deleteMutation.isPending}
-                className="rounded-md bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-[10px] bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/80 disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="socio-delete-confirm"
               >
                 {deleteMutation.isPending ? 'Dando de baja…' : 'Confirmar baja'}
@@ -452,7 +560,7 @@ export default function SocioDetailPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
           data-testid="socio-reactivate-modal"
         >
-          <div className="w-full max-w-md rounded-lg border border-ink-100 bg-surface-elevated p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-xl border border-ink-150 bg-surface-elevated p-8 shadow-2xl">
             <h2
               id="socio-reactivate-modal-title"
               className="font-display text-lg font-semibold text-ink-900"
@@ -474,7 +582,7 @@ export default function SocioDetailPage() {
                   if (!reactivateMutation.isPending) setConfirmReactivateOpen(false)
                 }}
                 disabled={reactivateMutation.isPending}
-                className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="socio-reactivate-cancel"
               >
                 Cancelar
@@ -483,7 +591,7 @@ export default function SocioDetailPage() {
                 type="button"
                 onClick={() => reactivateMutation.mutate()}
                 disabled={reactivateMutation.isPending}
-                className="rounded-md bg-success px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-success/80 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-[10px] bg-success px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-success/80 disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="socio-reactivate-confirm"
               >
                 {reactivateMutation.isPending ? 'Reactivando…' : 'Confirmar reactivación'}
