@@ -35,12 +35,12 @@ import type {
  *   - `db.update(table).set(p).where(cond).returning(...)`
  *   - `db.transaction(async (tx) => { ... })`  → passes a tx wrapper
  *   - `db.select(p).from(t1).innerJoin(t2, cond)`  → joined rows
- *   - `eq`, `and`, `isNull`, `gt`, `lt` operators (parsed from queryChunks)
+ *   - `eq`, `and`, `isNull`, `gt`, `lt`, `inArray` operators (parsed from queryChunks)
  *   - `sql\`count(*)::int\`` projections
  *
  * Not supported (callers MUST NOT use):
  *   - GROUP BY, ORDER BY, OFFSET (tests don't need them)
- *   - `between`, `inArray`, `isNotNull`
+ *   - `between`, `isNotNull`
  *   - LEFT / RIGHT joins (only INNER JOIN is wired)
  */
 
@@ -94,7 +94,11 @@ export interface StandinDb {
   reset(): void
 }
 
-type Filter = { kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'ilike'; column: string; value: unknown }
+type Filter = {
+  kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'ilike' | 'inArray'
+  column: string
+  value: unknown
+}
 
 /**
  * A logical group. The standin models the WHERE as a flat list of
@@ -327,6 +331,10 @@ function matches(row: Row, f: Filter, tableName: string): boolean {
     const re = new RegExp('^' + pattern + '$', 'i')
     return re.test(v)
   }
+  if (f.kind === 'inArray') {
+    if (!Array.isArray(f.value)) return false
+    return (f.value as unknown[]).includes(v)
+  }
   return false
 }
 
@@ -526,6 +534,21 @@ function parseLeaf(chunks: Array<unknown>): Filter | null {
       if (opStr === ' < ') return { kind: 'lt', column: col, value: val }
       if (opStr?.toLowerCase() === ' ilike ')
         return { kind: 'ilike', column: col, value: String(val) }
+      if (opStr?.toLowerCase() === ' in ') {
+        // `inArray(col, [a, b, c])` produces chunks[3] as an
+        // Array of value objects (each with `value: <scalar>`).
+        // We unwrap every entry so the matcher sees the scalars.
+        const arr = chunks[3]
+        if (Array.isArray(arr)) {
+          const values = arr.map((entry) => unwrapValue(entry))
+          return { kind: 'inArray', column: col, value: values }
+        }
+        // Defensive: a non-array value means the chunks shape
+        // doesn't match what drizzle 0.36 produces. Surface as
+        // a no-match filter so the test fails loudly rather
+        // than silently returning all rows.
+        return { kind: 'inArray', column: col, value: [] }
+      }
     }
   }
   return null

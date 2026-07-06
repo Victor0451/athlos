@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import { inArray } from 'drizzle-orm'
+import type { Db } from '@athlos/db'
+import { operators } from '@athlos/db/schema'
+import { BusinessError, ErrorCode } from '@athlos/errors'
 
 /**
  * `operator-lookup` module — read-only batch resolution of operator
@@ -45,3 +49,59 @@ export interface OperatorSummary {
 export const getOperatorByIdsQuerySchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(200),
 })
+
+/**
+ * Decode the `operators.role` char(1) column to the wire enum.
+ * Mirrors `apps/api/src/services/auth.ts:charToRole` — kept private
+ * here (design D6) rather than re-exporting from auth to avoid
+ * coupling two packages for 6 lines.
+ */
+function charToRole(code: string): OperatorRole {
+  switch (code) {
+    case 'A':
+      return 'ADMIN'
+    case 'T':
+      return 'TESORERO'
+    case 'O':
+      return 'OPERADOR'
+    case 'C':
+      return 'CONSULTA'
+    default:
+      throw BusinessError(ErrorCode.INTERNAL_ERROR, `Unknown operator role code: ${code}`)
+  }
+}
+
+/**
+ * Resolve a batch of operator ids to their public summaries.
+ *
+ * One Drizzle query (`inArray(operators.id, ids)`) — never per-id
+ * roundtrips (spec §"Single batched query"). The SELECT projection
+ * is intentionally narrow: only `id`, `username`, `role` leave the
+ * database (design D5), so `password_hash`, `failed_login_attempts`,
+ * and `is_active` never reach this code path.
+ *
+ * Missing ids are silently omitted (spec §"Mixed valid + unknown").
+ * Soft-deleted rows (`is_active = false`) are returned with their
+ * historical name (spec §"Soft-deleted operators retained") — the
+ * chip helper treats active and soft-deleted rows identically
+ * because the wire DTO doesn't expose `is_active`.
+ *
+ * Empty input short-circuits to `[]` so the route layer doesn't
+ * waste a roundtrip on a query that's guaranteed to return nothing.
+ */
+export async function listByIds(db: Db, ids: string[]): Promise<OperatorSummary[]> {
+  if (ids.length === 0) return []
+  const rows = await db
+    .select({
+      id: operators.id,
+      username: operators.username,
+      role: operators.role,
+    })
+    .from(operators)
+    .where(inArray(operators.id, ids))
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    role: charToRole(row.role),
+  }))
+}
