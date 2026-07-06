@@ -403,7 +403,7 @@ export default function SocioForm({
           type="button"
           onClick={onCancel}
           disabled={isSubmitting}
-          className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="socio-form-cancel"
         >
           Cancelar
@@ -411,7 +411,7 @@ export default function SocioForm({
         <button
           type="submit"
           disabled={isSubmitting}
-          className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="socio-form-submit"
         >
           {isSubmitting ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear socio'}

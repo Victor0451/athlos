@@ -91,11 +91,16 @@ describe('New socio page', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the "Nuevo socio" heading + a back link to /socios for ADMIN', () => {
+  it('renders the "Nuevo socio" heading + a back button for ADMIN', () => {
     renderPage()
     expect(screen.getByTestId('new-socio-heading')).toHaveTextContent(/nuevo socio/i)
     const back = screen.getByTestId('new-socio-back')
-    expect(back).toHaveAttribute('href', '/socios')
+    expect(back).toBeInTheDocument()
+    // The back control is a <button>, not a <Link> — clicking it
+    // pushes /socios (the canonical back target for this page, since
+    // there's no meaningful "history" to preserve on a deep-link).
+    fireEvent.click(back)
+    expect(pushMock).toHaveBeenCalledWith('/socios')
   })
 
   it('renders the create-mode SocioForm for ADMIN', () => {
