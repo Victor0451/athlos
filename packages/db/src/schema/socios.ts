@@ -1,5 +1,6 @@
 import {
   date,
+  index,
   integer,
   numeric,
   pgSchema,
@@ -21,6 +22,52 @@ import {
  * without a structural migration.
  */
 export const sociosSchema = pgSchema('socios')
+
+/**
+ * Per-socio free-form notes (`socio_notes`) — PR 8b.4.
+ *
+ * An operator can attach a free-text memo to any socio to record
+ * out-of-band context that doesn't fit into the structured fields
+ * (categoria, telefono, email, etc.). Examples:
+ *
+ *   - "Llamó el 2026-07-04 pidiendo cambio de cuota. Coordinar
+ *      con tesorería para facturarle mitad de julio."
+ *   - "Viuda del socio histórico #0014; contactarse con la hija
+ *      María antes de fin de mes."
+ *   - "Viene los martes con el nieto a la colonia."
+ *
+ * Edit history is preserved by routing every create/update/delete
+ * through `audit_events` (action = `SOCIO_NOTE_CREATED` /
+ * `SOCIO_NOTE_UPDATED` / `SOCIO_NOTE_DELETED`) — the timeline tab
+ * on the detail page renders them inline with system events.
+ *
+ * Permissions: all authenticated operators can read + create. Edit
+ * + delete is restricted to the original author OR ADMIN
+ * (enforced at the route layer).
+ */
+export const socioNotes = sociosSchema.table(
+  'socio_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    socioId: uuid('socio_id')
+      .notNull()
+      .references(() => socios.id, { onDelete: 'restrict' }),
+    /** FK to `operators` lives in the `auth` schema — declared as a
+     *  loose UUID here to avoid a cross-schema FK that breaks the
+     *  Drizzle relational queries. The route layer enforces
+     *  existence and ownership via a SELECT. */
+    operatorId: uuid('operator_id').notNull(),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    socioIdIdx: index('socio_notes_socio_id_idx').on(table.socioId),
+  }),
+)
+
+export type SocioNote = typeof socioNotes.$inferSelect
+export type NewSocioNote = typeof socioNotes.$inferInsert
 
 /**
  * Membership state. Soft-delete flips `estado` to `baja` and stamps

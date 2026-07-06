@@ -3,7 +3,9 @@ import { z } from 'zod'
 import { idSchema, socioEstadoSchema } from '@athlos/validation'
 import { throwIfInvalid } from '@athlos/errors'
 import { requireAuth, requireRole } from '@athlos/auth'
+import { queryAudit } from '@athlos/audit'
 import { aggregate, create, getById, list, softDelete, update } from '../modules/socios/service.ts'
+import { createNote, deleteNote, listForSocio, updateNote } from '../modules/socios/notes.ts'
 import type { AppContainer } from '../container.ts'
 
 /**
@@ -248,7 +250,180 @@ export const sociosRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     },
   )
 
+  /* ── Notes (PR 8b.4) ──────────────────────────────────────────── */
+
+  const noteParamSchema = z.object({ id: idSchema, noteId: idSchema })
+  const noteBodySchema = z.object({
+    body: z.string().min(1, 'Body requerido').max(4000, 'Máx. 4000 caracteres'),
+  })
+
+  // GET /api/v1/socios/:id/notes
+  fastify.get<{ Params: { id: string } }>(
+    '/api/v1/socios/:id/notes',
+    AUTH,
+    async (request, reply) => {
+      const params = throwIfInvalid(idParamSchema, request.params, 'params')
+      const items = await listForSocio(container.db, params.id)
+      return reply.code(200).send({
+        items: items.map(toSocioNoteDTO),
+      })
+    },
+  )
+
+  // POST /api/v1/socios/:id/notes
+  fastify.post<{ Params: { id: string } }>(
+    '/api/v1/socios/:id/notes',
+    AUTH,
+    async (request, reply) => {
+      const params = throwIfInvalid(idParamSchema, request.params, 'params')
+      const body = throwIfInvalid(noteBodySchema, request.body, 'body')
+      const operatorId = request.operator?.sub
+      if (!operatorId) {
+        return reply.code(401).send({ error: 'unauthenticated' })
+      }
+      const row = await createNote(
+        container.db,
+        params.id,
+        { body: body.body, operatorId },
+        {
+          operatorId,
+          sourceIp: request.ip ?? null,
+        },
+      )
+      return reply.code(201).send(toSocioNoteDTO(row))
+    },
+  )
+
+  // PATCH /api/v1/socios/:id/notes/:noteId — author OR ADMIN only (enforced in service).
+  fastify.patch<{ Params: { id: string; noteId: string } }>(
+    '/api/v1/socios/:id/notes/:noteId',
+    AUTH,
+    async (request, reply) => {
+      const params = throwIfInvalid(noteParamSchema, request.params, 'params')
+      const body = throwIfInvalid(noteBodySchema, request.body, 'body')
+      const callerOperatorId = request.operator?.sub
+      const callerRole = request.operator?.role
+      if (!callerOperatorId || !callerRole) {
+        return reply.code(401).send({ error: 'unauthenticated' })
+      }
+      const row = await updateNote(
+        container.db,
+        params.noteId,
+        { body: body.body },
+        { callerOperatorId, callerRole },
+        {
+          operatorId: callerOperatorId,
+          sourceIp: request.ip ?? null,
+        },
+      )
+      return reply.code(200).send(toSocioNoteDTO(row))
+    },
+  )
+
+  // DELETE /api/v1/socios/:id/notes/:noteId — author OR ADMIN only.
+  fastify.delete<{ Params: { id: string; noteId: string } }>(
+    '/api/v1/socios/:id/notes/:noteId',
+    AUTH,
+    async (request, reply) => {
+      const params = throwIfInvalid(noteParamSchema, request.params, 'params')
+      const callerOperatorId = request.operator?.sub
+      const callerRole = request.operator?.role
+      if (!callerOperatorId || !callerRole) {
+        return reply.code(401).send({ error: 'unauthenticated' })
+      }
+      await deleteNote(
+        container.db,
+        params.noteId,
+        { callerOperatorId, callerRole },
+        {
+          operatorId: callerOperatorId,
+          sourceIp: request.ip ?? null,
+        },
+      )
+      return reply.code(204).send()
+    },
+  )
+
+  /* ── Audit wrapper (PR 8b.4) ────────────────────────────────────── *
+   * Returns audit_events rows for THIS socio. The underlying
+   * queryAudit() is admin/steward-gated at /api/v1/audit; the
+   * wrapper exposes a per-socio view that's accessible to any
+   * authenticated operator (they need to see the timeline inside
+   * the detail page). */
+
+  // GET /api/v1/socios/:id/audit?page=&limit=
+  fastify.get<{ Params: { id: string } }>(
+    '/api/v1/socios/:id/audit',
+    AUTH,
+    async (request, reply) => {
+      const params = throwIfInvalid(idParamSchema, request.params, 'params')
+      const q = request.query as { page?: string; limit?: string }
+      const page = q.page ? Math.max(1, Number(q.page)) : 1
+      const limit = q.limit ? Math.min(200, Math.max(1, Number(q.limit))) : 100
+      const result = await queryAudit(container.db, {
+        entityType: 'socio',
+        entityId: params.id,
+        page,
+        limit,
+      })
+      return reply.code(200).send({
+        items: result.items.map(toAuditEventDTO),
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+      })
+    },
+  )
+
   done()
+}
+
+/* ── DTOs (snake_case to match the wire contract) ──────────────── */
+
+/** Map a `SocioNote` row to the wire DTO. */
+function toSocioNoteDTO(row: {
+  id: string
+  socioId: string
+  operatorId: string
+  body: string
+  createdAt: Date
+  updatedAt: Date
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    socio_id: row.socioId,
+    operator_id: row.operatorId,
+    body: row.body,
+    created_at: row.createdAt.toISOString(),
+    updated_at: row.updatedAt.toISOString(),
+  }
+}
+
+/** Map an audit_events row to the wire DTO the timeline UI consumes.
+ *  `old_value` / `new_value` are passed through as-is — the UI
+ *  renders them as a JSON diff when the action is `SOCIO_UPDATED`. */
+function toAuditEventDTO(row: {
+  id: string
+  operatorId: string | null
+  action: string
+  entityType: string
+  entityId: string
+  oldValue: unknown
+  newValue: unknown
+  sourceIp: string | null
+  createdAt: Date
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    operator_id: row.operatorId,
+    action: row.action,
+    entity_type: row.entityType,
+    entity_id: row.entityId,
+    old_value: row.oldValue ?? null,
+    new_value: row.newValue ?? null,
+    source_ip: row.sourceIp,
+    created_at: row.createdAt.toISOString(),
+  }
 }
 
 declare module 'fastify' {

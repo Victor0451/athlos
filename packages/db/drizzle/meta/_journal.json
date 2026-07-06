@@ -141,6 +141,13 @@
       "when": 1782342200000,
       "tag": "0019_gastos_ctacte_mapping",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0020_socio_notes",
+      "breakpoints": true
     }
   ]
 }
