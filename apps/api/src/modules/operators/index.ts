@@ -11,4 +11,9 @@
  * (for example schema.ts after a D3 split) get added.
  */
 
-export { getOperatorByIdsQuerySchema, OperatorRole, type OperatorSummary } from './lookup.ts'
+export {
+  getOperatorByIdsQuerySchema,
+  listByIds,
+  OperatorRole,
+  type OperatorSummary,
+} from './lookup.ts'
