@@ -15,8 +15,10 @@ const config: Config = {
         surface: 'var(--surface)',
         'surface-elevated': 'var(--surface-elevated)',
         'surface-sunken': 'var(--surface-sunken)',
+        'surface-page': 'var(--surface-page)',
         ink: {
           100: 'var(--ink-100)',
+          150: 'var(--ink-150)',
           200: 'var(--ink-200)',
           300: 'var(--ink-300)',
           500: 'var(--ink-500)',
@@ -55,6 +57,8 @@ const config: Config = {
         sm: 'var(--radius-sm)',
         md: 'var(--radius-md)',
         lg: 'var(--radius-lg)',
+        xl: '12px',
+        '2xl': '16px',
       },
       boxShadow: {
         sm: 'var(--shadow-sm)',
