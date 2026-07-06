@@ -307,7 +307,7 @@ describe('Socio detail page', () => {
     fireEvent.input(screen.getByTestId('socio-form-telefono'), {
       target: { value: '+5491100000000' },
     })
-    fireEvent.click(screen.getByTestId('socio-form-submit'))
+    fireEvent.click(screen.getByTestId('socio-edit-submit'))
 
     await waitFor(() => {
       // The form now strips the immutable legacy keys
