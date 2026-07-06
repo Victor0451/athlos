@@ -31,13 +31,27 @@ vi.mock('next/navigation', () => ({
 const getSocioMock = vi.fn()
 const updateSocioMock = vi.fn()
 const deleteSocioMock = vi.fn()
+const listSocioNotesMock = vi.fn()
+const createSocioNoteMock = vi.fn()
+const updateSocioNoteMock = vi.fn()
+const deleteSocioNoteMock = vi.fn()
+const getSocioAuditMock = vi.fn()
 
-vi.mock('@/lib/api/socios', () => ({
-  getSocio: (...args: unknown[]) => getSocioMock(...args),
-  createSocio: vi.fn(),
-  updateSocio: (...args: unknown[]) => updateSocioMock(...args),
-  deleteSocio: (...args: unknown[]) => deleteSocioMock(...args),
-}))
+vi.mock('@/lib/api/socios', async (importOriginal) => {
+  const original = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...original,
+    getSocio: (...args: unknown[]) => getSocioMock(...args),
+    createSocio: vi.fn(),
+    updateSocio: (...args: unknown[]) => updateSocioMock(...args),
+    deleteSocio: (...args: unknown[]) => deleteSocioMock(...args),
+    listSocioNotes: (...args: unknown[]) => listSocioNotesMock(...args),
+    createSocioNote: (...args: unknown[]) => createSocioNoteMock(...args),
+    updateSocioNote: (...args: unknown[]) => updateSocioNoteMock(...args),
+    deleteSocioNote: (...args: unknown[]) => deleteSocioNoteMock(...args),
+    getSocioAudit: (...args: unknown[]) => getSocioAuditMock(...args),
+  }
+})
 // The mock must export every name the page imports so partial mocks
 // don't trip TS on the page side — hence `createSocio` is included
 // even though the page itself doesn't call it directly (the test
@@ -139,6 +153,13 @@ describe('Socio detail page', () => {
     getSocioMock.mockResolvedValue(SAMPLE_SOCIO)
     getCtacteMock.mockReset()
     getCtacteMock.mockResolvedValue(SAMPLE_CTACTE)
+    listSocioNotesMock.mockReset()
+    listSocioNotesMock.mockResolvedValue([])
+    createSocioNoteMock.mockReset()
+    updateSocioNoteMock.mockReset()
+    deleteSocioNoteMock.mockReset()
+    getSocioAuditMock.mockReset()
+    getSocioAuditMock.mockResolvedValue([])
   })
 
   afterEach(() => {

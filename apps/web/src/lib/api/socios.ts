@@ -164,3 +164,94 @@ export async function updateSocio(id: string, patch: UpdateSocioInput): Promise<
 export async function deleteSocio(id: string): Promise<Socio> {
   return apiFetch<Socio>('/api/v1/socios/' + id, { method: 'DELETE' })
 }
+
+/* ── Notes (PR 8b.4) ────────────────────────────────────────────── */
+
+/** Wire DTO for `GET/POST /api/v1/socios/:id/notes`. */
+export interface SocioNote {
+  id: string
+  socio_id: string
+  /** Operator who authored the note. UUID. */
+  operator_id: string
+  body: string
+  /** ISO-8601 timestamp. */
+  created_at: string
+  updated_at: string
+}
+
+export interface SocioNoteListResponse {
+  items: SocioNote[]
+}
+
+export const NOTE_MAX_LENGTH = 4000
+
+/** `listSocioNotes(socioId)` — GET /api/v1/socios/:id/notes. */
+export async function listSocioNotes(socioId: string): Promise<SocioNote[]> {
+  const res = await apiFetch<SocioNoteListResponse>(`/api/v1/socios/${socioId}/notes`)
+  return res.items ?? []
+}
+
+/** `createSocioNote(socioId, body)` — POST. Throws on 403 (caller
+ *  lacks permission) or 400 (body too long). */
+export async function createSocioNote(socioId: string, body: string): Promise<SocioNote> {
+  return apiFetch<SocioNote>(`/api/v1/socios/${socioId}/notes`, {
+    method: 'POST',
+    body: { body },
+  })
+}
+
+/** `updateSocioNote(socioId, noteId, body)` — PATCH. Throws on 403
+ *  (caller is neither author nor ADMIN). */
+export async function updateSocioNote(
+  socioId: string,
+  noteId: string,
+  body: string,
+): Promise<SocioNote> {
+  return apiFetch<SocioNote>(`/api/v1/socios/${socioId}/notes/${noteId}`, {
+    method: 'PATCH',
+    body: { body },
+  })
+}
+
+/** `deleteSocioNote(socioId, noteId)` — DELETE. 204 on success. */
+export async function deleteSocioNote(socioId: string, noteId: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/socios/${socioId}/notes/${noteId}`, {
+    method: 'DELETE',
+  })
+}
+
+/* ── Audit (PR 8b.4) ────────────────────────────────────────────── */
+
+/**
+ * Wire DTO for a single audit_events row (as returned by
+ * `/api/v1/socios/:id/audit`). See backend `toAuditEventDTO`.
+ *
+ * `old_value` / `new_value` are opaque JSON. For `SOCIO_UPDATED`
+ * they are full Socio DTOs (snake_case keys). The UI computes a
+ * per-field diff and renders it.
+ */
+export interface AuditEvent {
+  id: string
+  operator_id: string | null
+  action: string
+  entity_type: string
+  entity_id: string
+  old_value: unknown
+  new_value: unknown
+  source_ip: string | null
+  /** ISO-8601 timestamp. */
+  created_at: string
+}
+
+export interface AuditListResponse {
+  items: AuditEvent[]
+  total: number
+  page: number
+  limit: number
+}
+
+/** `getSocioAudit(id)` — GET /api/v1/socios/:id/audit. */
+export async function getSocioAudit(id: string): Promise<AuditEvent[]> {
+  const res = await apiFetch<AuditListResponse>(`/api/v1/socios/${id}/audit`)
+  return res.items ?? []
+}

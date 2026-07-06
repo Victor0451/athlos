@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   CreditCard,
   Hash,
+  History,
   IdCard,
   Mail,
   MapPin,
@@ -28,6 +29,8 @@ import {
   type Socio,
 } from '@/lib/api/socios'
 import SocioForm from '@/components/socios/SocioForm'
+import { SocioNotesCard } from '@/components/socios/SocioNotesCard'
+import { AuditTab } from '@/components/socios/AuditTab'
 import { CtacteTab } from '@/components/socios/CtacteTab'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
@@ -156,7 +159,7 @@ export default function SocioDetailPage() {
   // Tabbed sections: Datos / Contacto / Cuenta. Each panel renders
   // independently under the same tab strip — switching is O(1) and
   // preserves scroll position inside each panel.
-  const [activeTab, setActiveTab] = useState<'datos' | 'contacto' | 'cuenta'>('datos')
+  const [activeTab, setActiveTab] = useState<'datos' | 'contacto' | 'cuenta' | 'auditoria'>('datos')
 
   const updateMutation = useMutation({
     mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
@@ -355,8 +358,13 @@ export default function SocioDetailPage() {
         </div>
       </header>
 
+      {/* ── Notes card (PR 8b.4) ───────────────────────────────────
+          Operator-authored notes attached to the socio. Lives ABOVE
+          the tab strip so it's immediately visible on entry. */}
+      <SocioNotesCard socioId={id} />
+
       {/* ── Tabs (with icons) ─────────────────────────────────── */}
-      <Tabs<'datos' | 'contacto' | 'cuenta'>
+      <Tabs<'datos' | 'contacto' | 'cuenta' | 'auditoria'>
         items={[
           {
             key: 'datos',
@@ -387,6 +395,16 @@ export default function SocioDetailPage() {
               </span>
             ),
             panelId: 'panel-cuenta',
+          },
+          {
+            key: 'auditoria',
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <History className="h-4 w-4" aria-hidden="true" />
+                Auditoría
+              </span>
+            ),
+            panelId: 'panel-auditoria',
           },
         ]}
         activeKey={activeTab}
@@ -453,6 +471,32 @@ export default function SocioDetailPage() {
           data-testid="socio-section-cuenta"
         >
           <CtacteTab socioId={id} />
+        </section>
+      ) : null}
+
+      {activeTab === 'auditoria' ? (
+        <section
+          id="panel-auditoria"
+          role="tabpanel"
+          aria-labelledby="tab-auditoria"
+          aria-label="Auditoría del socio"
+          className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
+          data-testid="socio-section-auditoria"
+        >
+          <header className="mb-6 flex items-center gap-3">
+            <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
+              <History className="h-5 w-5 text-accent" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-900">
+                Auditoría del socio
+              </h2>
+              <p className="font-body text-sm text-ink-500">
+                Historial cronológico de cambios al socio y a sus notas.
+              </p>
+            </div>
+          </header>
+          <AuditTab socioId={id} />
         </section>
       ) : null}
 
