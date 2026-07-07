@@ -12,6 +12,7 @@ import { schedulerAdminRoutes } from './routes/admin/scheduler.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
 import { sociosRoutes } from './routes/socios.ts'
+import { operatorsRoutes } from './routes/operators.ts'
 import { ctacteRoutes } from './routes/ctacte.ts'
 import { padronesRoutes } from './routes/padrones.ts'
 import { errorHandler } from './plugins/error-handler.ts'
@@ -196,6 +197,11 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 
   // 13. Socios (PR 5 TASK-037): /api/v1/socios CRUD.
   await app.register(sociosRoutes)
+
+  // 13b. Operator batch lookup (athlos-audit-operator-display PR A):
+  //      GET /api/v1/operators?ids=<uuid>,… — any authenticated
+  //      operator (no role gate; design D4).
+  await app.register(operatorsRoutes)
 
   // 14. Cuenta corriente (PR 5 TASK-039): /api/v1/socios/:id/cuenta-corriente
   //     and the movimientos sub-path. Read-only in PR 5.
