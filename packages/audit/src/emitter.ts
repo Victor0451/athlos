@@ -28,7 +28,38 @@ export interface AuditRecord {
   newValue: unknown
   sourceIp: string | null
   payload: unknown
+  /**
+   * Free-form JSON object persisted into `audit_events.metadata`.
+   *
+   * Added in PR 8c.1 (athlos-socio-legajo) so the new
+   * `SOCIO_ATTACHMENT_*` actions can carry action-specific keys
+   * (e.g. `{ attachment_id, filename, category, size_bytes }`)
+   * without piggy-backing on the legacy `old_value` / `new_value`
+   * diff snapshot. The column already exists in the public
+   * schema (see `packages/db/src/schema/public.ts`); no migration
+   * is needed.
+   *
+   * `metadata` is intentionally NOT part of the idempotency key:
+   * the SHA-256 bucket is computed from `operatorId + action +
+   * entityId + payload`, so identical uploads within 10s still
+   * collapse to a single row even if the metadata bag differs.
+   */
+  metadata?: Record<string, unknown>
 }
+
+/**
+ * Canonical action constants for the socio-attachment lifecycle.
+ *
+ * PR 8c.1 (athlos-socio-legajo). These extend the audit-logger
+ * action union — see `openspec/changes/athlos-socio-legajo/specs/audit-logger/spec.md`
+ * §"Audit Record Schema — Action Union Widened".
+ */
+export const AuditAction = {
+  SOCIO_ATTACHMENT_UPLOADED: 'SOCIO_ATTACHMENT_UPLOADED',
+  SOCIO_ATTACHMENT_DELETED: 'SOCIO_ATTACHMENT_DELETED',
+} as const
+
+export type SocioAttachmentAuditAction = (typeof AuditAction)[keyof typeof AuditAction]
 
 export type EmitAuditResult = { inserted: true; id: string } | { inserted: false; deduped: true }
 
@@ -63,6 +94,7 @@ export async function emitAudit(db: Db, r: AuditRecord): Promise<EmitAuditResult
         oldValue: r.oldValue as never,
         newValue: r.newValue as never,
         sourceIp: r.sourceIp,
+        metadata: (r.metadata ?? null) as never,
         idempotencyKey: key,
       })
       .returning({ id: auditEvents.id })

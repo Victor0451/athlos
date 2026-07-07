@@ -23,7 +23,7 @@
  * The direct-insert path is for SYSTEM events (jobs, cron triggers).
  */
 export { auditPlugin } from './middleware.ts'
-export { emitAudit } from './emitter.ts'
+export { emitAudit, AuditAction } from './emitter.ts'
 export { queryAudit } from './query.ts'
-export type { AuditRecord } from './emitter.ts'
+export type { AuditRecord, SocioAttachmentAuditAction } from './emitter.ts'
 export type { AuditQueryFilters, AuditPage } from './query.ts'
