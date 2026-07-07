@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { CircleX, History, Pencil, Pin, Plus, StickyNote, Trash2 } from 'lucide-react'
+import { CircleX, FolderOpen, History, Pencil, Pin, Plus, StickyNote, Trash2 } from 'lucide-react'
 import type { AuditEvent } from '@/lib/api/socios'
 import { getSocioAudit } from '@/lib/api/socios'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
@@ -25,6 +25,8 @@ import { OperatorChip } from './OperatorChip'
  *   SOCIO_NOTE_CREATED  → "Nota agregada"  + note body
  *   SOCIO_NOTE_UPDATED  → "Nota editada"  + before/after bodies
  *   SOCIO_NOTE_DELETED  → "Nota eliminada" + deleted body
+ *   SOCIO_ATTACHMENT_UPLOADED → "Archivo subido" + filename + size
+ *   SOCIO_ATTACHMENT_DELETED  → "Archivo eliminado" + filename
  *
  * The timeline is read-only — it never writes back. Operators who
  * need to edit/delete a note use the `<SocioNotesCard>` (which
@@ -58,6 +60,9 @@ function ActionIcon({ action }: { action: string }): React.ReactNode {
       return wrap(<Pencil className="h-4 w-4 text-accent" aria-hidden="true" />)
     case 'SOCIO_NOTE_DELETED':
       return wrap(<Trash2 className="h-4 w-4 text-accent" aria-hidden="true" />)
+    case 'SOCIO_ATTACHMENT_UPLOADED':
+    case 'SOCIO_ATTACHMENT_DELETED':
+      return wrap(<FolderOpen className="h-4 w-4 text-accent" aria-hidden="true" />)
     default:
       return wrap(<History className="h-4 w-4 text-accent" aria-hidden="true" />)
   }
@@ -78,6 +83,10 @@ function actionLabel(action: string): string {
       return 'Nota editada'
     case 'SOCIO_NOTE_DELETED':
       return 'Nota eliminada'
+    case 'SOCIO_ATTACHMENT_UPLOADED':
+      return 'Archivo subido'
+    case 'SOCIO_ATTACHMENT_DELETED':
+      return 'Archivo eliminado'
     default:
       return action
   }
@@ -164,6 +173,30 @@ function readNote(v: unknown): NoteShape | null {
   const n = v as Record<string, unknown>
   if (typeof n.body !== 'string') return null
   return { body: n.body }
+}
+
+/* ── Attachment-event bodies ───────────────────────────────── */
+
+interface AttachmentMetaShape {
+  filename: string
+  category?: string
+  size_bytes?: number
+}
+
+function readAttachmentMeta(v: unknown): AttachmentMetaShape | null {
+  if (!v || typeof v !== 'object') return null
+  const a = v as Record<string, unknown>
+  if (typeof a.filename !== 'string') return null
+  const out: AttachmentMetaShape = { filename: a.filename }
+  if (typeof a.category === 'string') out.category = a.category
+  if (typeof a.size_bytes === 'number') out.size_bytes = a.size_bytes
+  return out
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
 /* ── Socio summary (for CREATE / DELETE) ───────────────────────── */
@@ -311,6 +344,32 @@ function EventBody({ event }: { event: AuditEvent }) {
         >
           {note.body}
         </blockquote>
+      )
+    }
+    case 'SOCIO_ATTACHMENT_UPLOADED': {
+      const meta = readAttachmentMeta(event.new_value)
+      if (!meta) return null
+      return (
+        <div className="space-y-1">
+          <p className="font-body text-sm text-ink-700">
+            <span className="font-mono text-xs">{meta.filename}</span>
+            {meta.category ? <span className="ml-2 text-ink-500">· {meta.category}</span> : null}
+          </p>
+          {typeof meta.size_bytes === 'number' ? (
+            <p data-testid="audit-attachment-size" className="font-mono text-[11px] text-ink-500">
+              {formatSize(meta.size_bytes)}
+            </p>
+          ) : null}
+        </div>
+      )
+    }
+    case 'SOCIO_ATTACHMENT_DELETED': {
+      const meta = readAttachmentMeta(event.old_value) ?? readAttachmentMeta(event.new_value)
+      if (!meta) return null
+      return (
+        <p className="font-body text-sm text-ink-500">
+          <span className="font-mono text-xs line-through">{meta.filename}</span>
+        </p>
       )
     }
     default:

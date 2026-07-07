@@ -36,6 +36,10 @@ const createSocioNoteMock = vi.fn()
 const updateSocioNoteMock = vi.fn()
 const deleteSocioNoteMock = vi.fn()
 const getSocioAuditMock = vi.fn()
+// PR 8c.2 — Legajo tab. The page-level mock for `@/lib/api/socios`
+// covers the notes + audit surface; attachments live in their own
+// module (`@/lib/api/attachments`) so we mock that separately.
+const listAttachmentsMock = vi.fn()
 
 // PR 8b.7 — toast primitive. Mock `@/lib/notifications`
 // synchronously (D8 + R4) so the page wires `notify` into the
@@ -69,6 +73,14 @@ const getCtacteMock = vi.fn()
 vi.mock('@/lib/api/ctacte', () => ({
   getCtacte: (...args: unknown[]) => getCtacteMock(...args),
   getMovimientos: vi.fn(),
+}))
+
+vi.mock('@/lib/api/attachments', () => ({
+  listAttachments: (...args: unknown[]) => listAttachmentsMock(...args),
+  deleteAttachment: vi.fn(),
+  uploadAttachment: vi.fn(),
+  getAttachment: vi.fn(),
+  attachmentFileUrl: vi.fn(),
 }))
 
 const useAuthMock = vi.fn()
@@ -168,6 +180,8 @@ describe('Socio detail page', () => {
     deleteSocioNoteMock.mockReset()
     getSocioAuditMock.mockReset()
     getSocioAuditMock.mockResolvedValue([])
+    listAttachmentsMock.mockReset()
+    listAttachmentsMock.mockResolvedValue([])
     notifyMock.mockReset()
     notifyMock.mockReturnValue('toast-mock-1')
   })
@@ -389,6 +403,42 @@ describe('Socio detail page', () => {
     await waitFor(() => {
       expect(deleteSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id)
       expect(pushMock).toHaveBeenCalledWith('/socios')
+    })
+  })
+
+  /* ── PR 8c.2: Legajo tab wiring ───────────────────────────── */
+
+  it('renders the Legajo tab in the tab list', async () => {
+    renderPage()
+    await waitFor(() => {
+      // Tab is visible in the tablist (matches the AuditTab testid pattern).
+      expect(screen.getByRole('tab', { name: /legajo/i })).toBeInTheDocument()
+    })
+  })
+
+  it('clicking the Legajo tab renders the LegajoTab panel + section header', async () => {
+    // The listAttachments mock is provided via the page test's existing
+    // mock chain for `@/lib/api/socios`; for PR 8c.2 we also need to
+    // add `listAttachments` to that mock. See the mock declaration
+    // above for the patch.
+    listAttachmentsMock.mockResolvedValueOnce([])
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /legajo/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('tab', { name: /legajo/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-section-legajo')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/legajo del socio/i)).toBeInTheDocument()
+    // The upload component + empty state are part of the LegajoTab
+    // surface — verify they show up once the panel is mounted.
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-upload-dropzone')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('legajo-tab-empty')).toBeInTheDocument()
     })
   })
 

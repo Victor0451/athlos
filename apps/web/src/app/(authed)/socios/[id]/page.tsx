@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ChevronLeft,
   CreditCard,
+  FolderOpen,
   Hash,
   History,
   IdCard,
@@ -32,6 +33,7 @@ import SocioForm from '@/components/socios/SocioForm'
 import { SocioNotesCard } from '@/components/socios/SocioNotesCard'
 import { AuditTab } from '@/components/socios/AuditTab'
 import { CtacteTab } from '@/components/socios/CtacteTab'
+import { LegajoTab } from '@/components/socios/LegajoTab'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
@@ -160,7 +162,9 @@ export default function SocioDetailPage() {
   // Tabbed sections: Datos / Contacto / Cuenta. Each panel renders
   // independently under the same tab strip — switching is O(1) and
   // preserves scroll position inside each panel.
-  const [activeTab, setActiveTab] = useState<'datos' | 'contacto' | 'cuenta' | 'auditoria'>('datos')
+  const [activeTab, setActiveTab] = useState<
+    'datos' | 'contacto' | 'cuenta' | 'auditoria' | 'legajo'
+  >('datos')
 
   const updateMutation = useMutation({
     mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
@@ -375,7 +379,7 @@ export default function SocioDetailPage() {
       <SocioNotesCard socioId={id} />
 
       {/* ── Tabs (with icons) ─────────────────────────────────── */}
-      <Tabs<'datos' | 'contacto' | 'cuenta' | 'auditoria'>
+      <Tabs<'datos' | 'contacto' | 'cuenta' | 'auditoria' | 'legajo'>
         items={[
           {
             key: 'datos',
@@ -416,6 +420,16 @@ export default function SocioDetailPage() {
               </span>
             ),
             panelId: 'panel-auditoria',
+          },
+          {
+            key: 'legajo',
+            label: (
+              <span className="inline-flex items-center gap-2">
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                Legajo
+              </span>
+            ),
+            panelId: 'panel-legajo',
           },
         ]}
         activeKey={activeTab}
@@ -508,6 +522,31 @@ export default function SocioDetailPage() {
             </div>
           </header>
           <AuditTab socioId={id} />
+        </section>
+      ) : null}
+
+      {activeTab === 'legajo' ? (
+        <section
+          id="panel-legajo"
+          role="tabpanel"
+          aria-labelledby="tab-legajo"
+          aria-label="Legajo del socio"
+          className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
+          data-testid="socio-section-legajo"
+        >
+          <header className="mb-6 flex items-center gap-3">
+            <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
+              <FolderOpen className="h-5 w-5 text-accent" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-ink-900">Legajo del socio</h2>
+              <p className="font-body text-sm text-ink-500">
+                Archivos adjuntos (DNI, comprobantes, fotos, contratos). Arrastrá o elegí un archivo
+                para empezar.
+              </p>
+            </div>
+          </header>
+          <LegajoTab socioId={id} />
         </section>
       ) : null}
 

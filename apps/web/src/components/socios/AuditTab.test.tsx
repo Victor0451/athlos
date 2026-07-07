@@ -249,4 +249,59 @@ describe('AuditTab', () => {
       expect(screen.getByTestId('audit-event-actor-a-7')).toHaveTextContent('Operador desconocido')
     })
   })
+
+  /* ── PR 8c.2: SOCIO_ATTACHMENT_* audit actions (Legajo tab) ─── */
+
+  it('renders the SOCIO_ATTACHMENT_UPLOADED event with filename + size', async () => {
+    getSocioAuditMock.mockResolvedValueOnce([
+      {
+        id: 'a-up',
+        operator_id: OPERATOR_ID,
+        action: 'SOCIO_ATTACHMENT_UPLOADED',
+        entity_type: 'socio_attachment',
+        entity_id: 'att-1',
+        old_value: null,
+        new_value: {
+          id: 'att-1',
+          filename: 'dni.pdf',
+          category: 'dni',
+          size_bytes: 4096,
+        },
+        source_ip: null,
+        created_at: '2026-07-07T12:00:00.000Z',
+      },
+    ])
+    renderTab()
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-event-a-up')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('audit-event-action-a-up')).toHaveTextContent('Archivo subido')
+    expect(screen.getByTestId('audit-attachment-size')).toHaveTextContent(/KB/)
+  })
+
+  it('renders the SOCIO_ATTACHMENT_DELETED event with the filename', async () => {
+    getSocioAuditMock.mockResolvedValueOnce([
+      {
+        id: 'a-del',
+        operator_id: OPERATOR_ID,
+        action: 'SOCIO_ATTACHMENT_DELETED',
+        entity_type: 'socio_attachment',
+        entity_id: 'att-1',
+        old_value: {
+          id: 'att-1',
+          filename: 'dni.pdf',
+          category: 'dni',
+          size_bytes: 4096,
+        },
+        new_value: null,
+        source_ip: null,
+        created_at: '2026-07-07T12:30:00.000Z',
+      },
+    ])
+    renderTab()
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-event-a-del')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('audit-event-action-a-del')).toHaveTextContent('Archivo eliminado')
+  })
 })
