@@ -109,8 +109,17 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
     }
   }
   if (body !== undefined) {
-    ;(requestInit.headers as Record<string, string>)['content-type'] = 'application/json'
-    requestInit.body = JSON.stringify(body)
+    // PR 8c.2 — multipart upload. When the body is a FormData
+    // instance (file uploads via `/socios/:id/attachments`),
+    // skip the JSON content-type and pass the FormData through
+    // so the browser sets the multipart boundary (api-design
+    // spec delta §"Request/Response Content Type").
+    if (body instanceof FormData) {
+      requestInit.body = body
+    } else {
+      ;(requestInit.headers as Record<string, string>)['content-type'] = 'application/json'
+      requestInit.body = JSON.stringify(body)
+    }
   }
 
   let res: Response
