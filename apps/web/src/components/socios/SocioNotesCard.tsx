@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { NotepadText, Pencil, Trash2, UserRound, X } from 'lucide-react'
+import { ChevronDown, NotepadText, Pencil, Trash2, UserRound, X } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
 import {
   NOTE_MAX_LENGTH,
@@ -13,6 +13,7 @@ import {
   updateSocioNote,
 } from '@/lib/api/socios'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
+import { Badge } from '@/components/ui/Badge'
 import { OperatorChip } from './OperatorChip'
 
 /**
@@ -134,6 +135,8 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
     [operatorsQuery.data],
   )
 
+  const { toggle, displayExpanded } = useNotesCollapsed(socioId, editingId)
+
   const isAuthorOrAdmin = (note: SocioNote): boolean => {
     if (!user) return false
     if (user.role === 'ADMIN') return true
@@ -170,19 +173,42 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
       data-testid="socio-notes-card"
       className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
     >
-      {/* Card title row — same pattern as Datos personales / Contacto. */}
-      <header className="mb-6 flex items-center gap-3">
-        <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
-          <NotepadText className="h-5 w-5 text-accent" aria-hidden="true" />
+      {/* Card title row — same pattern as Datos personales / Contacto.
+          Wrapped in a clickable toggle (PR 8b.6) so operators can collapse
+          the notes region without losing the count chip in the header. */}
+      <button
+        type="button"
+        data-testid="notes-toggle"
+        aria-expanded={displayExpanded}
+        aria-controls="socio-notes-panel"
+        onClick={toggle}
+        className="group mb-6 -mx-2 -my-1 flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left transition-colors duration-fast hover:bg-surface-sunken/40"
+      >
+        <div className="flex items-center gap-3">
+          <div className="shrink-0 rounded-lg bg-accent-soft p-2.5">
+            <NotepadText className="h-5 w-5 text-accent" aria-hidden="true" />
+          </div>
+          <div>
+            <h2
+              id="socio-notes-heading"
+              className="font-display text-lg font-semibold text-ink-900"
+            >
+              Notas del operador
+            </h2>
+            <p className="font-body text-sm text-ink-500">
+              Memos libres para registrar contexto del socio (llamadas, casos familiares,
+              seguimientos). Cada nota queda asentada en la auditoría.
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 className="font-display text-lg font-semibold text-ink-900">Notas del operador</h2>
-          <p className="font-body text-sm text-ink-500">
-            Memos libres para registrar contexto del socio (llamadas, casos familiares,
-            seguimientos). Cada nota queda asentada en la auditoría.
-          </p>
-        </div>
-      </header>
+        <Badge variant="default" dataTestid="notes-counter" className="ml-auto">
+          {notes.length} nota{notes.length !== 1 ? 's' : ''}
+        </Badge>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-ink-500 transition-transform duration-fast ${displayExpanded ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
 
       {/* New note form */}
       <form onSubmit={handleSubmitDraft} className="mb-6" data-testid="socio-note-new-form">
