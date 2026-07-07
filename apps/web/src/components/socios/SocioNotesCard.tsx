@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NotepadText, Pencil, Trash2, UserRound, X } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
@@ -12,19 +12,21 @@ import {
   listSocioNotes,
   updateSocioNote,
 } from '@/lib/api/socios'
+import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
+import { OperatorChip } from './OperatorChip'
 
 /**
  * SocioNotesCard — operator-authored free-form notes attached to a
- * socio (PR 8b.4).
+ * socio (PR 8b.4 + PR 8b.5 B.4).
  *
  * Pattern (per `4-UI-Style-Gorriti-Premium.md`):
  *   - Principal card living between the page header and the tab
  *     strip, so notes are immediately visible on entry to the ficha.
  *   - Card title row (icon tile + h2 + subtitle), same shape used
  *     by the Datos personales / Contacto / Cuenta panels.
- *   - Each note row carries the author (truncated UUID — operator
- *     name resolution is a future slice), the body, and the
- *     timestamp. Edit/Delete buttons are gated by
+ *   - Each note row carries the author (resolved to `username ·
+ *     ROLE` via `<OperatorChip>` since PR 8b.5 B.4), the body, and
+ *     the timestamp. Edit/Delete buttons are gated by
  *     `note.operator_id === caller.id || caller.role === 'ADMIN'`
  *     — matches the backend's permission rule.
  *
@@ -33,6 +35,11 @@ import {
  *     write via `invalidateQueries(['socio-notes', id])`.
  *   - `createMutation`, `updateMutation`, `deleteMutation` keep the
  *     cache in sync and roll back optimistic updates on error.
+ *   - `operatorsQuery` (PR 8b.5 B.4) reads `/api/v1/operators`
+ *     for the union of author ids; the deterministic key
+ *     `['operators', sortedIds.join(',')]` (design D8) is shared
+ *     with `AuditTab` so both surfaces hit one fetch when their
+ *     id sets overlap.
  *
  * No data-testids are reused from any other component — the card
  * sits in its own DOM subtree (rendered above the tabs), so query
@@ -58,11 +65,10 @@ function formatTimestamp(iso: string): string {
   }).format(d)
 }
 
-/** Short form of a UUID — first 8 chars. Used to attribute notes
- *  when we don't have an operator-name lookup handy. */
-function shortOperatorId(id: string): string {
-  return id.slice(0, 8)
-}
+// `shortOperatorId` was removed in PR 8b.5 B.4 — the author span now
+// renders `<OperatorChip>` instead of the legacy `Operador 00000000-…`
+// short-UUID form. If a future surface needs the UUID-short form,
+// reintroduce it here.
 
 export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
   const { user } = useAuth()
@@ -106,6 +112,28 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
   })
 
   const notes = notesQuery.data ?? []
+
+  // Resolve author ids → operator summaries for the chip helper
+  // (PR 8b.5 B.4). Sorted id list → deterministic TanStack Query
+  // key (design D8) so AuditTab and SocioNotesCard share a cache
+  // entry when their id sets match.
+  const sortedOperatorIds = useMemo(() => {
+    const ids = notes.map((note) => note.operator_id).filter((id): id is string => id !== null)
+    return Array.from(new Set(ids)).sort()
+  }, [notes])
+
+  const operatorsQuery = useQuery({
+    queryKey: OPERATORS_QUERY_KEY(sortedOperatorIds),
+    queryFn: () => getOperatorNames(sortedOperatorIds),
+    enabled: sortedOperatorIds.length > 0,
+    staleTime: 30_000,
+  })
+
+  const operatorMap = useMemo(
+    () => new Map((operatorsQuery.data ?? []).map((o) => [o.id, o] as [string, OperatorSummary])),
+    [operatorsQuery.data],
+  )
+
   const isAuthorOrAdmin = (note: SocioNote): boolean => {
     if (!user) return false
     if (user.role === 'ADMIN') return true
@@ -237,7 +265,7 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
                         className="font-display text-[11px] font-semibold uppercase tracking-widest text-ink-500"
                         data-testid={`socio-note-author-${note.id}`}
                       >
-                        Operador {shortOperatorId(note.operator_id)}
+                        <OperatorChip operatorId={note.operator_id} operators={operatorMap} />
                       </div>
                       <div className="font-body text-xs text-ink-500">
                         <span data-testid={`socio-note-created-${note.id}`}>
