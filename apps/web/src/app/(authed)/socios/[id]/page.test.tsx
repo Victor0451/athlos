@@ -37,6 +37,14 @@ const updateSocioNoteMock = vi.fn()
 const deleteSocioNoteMock = vi.fn()
 const getSocioAuditMock = vi.fn()
 
+// PR 8b.7 — toast primitive. Mock `@/lib/notifications`
+// synchronously (D8 + R4) so the page wires `notify` into the
+// 3 page-level mutations without rendering a real <ToasterMount />.
+const notifyMock = vi.fn((..._args: unknown[]) => 'toast-mock-1')
+vi.mock('@/lib/notifications', () => ({
+  notify: (...args: unknown[]) => notifyMock(...args),
+}))
+
 vi.mock('@/lib/api/socios', async (importOriginal) => {
   const original = (await importOriginal()) as Record<string, unknown>
   return {
@@ -160,6 +168,8 @@ describe('Socio detail page', () => {
     deleteSocioNoteMock.mockReset()
     getSocioAuditMock.mockReset()
     getSocioAuditMock.mockResolvedValue([])
+    notifyMock.mockReset()
+    notifyMock.mockReturnValue('toast-mock-1')
   })
 
   afterEach(() => {
@@ -379,6 +389,107 @@ describe('Socio detail page', () => {
     await waitFor(() => {
       expect(deleteSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id)
       expect(pushMock).toHaveBeenCalledWith('/socios')
+    })
+  })
+
+  /* ── PR 8b.7: toast notifications on page-level mutations ─────── */
+
+  it('fires notify("success", "Socio actualizado") on update success', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    updateSocioMock.mockResolvedValueOnce(SAMPLE_SOCIO)
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-edit'))
+    fireEvent.click(screen.getByTestId('socio-detail-edit'))
+    await screen.findByTestId('socio-edit-modal')
+    fireEvent.click(screen.getByTestId('socio-edit-submit'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('success', 'Socio actualizado')
+    })
+  })
+
+  it('fires notify("error", "No se pudo actualizar el socio") on update failure', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    updateSocioMock.mockRejectedValueOnce(new Error('VALIDATION_ERROR: bad payload'))
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-edit'))
+    fireEvent.click(screen.getByTestId('socio-detail-edit'))
+    await screen.findByTestId('socio-edit-modal')
+    fireEvent.click(screen.getByTestId('socio-edit-submit'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo actualizar el socio')
+    })
+  })
+
+  it('fires notify("success", "Socio dado de baja") + router.push on delete success', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    deleteSocioMock.mockResolvedValueOnce({
+      ...SAMPLE_SOCIO,
+      estado: 'baja',
+      deleted_at: '2026-07-02T12:00:00.000Z',
+    })
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(await screen.findByTestId('socio-delete-confirm'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('success', 'Socio dado de baja')
+      expect(deleteSocioMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id)
+      expect(pushMock).toHaveBeenCalledWith('/socios')
+    })
+  })
+
+  it('fires notify("error", "No se pudo dar de baja el socio") + keeps inline deleteError on delete failure', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    deleteSocioMock.mockRejectedValueOnce(new Error('CONFLICT: socio in use'))
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(screen.getByTestId('socio-detail-delete'))
+    fireEvent.click(await screen.findByTestId('socio-delete-confirm'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo dar de baja el socio')
+      expect(screen.getByTestId('socio-delete-error')).toBeInTheDocument()
+    })
+    // Modal stays open so the operator can retry or cancel.
+    expect(screen.getByTestId('socio-delete-modal')).toBeInTheDocument()
+    // No navigation on error.
+    expect(pushMock).not.toHaveBeenCalledWith('/socios')
+  })
+
+  it('fires notify("success", "Socio reactivado") on reactivate success', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    getSocioMock.mockResolvedValue({ ...SAMPLE_SOCIO, estado: 'baja' })
+    updateSocioMock.mockResolvedValueOnce({ ...SAMPLE_SOCIO, estado: 'activo' })
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-reactivate'))
+    fireEvent.click(screen.getByTestId('socio-detail-reactivate'))
+    fireEvent.click(await screen.findByTestId('socio-reactivate-confirm'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('success', 'Socio reactivado')
+    })
+  })
+
+  it('fires notify("error", "No se pudo reactivar el socio") on reactivate failure', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    getSocioMock.mockResolvedValue({ ...SAMPLE_SOCIO, estado: 'baja' })
+    updateSocioMock.mockRejectedValueOnce(new Error('CONFLICT: already active'))
+    renderPage()
+
+    await waitFor(() => screen.getByTestId('socio-detail-reactivate'))
+    fireEvent.click(screen.getByTestId('socio-detail-reactivate'))
+    fireEvent.click(await screen.findByTestId('socio-reactivate-confirm'))
+
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo reactivar el socio')
     })
   })
 })
