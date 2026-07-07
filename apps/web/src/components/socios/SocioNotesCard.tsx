@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NotepadText, Pencil, Trash2, UserRound, X } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
@@ -371,4 +371,56 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
       )}
     </section>
   )
+}
+
+/**
+ * useNotesCollapsed — per-socio collapsible state for the notes card
+ * (PR 8b.6, task C.1).
+ *
+ * @internal — exported so the unit test file (`use-notes-collapsed.test.ts`)
+ * can drive the hook in isolation. The component above consumes it from the
+ * same module; no public API surface.
+ *
+ * Persistence: `localStorage[notes-collapsed-<socioId>]` is the source of
+ * truth post-hydration. SSR-safe via `typeof window === 'undefined'`
+ * short-circuit + `try/catch` around every read/write — mirrors the
+ * `lib/auth.ts:89-143` pattern.
+ *
+ * Edit-while-collapsed guard: `displayExpanded = !collapsed || editingId !== null`
+ * so an in-flight edit form is never hidden by a collapse toggle.
+ */
+export function useNotesCollapsed(
+  socioId: string,
+  editingId: string | null,
+): { collapsed: boolean; toggle: () => void; displayExpanded: boolean } {
+  const KEY = `notes-collapsed-${socioId}`
+  const [collapsed, setCollapsed] = useState<boolean>(true)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(KEY)
+      if (raw === 'false') setCollapsed(false)
+      else if (raw === 'true') setCollapsed(true)
+    } catch {
+      // private mode / quota — keep default
+    }
+  }, [KEY])
+
+  const toggle = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(KEY, String(next))
+        } catch {
+          // best-effort write — keep in-memory flip
+        }
+      }
+      return next
+    })
+  }, [KEY])
+
+  const displayExpanded = !collapsed || editingId !== null
+  return { collapsed, toggle, displayExpanded }
 }
