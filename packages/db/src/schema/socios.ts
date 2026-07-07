@@ -1,4 +1,5 @@
 import {
+  bigint,
   date,
   index,
   integer,
@@ -111,6 +112,83 @@ export const socios = sociosSchema.table(
 
 export type Socio = typeof socios.$inferSelect
 export type NewSocio = typeof socios.$inferInsert
+
+/**
+ * Attachment category — `dni | comprobante | foto | contrato | otro`.
+ *
+ * Used by the `socio_attachments.category` column. The enum is locked
+ * at the database level; the application layer reads
+ * `attachmentCategory.enumValues` so the Drizzle type and the SQL
+ * constraint stay in sync.
+ *
+ * PR 8c.1 (athlos-socio-legajo).
+ */
+export const attachmentCategory = sociosSchema.enum('attachment_category', [
+  'dni',
+  'comprobante',
+  'foto',
+  'contrato',
+  'otro',
+])
+
+/**
+ * `socio_attachments` — per-socio attachment rows for the Legajo tab.
+ *
+ * UUID PK (NOT ULID — codebase consistency override per file-storage
+ * delta R1; all sibling tables in `socios.*` use `uuid defaultRandom()`).
+ * `uploaded_by` is a loose UUID (no FK to `operators`); the route layer
+ * enforces existence via the JWT.
+ *
+ * The on-disk file lives at
+ * `<STORAGE_LOCAL_ROOT>/socios/<socio_id>/<attachment_id>.<ext>`. The
+ * `storage_sha256` column carries the SHA-256 of the file bytes (64 hex
+ * chars); the `(storage_sha256)` index lets a future dedup query probe
+ * for existing bytes without scanning.
+ *
+ * Quota enforcement (100 files / 500 MB per socio, soft-delete frees
+ * immediately) lives in the service layer under a `SELECT … FOR SHARE`
+ * transaction — see `apps/api/src/modules/socios/attachments.ts`.
+ *
+ * Soft delete sets `deleted_at` + `deleted_by`; the on-disk file is
+ * retained until a future retention cron (deferred per design).
+ *
+ * PR 8c.1 (athlos-socio-legajo).
+ */
+export const socioAttachments = sociosSchema.table(
+  'socio_attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    socioId: uuid('socio_id')
+      .notNull()
+      .references(() => socios.id, { onDelete: 'restrict' }),
+    filename: text('filename').notNull(),
+    description: text('description'),
+    category: attachmentCategory('category').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    storagePath: text('storage_path').notNull(),
+    storageSha256: text('storage_sha256').notNull(),
+    /** Loose UUID — no cross-schema FK to `auth.operators`. The route
+     *  layer / JWT enforces existence. */
+    uploadedBy: uuid('uploaded_by').notNull(),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: uuid('deleted_by'),
+  },
+  (table) => ({
+    socioActiveIdx: index('socio_attachments_socio_active_idx').on(table.socioId, table.deletedAt),
+    socioCategoryIdx: index('socio_attachments_socio_category_idx').on(
+      table.socioId,
+      table.category,
+    ),
+    storageShaIdx: index('socio_attachments_storage_sha_idx').on(table.storageSha256),
+    uploadedAtIdx: index('socio_attachments_uploaded_at_idx').on(table.uploadedAt),
+  }),
+)
+
+export type SocioAttachment = typeof socioAttachments.$inferSelect
+export type NewSocioAttachment = typeof socioAttachments.$inferInsert
+export type AttachmentCategory = (typeof attachmentCategory.enumValues)[number]
 
 /**
  * Per-school master table (NO socio_id FK).
