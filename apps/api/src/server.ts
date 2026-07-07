@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import multipart from '@fastify/multipart'
 import { authPlugin } from '@athlos/auth'
 import { buildContainer, type AppContainer } from './container.ts'
 import { authRoutes } from './routes/auth.ts'
@@ -15,6 +16,7 @@ import { sociosRoutes } from './routes/socios.ts'
 import { operatorsRoutes } from './routes/operators.ts'
 import { ctacteRoutes } from './routes/ctacte.ts'
 import { padronesRoutes } from './routes/padrones.ts'
+import { socioAttachmentsRoutes } from './routes/socios-attachments.ts'
 import { errorHandler } from './plugins/error-handler.ts'
 import { genRequestId as genReqId, requestId } from './plugins/request-id.ts'
 import { LOG_REDACT_PATHS, logging } from './plugins/logging.ts'
@@ -171,6 +173,18 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //    Registered BEFORE routes so the hooks apply to all route handlers.
   await app.register(auditPlugin)
 
+  // 9b. Multipart plugin (PR 8c.1): enables `request.file()` for the
+  //     socio-attachments upload route. Registered with a 10 MB
+  //     per-file cap (matches the spec's `STORAGE_MAX_FILE_SIZE_BYTES`
+  //     default) and 1 file per request. The route layer also has
+  //     an explicit per-file check as defence-in-depth.
+  const fileSizeCap = container.env.STORAGE_MAX_FILE_SIZE_BYTES
+    ? Number(container.env.STORAGE_MAX_FILE_SIZE_BYTES)
+    : 10 * 1024 * 1024
+  await app.register(multipart, {
+    limits: { fileSize: fileSizeCap, files: 1 },
+  })
+
   // 10. Auth routes (PR 3a: login; PR 3b: refresh / logout / me / change-password).
   await app.register(authRoutes)
 
@@ -197,6 +211,12 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 
   // 13. Socios (PR 5 TASK-037): /api/v1/socios CRUD.
   await app.register(sociosRoutes)
+
+  // 13b. Socio attachments (PR 8c.1): /api/v1/socios/:socioId/attachments/*
+  //      — five routes (POST upload, GET list, GET metadata, GET file
+  //      stream, DELETE soft). Requires `@fastify/multipart` to be
+  //      registered above.
+  await app.register(socioAttachmentsRoutes)
 
   // 13b. Operator batch lookup (athlos-audit-operator-display PR A):
   //      GET /api/v1/operators?ids=<uuid>,… — any authenticated

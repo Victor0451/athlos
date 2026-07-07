@@ -61,7 +61,16 @@ export { jobRuns } from './job-runs'
 export type { JobRun, NewJobRun, JobRunStatus, JobTrigger } from './job-runs'
 
 // socios ───────────────────────────────────────────────────────
-export { sociosSchema, socioEstado, socios, escuela, locacion, socioNotes } from './socios'
+export {
+  sociosSchema,
+  socioEstado,
+  socios,
+  escuela,
+  locacion,
+  socioNotes,
+  socioAttachments,
+  attachmentCategory,
+} from './socios'
 export type {
   Socio,
   NewSocio,
@@ -71,6 +80,9 @@ export type {
   NewLocacion,
   SocioNote,
   NewSocioNote,
+  SocioAttachment,
+  NewSocioAttachment,
+  AttachmentCategory,
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
