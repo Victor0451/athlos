@@ -3,13 +3,19 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * SocioNotesCard tests (PR 8b.4).
+ * SocioNotesCard tests (PR 8b.4 + PR 8b.5 B.4).
  *
  * Mocks the 4 socio-notes API calls at the module boundary so the
  * tests can drive the happy path of list / create / update /
  * delete without depending on the apiFetch pipeline. The auth
  * mock exposes `operator_id` + `role` to pin the edit/delete
  * gating.
+ *
+ * PR 8b.5 B.4 adds the operator-name lookup wiring: when the
+ * `getOperatorNames` mock returns the note author's id, the note
+ * author chip renders `username · ROLE`; when it returns `[]`,
+ * the chip renders `Operador desconocido` (OperatorChip fallback
+ * case 2 — id missing from lookup).
  */
 
 const listSocioNotesMock = vi.fn()
@@ -17,6 +23,7 @@ const createSocioNoteMock = vi.fn()
 const updateSocioNoteMock = vi.fn()
 const deleteSocioNoteMock = vi.fn()
 const useAuthMock = vi.fn()
+const getOperatorNamesMock = vi.fn()
 
 vi.mock('@/lib/api/socios', () => ({
   NOTE_MAX_LENGTH: 4000,
@@ -31,6 +38,16 @@ vi.mock('@/lib/api/socios', () => ({
   getSocios: vi.fn(),
   getSociosAggregate: vi.fn(),
   getSocioAudit: vi.fn(),
+}))
+
+vi.mock('@/lib/api/operators', () => ({
+  // The mock factory must stay SYNCHRONOUS (design R4). `OPERATORS_QUERY_KEY`
+  // is re-declared here because the real module is replaced wholesale by
+  // vi.mock — if the production implementation drifts (e.g. adds a hash),
+  // update this stub AND the real export in lockstep.
+  OPERATORS_QUERY_KEY: (sortedIds: readonly string[]) =>
+    ['operators', sortedIds.join(',')] as const,
+  getOperatorNames: (...args: unknown[]) => getOperatorNamesMock(...args),
 }))
 
 vi.mock('@/lib/use-auth', () => ({
@@ -124,13 +141,15 @@ describe('SocioNotesCard', () => {
         updated_at: '2026-07-05T08:30:00.000Z',
       }),
     ])
+    // No getOperatorNamesMock setup → operatorMap is empty → the
+    // chip falls back to "Operador desconocido" for both notes.
     renderCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-n-1')).toBeInTheDocument()
     })
     expect(screen.getByText('Primer memo')).toBeInTheDocument()
     expect(screen.getByText('Segundo memo')).toBeInTheDocument()
-    expect(screen.getByTestId('socio-note-author-n-1')).toHaveTextContent(/operador 00000000/i)
+    expect(screen.getByTestId('socio-note-author-n-1')).toHaveTextContent('Operador desconocido')
   })
 
   it('submits a new note via the form', async () => {
@@ -205,5 +224,46 @@ describe('SocioNotesCard', () => {
       expect(window.confirm).toHaveBeenCalled()
       expect(deleteSocioNoteMock).toHaveBeenCalledWith(SOCIO_ID, 'n-1')
     })
+  })
+
+  /* ── PR 8b.5 B.4: operator-name lookup wiring ────────────────────── */
+
+  it('renders "username · ROLE" for a note whose author id is in the operator lookup', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-known' })])
+    getOperatorNamesMock.mockResolvedValueOnce([
+      { id: OPERATOR_ID, username: 'vlongo', role: 'ADMIN' as const },
+    ])
+
+    renderCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-n-known')).toBeInTheDocument()
+    })
+    // Wait for the operators query to settle — the chip text flips
+    // from "Operador desconocido" (empty map while pending) to
+    // "vlongo · ADMIN" once the lookup resolves.
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-author-n-known')).toHaveTextContent('vlongo · ADMIN')
+    })
+    // Belt-and-braces: pin the known chip's data-testid so a future
+    // refactor of OperatorChip that swaps the testid would surface.
+    expect(screen.getByTestId('operator-chip-known')).toBeInTheDocument()
+  })
+
+  it('renders "Operador desconocido" for a note whose author id is missing from the lookup', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-orphan' })])
+    // Empty lookup → OperatorChip case 2: id missing from map
+    // → fallback. Also covers the empty-map-while-pending case.
+    getOperatorNamesMock.mockResolvedValueOnce([])
+
+    renderCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-n-orphan')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-author-n-orphan')).toHaveTextContent(
+        'Operador desconocido',
+      )
+    })
+    expect(screen.getByTestId('operator-chip-unknown')).toBeInTheDocument()
   })
 })
