@@ -582,6 +582,7 @@ interface StandinDrizzle {
   update(t: unknown): unknown
   delete(t: unknown): unknown
   transaction<T>(fn: (tx: StandinDrizzle) => Promise<T>): Promise<T>
+  execute(q: unknown): Promise<unknown[]>
 }
 
 function buildDrizzleInterface(state: StandinState): StandinDrizzle {
@@ -1282,6 +1283,55 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     },
     async transaction<T>(fn: (tx: StandinDrizzle) => Promise<T>): Promise<T> {
       return fn(buildDrizzleInterface(state))
+    },
+    /**
+     * Execute a raw SQL fragment via `tx.execute(sql\`...FOR SHARE\`)`.
+     *
+     * Supports the limited set of queries the audit / attachment
+     * services use: a `COUNT(*)::int` + `SUM(...)::bigint` aggregate
+     * filtered by a single equality on `socio_id` AND `deleted_at IS NULL`.
+     * Other shapes are best-effort and may return empty rows.
+     */
+    async execute(q: unknown): Promise<unknown[]> {
+      const stmt = (q as { queryChunks?: Array<unknown> })?.queryChunks
+      const sqlText = (stmt ?? [])
+        .map((c) => {
+          if (typeof c === 'string') return c
+          if (c && typeof c === 'object') {
+            const obj = c as { value?: unknown }
+            if (typeof obj.value === 'string') return obj.value
+            if (Array.isArray(obj.value)) return (obj.value as unknown[]).join('')
+          }
+          return ''
+        })
+        .join('')
+        .toLowerCase()
+      if (!sqlText.includes('count(*)') || !sqlText.includes('sum(')) return []
+      // Pull the socioId out of the parameter binding. Drizzle 0.36
+      // emits each `sql\`...${value}...\`` parameter as either a
+      // bare string OR a `{ value: <scalar> }` wrapper depending on
+      // the dialect adapter. Walk both shapes and accept the first
+      // UUID we see.
+      let socioId: string | null = null
+      for (const c of stmt ?? []) {
+        const v =
+          typeof c === 'string'
+            ? c
+            : c && typeof c === 'object'
+              ? (c as { value?: unknown }).value
+              : undefined
+        if (typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v)) {
+          socioId = v
+          break
+        }
+      }
+      if (!socioId) return []
+      const active = state.socioAttachments.filter(
+        (r) => r.socioId === socioId && r.deletedAt === null,
+      )
+      const count = active.length
+      const sum = active.reduce((acc, r) => acc + Number(r.sizeBytes ?? 0), 0)
+      return [{ count, sum }]
     },
   }
 }
