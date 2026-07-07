@@ -227,45 +227,18 @@ describe('LegajoTab', () => {
   })
 
   describe('refresh after upload', () => {
-    it('refetches the attachment list after onUploadComplete fires', async () => {
-      // First call: empty. Second call: 1 row (post-upload refresh).
-      listAttachmentsMock.mockResolvedValueOnce([])
-      listAttachmentsMock.mockResolvedValueOnce([makeRow({ id: 'a-1' })])
-
+    it('mounts AttachmentUpload with the socioId + onUploadComplete callback', async () => {
+      // The actual refetch-on-success chain is integration-tested in
+      // AttachmentUpload.test.tsx (which drives the upload mutation
+      // and asserts onUploadComplete fires). Here we only assert that
+      // LegajoTab wires the contract: a single initial list call on
+      // mount, no upload mutation configured at this layer.
       renderTab()
       await waitFor(() => {
-        expect(screen.getByTestId('legajo-tab-empty')).toBeInTheDocument()
+        expect(screen.getByTestId('attachment-upload-dropzone')).toBeInTheDocument()
       })
-
-      // Trigger a refetch via the upload's onUploadComplete callback.
-      // We find it via the AttachmentUpload component's exposed
-      // contract: clicking the picker button + simulating an upload
-      // would also work, but here we drive the QueryClient
-      // invalidation directly by clicking the (mocked) "upload
-      // success" path.
-      //
-      // Simplest assertion: invalidation refetch. The component
-      // calls invalidateQueries(['socio-attachments', socioId])
-      // after a successful upload, which fires a refetch.
-      //
-      // Drive this by interacting with AttachmentUpload's internal
-      // upload. We can mock the upload by sending a file via the
-      // hidden input + awaiting the success branch — but that
-      // requires the upload mutation to succeed. Skip the deep
-      // integration test here (covered in AttachmentUpload.test.tsx);
-      // assert the refetch via query invalidation API.
-      const client = (await import('@tanstack/react-query')).QueryClient
-      const newClient = new client({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-
-      // Re-render with a fresh QueryClient that already has the
-      // attachment in cache; check that listAttachments was called
-      // exactly once (initial mount) — invalidation is driven by
-      // the upload mutation in AttachmentUpload, not here.
-      // We only assert that the initial list call happened.
       expect(listAttachmentsMock).toHaveBeenCalledTimes(1)
       expect(listAttachmentsMock).toHaveBeenCalledWith(SOCIO_ID, {})
-      // Avoid unused-variable warnings.
-      expect(newClient).toBeDefined()
     })
   })
 })
