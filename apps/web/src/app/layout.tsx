@@ -4,6 +4,7 @@ import '../styles/tokens.css'
 import './globals.css'
 import { QueryProvider } from '@/providers/QueryProvider'
 import { AuthProvider } from '@/providers/AuthProvider'
+import { ToasterMount } from '@/components/ui/Toast'
 
 export const metadata: Metadata = {
   title: 'Athlos',
@@ -16,7 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-surface text-ink-700 font-body antialiased">
         <NuqsAdapter>
           <QueryProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              {children}
+              <ToasterMount />
+            </AuthProvider>
           </QueryProvider>
         </NuqsAdapter>
       </body>
