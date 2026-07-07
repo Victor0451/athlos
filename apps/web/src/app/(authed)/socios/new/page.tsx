@@ -7,6 +7,7 @@ import { ChevronLeft, UserRound } from 'lucide-react'
 import { createSocio, type CreateSocioInput } from '@/lib/api/socios'
 import SocioForm from '@/components/socios/SocioForm'
 import { useAuth } from '@/lib/use-auth'
+import { notify } from '@/lib/notifications'
 
 /**
  * Standalone "create socio" page — `/socios/new` (PR 8b.2 second slice,
@@ -62,8 +63,12 @@ export default function NewSocioPage() {
   const createMutation = useMutation({
     mutationFn: (input: CreateSocioInput) => createSocio(input),
     onSuccess: () => {
+      notify('success', 'Socio creado')
       queryClient.invalidateQueries({ queryKey: ['socios'] })
       router.push('/socios')
+    },
+    onError: () => {
+      notify('error', 'No se pudo crear el socio')
     },
   })
 
