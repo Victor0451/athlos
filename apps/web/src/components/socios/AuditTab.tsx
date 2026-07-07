@@ -1,9 +1,12 @@
 'use client'
 
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CircleX, History, Pencil, Pin, Plus, StickyNote, Trash2 } from 'lucide-react'
 import type { AuditEvent } from '@/lib/api/socios'
 import { getSocioAudit } from '@/lib/api/socios'
+import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
+import { OperatorChip } from './OperatorChip'
 
 /**
  * AuditTab — chronologic timeline of audit_events for a socio
@@ -93,10 +96,10 @@ function formatTimestamp(iso: string): string {
   }).format(d)
 }
 
-function shortOperatorId(id: string | null): string {
-  if (!id) return 'sistema'
-  return id.slice(0, 8)
-}
+// `shortOperatorId` was removed in PR 8b.5 B.3 — the actor span now
+// renders `<OperatorChip>` instead of the legacy
+// `por operador {8-char-uuid}` form. If a future surface needs the
+// UUID-short form, reintroduce it here.
 
 /* ── Field-level diff (SOCIO_UPDATED only) ─────────────────────── */
 
@@ -324,6 +327,29 @@ export function AuditTab({ socioId }: AuditTabProps) {
     staleTime: 15_000,
   })
 
+  // Resolve actor ids → operator summaries for the chip helper
+  // (PR 8b.5 B.3). Sorted id list → deterministic TanStack Query
+  // key (design D8) so SocioNotesCard and AuditTab share a cache
+  // entry when their id sets match.
+  const sortedOperatorIds = useMemo(() => {
+    const ids = (query.data ?? [])
+      .map((event) => event.operator_id)
+      .filter((id): id is string => id !== null)
+    return Array.from(new Set(ids)).sort()
+  }, [query.data])
+
+  const operatorsQuery = useQuery({
+    queryKey: OPERATORS_QUERY_KEY(sortedOperatorIds),
+    queryFn: () => getOperatorNames(sortedOperatorIds),
+    enabled: sortedOperatorIds.length > 0,
+    staleTime: 30_000,
+  })
+
+  const operatorMap = useMemo(
+    () => new Map((operatorsQuery.data ?? []).map((o) => [o.id, o] as [string, OperatorSummary])),
+    [operatorsQuery.data],
+  )
+
   if (query.isPending) {
     return (
       <div role="status" aria-live="polite" data-testid="audit-tab-loading" className="space-y-4">
@@ -400,7 +426,7 @@ export function AuditTab({ socioId }: AuditTabProps) {
                     className="font-body text-xs text-ink-500"
                     data-testid={`audit-event-actor-${event.id}`}
                   >
-                    por operador {shortOperatorId(event.operator_id)}
+                    <OperatorChip operatorId={event.operator_id} operators={operatorMap} />
                   </span>
                 </div>
                 <div
