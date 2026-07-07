@@ -61,6 +61,32 @@ describe('ToasterMount', () => {
     await mountToaster()
     expect(document.querySelectorAll('[data-sonner-toast]')).toHaveLength(0)
   })
+
+  it('mounts the sonner portal inside the root-layout provider chain (AuthProvider + ToasterMount)', async () => {
+    // This test mirrors the C.2 contract: the root layout renders
+    // <AuthProvider>...<ToasterMount /></AuthProvider>, so when the
+    // chain mounts, the sonner section must be reachable inside
+    // document.body. We use the real AuthProvider (zero deps) plus
+    // a QueryClientProvider wrapper so the chain matches what the
+    // production layout builds.
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { AuthProvider } = await import('@/providers/AuthProvider')
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <AuthProvider>
+          <div data-testid="page-content">page</div>
+          <ToasterMount />
+        </AuthProvider>
+      </QueryClientProvider>,
+    )
+    // The page content is present (we mounted the chain).
+    expect(screen.getByTestId('page-content')).toBeInTheDocument()
+    // And the sonner section is reachable after the layout commit.
+    expect(await screen.findByLabelText(SONNER_SECTION_LABEL)).toBeInTheDocument()
+  })
 })
 
 describe('notify() — render path (real sonner)', () => {
