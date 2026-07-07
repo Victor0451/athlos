@@ -82,6 +82,22 @@ function renderCard() {
   )
 }
 
+/**
+ * Expand the notes card so the existing tests that drive the form/list
+ * render paths (which were authored before the card was collapsible)
+ * continue to find their DOM. New collapse-state tests opt out of this
+ * helper to assert the default-collapsed behaviour.
+ */
+async function expandCard() {
+  await waitFor(() => {
+    expect(screen.getByTestId('notes-toggle')).toBeInTheDocument()
+  })
+  fireEvent.click(screen.getByTestId('notes-toggle'))
+  await waitFor(() => {
+    expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
+  })
+}
+
 function makeAdminUser() {
   return {
     user: {
@@ -126,6 +142,7 @@ describe('SocioNotesCard', () => {
     renderCard()
     expect(screen.getByTestId('socio-notes-card')).toBeInTheDocument()
     expect(screen.getByText(/Notas del operador/i)).toBeInTheDocument()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-notes-empty')).toBeInTheDocument()
     })
@@ -144,6 +161,7 @@ describe('SocioNotesCard', () => {
     // No getOperatorNamesMock setup → operatorMap is empty → the
     // chip falls back to "Operador desconocido" for both notes.
     renderCard()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-n-1')).toBeInTheDocument()
     })
@@ -155,6 +173,7 @@ describe('SocioNotesCard', () => {
   it('submits a new note via the form', async () => {
     createSocioNoteMock.mockResolvedValueOnce(makeNote())
     renderCard()
+    await expandCard()
 
     const textarea = await screen.findByTestId('socio-note-new-body')
     fireEvent.change(textarea, { target: { value: '  nueva nota  ' } })
@@ -167,6 +186,7 @@ describe('SocioNotesCard', () => {
 
   it('disables the submit button when the draft is empty', async () => {
     renderCard()
+    await expandCard()
     expect(screen.getByTestId('socio-note-new-submit')).toBeDisabled()
   })
 
@@ -183,6 +203,7 @@ describe('SocioNotesCard', () => {
       },
     })
     renderCard()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-edit-mine')).toBeInTheDocument()
     })
@@ -193,6 +214,7 @@ describe('SocioNotesCard', () => {
     listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'foreign' })])
     useAuthMock.mockReturnValue(makeOperadorUser())
     renderCard()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-foreign')).toBeInTheDocument()
     })
@@ -204,6 +226,7 @@ describe('SocioNotesCard', () => {
     listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
     updateSocioNoteMock.mockResolvedValueOnce(makeNote({ id: 'n-1', body: 'editado' }))
     renderCard()
+    await expandCard()
     await waitFor(() => screen.getByTestId('socio-note-edit-n-1'))
     fireEvent.click(screen.getByTestId('socio-note-edit-n-1'))
     const editBody = await screen.findByTestId('socio-note-edit-body-n-1')
@@ -218,6 +241,7 @@ describe('SocioNotesCard', () => {
     listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
     deleteSocioNoteMock.mockResolvedValueOnce(undefined)
     renderCard()
+    await expandCard()
     await waitFor(() => screen.getByTestId('socio-note-delete-n-1'))
     fireEvent.click(screen.getByTestId('socio-note-delete-n-1'))
     await waitFor(() => {
@@ -235,6 +259,7 @@ describe('SocioNotesCard', () => {
     ])
 
     renderCard()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-n-known')).toBeInTheDocument()
     })
@@ -256,6 +281,7 @@ describe('SocioNotesCard', () => {
     getOperatorNamesMock.mockResolvedValueOnce([])
 
     renderCard()
+    await expandCard()
     await waitFor(() => {
       expect(screen.getByTestId('socio-note-n-orphan')).toBeInTheDocument()
     })
@@ -298,5 +324,68 @@ describe('SocioNotesCard', () => {
       expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
     })
     expect(globalThis.localStorage.getItem('notes-collapsed-' + SOCIO_ID)).toBe('false')
+  })
+
+  it('persists expanded state across remounts', async () => {
+    const first = renderCard()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-toggle')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('notes-toggle'))
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
+    })
+    expect(globalThis.localStorage.getItem('notes-collapsed-' + SOCIO_ID)).toBe('false')
+
+    first.unmount()
+
+    renderCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
+    })
+    expect(screen.getByTestId('notes-panel')).toBeInTheDocument()
+  })
+
+  it('edit-while-collapsed keeps the panel and edit textarea visible', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
+    renderCard()
+
+    // Expand so the edit button is in the DOM and reachable by the user.
+    await expandCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-edit-n-1')).toBeInTheDocument()
+    })
+
+    // Start editing → editingId set; displayExpanded stays true.
+    fireEvent.click(screen.getByTestId('socio-note-edit-n-1'))
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-note-edit-body-n-1')).toBeInTheDocument()
+    })
+
+    // User clicks the toggle to "collapse". The guard must keep the panel
+    // open because editingId !== null.
+    fireEvent.click(screen.getByTestId('notes-toggle'))
+
+    // aria-expanded is derived from displayExpanded, so it stays "true".
+    expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('notes-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('socio-note-edit-body-n-1')).toBeInTheDocument()
+  })
+
+  it('counter pluralisation: "0 notas" / "1 nota" / "N notas"', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([])
+    renderCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-counter')).toHaveTextContent('0 notas')
+    })
+  })
+
+  it('counter shows "1 nota" (singular) when there is exactly one note', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'solo' })])
+    renderCard()
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-counter')).toHaveTextContent('1 nota')
+    })
   })
 })
