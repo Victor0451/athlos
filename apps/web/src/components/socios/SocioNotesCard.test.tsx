@@ -266,4 +266,37 @@ describe('SocioNotesCard', () => {
     })
     expect(screen.getByTestId('operator-chip-unknown')).toBeInTheDocument()
   })
+
+  /* ── PR 8b.6: collapsible SocioNotesCard (notes-collapsible change) ─── */
+
+  it('renders collapsed by default with the counter chip showing the note count', async () => {
+    listSocioNotesMock.mockResolvedValueOnce([
+      makeNote({ id: 'n-1', body: 'uno' }),
+      makeNote({ id: 'n-2', body: 'dos' }),
+      makeNote({ id: 'n-3', body: 'tres' }),
+    ])
+    renderCard()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-counter')).toHaveTextContent('3 notas')
+    })
+    expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-controls', 'socio-notes-panel')
+  })
+
+  it('clicking the toggle flips aria-expanded and writes "false" to localStorage', async () => {
+    renderCard()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-toggle')).toBeInTheDocument()
+    })
+    expect(globalThis.localStorage.getItem('notes-collapsed-' + SOCIO_ID)).toBeNull()
+
+    fireEvent.click(screen.getByTestId('notes-toggle'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notes-toggle')).toHaveAttribute('aria-expanded', 'true')
+    })
+    expect(globalThis.localStorage.getItem('notes-collapsed-' + SOCIO_ID)).toBe('false')
+  })
 })
