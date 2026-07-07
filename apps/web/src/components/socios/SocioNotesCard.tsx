@@ -15,6 +15,7 @@ import {
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
 import { Badge } from '@/components/ui/Badge'
 import { OperatorChip } from './OperatorChip'
+import { notify } from '@/lib/notifications'
 
 /**
  * SocioNotesCard — operator-authored free-form notes attached to a
@@ -87,9 +88,13 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
   const createMutation = useMutation({
     mutationFn: (body: string) => createSocioNote(socioId, body),
     onSuccess: () => {
+      notify('success', 'Nota creada')
       setDraft('')
       queryClient.invalidateQueries({ queryKey: ['socio-notes', socioId] })
       queryClient.invalidateQueries({ queryKey: ['socio-audit', socioId] })
+    },
+    onError: () => {
+      notify('error', 'No se pudo crear la nota')
     },
   })
 
@@ -97,10 +102,14 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
     mutationFn: ({ noteId, body }: { noteId: string; body: string }) =>
       updateSocioNote(socioId, noteId, body),
     onSuccess: () => {
+      notify('success', 'Nota actualizada')
       setEditingId(null)
       setEditingDraft('')
       queryClient.invalidateQueries({ queryKey: ['socio-notes', socioId] })
       queryClient.invalidateQueries({ queryKey: ['socio-audit', socioId] })
+    },
+    onError: () => {
+      notify('error', 'No se pudo actualizar la nota')
     },
   })
 

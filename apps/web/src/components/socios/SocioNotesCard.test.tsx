@@ -25,6 +25,14 @@ const deleteSocioNoteMock = vi.fn()
 const useAuthMock = vi.fn()
 const getOperatorNamesMock = vi.fn()
 
+// PR 8b.7 — toast primitive. Mock `@/lib/notifications`
+// synchronously (D8 + R4) so the card wires `notify` into the
+// 3 note mutations without rendering a real <ToasterMount />.
+const notifyMock = vi.fn((..._args: unknown[]) => 'toast-mock-1')
+vi.mock('@/lib/notifications', () => ({
+  notify: (...args: unknown[]) => notifyMock(...args),
+}))
+
 vi.mock('@/lib/api/socios', () => ({
   NOTE_MAX_LENGTH: 4000,
   listSocioNotes: (...args: unknown[]) => listSocioNotesMock(...args),
@@ -135,6 +143,7 @@ beforeEach(() => {
   window.confirm = vi.fn().mockReturnValue(true)
   useAuthMock.mockReturnValue(makeAdminUser())
   listSocioNotesMock.mockResolvedValue([])
+  notifyMock.mockReturnValue('toast-mock-1')
 })
 
 describe('SocioNotesCard', () => {
@@ -386,6 +395,69 @@ describe('SocioNotesCard', () => {
     renderCard()
     await waitFor(() => {
       expect(screen.getByTestId('notes-counter')).toHaveTextContent('1 nota')
+    })
+  })
+
+  /* ── PR 8b.7: toast notifications on note mutations ────────────── */
+
+  describe('toast wiring', () => {
+    it('fires notify("success", "Nota creada") on successful note create', async () => {
+      createSocioNoteMock.mockResolvedValueOnce(makeNote())
+      renderCard()
+      await expandCard()
+      const textarea = await screen.findByTestId('socio-note-new-body')
+      fireEvent.change(textarea, { target: { value: '  nueva nota  ' } })
+      fireEvent.click(screen.getByTestId('socio-note-new-submit'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('success', 'Nota creada')
+      })
+    })
+
+    it('fires notify("error", "No se pudo crear la nota") + keeps inline error on note create failure', async () => {
+      createSocioNoteMock.mockRejectedValueOnce(new Error('VALIDATION_ERROR: body too long'))
+      renderCard()
+      await expandCard()
+      const textarea = await screen.findByTestId('socio-note-new-body')
+      fireEvent.change(textarea, { target: { value: 'nota fallida' } })
+      fireEvent.click(screen.getByTestId('socio-note-new-submit'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo crear la nota')
+        expect(screen.getByTestId('socio-note-new-error')).toBeInTheDocument()
+      })
+    })
+
+    it('fires notify("success", "Nota actualizada") on successful note update', async () => {
+      listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
+      updateSocioNoteMock.mockResolvedValueOnce(makeNote({ id: 'n-1', body: 'editado' }))
+      renderCard()
+      await expandCard()
+      await waitFor(() => screen.getByTestId('socio-note-edit-n-1'))
+      fireEvent.click(screen.getByTestId('socio-note-edit-n-1'))
+      const editBody = await screen.findByTestId('socio-note-edit-body-n-1')
+      fireEvent.change(editBody, { target: { value: '  editado  ' } })
+      fireEvent.click(screen.getByTestId('socio-note-edit-save-n-1'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('success', 'Nota actualizada')
+      })
+    })
+
+    it('fires notify("error", "No se pudo actualizar la nota") on note update failure', async () => {
+      listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
+      updateSocioNoteMock.mockRejectedValueOnce(new Error('CONFLICT: note locked'))
+      renderCard()
+      await expandCard()
+      await waitFor(() => screen.getByTestId('socio-note-edit-n-1'))
+      fireEvent.click(screen.getByTestId('socio-note-edit-n-1'))
+      const editBody = await screen.findByTestId('socio-note-edit-body-n-1')
+      fireEvent.change(editBody, { target: { value: '  editado  ' } })
+      fireEvent.click(screen.getByTestId('socio-note-edit-save-n-1'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo actualizar la nota')
+      })
     })
   })
 })
