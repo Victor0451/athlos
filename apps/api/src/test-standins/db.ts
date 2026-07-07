@@ -9,6 +9,8 @@ import type {
   Operator,
   RefreshToken,
   Socio,
+  SocioAttachment,
+  AttachmentCategory,
   Ctacte,
   Disciplina,
   Ejercicio,
@@ -48,6 +50,7 @@ type OperatorRow = Operator
 type RefreshTokenRow = RefreshToken
 type ApprovalTokenRow = ApprovalToken
 type SocioRow = Socio
+type SocioAttachmentRow = SocioAttachment
 type CtacteRow = Ctacte
 type DisciplinaRow = Disciplina
 type EjercicioRow = Ejercicio
@@ -63,6 +66,7 @@ type Row =
   | RefreshTokenRow
   | ApprovalTokenRow
   | SocioRow
+  | SocioAttachmentRow
   | CtacteRow
   | DisciplinaRow
   | EjercicioRow
@@ -78,6 +82,7 @@ interface StandinState {
   refreshTokens: RefreshTokenRow[]
   approvalTokens: ApprovalTokenRow[]
   socios: SocioRow[]
+  socioAttachments: SocioAttachmentRow[]
   ctacte: CtacteRow[]
   disciplinas: DisciplinaRow[]
   ejercicios: EjercicioRow[]
@@ -166,6 +171,22 @@ const SOCIO_SQL_TO_JS: Record<string, keyof SocioRow> = {
   created_at: 'createdAt',
   updated_at: 'updatedAt',
   deleted_at: 'deletedAt',
+}
+
+const SOCIO_ATTACHMENT_SQL_TO_JS: Record<string, keyof SocioAttachmentRow> = {
+  id: 'id',
+  socio_id: 'socioId',
+  filename: 'filename',
+  description: 'description',
+  category: 'category',
+  mime_type: 'mimeType',
+  size_bytes: 'sizeBytes',
+  storage_path: 'storagePath',
+  storage_sha256: 'storageSha256',
+  uploaded_by: 'uploadedBy',
+  uploaded_at: 'uploadedAt',
+  deleted_at: 'deletedAt',
+  deleted_by: 'deletedBy',
 }
 
 const CTACTE_SQL_TO_JS: Record<string, keyof CtacteRow> = {
@@ -290,6 +311,7 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   refresh_tokens: REFRESH_SQL_TO_JS,
   approval_tokens: APPROVAL_SQL_TO_JS,
   socios: SOCIO_SQL_TO_JS,
+  socio_attachments: SOCIO_ATTACHMENT_SQL_TO_JS,
   ctacte: CTACTE_SQL_TO_JS,
   disciplinas: DISCIPLINA_SQL_TO_JS,
   ejercicios: EJERCICIO_SQL_TO_JS,
@@ -560,6 +582,7 @@ interface StandinDrizzle {
   update(t: unknown): unknown
   delete(t: unknown): unknown
   transaction<T>(fn: (tx: StandinDrizzle) => Promise<T>): Promise<T>
+  execute(q: unknown): Promise<unknown[]>
 }
 
 function buildDrizzleInterface(state: StandinState): StandinDrizzle {
@@ -575,6 +598,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'refresh_tokens') return state.refreshTokens
     if (tname === 'approval_tokens') return state.approvalTokens
     if (tname === 'socios') return state.socios
+    if (tname === 'socio_attachments') return state.socioAttachments
     if (tname === 'ctacte') return state.ctacte
     if (tname === 'disciplinas') return state.disciplinas
     if (tname === 'ejercicios') return state.ejercicios
@@ -648,6 +672,23 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         updatedAt: (v['updatedAt'] as Date) ?? new Date(),
         deletedAt: (v['deletedAt'] as Date | null) ?? null,
       } as SocioRow
+    }
+    if (tname === 'socio_attachments') {
+      return {
+        id: id as string,
+        socioId: v['socioId']!,
+        filename: v['filename']!,
+        description: (v['description'] as string | null) ?? null,
+        category: v['category'] as AttachmentCategory,
+        mimeType: v['mimeType']!,
+        sizeBytes: Number(v['sizeBytes'] ?? 0),
+        storagePath: v['storagePath']!,
+        storageSha256: v['storageSha256']!,
+        uploadedBy: v['uploadedBy']!,
+        uploadedAt: (v['uploadedAt'] as Date) ?? new Date(),
+        deletedAt: (v['deletedAt'] as Date | null) ?? null,
+        deletedBy: (v['deletedBy'] as string | null) ?? null,
+      } as SocioAttachmentRow
     }
     if (tname === 'ctacte') {
       return {
@@ -1114,6 +1155,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
    */
   function tnameOf(row: Record<string, unknown>): string | null {
     if ('numeroSocio' in row) return 'socios'
+    if ('storageSha256' in row) return 'socio_attachments'
     if ('anio' in row && 'fechaInicio' in row) return 'ejercicios'
     if ('codigo' in row && 'nombre' in row) return 'disciplinas'
     if ('socioId' in row && 'disciplinaId' in row && 'ejercicioId' in row) return 'inscripciones'
@@ -1242,6 +1284,55 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     async transaction<T>(fn: (tx: StandinDrizzle) => Promise<T>): Promise<T> {
       return fn(buildDrizzleInterface(state))
     },
+    /**
+     * Execute a raw SQL fragment via `tx.execute(sql\`...FOR SHARE\`)`.
+     *
+     * Supports the limited set of queries the audit / attachment
+     * services use: a `COUNT(*)::int` + `SUM(...)::bigint` aggregate
+     * filtered by a single equality on `socio_id` AND `deleted_at IS NULL`.
+     * Other shapes are best-effort and may return empty rows.
+     */
+    async execute(q: unknown): Promise<unknown[]> {
+      const stmt = (q as { queryChunks?: Array<unknown> })?.queryChunks
+      const sqlText = (stmt ?? [])
+        .map((c) => {
+          if (typeof c === 'string') return c
+          if (c && typeof c === 'object') {
+            const obj = c as { value?: unknown }
+            if (typeof obj.value === 'string') return obj.value
+            if (Array.isArray(obj.value)) return (obj.value as unknown[]).join('')
+          }
+          return ''
+        })
+        .join('')
+        .toLowerCase()
+      if (!sqlText.includes('count(*)') || !sqlText.includes('sum(')) return []
+      // Pull the socioId out of the parameter binding. Drizzle 0.36
+      // emits each `sql\`...${value}...\`` parameter as either a
+      // bare string OR a `{ value: <scalar> }` wrapper depending on
+      // the dialect adapter. Walk both shapes and accept the first
+      // UUID we see.
+      let socioId: string | null = null
+      for (const c of stmt ?? []) {
+        const v =
+          typeof c === 'string'
+            ? c
+            : c && typeof c === 'object'
+              ? (c as { value?: unknown }).value
+              : undefined
+        if (typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v)) {
+          socioId = v
+          break
+        }
+      }
+      if (!socioId) return []
+      const active = state.socioAttachments.filter(
+        (r) => r.socioId === socioId && r.deletedAt === null,
+      )
+      const count = active.length
+      const sum = active.reduce((acc, r) => acc + Number(r.sizeBytes ?? 0), 0)
+      return [{ count, sum }]
+    },
   }
 }
 
@@ -1294,6 +1385,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     refreshTokens: [],
     approvalTokens: [],
     socios: [],
+    socioAttachments: [],
     ctacte: [],
     disciplinas: [],
     ejercicios: [],
@@ -1311,6 +1403,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.refreshTokens.length = 0
       state.approvalTokens.length = 0
       state.socios.length = 0
+      state.socioAttachments.length = 0
       state.ctacte.length = 0
       state.disciplinas.length = 0
       state.ejercicios.length = 0
