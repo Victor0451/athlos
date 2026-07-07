@@ -116,8 +116,12 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
   const deleteMutation = useMutation({
     mutationFn: (noteId: string) => deleteSocioNote(socioId, noteId),
     onSuccess: () => {
+      notify('success', 'Nota eliminada')
       queryClient.invalidateQueries({ queryKey: ['socio-notes', socioId] })
       queryClient.invalidateQueries({ queryKey: ['socio-audit', socioId] })
+    },
+    onError: () => {
+      notify('error', 'No se pudo eliminar la nota')
     },
   })
 
