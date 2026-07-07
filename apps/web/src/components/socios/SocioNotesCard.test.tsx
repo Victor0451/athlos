@@ -459,5 +459,31 @@ describe('SocioNotesCard', () => {
         expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo actualizar la nota')
       })
     })
+
+    it('fires notify("success", "Nota eliminada") on successful note delete', async () => {
+      listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
+      deleteSocioNoteMock.mockResolvedValueOnce(undefined)
+      renderCard()
+      await expandCard()
+      await waitFor(() => screen.getByTestId('socio-note-delete-n-1'))
+      fireEvent.click(screen.getByTestId('socio-note-delete-n-1'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('success', 'Nota eliminada')
+      })
+    })
+
+    it('fires notify("error", "No se pudo eliminar la nota") on note delete failure', async () => {
+      listSocioNotesMock.mockResolvedValueOnce([makeNote({ id: 'n-1' })])
+      deleteSocioNoteMock.mockRejectedValueOnce(new Error('NOT_FOUND: note missing'))
+      renderCard()
+      await expandCard()
+      await waitFor(() => screen.getByTestId('socio-note-delete-n-1'))
+      fireEvent.click(screen.getByTestId('socio-note-delete-n-1'))
+
+      await waitFor(() => {
+        expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo eliminar la nota')
+      })
+    })
   })
 })
