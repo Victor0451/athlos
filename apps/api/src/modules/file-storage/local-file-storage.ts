@@ -67,14 +67,19 @@ export interface LocalFileStorageOptions {
 /**
  * Read the env vars that govern `LocalFileStorage`. Centralised so
  * tests + prod use the same defaults.
+ *
+ * Accepts either the spec's `UPLOADS_DIR` / `MAX_FILE_SIZE_BYTES`
+ * names OR the config-schema's `STORAGE_LOCAL_ROOT` /
+ * `STORAGE_MAX_FILE_SIZE_BYTES` aliases — the latter wins when set
+ * (matches `@athlos/config` and avoids divergence).
  */
 export function readStorageEnv(env: NodeJS.ProcessEnv = process.env): {
   baseDir: string
   maxBytes: number
 } {
-  const baseDir = env['UPLOADS_DIR'] ?? '/app/storage'
-  const rawMax = env['MAX_FILE_SIZE_BYTES']
-  const maxBytes = rawMax ? Number.parseInt(rawMax, 10) : 10 * 1024 * 1024
+  const baseDir = env['STORAGE_LOCAL_ROOT'] ?? env['UPLOADS_DIR'] ?? '/app/storage'
+  const rawMax = env['STORAGE_MAX_FILE_SIZE_BYTES'] ?? env['MAX_FILE_SIZE_BYTES']
+  const maxBytes = rawMax ? Number.parseInt(String(rawMax), 10) : 10 * 1024 * 1024
   return { baseDir, maxBytes: Number.isFinite(maxBytes) ? maxBytes : 10 * 1024 * 1024 }
 }
 

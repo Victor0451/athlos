@@ -9,6 +9,11 @@ services:
     volumes:
       - ./backups:/var/backups/athlos
       - /tmp/legacy-placeholder:/legacy:ro
+      # PR 8c.1 (athlos-socio-legajo): named volume for the
+      # `socio_attachments` on-disk storage. Survives container
+      # restarts; rolling deploy required so existing containers
+      # pick up the mount.
+      - storage:/app/storage
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3001/health"]
       interval: 30s
@@ -23,3 +28,4 @@ services:
 
 volumes:
   backups:
+  storage:
