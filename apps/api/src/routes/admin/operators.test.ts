@@ -39,6 +39,8 @@ function makeEnv(): Env {
     RECONCILIATION_CRON: '0 * * * *',
     PROMOTION_CRON: '0 */6 * * *',
     AUDIT_RETENTION_DAYS: 90,
+    STORAGE_LOCAL_ROOT: '/app/storage',
+    STORAGE_MAX_FILE_SIZE_BYTES: 10 * 1024 * 1024,
   } as Env
 }
 

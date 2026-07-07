@@ -40,6 +40,15 @@ export const envSchema = z.object({
   RECONCILIATION_CRON: z.string().optional(),
   PROMOTION_CRON: z.string().default('0 */6 * * *'),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  // File-storage env (PR 8c.1 — athlos-socio-legajo). Optional so
+  // existing deployments don't fail the env-validator; defaults
+  // match the spec's locked values.
+  STORAGE_LOCAL_ROOT: z.string().default('/app/storage'),
+  STORAGE_MAX_FILE_SIZE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 1024 * 1024),
 })
 
 export type Env = z.infer<typeof envSchema>
