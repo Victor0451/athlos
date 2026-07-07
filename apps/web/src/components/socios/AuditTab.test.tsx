@@ -3,14 +3,20 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * AuditTab tests (PR 8b.4).
+ * AuditTab tests (PR 8b.4 + PR 8b.5 B.3).
  *
  * Pins the rendering of the timeline + the diff formatter. The
  * `getSocioAudit()` mock covers the three SOCIO_* cases and
  * verifies the field-level diff markup.
+ *
+ * PR 8b.5 B.3 adds the operator-name lookup wiring: when the
+ * `getOperatorNames` mock returns known operators, the actor pill
+ * renders `username · ROLE`; when it returns `[]`, every actor
+ * pill renders `Operador desconocido`.
  */
 
 const getSocioAuditMock = vi.fn()
+const getOperatorNamesMock = vi.fn()
 
 vi.mock('@/lib/api/socios', () => ({
   NOTE_MAX_LENGTH: 4000,
@@ -25,6 +31,16 @@ vi.mock('@/lib/api/socios', () => ({
   deleteSocio: vi.fn(),
   getSocios: vi.fn(),
   getSociosAggregate: vi.fn(),
+}))
+
+vi.mock('@/lib/api/operators', () => ({
+  // The mock factory must stay SYNCHRONOUS (design R4). `OPERATORS_QUERY_KEY`
+  // is re-declared here because the real module is replaced wholesale by
+  // vi.mock — if the production implementation drifts (e.g. adds a hash),
+  // update this stub AND the real export in lockstep.
+  OPERATORS_QUERY_KEY: (sortedIds: readonly string[]) =>
+    ['operators', sortedIds.join(',')] as const,
+  getOperatorNames: (...args: unknown[]) => getOperatorNamesMock(...args),
 }))
 
 const { AuditTab } = await import('./AuditTab')
@@ -83,7 +99,9 @@ describe('AuditTab', () => {
     })
     expect(screen.getByTestId('audit-event-a-2')).toBeInTheDocument()
     expect(screen.getByTestId('audit-event-action-a-1')).toHaveTextContent('Socio creado')
-    expect(screen.getByTestId('audit-event-actor-a-2')).toHaveTextContent(/sistema/i)
+    // null operator_id (system event) renders "Operador desconocido"
+    // (OperatorChip fallback, design D7 case 1).
+    expect(screen.getByTestId('audit-event-actor-a-2')).toHaveTextContent(/Operador desconocido/i)
   })
 
   it('renders a per-field diff for SOCIO_UPDATED events', async () => {
@@ -172,5 +190,63 @@ describe('AuditTab', () => {
     })
     expect(screen.getByTestId('audit-note-before')).toHaveTextContent('versión vieja')
     expect(screen.getByTestId('audit-note-after')).toHaveTextContent('versión nueva')
+  })
+
+  /* ── PR 8b.5 B.3: operator-name lookup wiring ────────────────────── */
+
+  it('renders "username · ROLE" for an actor whose id is in the operator lookup', async () => {
+    getSocioAuditMock.mockResolvedValueOnce([
+      {
+        id: 'a-6',
+        operator_id: OPERATOR_ID,
+        action: 'SOCIO_CREATED',
+        entity_type: 'socio',
+        entity_id: SOCIO_ID,
+        old_value: null,
+        new_value: { numero_socio: '00001', nombre: 'Juan', apellido: 'García' },
+        source_ip: null,
+        created_at: '2026-07-04T12:00:00.000Z',
+      },
+    ])
+    getOperatorNamesMock.mockResolvedValueOnce([
+      { id: OPERATOR_ID, username: 'vlongo', role: 'ADMIN' as const },
+    ])
+
+    renderTab()
+    // Wait for the second query (operators) to settle, not just the
+    // event row — the chip text flips from "Operador desconocido"
+    // (pending/empty map) to "vlongo · ADMIN" once the lookup resolves.
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-event-actor-a-6')).toHaveTextContent('vlongo · ADMIN')
+    })
+  })
+
+  it('renders "Operador desconocido" when the operator id is not in the lookup', async () => {
+    getSocioAuditMock.mockResolvedValueOnce([
+      {
+        id: 'a-7',
+        operator_id: OPERATOR_ID,
+        action: 'SOCIO_CREATED',
+        entity_type: 'socio',
+        entity_id: SOCIO_ID,
+        old_value: null,
+        new_value: { numero_socio: '00001', nombre: 'Juan', apellido: 'García' },
+        source_ip: null,
+        created_at: '2026-07-04T12:00:00.000Z',
+      },
+    ])
+    // Empty lookup → OperatorChip case 2: id missing from map
+    // → fallback. Also covers the empty-map-while-pending case.
+    getOperatorNamesMock.mockResolvedValueOnce([])
+
+    renderTab()
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-event-a-7')).toBeInTheDocument()
+    })
+    // The fallback is the chip's "missing" branch — let the second
+    // query settle first, then assert.
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-event-actor-a-7')).toHaveTextContent('Operador desconocido')
+    })
   })
 })
