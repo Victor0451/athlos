@@ -35,6 +35,7 @@ import { CtacteTab } from '@/components/socios/CtacteTab'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
+import { notify } from '@/lib/notifications'
 
 /**
  * Socio detail page — `/socios/[id]` (TASK-021 + PR 8b.2; PR 8b.3
@@ -164,20 +165,26 @@ export default function SocioDetailPage() {
   const updateMutation = useMutation({
     mutationFn: (input: UpdateSocioInput) => updateSocio(id, input),
     onSuccess: () => {
+      notify('success', 'Socio actualizado')
       queryClient.invalidateQueries({ queryKey: ['socio', id] })
       queryClient.invalidateQueries({ queryKey: ['socios'] })
       setEditOpen(false)
+    },
+    onError: () => {
+      notify('error', 'No se pudo actualizar el socio')
     },
   })
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteSocio(id),
     onSuccess: () => {
+      notify('success', 'Socio dado de baja')
       queryClient.invalidateQueries({ queryKey: ['socio', id] })
       queryClient.invalidateQueries({ queryKey: ['socios'] })
       router.push('/socios')
     },
     onError: (err) => {
+      notify('error', 'No se pudo dar de baja el socio')
       setDeleteError(
         err instanceof Error
           ? `${err.message}. Intentá de nuevo.`
@@ -189,9 +196,13 @@ export default function SocioDetailPage() {
   const reactivateMutation = useMutation({
     mutationFn: () => updateSocio(id, { estado: 'activo' }),
     onSuccess: () => {
+      notify('success', 'Socio reactivado')
       queryClient.invalidateQueries({ queryKey: ['socio', id] })
       queryClient.invalidateQueries({ queryKey: ['socios'] })
       setConfirmReactivateOpen(false)
+    },
+    onError: () => {
+      notify('error', 'No se pudo reactivar el socio')
     },
   })
 
