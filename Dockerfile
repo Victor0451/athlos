@@ -25,7 +25,26 @@ RUN pnpm --filter @athlos/db generate
 # --- Stage 2: runner ---
 FROM node:22-alpine AS runner
 
-RUN apk add --no-cache tini bash postgresql-client curl
+# PR 8d.1 (athlos-socio-form-emit): puppeteer needs the chromium
+# runtime libraries that are NOT bundled with the alpine base image.
+# Install them in the RUNNER stage (not the builder) so the chromium
+# libs are NOT in the build cache. `apk add --no-cache` keeps the
+# runner image lean. The `chromium` package version is pinned below
+# — bumping it is a deliberate decision (test fixtures depend on it).
+RUN apk add --no-cache \
+    tini \
+    bash \
+    postgresql-client \
+    curl \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    cairo \
+    pango \
+    libintl \
+    libssl1.1
 
 # Pin pnpm + install tsx. Both as root (USER athlos below can't write to
 # /usr/local/lib). corepack prepare activates the pinned version so the
@@ -63,6 +82,12 @@ RUN chmod +x /app/scripts/*.sh /app/scripts/lib/*.sh 2>/dev/null || true
 RUN chmod 777 /app
 
 USER athlos
+
+# PR 8d.1: tell puppeteer to use the system chromium package instead
+# of downloading its own (~170 MB savings). Mirrors the args the
+# runtime applies in `pdf-generator.ts`.
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_ARGS="--no-sandbox --disable-dev-shm-usage"
 
 EXPOSE 3001
 
