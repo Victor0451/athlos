@@ -94,6 +94,14 @@ export const socios = sociosSchema.table(
     /** National ID (DNI) — stored as text to preserve leading zeros. */
     dni: text('dni').notNull(),
     fechaAlta: date('fecha_alta').notNull(),
+    /**
+     * Date of birth. Added in PR 8d.1 (athlos-socio-form-emit) so the
+     * Gorriti `solicitud-inscripcion` PDF can be auto-filled with the
+     * titular's birth date. Nullable — existing rows have no value
+     * and the form renders a `..../..../......` placeholder when NULL.
+     * Backfill is deferred to a follow-up change.
+     */
+    fechaNacimiento: date('fecha_nacimiento'),
     estado: socioEstado('estado').notNull().default('activo'),
     categoria: text('categoria'),
     direccion: text('direccion'),
