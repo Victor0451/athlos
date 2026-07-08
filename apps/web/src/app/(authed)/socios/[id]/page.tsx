@@ -34,6 +34,7 @@ import { SocioNotesCard } from '@/components/socios/SocioNotesCard'
 import { AuditTab } from '@/components/socios/AuditTab'
 import { CtacteTab } from '@/components/socios/CtacteTab'
 import { LegajoTab } from '@/components/socios/LegajoTab'
+import { EmitirSolicitudButton } from '@/components/socios/EmitirSolicitudButton'
 import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
@@ -334,8 +335,16 @@ export default function SocioDetailPage() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* "Always" group — visible to any authenticated operator, not gated by
+              `isAdmin`. The print-the-inscription workflow is part of the standard
+              operator surface (PR 8d.2 ui-design delta R7). */}
+          <EmitirSolicitudButton socioId={id} disabled={!socio.direccion} />
+          {/* Visual divider between the always-visible group and the ADMIN-gated
+              group. `aria-hidden` so screen readers don't announce a separator
+              with no semantic meaning. */}
           {isAdmin ? (
             <>
+              <span aria-hidden className="mx-1 inline-block h-6 w-px bg-ink-100" />
               <button
                 type="button"
                 onClick={() => setEditOpen(true)}
