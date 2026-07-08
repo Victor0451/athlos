@@ -17,6 +17,8 @@ import { operatorsRoutes } from './routes/operators.ts'
 import { ctacteRoutes } from './routes/ctacte.ts'
 import { padronesRoutes } from './routes/padrones.ts'
 import { socioAttachmentsRoutes } from './routes/socios-attachments.ts'
+import { socioFormsRoutes } from './routes/socio-forms.ts'
+import { createPdfGenerator } from './modules/socios/forms/pdf-generator.ts'
 import { errorHandler } from './plugins/error-handler.ts'
 import { genRequestId as genReqId, requestId } from './plugins/request-id.ts'
 import { LOG_REDACT_PATHS, logging } from './plugins/logging.ts'
@@ -87,6 +89,12 @@ export interface BuildServerOptions {
   containerOverrides?: Parameters<typeof buildContainer>[0]['overrides']
   /** Skip starting the Fastify logger (test mode). */
   quietLogger?: boolean
+  /**
+   * Optional PDF generator override (PR 8d.1). When unset, server.ts
+   * wires a real `createPdfGenerator()` singleton. Tests inject a stub
+   * so route tests don't launch a real Chromium.
+   */
+  pdfGenerator?: ReturnType<typeof createPdfGenerator>
 }
 
 export async function buildServer(opts: BuildServerOptions = {}): Promise<FastifyInstance> {
@@ -217,6 +225,16 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      stream, DELETE soft). Requires `@fastify/multipart` to be
   //      registered above.
   await app.register(socioAttachmentsRoutes)
+
+  // 13c. Socio forms (PR 8d.1 / athlos-socio-form-emit):
+  //      GET /api/v1/socios/:socioId/forms/solicitud-inscripcion.pdf
+  //      — server-renders the Gorriti `solicitud-inscripcion` PDF via
+  //      a puppeteer singleton. The generator is wired here (rather
+  //      than inside the route plugin) so the browser launch cost is
+  //      paid once per process. Tests can override via
+  //      `opts.pdfGenerator` to inject a stub.
+  const pdfGenerator = opts.pdfGenerator ?? createPdfGenerator({ maxConcurrent: 3 })
+  await app.register(socioFormsRoutes, { pdfGenerator })
 
   // 13b. Operator batch lookup (athlos-audit-operator-display PR A):
   //      GET /api/v1/operators?ids=<uuid>,… — any authenticated
