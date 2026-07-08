@@ -24,11 +24,11 @@
     "@athlos/errors": "workspace:*",
     "@athlos/freshness": "workspace:*",
     "@athlos/import": "workspace:*",
-    "@athlos/lineage": "workspace:*",
     "@athlos/integrations-clock": "workspace:*",
     "@athlos/integrations-email": "workspace:*",
     "@athlos/integrations-legacy-db": "workspace:*",
     "@athlos/integrations-whatsapp": "workspace:*",
+    "@athlos/lineage": "workspace:*",
     "@athlos/projection": "workspace:*",
     "@athlos/promotion": "workspace:*",
     "@athlos/scheduler": "workspace:*",
@@ -51,7 +51,9 @@
   "devDependencies": {
     "@athlos/vitest-config": "workspace:*",
     "@types/node": "^22.10.2",
+    "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.11.0",
+    "pdf-parse": "^1.1.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
