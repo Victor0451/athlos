@@ -542,4 +542,46 @@ describe('Socio detail page', () => {
       expect(notifyMock).toHaveBeenCalledWith('error', 'No se pudo reactivar el socio')
     })
   })
+
+  /* ── PR 8d.2: Emitir Solicitud button (frontend) ──────────────
+     The "Emitir Solicitud" button (PR 8d.2, task B.3) lives in
+     the page header NEXT to the existing admin group, visible to
+     ANY authenticated operator (not gated by `isAdmin` per the
+     ui-design delta R7). It opens the server-rendered PDF in a
+     new tab via the `<EmitirSolicitudButton>` component, which
+     is the unit-tested surface in
+     `components/socios/EmitirSolicitudButton.test.tsx`. Here we
+     only pin the page-level wiring: rendered-in-header +
+     visible-to-non-admins + disabled when the socio has no
+     `direccion` (per the UI design delta gating). */
+
+  it('renders the Emitir Solicitud button in the header next to the admin actions', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-detail-emitir-solicitud')).toBeInTheDocument()
+    })
+  })
+
+  it('shows the Emitir Solicitud button to non-ADMIN operators too', async () => {
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-detail-emitir-solicitud')).toBeInTheDocument()
+    })
+    // The ADMIN-gated edit/delete buttons stay hidden for a plain
+    // operator; the Emitir button must NOT be gated by `isAdmin`
+    // (per the ui-design delta R7).
+    expect(screen.queryByTestId('socio-detail-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('socio-detail-delete')).not.toBeInTheDocument()
+  })
+
+  it('passes disabled=true to Emitir Solicitud when socio.direccion is empty', async () => {
+    useAuthMock.mockReturnValue(makeAdminUser())
+    getSocioMock.mockResolvedValueOnce({ ...SAMPLE_SOCIO, direccion: '' })
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('socio-detail-emitir-solicitud')).toBeDisabled()
+    })
+  })
 })
