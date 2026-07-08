@@ -180,6 +180,41 @@ describe('emitAudit — action union widening', () => {
     expect(rows[0]!.action).toBe('SOCIO_ATTACHMENT_UPLOADED')
   })
 
+  it('accepts SOCIO_FORM_EMITTED with the 4-key metadata shape (PR 8d.1)', async () => {
+    // PR 8d.1 (athlos-socio-form-emit): the audit-logger spec mandates
+    // an exact 4-key metadata shape — `socio_id`, `form_id`, `sha256`,
+    // `byte_size`. Any deviation (extra keys or missing keys) breaks
+    // the spec, so we pin both the shape and the runtime persistence.
+    const sha = 'a'.repeat(64)
+    const metadata = {
+      socio_id: '00000000-0000-4000-8000-000000000099',
+      form_id: 'solicitud-inscripcion',
+      sha256: sha,
+      byte_size: 12345,
+    }
+    await emitAudit(buildMockDb() as never, {
+      operatorId: OPERATOR_ID,
+      action: 'SOCIO_FORM_EMITTED',
+      entityType: 'socio',
+      entityId: '00000000-0000-4000-8000-000000000099',
+      oldValue: null,
+      newValue: null,
+      sourceIp: null,
+      payload: { socioId: '00000000-0000-4000-8000-000000000099', sha256: sha, byteSize: 12345 },
+      metadata,
+    } satisfies AuditRecord)
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.action).toBe('SOCIO_FORM_EMITTED')
+    expect(Object.keys(row.metadata ?? {}).sort()).toEqual([
+      'byte_size',
+      'form_id',
+      'sha256',
+      'socio_id',
+    ])
+    expect(row.metadata).toEqual(metadata)
+  })
+
   it('two distinct upload events with identical payload dedupe within the 10s window', async () => {
     // The idempotency key is `sha256(operatorId|action|entityId|payload|10s_bucket)`.
     // Two identical uploads within 10s collapse to a single row. The
