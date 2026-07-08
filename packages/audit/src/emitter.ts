@@ -48,15 +48,25 @@ export interface AuditRecord {
 }
 
 /**
- * Canonical action constants for the socio-attachment lifecycle.
+ * Canonical action constants for the socio-attachment lifecycle and the
+ * PDF form-emit endpoint.
  *
- * PR 8c.1 (athlos-socio-legajo). These extend the audit-logger
- * action union — see `openspec/changes/athlos-socio-legajo/specs/audit-logger/spec.md`
+ * PR 8c.1 (athlos-socio-legajo) added `SOCIO_ATTACHMENT_UPLOADED` /
+ * `SOCIO_ATTACHMENT_DELETED` — see
+ * `openspec/changes/athlos-socio-legajo/specs/audit-logger/spec.md`
  * §"Audit Record Schema — Action Union Widened".
+ *
+ * PR 8d.1 (athlos-socio-form-emit) adds `SOCIO_FORM_EMITTED` for the
+ * `GET /api/v1/socios/:socioId/forms/solicitud-inscripcion.pdf` endpoint.
+ * The matching `metadata` bag MUST carry exactly 4 keys:
+ * `socio_id`, `form_id`, `sha256`, `byte_size` — see
+ * `openspec/changes/athlos-socio-form-emit/specs/audit-logger/spec.md`
+ * §"Form Emission Audit Action".
  */
 export const AuditAction = {
   SOCIO_ATTACHMENT_UPLOADED: 'SOCIO_ATTACHMENT_UPLOADED',
   SOCIO_ATTACHMENT_DELETED: 'SOCIO_ATTACHMENT_DELETED',
+  SOCIO_FORM_EMITTED: 'SOCIO_FORM_EMITTED',
 } as const
 
 export type SocioAttachmentAuditAction = (typeof AuditAction)[keyof typeof AuditAction]
