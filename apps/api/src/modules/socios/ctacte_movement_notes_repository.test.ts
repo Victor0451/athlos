@@ -83,7 +83,7 @@ describe('ctacte_movement_notes_repository — insert + list', () => {
       authorOperatorId: OPERATOR_ID,
       body: 'soft-delete-me',
     })
-    await repo.softDeleteNote(db, a.id, OPERATOR_2)
+    await repo.softDeleteNote(db, a.id)
 
     const visible = await repo.listNotesByMovement(db, MOVEMENT_A)
     expect(visible).toHaveLength(1)
@@ -104,7 +104,7 @@ describe('ctacte_movement_notes_repository — softDeleteNote', () => {
       authorOperatorId: OPERATOR_ID,
       body: 'to-delete',
     })
-    await repo.softDeleteNote(db, inserted.id, OPERATOR_2)
+    await repo.softDeleteNote(db, inserted.id)
 
     const raw = standin.state.ctacteMovementNotes.find((r) => r.id === inserted.id)
     expect(raw).toBeDefined()
@@ -117,12 +117,12 @@ describe('ctacte_movement_notes_repository — softDeleteNote', () => {
       authorOperatorId: OPERATOR_ID,
       body: 'x',
     })
-    await repo.softDeleteNote(db, inserted.id, OPERATOR_2)
+    await repo.softDeleteNote(db, inserted.id)
     const firstDeleteAt = standin.state.ctacteMovementNotes.find(
       (r) => r.id === inserted.id,
     )!.deletedAt
 
-    await repo.softDeleteNote(db, inserted.id, OPERATOR_2)
+    await repo.softDeleteNote(db, inserted.id)
     const secondDeleteAt = standin.state.ctacteMovementNotes.find(
       (r) => r.id === inserted.id,
     )!.deletedAt
