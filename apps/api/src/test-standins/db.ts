@@ -104,7 +104,7 @@ export interface StandinDb {
 }
 
 type Filter = {
-  kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'ilike' | 'inArray'
+  kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'gte' | 'lte' | 'ilike' | 'inArray'
   column: string
   value: unknown
 }
@@ -360,6 +360,18 @@ function matches(row: Row, f: Filter, tableName: string): boolean {
     if (typeof v === 'string' && typeof f.value === 'string') return v < f.value
     return false
   }
+  if (f.kind === 'gte') {
+    if (v instanceof Date && f.value instanceof Date) return v >= f.value
+    if (typeof v === 'number' && typeof f.value === 'number') return v >= f.value
+    if (typeof v === 'string' && typeof f.value === 'string') return v >= f.value
+    return false
+  }
+  if (f.kind === 'lte') {
+    if (v instanceof Date && f.value instanceof Date) return v <= f.value
+    if (typeof v === 'number' && typeof f.value === 'number') return v <= f.value
+    if (typeof v === 'string' && typeof f.value === 'string') return v <= f.value
+    return false
+  }
   if (f.kind === 'ilike') {
     // The value passed in is the LIKE pattern (e.g. `%garc%`).
     // Translate `%` to `.*` and match case-insensitively.
@@ -569,6 +581,8 @@ function parseLeaf(chunks: Array<unknown>): Filter | null {
       if (opStr === ' = ') return { kind: 'eq', column: col, value: val }
       if (opStr === ' > ') return { kind: 'gt', column: col, value: val }
       if (opStr === ' < ') return { kind: 'lt', column: col, value: val }
+      if (opStr === ' >= ') return { kind: 'gte', column: col, value: val }
+      if (opStr === ' <= ') return { kind: 'lte', column: col, value: val }
       if (opStr?.toLowerCase() === ' ilike ')
         return { kind: 'ilike', column: col, value: String(val) }
       if (opStr?.toLowerCase() === ' in ') {
