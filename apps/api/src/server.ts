@@ -18,6 +18,7 @@ import { ctacteRoutes } from './routes/ctacte.ts'
 import { padronesRoutes } from './routes/padrones.ts'
 import { socioAttachmentsRoutes } from './routes/socios-attachments.ts'
 import { socioFormsRoutes } from './routes/socio-forms.ts'
+import { ctacteMutationsRoutes } from './routes/ctacte-mutations.ts'
 import { createPdfGenerator } from './modules/socios/forms/pdf-generator.ts'
 import { errorHandler } from './plugins/error-handler.ts'
 import { genRequestId as genReqId, requestId } from './plugins/request-id.ts'
@@ -235,6 +236,12 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      `opts.pdfGenerator` to inject a stub.
   const pdfGenerator = opts.pdfGenerator ?? createPdfGenerator({ maxConcurrent: 3 })
   await app.register(socioFormsRoutes, { pdfGenerator })
+
+  // 13d. ctacte mutations (athlos-ctacte-mutations PR A1b):
+  //     POST /payment + POST /debit + POST /:movementId/notes
+  //     (all authenticated), GET /comprobante.pdf (authenticated).
+  //     Shares the same pdfGenerator singleton as socioFormsRoutes.
+  await app.register(ctacteMutationsRoutes, { pdfGenerator })
 
   // 13b. Operator batch lookup (athlos-audit-operator-display PR A):
   //      GET /api/v1/operators?ids=<uuid>,… — any authenticated
