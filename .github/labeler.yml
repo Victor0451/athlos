@@ -1,4 +1,13 @@
+# .github/labeler.yml — Pull Request Labeler configuration (v5 syntax)
+#
+# Uses actions/labeler@v5 syntax. The previous version (v4) used a flat
+# list of glob patterns under each label; v5 wraps them under
+# `changed-files → any-glob-to-any-file` so the labeler parses the config
+# without crashing.
+#
+# https://github.com/actions/labeler#configuration
 db-destructive:
-  - packages/db/migrations/**
-  - packages/db/src/schema/**
-  - drizzle/**
+  - changed-files:
+      - any-glob-to-any-file:
+          - packages/db/drizzle/**
+          - packages/db/src/schema/**
