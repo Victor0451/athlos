@@ -70,6 +70,12 @@ export async function emitForm(params: EmitFormParams): Promise<EmitFormResult> 
       fechaNacimiento: formatFechaNacimiento(socio.fechaNacimiento),
       numeroSocio: socio.numeroSocio,
       domicilioCalle: socio.direccion ?? '',
+      // `domicilioNumero` and `domicilioBarrio` are not separate DB
+      // columns; they're embedded in `socio.direccion` in the current
+      // schema. The form expects them in separate fields, so we leave
+      // them blank. If the schema is later split, populate here.
+      domicilioNumero: '',
+      domicilioBarrio: '',
       domicilioTelefono: socio.telefono ?? '',
       email: socio.email ?? '',
       fechaEmision: formatFechaEmision((params.now ?? defaultNow)()),
