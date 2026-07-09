@@ -44,7 +44,7 @@ RUN apk add --no-cache \
     cairo \
     pango \
     libintl \
-    libssl1.1
+    libssl3
 
 # Pin pnpm + install tsx. Both as root (USER athlos below can't write to
 # /usr/local/lib). corepack prepare activates the pinned version so the
