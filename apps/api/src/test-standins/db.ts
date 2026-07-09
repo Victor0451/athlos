@@ -12,6 +12,7 @@ import type {
   SocioAttachment,
   AttachmentCategory,
   Ctacte,
+  CtacteMovementNote,
   Disciplina,
   Ejercicio,
   Inscripcion,
@@ -52,6 +53,7 @@ type ApprovalTokenRow = ApprovalToken
 type SocioRow = Socio
 type SocioAttachmentRow = SocioAttachment
 type CtacteRow = Ctacte
+type CtacteMovementNoteRow = CtacteMovementNote
 type DisciplinaRow = Disciplina
 type EjercicioRow = Ejercicio
 type InscripcionRow = Inscripcion
@@ -68,6 +70,7 @@ type Row =
   | SocioRow
   | SocioAttachmentRow
   | CtacteRow
+  | CtacteMovementNoteRow
   | DisciplinaRow
   | EjercicioRow
   | InscripcionRow
@@ -84,6 +87,7 @@ interface StandinState {
   socios: SocioRow[]
   socioAttachments: SocioAttachmentRow[]
   ctacte: CtacteRow[]
+  ctacteMovementNotes: CtacteMovementNoteRow[]
   disciplinas: DisciplinaRow[]
   ejercicios: EjercicioRow[]
   inscripciones: InscripcionRow[]
@@ -100,7 +104,7 @@ export interface StandinDb {
 }
 
 type Filter = {
-  kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'ilike' | 'inArray'
+  kind: 'eq' | 'isNull' | 'gt' | 'lt' | 'gte' | 'lte' | 'ilike' | 'inArray'
   column: string
   value: unknown
 }
@@ -202,7 +206,17 @@ const CTACTE_SQL_TO_JS: Record<string, keyof CtacteRow> = {
   anulado_motivo: 'anuladoMotivo',
   cctcuenta: 'cctcuenta',
   legacy_id: 'legacyId',
+  comprobante_attachment_id: 'comprobanteAttachmentId',
   created_at: 'createdAt',
+}
+
+const CTACTE_MOVEMENT_NOTES_SQL_TO_JS: Record<string, keyof CtacteMovementNoteRow> = {
+  id: 'id',
+  ctacte_movement_id: 'ctacteMovementId',
+  body: 'body',
+  author_operator_id: 'authorOperatorId',
+  created_at: 'createdAt',
+  deleted_at: 'deletedAt',
 }
 
 const DISCIPLINA_SQL_TO_JS: Record<string, keyof DisciplinaRow> = {
@@ -313,6 +327,7 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   socios: SOCIO_SQL_TO_JS,
   socio_attachments: SOCIO_ATTACHMENT_SQL_TO_JS,
   ctacte: CTACTE_SQL_TO_JS,
+  ctacte_movement_notes: CTACTE_MOVEMENT_NOTES_SQL_TO_JS,
   disciplinas: DISCIPLINA_SQL_TO_JS,
   ejercicios: EJERCICIO_SQL_TO_JS,
   inscripciones: INSCRIPCION_SQL_TO_JS,
@@ -343,6 +358,18 @@ function matches(row: Row, f: Filter, tableName: string): boolean {
     if (v instanceof Date && f.value instanceof Date) return v < f.value
     if (typeof v === 'number' && typeof f.value === 'number') return v < f.value
     if (typeof v === 'string' && typeof f.value === 'string') return v < f.value
+    return false
+  }
+  if (f.kind === 'gte') {
+    if (v instanceof Date && f.value instanceof Date) return v >= f.value
+    if (typeof v === 'number' && typeof f.value === 'number') return v >= f.value
+    if (typeof v === 'string' && typeof f.value === 'string') return v >= f.value
+    return false
+  }
+  if (f.kind === 'lte') {
+    if (v instanceof Date && f.value instanceof Date) return v <= f.value
+    if (typeof v === 'number' && typeof f.value === 'number') return v <= f.value
+    if (typeof v === 'string' && typeof f.value === 'string') return v <= f.value
     return false
   }
   if (f.kind === 'ilike') {
@@ -554,6 +581,8 @@ function parseLeaf(chunks: Array<unknown>): Filter | null {
       if (opStr === ' = ') return { kind: 'eq', column: col, value: val }
       if (opStr === ' > ') return { kind: 'gt', column: col, value: val }
       if (opStr === ' < ') return { kind: 'lt', column: col, value: val }
+      if (opStr === ' >= ') return { kind: 'gte', column: col, value: val }
+      if (opStr === ' <= ') return { kind: 'lte', column: col, value: val }
       if (opStr?.toLowerCase() === ' ilike ')
         return { kind: 'ilike', column: col, value: String(val) }
       if (opStr?.toLowerCase() === ' in ') {
@@ -600,6 +629,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'socios') return state.socios
     if (tname === 'socio_attachments') return state.socioAttachments
     if (tname === 'ctacte') return state.ctacte
+    if (tname === 'ctacte_movement_notes') return state.ctacteMovementNotes
     if (tname === 'disciplinas') return state.disciplinas
     if (tname === 'ejercicios') return state.ejercicios
     if (tname === 'inscripciones') return state.inscripciones
@@ -702,8 +732,21 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         anulado: (v['anulado'] as boolean) ?? false,
         anuladoAt: (v['anuladoAt'] as Date | null) ?? null,
         anuladoMotivo: (v['anuladoMotivo'] as string | null) ?? null,
+        cctcuenta: (v['cctcuenta'] as string | null) ?? null,
+        legacyId: (v['legacyId'] as string | null) ?? null,
+        comprobanteAttachmentId: (v['comprobanteAttachmentId'] as string | null) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as CtacteRow
+    }
+    if (tname === 'ctacte_movement_notes') {
+      return {
+        id: id as string,
+        ctacteMovementId: v['ctacteMovementId']!,
+        body: v['body']!,
+        authorOperatorId: v['authorOperatorId']!,
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+        deletedAt: (v['deletedAt'] as Date | null) ?? null,
+      } as CtacteMovementNoteRow
     }
     if (tname === 'disciplinas') {
       return {
@@ -1160,6 +1203,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if ('codigo' in row && 'nombre' in row) return 'disciplinas'
     if ('socioId' in row && 'disciplinaId' in row && 'ejercicioId' in row) return 'inscripciones'
     if ('debe' in row && 'haber' in row) return 'ctacte'
+    if ('ctacteMovementId' in row) return 'ctacte_movement_notes'
     if ('username' in row && 'role' in row) return 'operators'
     if ('tokenHash' in row && 'operatorId' in row) return 'refreshTokens'
     if ('tokenHash' in row && 'actionType' in row) return 'approvalTokens'
@@ -1387,6 +1431,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     socios: [],
     socioAttachments: [],
     ctacte: [],
+    ctacteMovementNotes: [],
     disciplinas: [],
     ejercicios: [],
     inscripciones: [],
@@ -1405,6 +1450,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.socios.length = 0
       state.socioAttachments.length = 0
       state.ctacte.length = 0
+      state.ctacteMovementNotes.length = 0
       state.disciplinas.length = 0
       state.ejercicios.length = 0
       state.inscripciones.length = 0
