@@ -48,8 +48,8 @@ export interface AuditRecord {
 }
 
 /**
- * Canonical action constants for the socio-attachment lifecycle and the
- * PDF form-emit endpoint.
+ * Canonical action constants for the socio-attachment lifecycle, the
+ * PDF form-emit endpoint, and the ctacte mutation lifecycle.
  *
  * PR 8c.1 (athlos-socio-legajo) added `SOCIO_ATTACHMENT_UPLOADED` /
  * `SOCIO_ATTACHMENT_DELETED` — see
@@ -62,11 +62,35 @@ export interface AuditRecord {
  * `socio_id`, `form_id`, `sha256`, `byte_size` — see
  * `openspec/changes/athlos-socio-form-emit/specs/audit-logger/spec.md`
  * §"Form Emission Audit Action".
+ *
+ * PR A1a (athlos-ctacte-mutations) adds the four `CTACTE_*` actions
+ * for the `/ctacte/[cuenta]` mutation surface. The matching `metadata`
+ * keys are pinned per action by
+ * `openspec/changes/athlos-ctacte-mutations/specs/audit-logger/spec.md`
+ * §"CTACTE Movement Audit Actions":
+ *   - CTACTE_PAYMENT_REGISTERED    → 6 keys (ctacte_id, movement_id,
+ *                                     monto, fecha, concepto,
+ *                                     comprobante_attachment_id)
+ *   - CTACTE_DEBIT_REGISTERED      → 5 keys (ctacte_id, movement_id,
+ *                                     monto, fecha, motivo)
+ *   - CTACTE_MOVEMENT_NOTE_ADDED   → 5 keys (ctacte_id, movement_id,
+ *                                     note_id, body, author_operator_id)
+ *   - CTACTE_COMPROBANTE_PRINTED   → 7 keys (socio_id, ctacte_id, from,
+ *                                     to, movement_count, sha256,
+ *                                     byte_size)
+ *
+ * The action remains server-emitted (NEVER client-supplied). The
+ * `metadata` field is intentionally NOT part of the idempotency key
+ * (see `emitAudit()`).
  */
 export const AuditAction = {
   SOCIO_ATTACHMENT_UPLOADED: 'SOCIO_ATTACHMENT_UPLOADED',
   SOCIO_ATTACHMENT_DELETED: 'SOCIO_ATTACHMENT_DELETED',
   SOCIO_FORM_EMITTED: 'SOCIO_FORM_EMITTED',
+  CTACTE_PAYMENT_REGISTERED: 'CTACTE_PAYMENT_REGISTERED',
+  CTACTE_DEBIT_REGISTERED: 'CTACTE_DEBIT_REGISTERED',
+  CTACTE_MOVEMENT_NOTE_ADDED: 'CTACTE_MOVEMENT_NOTE_ADDED',
+  CTACTE_COMPROBANTE_PRINTED: 'CTACTE_COMPROBANTE_PRINTED',
 } as const
 
 export type SocioAttachmentAuditAction = (typeof AuditAction)[keyof typeof AuditAction]

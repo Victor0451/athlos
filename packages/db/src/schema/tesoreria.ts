@@ -81,6 +81,12 @@ export const ctacte = tesoreriaSchema.table(
      * Migration 0014 adds the column + UNIQUE INDEX.
      */
     legacyId: text('legacy_id'),
+    /** Soft link to a comprobante file in `socios.socio_attachments`.
+     *  PR A1a (athlos-ctacte-mutations) — NULL when the pago was
+     *  registered without an attached comprobante. Cross-schema FK
+     *  target, so it's a loose UUID at the Drizzle layer (the SQL FK
+     *  is added by migration 0031 with ON DELETE SET NULL). */
+    comprobanteAttachmentId: uuid('comprobante_attachment_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
