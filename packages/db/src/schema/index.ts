@@ -70,6 +70,7 @@ export {
   socioNotes,
   socioAttachments,
   attachmentCategory,
+  ctacteMovementNotes,
 } from './socios'
 export type {
   Socio,
@@ -83,6 +84,8 @@ export type {
   SocioAttachment,
   NewSocioAttachment,
   AttachmentCategory,
+  CtacteMovementNote,
+  NewCtacteMovementNote,
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
