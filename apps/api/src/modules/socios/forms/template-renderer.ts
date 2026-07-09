@@ -22,6 +22,13 @@
  *   - Identifier: `[A-Za-z_][A-Za-z0-9_]*`
  *   - Whitespace inside the braces is tolerated (`{{ foo }}` works).
  *   - Unknown identifier → empty string.
+ *
+ * For templates that need to embed pre-rendered HTML chunks (e.g. the
+ * `ctacte-comprobante` table rows + totals footer), pair this with
+ * `renderTemplateMixed` — it accepts both escaped scalars AND raw
+ * HTML chunks (via the `__raw:<name>` prefix convention), and runs
+ * the raw substitution FIRST so the escaped scalar pass can't
+ * double-encode the `<` / `>` of the chunk.
  */
 
 export type TemplateVariableValue = string | number | null | undefined
@@ -35,6 +42,38 @@ export function renderTemplate(
     if (raw === null || raw === undefined) return ''
     return escapeHtml(String(raw))
   })
+}
+
+/**
+ * Mixed-mode renderer. Variables whose name starts with `__raw:` are
+ * substituted RAW (no HTML escape); all others are escaped as in
+ * `renderTemplate()`. The raw pass runs FIRST so a raw value can
+ * contain `{{var}}`-looking text that gets processed by the scalar
+ * pass.
+ *
+ * Use this for templates that embed pre-rendered HTML chunks (e.g.
+ * the `ctacte-comprobante` movements table + totals footer).
+ */
+export function renderTemplateMixed(
+  template: string,
+  variables: Record<string, TemplateVariableValue>,
+): string {
+  // Pass 1 — raw substitution.
+  let out = template.replace(
+    /\{\{\s*__raw:([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g,
+    (_match, name: string) => {
+      const raw = variables[name]
+      if (raw === null || raw === undefined) return ''
+      return String(raw)
+    },
+  )
+  // Pass 2 — escaped scalar substitution.
+  out = out.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_match, name: string) => {
+    const raw = variables[name]
+    if (raw === null || raw === undefined) return ''
+    return escapeHtml(String(raw))
+  })
+  return out
 }
 
 /**
