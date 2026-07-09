@@ -35,6 +35,25 @@ log() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# log_info / log_warn / log_error
+#
+# Level-tagged shortcuts around `log LEVEL`. Mirror the convention used
+# in docker-entrypoint.sh (which calls log_error directly); the longer
+# `log ERROR "..."` form still works everywhere else.
+# ─────────────────────────────────────────────────────────────────────────────
+log_info() {
+  log INFO "$*"
+}
+
+log_warn() {
+  log WARN "$*"
+}
+
+log_error() {
+  log ERROR "$*"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # die MSG...
 #
 # Logs ERROR and exits with code 1.
