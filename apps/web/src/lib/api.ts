@@ -186,6 +186,65 @@ function ensureRefresh(): Promise<string> {
 
 /* ── Typed convenience helpers ─────────────────────────────────── */
 
+/**
+ * Fetch a binary resource (PDF, image, etc.) with the same auth +
+ * single-flight refresh logic as `apiFetch`, but return the response
+ * body as a `Blob` instead of parsing JSON.
+ *
+ * Used by `EmitirSolicitudButton` and any other caller that needs to
+ * serve a non-JSON API response to the browser while keeping the
+ * auth/refresh contract.
+ *
+ * The JSON `apiFetch` would call `res.json()` which fails on a PDF
+ * payload; this variant calls `res.blob()` instead.
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const url = buildUrl(path)
+  const headers: Record<string, string> = { accept: 'application/pdf' }
+  const token = getAccessToken()
+  if (token) headers['authorization'] = `Bearer ${token}`
+
+  const doFetch = async () => {
+    const res = await fetch(url, { method: 'GET', headers })
+    if (res.status !== 401) {
+      if (!res.ok) {
+        let body: { code?: string; message?: string } = {}
+        try {
+          body = (await res.json()) as { code?: string; message?: string }
+        } catch {
+          /* body wasn't JSON */
+        }
+        throw new ApiError(
+          res.status,
+          body.code ?? 'HTTP_ERROR',
+          body.message ?? `HTTP ${res.status}`,
+        )
+      }
+      return res.blob()
+    }
+    // 401 → refresh + retry once
+    const { refreshAccessToken } = await import('./auth.ts')
+    const { clearAccessToken } = await import('./auth.ts')
+    const { redirect } = await import('next/navigation')
+    try {
+      await refreshAccessToken()
+    } catch {
+      clearAccessToken()
+      redirect('/login?expired=1')
+    }
+    const newToken = getAccessToken()
+    if (newToken) headers['authorization'] = `Bearer ${newToken}`
+    const retry = await fetch(url, { method: 'GET', headers })
+    if (!retry.ok) {
+      clearAccessToken()
+      redirect('/login?expired=1')
+    }
+    return retry.blob()
+  }
+
+  return doFetch()
+}
+
 export function get<T>(path: string, query?: Record<string, string | number | undefined>) {
   return apiFetch<T>(path, query ? { method: 'GET', query } : { method: 'GET' })
 }
