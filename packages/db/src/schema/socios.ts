@@ -71,6 +71,53 @@ export type SocioNote = typeof socioNotes.$inferSelect
 export type NewSocioNote = typeof socioNotes.$inferInsert
 
 /**
+ * Per-movement notes for the `/ctacte/[cuenta]` page (`ctacte_movement_notes`)
+ * — PR A1a (athlos-ctacte-mutations).
+ *
+ * An operator can attach a free-text memo to any `tesoreria.ctacte` row
+ * to record context that doesn't fit into the structured columns
+ * (concepto / motivo). Examples: "Verificar comprobante físico",
+ * "Hablar con tesorería sobre prorroga", "Anular por error de carga".
+ *
+ * Soft-delete preserves the audit trail: queries exclude rows where
+ * `deleted_at IS NOT NULL`, but the underlying row stays so the
+ * `audit_events` row can still reference it. The audit row carries the
+ * `body` snapshot, so even after a soft-delete the historical text is
+ * recoverable from `audit_events.metadata.body`.
+ *
+ * `ctacte_movement_id` is a loose UUID because the FK target
+ * (`tesoreria.ctacte.id`) is cross-schema and a Drizzle back-reference
+ * from `socios` to `tesoreria` would introduce a circular import
+ * (`tesoreria.ts` already imports `socios.ts`). The FK constraint is
+ * enforced at SQL level via migration 0031 with `ON DELETE RESTRICT`.
+ *
+ * `author_operator_id` is a loose UUID (no cross-schema FK to
+ * `auth.operators`) — same precedent as `socio_notes.operator_id` and
+ * `socio_attachments.uploaded_by`. The route layer enforces existence
+ * via the JWT.
+ */
+export const ctacteMovementNotes = sociosSchema.table(
+  'ctacte_movement_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** FK to `tesoreria.ctacte.id` (cross-schema — see header). */
+    ctacteMovementId: uuid('ctacte_movement_id').notNull(),
+    body: text('body').notNull(),
+    authorOperatorId: uuid('author_operator_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Soft-delete marker. NULL while active. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => ({
+    movementIdx: index('idx_ctacte_movement_notes_movement').on(table.ctacteMovementId),
+    createdIdx: index('idx_ctacte_movement_notes_created').on(table.createdAt),
+  }),
+)
+
+export type CtacteMovementNote = typeof ctacteMovementNotes.$inferSelect
+export type NewCtacteMovementNote = typeof ctacteMovementNotes.$inferInsert
+
+/**
  * Membership state. Soft-delete flips `estado` to `baja` and stamps
  * `deleted_at`; the row is never physically removed. `suspendido` is a
  * temporary hold (e.g. disciplinary) — `fecha_alta`/`fecha_baja` track the
