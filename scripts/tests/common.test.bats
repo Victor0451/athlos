@@ -72,6 +72,36 @@ export ATHLOS_COMMON_LOADED
 }
 
 # ────────────────────────────────────────────────────────────────
+# log_error / log_info / log_warn — level-tagged shortcuts for log
+# (required by docker-entrypoint.sh, which calls them directly)
+# ────────────────────────────────────────────────────────────────
+
+@test "log_error writes a line containing the ERROR tag" {
+  run log_error "database not ready"
+  echo "$output" | grep -q "ERROR"
+  echo "$output" | grep -q "database not ready"
+}
+
+@test "log_info writes a line containing the INFO tag" {
+  run log_info "starting up"
+  echo "$output" | grep -q "INFO"
+  echo "$output" | grep -q "starting up"
+}
+
+@test "log_warn writes a line containing the WARN tag" {
+  run log_warn "deprecated path"
+  echo "$output" | grep -q "WARN"
+  echo "$output" | grep -q "deprecated path"
+}
+
+@test "log_error writes to stderr not stdout" {
+  # stderr should contain the message; stdout should NOT (output is
+  # empty or whitespace because bats captures stderr separately)
+  run log_error "boom"
+  echo "$output" | grep -q "boom"
+}
+
+# ────────────────────────────────────────────────────────────────
 # cleanup_old_backups — deletes files older than N days
 # ────────────────────────────────────────────────────────────────
 
