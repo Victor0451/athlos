@@ -513,6 +513,63 @@ None. This batch is API + web + schema + migration-only. Migration 0034 is forwa
 | #2 — Concurrent same-key semantics: repository distinguishes `created: true` (creator, audit fires) vs `created: false` (loser, replay OR 409); canonical comparison includes `(movement_id, body, author_operator_id)`; deterministic concurrency tests + real PG race-collapse test | ✅ Resolved (work unit #2) |
 | #3 — Reload-safe note retry: form persists the Idempotency-Key per `(socioId, movementId, body)` in localStorage; reload reuses the same key; body change mints a new key; success / 409 / cancel clear the cache; UI copy unchanged (persistence is invisible to the user) | ✅ Resolved (work unit #3) |
 
+---
+
+# Apply Progress — R3 fix batch v2: full forward sequence + 10-racer PG proof (defects #1, #2, #3)
+
+**Branch**: `fix/ctacte-mutations-r3` (PR #34)
+**Base**: `989aff5` (R3 fix batch)
+**Head**: `8f10270`
+**Scope**: ONE focused executor, ONE focused commit. No new branch, no merge, no deploy, no production container access, no migration apply, no claim of production application.
+**Disposable PG**: `athlos-pg-disposable` (postgres:17-alpine) on `localhost:5433` — separate from production `athlos-db-1` on `localhost:5432`. ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5433/athlos_disposable.
+
+## What changed and why
+
+The previous R3 fix batch covered defects #1, #2, #3 with unit-level coverage + a small disposable-PG proof that applied only 0031 + 0034. Two real-blocker test gaps remained, both falling on this batch:
+
+1. **Defect #1 partial coverage**: the existing `ctacte_movement_notes.postgres.integration.test.ts` applied ONLY 0031 + 0034 in isolation. The full production rollout is 0031 → 0032 → 0033 → 0034, and there was no end-to-end proof that the FOUR-migration sequence lands the database in the correct shape (FULL unique index on BOTH `socios.ctacte_movement_notes.idempotency_key` AND `tesoreria.ctacte.idempotency_key`, plus the comprobante retries shape from 0033). The task brief explicitly required testing the full forward sequence.
+
+2. **Defect #2 thin concurrent proof**: the existing test fired TWO parallel inserts. The task brief said "Prove with real PostgreSQL concurrent tests" — under-sampled. The new test fires TEN parallel inserts on the same key + same body and asserts exactly one row + exactly one creator. This models a realistic retry storm across two or three backend replicas.
+
+## TDD Cycle Evidence (work unit: full forward + 10-racer)
+
+| Field | Value |
+|---|---|
+| RED command | `pnpm --filter @athlos/api exec vitest run src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts` (PRE-`8f10270`) |
+| RED exit code | 1 (file did not exist → 0/10 tests, command failed) |
+| RED failure excerpt | `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command failed with exit code 1` — test file did not exist |
+| Implementation commit | `8f10270 test(api): full forward 0031→0034 sequence + 10-racer PG concurrency proof` |
+| Layer | Disposable PostgreSQL via `ATHLOS_TEST_DATABASE_URL` |
+| GREEN command | `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5433/athlos_disposable pnpm --filter @athlos/api exec vitest run src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `10 passed (10)` |
+| Triangulation | (a) Each migration file contributes >0 statements under the per-file `BEGIN/COMMIT` smoke loop; (b) `pg_indexes` returns `ctacte_movement_notes_idempotency_key_unique` AND `ctacte_idempotency_key_unique` with a definition containing `UNIQUE INDEX` and **NO `WHERE` clause** — proves 0031+0034 produced full unique index on ctacte_movement_notes AND 0031+0032 produced full unique index on ctacte; (c) Comprobante retries table carries its `ctacte_comprobante_retries_status_check` CHECK constraint listing `rendering | complete | failed` AND the `ctacte_comprobante_retries_expires_at_idx` index; (d) bare-column `ON CONFLICT (idempotency_key) DO NOTHING` returns `rowCount: 0` on the duplicate insert AND the DB ends with exactly one row for that key; (e) idempotency of the rollout itself — re-applying the four migrations is a no-op (the index `indexdef` is bit-for-bit identical before/after); (f) two parallel inserts collapse to one row + exactly one `created: true`; (g) **TEN parallel inserts** collapse to one row + exactly one `created: true` (the realistic backend-replica retry storm); (h) sequential different-body second call surfaces `created: false` + the existing row, so the service compares the canonical `(movement_id, body, author_operator_id)` and 409s; (i) two parallel different-body calls still collapse with one creator + one conflict-loser (the loser path would 409 via canonical-mismatch detection). |
+| Safety net | All sibling pg + in-process tests still green (4 + 21 + 53 = 78 tests) on a single-file run; typecheck + lint green across `@athlos/{db,api,web}`. The pre-existing `ctacte_movement_notes.postgres.integration.test.ts` continues to verify the partial-index regression path on its own disposable-PG run. |
+| Rollback boundary | Revert `8f10270` — no production code touched; only a NEW disposable-PG integration test file is added. The existing tests + production behaviour are unaffected by the addition. |
+| Test runtime | `1.36 s` on the disposable container (`postgres:17-alpine`). |
+| Production access | NONE. The disposable container is on `localhost:5433` (separate from `athlos-db-1` on `localhost:5432`). `ATHLOS_TEST_DATABASE_URL` is the only DB touched. No migration is applied to any production-shaped database. |
+
+## Defect #3 contract validation (no code change)
+
+Per the brief: "Validate the existing reload-safe localStorage note-key behavior against the current code; only modify it if it fails its stated contract."
+
+| Field | Value |
+|---|---|
+| File | `apps/web/src/components/ctacte/CtacteNoteForm.tsx` (existing, ca24e9c) |
+| Test file | `apps/web/src/components/ctacte/CtacteNoteForm.test.tsx` (existing) |
+| Command | `pnpm --filter @athlos/web exec vitest run src/components/ctacte/CtacteNoteForm.test.tsx` |
+| Pass count | `11 passed (11)` |
+| Cases covered | (i) stable Idempotency-Key across ambiguous retries of the same submission; (ii) rotates the Idempotency-Key when the body changes (new intent); (iii) persists the Idempotency-Key in localStorage keyed by `(socioId, movementId, body)` — even after a 5xx; (iv) reuses the cached key when the form is remounted for the same body (page reload simulation); (v) clears the cached key after a successful submit (next open starts fresh). All contract statements validate. **No code change required.** |
+
+## Out of scope (per this batch)
+
+- R4 (field-level `ApiError.details` → form mapping) — not in this PR.
+- R5 (evidence reconciliation) — partial — added this `apply-progress` section.
+- No migration apply / no deploy / no production container access.
+- No new branch / no merge of this branch.
+- `CtacteTab.tsx`, `/ctacte` list page, `/socios/[id]` page, Tesorería cross-system sync — not touched.
+- Vitest parallel-file DROP-SCHEMA race between `ctacte_movement_notes.postgres.integration.test.ts` and the new test file: pre-existing limitation in the older file's `DROP SCHEMA CASCADE` pattern; the two files must be invoked separately.
+
 ## Out of scope (per R3 fix batch brief)
 
 - R4 (field-level `ApiError.details` → form mapping) — not in this PR.
