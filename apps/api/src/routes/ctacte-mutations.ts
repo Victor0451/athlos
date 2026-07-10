@@ -414,6 +414,14 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       return reply.code(401).send({ error: 'UNAUTHORIZED' })
     }
 
+    const idempotencyKey = request.headers['idempotency-key']
+    if (
+      typeof idempotencyKey !== 'string' ||
+      idempotencyKey.trim().length === 0 ||
+      idempotencyKey.length > 128
+    ) {
+      return apiError(reply, 'VALIDATION_ERROR', 'Idempotency-Key header must be 1–128 characters')
+    }
     try {
       const result = await renderComprobante({
         socioId: params.socioId,
@@ -421,6 +429,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         operatorId,
         from: q.from,
         to: q.to,
+        idempotencyKey,
         db: container.db,
         pdfGenerator,
       })
@@ -448,6 +457,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         }
         return reply.code(400).send({ error: 'VALIDATION_ERROR', message: e.message })
       }
+      if (e.code === ErrorCode.CONFLICT)
+        return reply.code(409).send({ error: 'CONFLICT', message: e.message })
       request.log.warn({ err }, 'renderComprobante failed')
       return reply
         .code(400)

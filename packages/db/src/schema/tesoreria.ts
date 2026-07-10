@@ -89,6 +89,7 @@ export const ctacte = tesoreriaSchema.table(
     comprobanteAttachmentId: uuid('comprobante_attachment_id'),
     /** Client-supplied payment retry key. UNIQUE at the database layer. */
     idempotencyKey: text('idempotency_key'),
+    idempotencyOperatorId: uuid('idempotency_operator_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -107,6 +108,7 @@ export type NewCtacte = typeof ctacte.$inferInsert
 export const ctacteComprobanteRetries = tesoreriaSchema.table('ctacte_comprobante_retries', {
   idempotencyKey: text('idempotency_key').primaryKey(),
   status: text('status').notNull(),
+  requestFingerprint: text('request_fingerprint').notNull(),
   pdfBase64: text('pdf_base64'),
   sha256: text('sha256'),
   byteSize: integer('byte_size'),

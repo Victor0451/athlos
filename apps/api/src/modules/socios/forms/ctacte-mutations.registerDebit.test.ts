@@ -54,6 +54,7 @@ describe('registerDebit', () => {
         debe: '800.00',
         haber: '0.00',
         comprobanteAttachmentId: null,
+        idempotencyOperatorId: '00000000-0000-4000-8000-000000000002',
         createdAt: new Date(),
       },
       created: true,
@@ -105,6 +106,34 @@ describe('registerDebit', () => {
     )
   })
 
+  it('conflicts when a different operator reuses the same debit key', async () => {
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'DEBITO',
+        concepto: 'Cuota social Julio',
+        debe: '800.00',
+        haber: '0.00',
+        comprobanteAttachmentId: null,
+        idempotencyOperatorId: '00000000-0000-4000-8000-000000000002',
+      },
+      created: false,
+    })
+    await expect(
+      registerDebit({
+        db: dbMock,
+        socioId: SOCIO_ID,
+        operatorId: OPERATOR_ID,
+        monto: 800,
+        fecha: '2026-07-09',
+        motivo: 'Cuota social Julio',
+        idempotencyKey: 'debit-intent-1',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
   it('replays an existing debit only when the caller key has the same canonical payload', async () => {
     repoInsertCtacteRow.mockResolvedValueOnce({
       row: {
@@ -116,6 +145,7 @@ describe('registerDebit', () => {
         debe: '800.00',
         haber: '0.00',
         comprobanteAttachmentId: null,
+        idempotencyOperatorId: OPERATOR_ID,
       },
       created: false,
     })

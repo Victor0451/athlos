@@ -56,11 +56,17 @@ type CtacteRow = Ctacte
 type CtacteMovementNoteRow = CtacteMovementNote
 type CtacteComprobanteRetryRow = {
   idempotencyKey: string
+  requestFingerprint: string
   status: string
   pdfBase64: string | null
   sha256: string | null
   byteSize: number | null
   filename: string | null
+  movementCount: number | null
+  leaseOwner: string | null
+  leaseExpiresAt: Date | null
+  attemptCount: number
+  updatedAt: Date
   expiresAt: Date
   createdAt: Date
 }
@@ -220,6 +226,7 @@ const CTACTE_SQL_TO_JS: Record<string, keyof CtacteRow> = {
   legacy_id: 'legacyId',
   comprobante_attachment_id: 'comprobanteAttachmentId',
   idempotency_key: 'idempotencyKey',
+  idempotency_operator_id: 'idempotencyOperatorId',
   created_at: 'createdAt',
 }
 
@@ -234,11 +241,15 @@ const CTACTE_MOVEMENT_NOTES_SQL_TO_JS: Record<string, keyof CtacteMovementNoteRo
 
 const CTACTE_COMPROBANTE_RETRIES_SQL_TO_JS: Record<string, keyof CtacteComprobanteRetryRow> = {
   idempotency_key: 'idempotencyKey',
+  request_fingerprint: 'requestFingerprint',
   status: 'status',
   pdf_base64: 'pdfBase64',
   sha256: 'sha256',
   byte_size: 'byteSize',
   filename: 'filename',
+  movement_count: 'movementCount',
+  lease_owner: 'leaseOwner',
+  lease_expires_at: 'leaseExpiresAt',
   expires_at: 'expiresAt',
   created_at: 'createdAt',
 }
@@ -762,6 +773,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         legacyId: (v['legacyId'] as string | null) ?? null,
         comprobanteAttachmentId: (v['comprobanteAttachmentId'] as string | null) ?? null,
         idempotencyKey: (v['idempotencyKey'] as string | null) ?? null,
+        idempotencyOperatorId: (v['idempotencyOperatorId'] as string | null) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as CtacteRow
     }
@@ -783,6 +795,12 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         sha256: (v['sha256'] as string | null) ?? null,
         byteSize: (v['byteSize'] as number | null) ?? null,
         filename: (v['filename'] as string | null) ?? null,
+        requestFingerprint: (v['requestFingerprint'] as string) ?? '',
+        movementCount: (v['movementCount'] as number | null) ?? null,
+        leaseOwner: (v['leaseOwner'] as string | null) ?? null,
+        leaseExpiresAt: (v['leaseExpiresAt'] as Date | null) ?? null,
+        attemptCount: Number(v['attemptCount'] ?? 0),
+        updatedAt: (v['updatedAt'] as Date) ?? new Date(),
         expiresAt: (v['expiresAt'] as Date) ?? new Date(),
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as CtacteComprobanteRetryRow
@@ -1404,6 +1422,150 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         })
         .join('')
         .toLowerCase()
+      const values = (stmt ?? []).flatMap((chunk) => {
+        if (typeof chunk === 'string' || typeof chunk === 'number' || chunk instanceof Date)
+          return [chunk]
+        if (!chunk || typeof chunk !== 'object') return []
+        const value = (chunk as { value?: unknown }).value
+        return Array.isArray(value) ? [] : [value]
+      })
+      const retries = state.ctacteComprobanteRetries
+      if (sqlText.includes('ctacte_comprobante_retries')) {
+        if (sqlText.includes('delete from')) {
+          const [key, now] = values as [string, Date]
+          const index = retries.findIndex(
+            (row) =>
+              row.idempotencyKey === key && row.status === 'complete' && row.expiresAt <= now,
+          )
+          if (index >= 0) retries.splice(index, 1)
+          return []
+        }
+        if (sqlText.includes('insert into')) {
+          const [key, requestFingerprint, owner, leaseExpiresAt, expiresAt] = values as [
+            string,
+            string,
+            string,
+            Date,
+            Date,
+          ]
+          if (retries.some((row) => row.idempotencyKey === key)) return []
+          retries.push({
+            idempotencyKey: key,
+            requestFingerprint,
+            status: 'rendering',
+            pdfBase64: null,
+            sha256: null,
+            byteSize: null,
+            filename: null,
+            movementCount: null,
+            leaseOwner: owner,
+            leaseExpiresAt,
+            attemptCount: 1,
+            updatedAt: new Date(),
+            expiresAt,
+            createdAt: new Date(),
+          })
+          return [{ idempotency_key: key }]
+        }
+        if (sqlText.includes("set status = 'rendering'")) {
+          const [owner, leaseExpiresAt, key, now] = values as [string, Date, string, Date]
+          const row = retries.find((candidate) => candidate.idempotencyKey === key)
+          if (
+            !row ||
+            !(
+              row.status === 'failed' ||
+              (row.status === 'rendering' &&
+                row.leaseExpiresAt !== null &&
+                row.leaseExpiresAt <= now)
+            )
+          )
+            return []
+          row.status = 'rendering'
+          row.leaseOwner = owner
+          row.leaseExpiresAt = leaseExpiresAt
+          row.attemptCount += 1
+          row.updatedAt = new Date()
+          return [{ idempotency_key: key }]
+        }
+        if (sqlText.includes('select status')) {
+          const [key] = values as [string]
+          const row = retries.find((candidate) => candidate.idempotencyKey === key)
+          return row
+            ? [
+                {
+                  status: row.status,
+                  request_fingerprint: row.requestFingerprint,
+                  pdf_base64: row.pdfBase64,
+                  sha256: row.sha256,
+                  byte_size: row.byteSize,
+                  filename: row.filename,
+                  movement_count: row.movementCount,
+                },
+              ]
+            : []
+        }
+        if (
+          sqlText.includes('set lease_expires_at') &&
+          !sqlText.includes("set status = 'complete'") &&
+          !sqlText.includes("set status = 'failed'")
+        ) {
+          const [leaseExpiresAt, key, owner] = values as [Date, string, string]
+          const row = retries.find(
+            (candidate) =>
+              candidate.idempotencyKey === key &&
+              candidate.status === 'rendering' &&
+              candidate.leaseOwner === owner,
+          )
+          if (!row) return []
+          row.leaseExpiresAt = leaseExpiresAt
+          row.updatedAt = new Date()
+          return [{ idempotency_key: key }]
+        }
+        if (sqlText.includes("set status = 'complete'")) {
+          const [pdfBase64, sha256, byteSize, filename, movementCount, key, owner] = values as [
+            string,
+            string,
+            number,
+            string,
+            number,
+            string,
+            string,
+          ]
+          const row = retries.find(
+            (candidate) =>
+              candidate.idempotencyKey === key &&
+              candidate.status === 'rendering' &&
+              candidate.leaseOwner === owner,
+          )
+          if (!row) return []
+          Object.assign(row, {
+            status: 'complete',
+            pdfBase64,
+            sha256,
+            byteSize,
+            filename,
+            movementCount,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            updatedAt: new Date(),
+          })
+          return [{ idempotency_key: key }]
+        }
+        if (sqlText.includes("set status = 'failed'")) {
+          const [key, owner] = values as [string, string]
+          const row = retries.find(
+            (candidate) =>
+              candidate.idempotencyKey === key &&
+              candidate.status === 'rendering' &&
+              candidate.leaseOwner === owner,
+          )
+          if (!row) return []
+          row.status = 'failed'
+          row.leaseOwner = null
+          row.leaseExpiresAt = null
+          return [{ idempotency_key: key }]
+        }
+      }
       if (!sqlText.includes('count(*)') || !sqlText.includes('sum(')) return []
       // Pull the socioId out of the parameter binding. Drizzle 0.36
       // emits each `sql\`...${value}...\`` parameter as either a

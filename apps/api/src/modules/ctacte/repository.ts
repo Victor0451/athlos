@@ -152,6 +152,7 @@ export interface InsertCtacteRowInput {
    *  upload). NULL when the pago was registered without a comprobante. */
   comprobanteAttachmentId?: string | null
   idempotencyKey?: string
+  idempotencyOperatorId?: string
 }
 
 export interface InsertCtacteRowResult {
@@ -192,6 +193,7 @@ export async function insertCtacteRow(
     haber: input.tipo === 'CREDITO' ? input.monto : '0.00',
     comprobanteAttachmentId: input.comprobanteAttachmentId ?? null,
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.idempotencyOperatorId ? { idempotencyOperatorId: input.idempotencyOperatorId } : {}),
   }
   const [inserted] = input.idempotencyKey
     ? await db

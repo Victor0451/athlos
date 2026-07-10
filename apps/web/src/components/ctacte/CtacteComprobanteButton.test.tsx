@@ -132,6 +132,12 @@ describe('CtacteComprobanteButton', () => {
         '2026-01-01',
         '2026-06-30',
       )
+      expect(apiFetchBlobMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+        }),
+      )
     })
     await waitFor(() => {
       expect(windowOpenMock).toHaveBeenCalledWith(

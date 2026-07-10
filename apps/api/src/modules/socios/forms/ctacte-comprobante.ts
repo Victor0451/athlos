@@ -68,7 +68,14 @@ type LeaseClaim =
 
 /** The durable state-machine boundary. Production uses PostgreSQL; tests share an equivalent store. */
 export interface ComprobanteLeaseStore {
-  claim(key: string, owner: string, now: number, leaseMs: number): Promise<LeaseClaim>
+  claim(
+    key: string,
+    fingerprint: string,
+    owner: string,
+    now: number,
+    leaseMs: number,
+    retentionMs: number,
+  ): Promise<LeaseClaim | { kind: 'conflict' }>
   heartbeat(key: string, owner: string, now: number, leaseMs: number): Promise<boolean>
   complete(key: string, owner: string, result: RenderComprobanteResult): Promise<boolean>
   fail(key: string, owner: string): Promise<boolean>
@@ -77,15 +84,34 @@ export interface ComprobanteLeaseStore {
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
-  const retryKey = params.idempotencyKey ?? comprobanteRetryKey(params)
+  if (!params.idempotencyKey)
+    throw BusinessError(
+      ErrorCode.VALIDATION_ERROR,
+      'Idempotency-Key header must be 1–128 characters',
+    )
+  const retryKey = params.idempotencyKey
+  const fingerprint = comprobanteRequestFingerprint(params)
   const store = params.leaseStore ?? createPostgresComprobanteLeaseStore(params.db)
   const owner = randomUUID()
   const leaseDurationMs = params.leaseDurationMs ?? 5_000
   const heartbeatMs = params.heartbeatMs ?? Math.max(100, Math.floor(leaseDurationMs / 3))
+  const retentionMs = 24 * 60 * 60 * 1000
   const now = params.now ?? defaultNow
 
   for (let attempt = 0; ; attempt += 1) {
-    const claim = await store.claim(retryKey, owner, now().valueOf(), leaseDurationMs)
+    const claim = await store.claim(
+      retryKey,
+      fingerprint,
+      owner,
+      now().valueOf(),
+      leaseDurationMs,
+      retentionMs,
+    )
+    if (claim.kind === 'conflict')
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency-Key was already used for a different comprobante request',
+      )
     if (claim.kind === 'complete') return claim.result
     if (claim.kind === 'follower') {
       await delay(Math.min(250, 15 + attempt * 10))
@@ -180,16 +206,18 @@ async function generateOwnedComprobante(
 export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseStore {
   const rows = async <T>(query: ReturnType<typeof sql>): Promise<T[]> => {
     const result = await db.execute(query)
-    return result.rows as unknown as T[]
+    return (Array.isArray(result) ? result : result.rows) as unknown as T[]
   }
   return {
-    async claim(key, owner, now, leaseMs) {
+    async claim(key, fingerprint, owner, now, leaseMs, retentionMs) {
       const leaseExpiresAt = new Date(now + leaseMs)
-      const expiresAt = new Date(now + 24 * 60 * 60 * 1000)
+      const expiresAt = new Date(now + retentionMs)
+      await rows(sql`DELETE FROM tesoreria.ctacte_comprobante_retries
+        WHERE idempotency_key = ${key} AND status = 'complete' AND expires_at <= ${new Date(now)}`)
       const inserted = await rows<{ idempotency_key: string }>(sql`
         INSERT INTO tesoreria.ctacte_comprobante_retries
-          (idempotency_key, status, lease_owner, lease_expires_at, attempt_count, expires_at, updated_at)
-        VALUES (${key}, 'rendering', ${owner}, ${leaseExpiresAt}, 1, ${expiresAt}, now())
+          (idempotency_key, request_fingerprint, status, lease_owner, lease_expires_at, attempt_count, expires_at, updated_at)
+        VALUES (${key}, ${fingerprint}, 'rendering', ${owner}, ${leaseExpiresAt}, 1, ${expiresAt}, now())
         ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key`)
       if (inserted.length) return { kind: 'owner' }
       const reclaimed = await rows<{ idempotency_key: string }>(sql`
@@ -202,14 +230,16 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
       if (reclaimed.length) return { kind: 'owner' }
       const [existing] = await rows<{
         status: string
+        request_fingerprint: string
         pdf_base64: string | null
         sha256: string | null
         byte_size: number | null
         filename: string | null
         movement_count: number | null
       }>(sql`
-        SELECT status, pdf_base64, sha256, byte_size, filename, movement_count
+        SELECT status, request_fingerprint, pdf_base64, sha256, byte_size, filename, movement_count
         FROM tesoreria.ctacte_comprobante_retries WHERE idempotency_key = ${key}`)
+      if (existing && existing.request_fingerprint !== fingerprint) return { kind: 'conflict' }
       if (
         existing?.status === 'complete' &&
         existing.pdf_base64 &&
@@ -263,12 +293,9 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function comprobanteRetryKey(params: RenderComprobanteParams): string {
-  const bucket = Math.floor((params.now ?? defaultNow)().valueOf() / 10_000)
+function comprobanteRequestFingerprint(params: RenderComprobanteParams): string {
   return createHash('sha256')
-    .update(
-      `comprobante|${params.operatorId}|${params.socioId}|${params.cuenta}|${params.from}|${params.to}|${bucket}`,
-    )
+    .update(`comprobante|${params.socioId}|${params.cuenta}|${params.from}|${params.to}`)
     .digest('hex')
 }
 

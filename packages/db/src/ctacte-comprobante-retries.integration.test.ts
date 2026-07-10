@@ -6,7 +6,8 @@ const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
 let pool: Pool | undefined
 
 beforeAll(async () => {
-  if (!databaseUrl) return
+  if (!databaseUrl)
+    throw new Error('ATHLOS_TEST_DATABASE_URL is required for PostgreSQL migration tests')
   pool = new Pool({ connectionString: databaseUrl, connectionTimeoutMillis: 5_000 })
   await pool.query('SELECT 1')
 })
@@ -22,7 +23,8 @@ afterAll(async () => {
 
 describe('0033 ctacte comprobante retry migration', () => {
   it('repairs the prior draft shape and is safe to apply twice on PostgreSQL', async () => {
-    if (!pool) return
+    if (!pool) throw new Error('PostgreSQL pool was not initialized')
+    await pool.query('CREATE TABLE tesoreria.ctacte (id uuid PRIMARY KEY)')
     await pool.query(`
       CREATE TABLE tesoreria.ctacte_comprobante_retries (
         idempotency_key text PRIMARY KEY,

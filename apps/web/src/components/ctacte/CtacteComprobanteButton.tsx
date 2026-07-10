@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Printer } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
@@ -34,11 +34,13 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
 
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const idempotencyKey = useRef<string | null>(null)
 
   const handleOpen = useCallback(() => {
     setErrors({})
     setFrom('')
     setTo('')
+    idempotencyKey.current = crypto.randomUUID()
     setOpen(true)
   }, [])
 
@@ -62,7 +64,9 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
     setIsGenerating(true)
     try {
       const url = getCtacteComprobanteUrl(socioId, cuenta, from, to)
-      const blob = await apiFetchBlob(url)
+      const blob = await apiFetchBlob(url, {
+        headers: { 'Idempotency-Key': idempotencyKey.current ?? crypto.randomUUID() },
+      })
       const blobUrl = URL.createObjectURL(blob)
       window.open(blobUrl, '_blank', 'noopener,noreferrer')
       notify('success', 'Comprobante generado')
