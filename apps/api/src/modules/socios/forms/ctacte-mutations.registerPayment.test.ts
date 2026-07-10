@@ -93,6 +93,7 @@ describe('registerPayment — happy path', () => {
       monto: '1500.00',
       comprobanteAttachmentId: null,
       idempotencyKey: IDEMPOTENCY_KEY,
+      idempotencyOperatorId: OPERATOR_ID,
     })
     expect(emitAuditMock).toHaveBeenCalledTimes(1)
     const auditCall = emitAuditMock.mock.calls[0]![1]
@@ -167,6 +168,7 @@ describe('registerPayment — idempotency', () => {
       concepto: 'Cuota Julio',
       haber: '1500.00',
       comprobanteAttachmentId: null,
+      idempotencyOperatorId: OPERATOR_ID,
     })
 
     const result = await registerPayment({
@@ -194,6 +196,7 @@ describe('registerPayment — idempotency', () => {
       concepto: 'Cuota Julio',
       haber: '1500.00',
       comprobanteAttachmentId: null,
+      idempotencyOperatorId: OPERATOR_ID,
     })
 
     await expect(
@@ -211,6 +214,34 @@ describe('registerPayment — idempotency', () => {
     expect(repoInsertCtacteRow).not.toHaveBeenCalled()
   })
 
+  it('rejects a reused key from a different operator even with the same canonical payment payload', async () => {
+    repoFindCtacteByIdempotencyKey.mockResolvedValueOnce({
+      id: MOVEMENT_ID,
+      socioId: SOCIO_ID,
+      fecha: '2026-07-09',
+      tipo: 'CREDITO',
+      concepto: 'Cuota Julio',
+      haber: '1500.00',
+      comprobanteAttachmentId: null,
+      idempotencyOperatorId: OPERATOR_ID,
+    })
+
+    await expect(
+      registerPayment({
+        db: dbMock,
+        storage: {} as never,
+        socioId: SOCIO_ID,
+        operatorId: '00000000-0000-4000-8000-000000000002',
+        monto: 1500,
+        fecha: '2026-07-09',
+        concepto: 'Cuota Julio',
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(repoInsertCtacteRow).not.toHaveBeenCalled()
+    expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['date', { fecha: '2026-07-08' }],
     ['concept', { concepto: 'Cuota Agosto' }],
@@ -223,6 +254,7 @@ describe('registerPayment — idempotency', () => {
       concepto: 'Cuota Julio',
       haber: '1500.00',
       comprobanteAttachmentId: null,
+      idempotencyOperatorId: OPERATOR_ID,
     })
 
     await expect(
@@ -249,6 +281,7 @@ describe('registerPayment — idempotency', () => {
       concepto: 'Cuota Julio',
       haber: '1500.00',
       comprobanteAttachmentId: ATTACHMENT_ID,
+      idempotencyOperatorId: OPERATOR_ID,
     })
     getAttachmentMock.mockResolvedValueOnce({ storageSha256: 'different-attachment-hash' })
 

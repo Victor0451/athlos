@@ -198,14 +198,21 @@ function ensureRefresh(): Promise<string> {
  * The JSON `apiFetch` would call `res.json()` which fails on a PDF
  * payload; this variant calls `res.blob()` instead.
  */
-export async function apiFetchBlob(path: string): Promise<Blob> {
+interface ApiFetchBlobOptions {
+  headers?: Record<string, string>
+}
+
+export async function apiFetchBlob(
+  path: string,
+  { headers: callerHeaders = {} }: ApiFetchBlobOptions = {},
+): Promise<Blob> {
   const url = buildUrl(path)
-  const headers: Record<string, string> = { accept: 'application/pdf' }
+  const headers: Record<string, string> = { accept: 'application/pdf', ...callerHeaders }
   const token = getAccessToken()
   if (token) headers['authorization'] = `Bearer ${token}`
 
   const doFetch = async () => {
-    const res = await fetch(url, { method: 'GET', headers })
+    const res = await fetch(url, { method: 'GET', credentials: 'include', headers })
     if (res.status !== 401) {
       if (!res.ok) {
         let body: { code?: string; message?: string } = {}
@@ -234,7 +241,7 @@ export async function apiFetchBlob(path: string): Promise<Blob> {
     }
     const newToken = getAccessToken()
     if (newToken) headers['authorization'] = `Bearer ${newToken}`
-    const retry = await fetch(url, { method: 'GET', headers })
+    const retry = await fetch(url, { method: 'GET', credentials: 'include', headers })
     if (!retry.ok) {
       clearAccessToken()
       redirect('/login?expired=1')

@@ -80,6 +80,7 @@ describe('CtacteDebitForm', () => {
       monto: 300,
       fecha: '2026-01-15',
       motivo: 'Cargo por mora',
+      idempotencyKey: expect.any(String),
     })
   })
 
