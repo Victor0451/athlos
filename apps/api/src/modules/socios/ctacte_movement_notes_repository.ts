@@ -20,11 +20,20 @@ import {
  * soft-delete (spec delta §"Audit event for soft-deleted note
  * remains queryable").
  *
- * R3 fix #2 — durable idempotency: `insertNote` accepts an
+ * R3 fix #2 — durable idempotency. `insertNote` accepts an
  * `idempotencyKey` argument and uses the schema's
- * `idempotencyKeyUnique` UNIQUE partial index as the conflict
- * target. `findNoteByIdempotencyKey` returns the existing row on
- * replay so service-level dedup survives process restarts.
+ * `idempotencyKeyUnique` UNIQUE INDEX (full, after migration 0034) as
+ * the conflict target. `findNoteByIdempotencyKey` returns the
+ * existing row on replay so service-level dedup survives process
+ * restarts.
+ *
+ * R3 fix batch — defect #2 (concurrent same-key semantics). The
+ * `insertNote` return shape is `{ row, created }` so the service can
+ * distinguish "I am the creator of this row" from "someone else
+ * already created it and I am the conflict loser". Only the creator
+ * emits a `CTACTE_MOVEMENT_NOTE_ADDED` audit; the loser surfaces the
+ * existing row silently (or throws CONFLICT after payload
+ * comparison — see service).
  */
 export interface InsertNoteInput {
   id?: string
@@ -38,16 +47,33 @@ export interface InsertNoteInput {
 }
 
 /**
+ * Result of a conflict-aware insert.
+ *
+ * - `created: true`  — this call wrote the row. Audit emission
+ *   belongs to the caller, no further lookup is required.
+ * - `created: false` — a prior row already owns this
+ *   `idempotencyKey`. The returned `row` is the existing persisted
+ *   note; the caller MUST compare its canonical payload against the
+ *   caller's intent (same → replay / different → CONFLICT) and MUST
+ *   NOT emit a new audit.
+ */
+export interface InsertNoteResult {
+  row: CtacteMovementNote
+  created: boolean
+}
+
+/**
  * Insert a new note row. The DB server stamps `id` (gen_random_uuid)
  * and `created_at` (default now()).
  *
  * When `idempotencyKey` is provided the insert uses the schema's
- * UNIQUE partial index as the conflict target — a duplicate key
- * returns `[]` from the conflict-aware insert, and the helper then
- * looks the existing row up and returns it (the "already-completed"
- * idempotency arm).
+ * UNIQUE INDEX as the conflict target. A duplicate key returns
+ * `[]` from the conflict-aware insert, and the helper then looks
+ * the existing row up and returns it with `created: false`
+ * (idempotency replay). On a fresh insert the row is returned with
+ * `created: true`.
  */
-export async function insertNote(db: Db, input: InsertNoteInput): Promise<CtacteMovementNote> {
+export async function insertNote(db: Db, input: InsertNoteInput): Promise<InsertNoteResult> {
   const row: NewCtacteMovementNote = {
     ...(input.id ? { id: input.id } : {}),
     ctacteMovementId: input.ctacteMovementId,
@@ -55,29 +81,24 @@ export async function insertNote(db: Db, input: InsertNoteInput): Promise<Ctacte
     body: input.body,
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   }
-  const [inserted] = input.idempotencyKey
-    ? await db
-        .insert(ctacteMovementNotes)
-        .values(row)
-        .onConflictDoNothing({ target: ctacteMovementNotes.idempotencyKey })
-        .returning()
-    : await db.insert(ctacteMovementNotes).values(row).returning()
-  if (!inserted && input.idempotencyKey) {
+  if (input.idempotencyKey) {
+    const [inserted] = await db
+      .insert(ctacteMovementNotes)
+      .values(row)
+      .onConflictDoNothing({ target: ctacteMovementNotes.idempotencyKey })
+      .returning()
+    if (inserted) {
+      return { row: inserted, created: true }
+    }
     const existing = await findNoteByIdempotencyKey(db, input.idempotencyKey)
-    if (existing) return existing
+    if (existing) {
+      return { row: existing, created: false }
+    }
+    throw new Error('insert returned no row after conflict-loser lookup')
   }
-  if (!inserted && input.id) {
-    const [existing] = await db
-      .select()
-      .from(ctacteMovementNotes)
-      .where(eq(ctacteMovementNotes.id, input.id))
-      .limit(1)
-    if (existing) return existing
-  }
-  if (!inserted) {
-    throw new Error('insert returned no row')
-  }
-  return inserted
+  const [inserted] = await db.insert(ctacteMovementNotes).values(row).returning()
+  if (!inserted) throw new Error('insert returned no row')
+  return { row: inserted, created: true }
 }
 
 /**
