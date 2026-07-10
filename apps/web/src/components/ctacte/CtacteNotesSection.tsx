@@ -2,24 +2,32 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, MessageSquare, UserRound } from 'lucide-react'
-import { addCtacteNote, type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
+import { ChevronDown, MessageSquare, Trash2, UserRound } from 'lucide-react'
+import {
+  addCtacteNote,
+  deleteCtacteNote,
+  type CtacteNoteResponse,
+} from '@/lib/api/ctacte-mutations'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
 import { Badge } from '@/components/ui/Badge'
 import { OperatorChip } from '@/components/socios/OperatorChip'
 import { notify } from '@/lib/notifications'
+import { useAuth } from '@/lib/use-auth'
 
 /**
  * CtacteNotesSection — operator-authored notes attached to a cuenta-corriente
- * movement (PR A2 — athlos-ctacte-mutations).
+ * movement (PR A2 — athlos-ctacte-mutations; R3 hardening).
  *
  * Mirrors the SocioNotesCard pattern:
- *   - Collapsible via `useNotesCollapsed(cuentaId, null)` hook (localStorage key
- *     `ctacte-notes-collapsed-<cuenta>`; default collapsed).
+ *   - Collapsible via `useNotesCollapsed(cuentaId, null)` hook (localStorage
+ *     key `ctacte-notes-collapsed-<cuenta>`; default collapsed). R3 fix:
+ *     the key MUST be the cuenta (socioId), not the movementId, so the
+ *     collapse state persists across movements on the same cuenta and
+ *     stays isolated across cuentas.
  *   - Form to add a new note per movement.
  *   - List of existing notes (excludes soft-deleted).
  *   - Per-row `OperatorChip` renders `username · ROLE`.
- *   - Soft-delete gated to author OR ADMIN.
+ *   - Per-row soft-delete gated to author OR ADMIN (R3 authorization).
  */
 
 export const CTACTE_NOTES_QUERY_KEY = (socioId: string, movementId: string) =>
@@ -47,7 +55,19 @@ function formatTimestamp(iso: string): string {
   }).format(d)
 }
 
-function useNotesCollapsed(
+/**
+ * `useNotesCollapsed` — per-cuenta collapsible state for the notes card.
+ *
+ * R3 invariant: the localStorage key MUST be scoped to the cuenta
+ * (`ctacte-notes-collapsed-<cuenta>`), NOT to the movement id. The
+ * account-level collapse preference is a property of the cuenta, not
+ * of the individual movement; per-movement keys made the toggle
+ * appear "broken" because switching movements reset the state.
+ *
+ * Exported for unit tests so the persistence rules can be pinned
+ * independently of the section component.
+ */
+export function useNotesCollapsed(
   cuentaId: string,
   editingId: string | null,
 ): { collapsed: boolean; toggle: () => void; displayExpanded: boolean } {
@@ -91,7 +111,10 @@ export function CtacteNotesSection({
   onNoteAdded,
 }: CtacteNotesSectionProps) {
   const [draft, setDraft] = useState('')
-  const { toggle, displayExpanded } = useNotesCollapsed(movementId, null)
+  const { toggle, displayExpanded } = useNotesCollapsed(socioId, null)
+  const { user } = useAuth()
+  const currentOperatorId = user?.operator_id ?? null
+  const currentRole = user?.role ?? null
 
   const sortedOperatorIds = useMemo(() => {
     const ids = notes
@@ -112,6 +135,20 @@ export function CtacteNotesSection({
     [operatorsQuery.data],
   )
 
+  /**
+   * R3 authorization gate: only the original author OR an ADMIN may
+   * delete a note. Mirrors the server-side `canDeleteCtacteNote` rule
+   * in `apps/api/src/modules/socios/ctacte_movement_notes.ts`.
+   */
+  const canDeleteNote = useCallback(
+    (note: CtacteNoteResponse): boolean => {
+      if (!currentOperatorId) return false
+      if (currentRole === 'ADMIN') return true
+      return note.author_operator_id === currentOperatorId
+    },
+    [currentOperatorId, currentRole],
+  )
+
   async function handleSubmitDraft(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const trimmed = draft.trim()
@@ -123,6 +160,20 @@ export function CtacteNotesSection({
       onNoteAdded()
     } catch {
       notify('error', 'No se pudo crear la nota')
+    }
+  }
+
+  async function handleDeleteClick(note: CtacteNoteResponse) {
+    if (!canDeleteNote(note)) {
+      notify('error', 'No tenés permiso para borrar esta nota')
+      return
+    }
+    try {
+      await deleteCtacteNote(socioId, movementId, note.id)
+      notify('success', 'Nota eliminada')
+      onNoteAdded()
+    } catch {
+      notify('error', 'No se pudo eliminar la nota')
     }
   }
 
@@ -233,6 +284,7 @@ export function CtacteNotesSection({
               ) : (
                 <ul data-testid="ctacte-notes-list" className="space-y-3">
                   {notes.map((note) => {
+                    const deletable = canDeleteNote(note)
                     return (
                       <li
                         key={note.id}
@@ -261,6 +313,17 @@ export function CtacteNotesSection({
                               </div>
                             </div>
                           </div>
+                          {deletable ? (
+                            <button
+                              type="button"
+                              data-testid={`ctacte-note-delete-${note.id}`}
+                              aria-label="Eliminar nota"
+                              onClick={() => handleDeleteClick(note)}
+                              className="shrink-0 rounded-md p-1.5 text-ink-500 transition-colors duration-fast hover:bg-danger/10 hover:text-danger focus:outline-none focus:ring-2 focus:ring-danger"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          ) : null}
                         </div>
 
                         <p
