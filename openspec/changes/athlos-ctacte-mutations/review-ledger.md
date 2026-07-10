@@ -85,3 +85,11 @@ Apply one scoped fix round for all open BLOCKER/CRITICAL findings, then re-revie
 - R3-2002 was subsequently verified against an isolated PostgreSQL 16 container with `ATHLOS_TEST_DATABASE_URL`; the assertion executed and passed.
 - Convergence budget is exhausted after two fix rounds; no further automatic fix round is permitted.
 - Overall PR review is APPROVED; all BLOCKER and CRITICAL findings are verified or refuted.
+
+## PR #30 Fix Round 1
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-R1-001 | reliability | `apps/api/src/modules/socios/forms/ctacte-mutations.ts:316-327` | CRITICAL | fixed | Payment future-date comparison now derives the Argentina business calendar date (`America/Argentina/Buenos_Aires`), with deterministic UTC-boundary coverage. |
+| R3-R1-002 | reliability | `apps/api/src/routes/ctacte-mutations.ts:58-64,104-111` | CRITICAL | fixed | Payment and debit schemas reject malformed or impossible ISO calendar dates with field-level `VALIDATION_ERROR.details` before service persistence. |
+| R3-R1-003 | reliability | `apps/api/src/modules/socios/forms/ctacte-mutations.ts:288-312` | CRITICAL | fixed | The comprobante flow uses one `LIMIT 51` snapshot query and rejects a 51st row, eliminating the count/fetch interleaving that could truncate a PDF. |

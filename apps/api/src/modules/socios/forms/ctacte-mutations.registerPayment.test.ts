@@ -212,7 +212,7 @@ describe('registerPayment — idempotency', () => {
   })
 
   it.each([
-    ['date', { fecha: '2026-07-10' }],
+    ['date', { fecha: '2026-07-08' }],
     ['concept', { concepto: 'Cuota Agosto' }],
   ])('rejects a reused key when the payment %s changes', async (_label, changes) => {
     repoFindCtacteByIdempotencyKey.mockResolvedValueOnce({

@@ -6,7 +6,11 @@ import { and, eq } from 'drizzle-orm'
 import { idSchema } from '@athlos/validation'
 import { throwIfInvalid, ErrorCode } from '@athlos/errors'
 import { requireAuth } from '@athlos/auth'
-import { registerPayment, registerDebit } from '../modules/socios/forms/ctacte-mutations.ts'
+import {
+  isValidIsoCalendarDate,
+  registerPayment,
+  registerDebit,
+} from '../modules/socios/forms/ctacte-mutations.ts'
 import { addNote, listNotes } from '../modules/socios/ctacte_movement_notes.ts'
 import { renderComprobante } from '../modules/socios/forms/ctacte-comprobante.ts'
 import { ctacte } from '@athlos/db/schema'
@@ -51,13 +55,13 @@ const socioIdParamsSchema = z.object({ socioId: idSchema })
 
 const paymentSchema = z.object({
   monto: z.coerce.number({ invalid_type_error: 'monto must be a number' }),
-  fecha: z.string().min(1, 'fecha is required'),
+  fecha: z.string().refine(isValidIsoCalendarDate, 'must be a valid ISO calendar date'),
   concepto: z.string().min(1, 'concepto is required'),
 })
 
 const debitSchema = z.object({
   monto: z.coerce.number({ invalid_type_error: 'monto must be a number' }),
-  fecha: z.string().min(1, 'fecha is required'),
+  fecha: z.string().refine(isValidIsoCalendarDate, 'must be a valid ISO calendar date'),
   motivo: z.string().min(1, 'motivo is required'),
 })
 
@@ -92,8 +96,21 @@ function apiError(
   reply: { code: (n: number) => { send: (body: unknown) => unknown } },
   code: string,
   message: string,
+  details?: unknown,
 ): unknown {
-  return reply.code(400).send({ error: code, message })
+  return reply
+    .code(400)
+    .send({ error: code, message, ...(details === undefined ? {} : { details }) })
+}
+
+function schemaError(
+  reply: { code: (n: number) => { send: (body: unknown) => unknown } },
+  error: z.ZodError,
+): unknown {
+  const issue = error.errors[0]!
+  return apiError(reply, 'VALIDATION_ERROR', issue.message, [
+    { field: String(issue.path[0] ?? 'body'), message: issue.message },
+  ])
 }
 
 // ─── Route plugin ─────────────────────────────────────────────────────────────
@@ -157,7 +174,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         concepto: conceptoVal,
       })
       if (!parsed.success) {
-        return apiError(reply, 'VALIDATION_ERROR', parsed.error.errors[0]!.message)
+        return schemaError(reply, parsed.error)
       }
 
       const { monto, fecha, concepto } = parsed.data
@@ -249,7 +266,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
 
       const parsed = debitSchema.safeParse(request.body)
       if (!parsed.success) {
-        return apiError(reply, 'VALIDATION_ERROR', parsed.error.errors[0]!.message)
+        return schemaError(reply, parsed.error)
       }
 
       const { monto, fecha, motivo } = parsed.data
@@ -274,12 +291,14 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           motivo: movement.motivo,
         })
       } catch (err) {
-        const e = err as { code?: string; message?: string }
+        const e = err as { code?: string; message?: string; details?: unknown }
         if (e.code === ErrorCode.NOT_FOUND) {
           return reply.code(404).send({ error: 'NOT_FOUND' })
         }
         if (e.code === ErrorCode.VALIDATION_ERROR) {
-          return reply.code(400).send({ error: 'VALIDATION_ERROR', message: e.message })
+          return reply
+            .code(400)
+            .send({ error: 'VALIDATION_ERROR', message: e.message, details: e.details })
         }
         request.log.warn({ err }, 'registerDebit failed')
         return reply
