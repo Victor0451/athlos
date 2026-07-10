@@ -96,6 +96,7 @@ export {
   tesoreriaSchema,
   ctacteTipo,
   ctacte,
+  ctacteComprobanteRetries,
   ctacte1,
   cajaMovimiento,
   gastos,
@@ -104,6 +105,7 @@ export {
 } from './tesoreria'
 export type {
   Ctacte,
+  CtacteComprobanteRetry,
   NewCtacte,
   Ctacte1,
   NewCtacte1,

@@ -54,6 +54,16 @@ type SocioRow = Socio
 type SocioAttachmentRow = SocioAttachment
 type CtacteRow = Ctacte
 type CtacteMovementNoteRow = CtacteMovementNote
+type CtacteComprobanteRetryRow = {
+  idempotencyKey: string
+  status: string
+  pdfBase64: string | null
+  sha256: string | null
+  byteSize: number | null
+  filename: string | null
+  expiresAt: Date
+  createdAt: Date
+}
 type DisciplinaRow = Disciplina
 type EjercicioRow = Ejercicio
 type InscripcionRow = Inscripcion
@@ -71,6 +81,7 @@ type Row =
   | SocioAttachmentRow
   | CtacteRow
   | CtacteMovementNoteRow
+  | CtacteComprobanteRetryRow
   | DisciplinaRow
   | EjercicioRow
   | InscripcionRow
@@ -88,6 +99,7 @@ interface StandinState {
   socioAttachments: SocioAttachmentRow[]
   ctacte: CtacteRow[]
   ctacteMovementNotes: CtacteMovementNoteRow[]
+  ctacteComprobanteRetries: CtacteComprobanteRetryRow[]
   disciplinas: DisciplinaRow[]
   ejercicios: EjercicioRow[]
   inscripciones: InscripcionRow[]
@@ -220,6 +232,17 @@ const CTACTE_MOVEMENT_NOTES_SQL_TO_JS: Record<string, keyof CtacteMovementNoteRo
   deleted_at: 'deletedAt',
 }
 
+const CTACTE_COMPROBANTE_RETRIES_SQL_TO_JS: Record<string, keyof CtacteComprobanteRetryRow> = {
+  idempotency_key: 'idempotencyKey',
+  status: 'status',
+  pdf_base64: 'pdfBase64',
+  sha256: 'sha256',
+  byte_size: 'byteSize',
+  filename: 'filename',
+  expires_at: 'expiresAt',
+  created_at: 'createdAt',
+}
+
 const DISCIPLINA_SQL_TO_JS: Record<string, keyof DisciplinaRow> = {
   id: 'id',
   codigo: 'codigo',
@@ -329,6 +352,7 @@ const SQL_TO_JS_FOR: Record<string, Record<string, string>> = {
   socio_attachments: SOCIO_ATTACHMENT_SQL_TO_JS,
   ctacte: CTACTE_SQL_TO_JS,
   ctacte_movement_notes: CTACTE_MOVEMENT_NOTES_SQL_TO_JS,
+  ctacte_comprobante_retries: CTACTE_COMPROBANTE_RETRIES_SQL_TO_JS,
   disciplinas: DISCIPLINA_SQL_TO_JS,
   ejercicios: EJERCICIO_SQL_TO_JS,
   inscripciones: INSCRIPCION_SQL_TO_JS,
@@ -631,6 +655,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if (tname === 'socio_attachments') return state.socioAttachments
     if (tname === 'ctacte') return state.ctacte
     if (tname === 'ctacte_movement_notes') return state.ctacteMovementNotes
+    if (tname === 'ctacte_comprobante_retries') return state.ctacteComprobanteRetries
     if (tname === 'disciplinas') return state.disciplinas
     if (tname === 'ejercicios') return state.ejercicios
     if (tname === 'inscripciones') return state.inscripciones
@@ -749,6 +774,18 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         createdAt: (v['createdAt'] as Date) ?? new Date(),
         deletedAt: (v['deletedAt'] as Date | null) ?? null,
       } as CtacteMovementNoteRow
+    }
+    if (tname === 'ctacte_comprobante_retries') {
+      return {
+        idempotencyKey: v['idempotencyKey']!,
+        status: v['status']!,
+        pdfBase64: (v['pdfBase64'] as string | null) ?? null,
+        sha256: (v['sha256'] as string | null) ?? null,
+        byteSize: (v['byteSize'] as number | null) ?? null,
+        filename: (v['filename'] as string | null) ?? null,
+        expiresAt: (v['expiresAt'] as Date) ?? new Date(),
+        createdAt: (v['createdAt'] as Date) ?? new Date(),
+      } as CtacteComprobanteRetryRow
     }
     if (tname === 'disciplinas') {
       return {
@@ -938,6 +975,11 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           v['idempotencyKey'] !== null &&
           v['idempotencyKey'] !== undefined &&
           (r as CtacteRow).idempotencyKey === v['idempotencyKey'],
+      )
+    }
+    if (tname === 'ctacte_comprobante_retries') {
+      return rows.some(
+        (r) => (r as CtacteComprobanteRetryRow).idempotencyKey === v['idempotencyKey'],
       )
     }
     return false
@@ -1214,6 +1256,8 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     if ('socioId' in row && 'disciplinaId' in row && 'ejercicioId' in row) return 'inscripciones'
     if ('debe' in row && 'haber' in row) return 'ctacte'
     if ('ctacteMovementId' in row) return 'ctacte_movement_notes'
+    if ('idempotencyKey' in row && 'expiresAt' in row && 'status' in row)
+      return 'ctacte_comprobante_retries'
     if ('username' in row && 'role' in row) return 'operators'
     if ('tokenHash' in row && 'operatorId' in row) return 'refreshTokens'
     if ('tokenHash' in row && 'actionType' in row) return 'approvalTokens'
@@ -1442,6 +1486,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
     socioAttachments: [],
     ctacte: [],
     ctacteMovementNotes: [],
+    ctacteComprobanteRetries: [],
     disciplinas: [],
     ejercicios: [],
     inscripciones: [],
@@ -1461,6 +1506,7 @@ export function createStandinDb(): StandinDb & { drizzle: StandinDrizzle } {
       state.socioAttachments.length = 0
       state.ctacte.length = 0
       state.ctacteMovementNotes.length = 0
+      state.ctacteComprobanteRetries.length = 0
       state.disciplinas.length = 0
       state.ejercicios.length = 0
       state.inscripciones.length = 0

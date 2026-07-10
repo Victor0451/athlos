@@ -103,6 +103,20 @@ export const ctacte = tesoreriaSchema.table(
 export type Ctacte = typeof ctacte.$inferSelect
 export type NewCtacte = typeof ctacte.$inferInsert
 
+/** Durable, short-lived replay result for comprobante generation. */
+export const ctacteComprobanteRetries = tesoreriaSchema.table('ctacte_comprobante_retries', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  status: text('status').notNull(),
+  pdfBase64: text('pdf_base64'),
+  sha256: text('sha256'),
+  byteSize: integer('byte_size'),
+  filename: text('filename'),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export type CtacteComprobanteRetry = typeof ctacteComprobanteRetries.$inferSelect
+
 /**
  * ctacte1 sub-ledger — created lazily by rebuild.ts projection only.
  * E1a ships the master table so 245,370 rows can be promoted into it.

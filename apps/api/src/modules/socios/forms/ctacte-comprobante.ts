@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
+import { eq, lt } from 'drizzle-orm'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { Db } from '@athlos/db'
 import { emitAudit } from '@athlos/audit'
+import { ctacteComprobanteRetries } from '@athlos/db/schema'
 import { findById } from '../repository.ts'
 import { getMovementsForComprobante } from './ctacte-mutations.ts'
 import type { PdfGenerator } from './pdf-generator.ts'
@@ -55,13 +57,11 @@ export interface RenderComprobanteResult {
   movementCount: number
 }
 
-const comprobanteRetries = new WeakMap<object, Map<string, RenderComprobanteResult>>()
-
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
   const retryKey = comprobanteRetryKey(params)
-  const cached = comprobanteRetries.get(params.db as object)?.get(retryKey)
+  const cached = await claimOrReadComprobanteRetry(params.db, retryKey)
   if (cached) return cached
   const socio = await findById(params.db, params.socioId)
   if (!socio) {
@@ -122,11 +122,69 @@ export async function renderComprobante(
   })
 
   const result = { pdf, filename, sha256, byteSize, movementCount: movements.length }
-  const byDb =
-    comprobanteRetries.get(params.db as object) ?? new Map<string, RenderComprobanteResult>()
-  byDb.set(retryKey, result)
-  comprobanteRetries.set(params.db as object, byDb)
+  await completeComprobanteRetry(params.db, retryKey, result)
   return result
+}
+
+async function claimOrReadComprobanteRetry(
+  db: Db,
+  key: string,
+): Promise<RenderComprobanteResult | null> {
+  // Results are intentionally short-lived: this table is a replay ledger,
+  // not an in-process PDF cache. Opportunistic cleanup bounds durable PDF
+  // retention without retaining Buffers in module memory.
+  await db
+    .delete(ctacteComprobanteRetries)
+    .where(lt(ctacteComprobanteRetries.expiresAt, new Date()))
+  const expiresAt = new Date((Math.floor(Date.now() / 10_000) + 1) * 10_000)
+  const [claimed] = await db
+    .insert(ctacteComprobanteRetries)
+    .values({ idempotencyKey: key, status: 'rendering', expiresAt })
+    .onConflictDoNothing({ target: ctacteComprobanteRetries.idempotencyKey })
+    .returning()
+  if (claimed) return null
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const [existing] = await db
+      .select()
+      .from(ctacteComprobanteRetries)
+      .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
+      .limit(1)
+    if (
+      existing?.status === 'complete' &&
+      existing.pdfBase64 &&
+      existing.sha256 &&
+      existing.byteSize != null &&
+      existing.filename
+    ) {
+      return {
+        pdf: Buffer.from(existing.pdfBase64, 'base64'),
+        filename: existing.filename,
+        sha256: existing.sha256,
+        byteSize: existing.byteSize,
+        movementCount: 0,
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw BusinessError(ErrorCode.CONFLICT, 'Comprobante generation is still in progress')
+}
+
+async function completeComprobanteRetry(
+  db: Db,
+  key: string,
+  result: RenderComprobanteResult,
+): Promise<void> {
+  await db
+    .update(ctacteComprobanteRetries)
+    .set({
+      status: 'complete',
+      pdfBase64: result.pdf.toString('base64'),
+      sha256: result.sha256,
+      byteSize: result.byteSize,
+      filename: result.filename,
+    })
+    .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
 }
 
 function comprobanteRetryKey(params: RenderComprobanteParams): string {
