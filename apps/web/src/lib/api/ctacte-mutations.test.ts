@@ -49,6 +49,7 @@ let getCtacteComprobanteUrl: (...args: any[]) => any
 
 const SAMPLE_SOCIO_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 const SAMPLE_MOVEMENT_ID = 'mv-abc123'
+const IDEMPOTENCY_KEY = 'payment-retry-key-1'
 
 describe('ctacte-mutations API', () => {
   beforeEach(() => {
@@ -72,12 +73,16 @@ describe('ctacte-mutations API', () => {
         monto: 1500,
         fecha: '2026-01-15',
         concepto: 'Pago cuota enero',
+        idempotencyKey: IDEMPOTENCY_KEY,
       })
 
       expect(apiFetchMock).toHaveBeenCalledTimes(1)
       const call = apiFetchMock.mock.calls[0]!
       expect(call[0]).toBe(`/api/v1/socios/${SAMPLE_SOCIO_ID}/ctacte/movements/payment`)
-      expect(call[1]).toMatchObject({ method: 'POST' })
+      expect(call[1]).toMatchObject({
+        method: 'POST',
+        headers: { 'Idempotency-Key': IDEMPOTENCY_KEY },
+      })
       expect(call[1]?.body).toBeInstanceOf(FormData)
       expect(result.id).toBe('mv-new')
     })
@@ -96,6 +101,7 @@ describe('ctacte-mutations API', () => {
         monto: 500,
         fecha: '2026-02-01',
         concepto: 'Pago febrero',
+        idempotencyKey: IDEMPOTENCY_KEY,
       })
 
       const formData = apiFetchMock.mock.calls[0]![1]?.body as FormData
@@ -121,6 +127,7 @@ describe('ctacte-mutations API', () => {
         fecha: '2026-03-01',
         concepto: 'Pago marzo con comprobante',
         comprobante: fakeFile,
+        idempotencyKey: IDEMPOTENCY_KEY,
       })
 
       const formData = apiFetchMock.mock.calls[0]![1]?.body as FormData
@@ -143,6 +150,7 @@ describe('ctacte-mutations API', () => {
         monto: 1000,
         fecha: '2026-04-01',
         concepto: 'Pago abril sin comprobante',
+        idempotencyKey: IDEMPOTENCY_KEY,
       })
 
       const formData = apiFetchMock.mock.calls[0]![1]?.body as FormData

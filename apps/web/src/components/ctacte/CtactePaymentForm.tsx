@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -61,24 +61,28 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
-  } = useForm<PaymentFormValues>({
+  } = useForm<PaymentFormValues, unknown, PaymentFormValues>({
     resolver: zodResolver(paymentSchema),
-    defaultValues: { monto: undefined, fecha: '', concepto: '' },
+    defaultValues: { fecha: '', concepto: '' },
     mode: 'onSubmit',
   })
+  const idempotencyKey = useRef<string | null>(null)
 
   const onSubmit = useCallback(
     async (values: PaymentFormValues) => {
       try {
+        idempotencyKey.current ??= crypto.randomUUID()
         await registerCtactePayment(socioId, {
           monto: values.monto,
           fecha: values.fecha,
           concepto: values.concepto,
-          comprobante: file ?? undefined,
+          ...(file ? { comprobante: file } : {}),
+          idempotencyKey: idempotencyKey.current,
         })
         notify('success', 'Pago registrado')
         reset()
         setFile(null)
+        idempotencyKey.current = null
         onSuccess?.()
         onClose()
       } catch {
@@ -91,6 +95,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
   const handleCancel = useCallback(() => {
     reset()
     setFile(null)
+    idempotencyKey.current = null
     onClose()
   }, [reset, onClose])
 

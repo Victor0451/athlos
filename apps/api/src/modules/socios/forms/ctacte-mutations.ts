@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { Db } from '@athlos/db'
 import type { LocalFileStorage } from '../../file-storage/local-file-storage.ts'
-import { insertCtacteRow, listMovementsByDateRange } from '../../ctacte/repository.ts'
+import {
+  findCtacteByIdempotencyKey,
+  insertCtacteRow,
+  listMovementsByDateRange,
+} from '../../ctacte/repository.ts'
 import { findById as findSocioById } from '../../socios/repository.ts'
-import { uploadAttachment } from '../../socios/attachments.ts'
+import { getAttachment, uploadAttachment } from '../../socios/attachments.ts'
 import { emitAudit } from '@athlos/audit'
 
 /**
@@ -63,6 +68,8 @@ export interface RegisterPaymentParams {
     mimeType: string
     filename: string
   }
+  /** Required stable retry key, enforced by the ledger's UNIQUE index. */
+  idempotencyKey: string
 }
 
 /**
@@ -93,6 +100,12 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
   }
 
+  const existing = await findCtacteByIdempotencyKey(params.db, params.idempotencyKey)
+  if (existing) {
+    await assertMatchingPaymentRetry(params, existing)
+    return paymentMovement(existing)
+  }
+
   let comprobanteAttachmentId: string | null = null
   if (params.comprobante) {
     const attachment = await uploadAttachment({
@@ -108,33 +121,82 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
     comprobanteAttachmentId = attachment.id
   }
 
-  const inserted = await insertCtacteRow(params.db, {
+  const result = await insertCtacteRow(params.db, {
     socioId: params.socioId,
     fecha: params.fecha,
     tipo: 'CREDITO',
     concepto: params.concepto,
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId,
+    idempotencyKey: params.idempotencyKey,
   })
+
+  if (!result.created) {
+    await assertMatchingPaymentRetry(params, result.row)
+    return paymentMovement(result.row)
+  }
 
   await emitPaymentAudit(
     params.db,
-    inserted,
+    result.row,
     params.operatorId,
     comprobanteAttachmentId,
     params.monto,
   )
 
+  return paymentMovement(result.row)
+}
+
+async function assertMatchingPaymentRetry(
+  params: RegisterPaymentParams,
+  existing: {
+    socioId: string
+    fecha: string
+    tipo: string
+    concepto: string
+    haber: string
+    comprobanteAttachmentId: string | null
+  },
+): Promise<void> {
+  const expectedAttachmentHash = params.comprobante
+    ? createHash('sha256').update(params.comprobante.bytes).digest('hex')
+    : null
+  let existingAttachmentHash: string | null = null
+  if (existing.comprobanteAttachmentId) {
+    existingAttachmentHash =
+      (await getAttachment(existing.comprobanteAttachmentId, params.db))?.storageSha256 ?? null
+  }
+  if (
+    existing.socioId !== params.socioId ||
+    existing.tipo !== 'CREDITO' ||
+    existing.fecha !== params.fecha ||
+    existing.concepto !== params.concepto ||
+    existing.haber !== params.monto.toFixed(2) ||
+    existingAttachmentHash !== expectedAttachmentHash
+  ) {
+    throw BusinessError(
+      ErrorCode.CONFLICT,
+      'Idempotency-Key was already used for a different payment',
+    )
+  }
+}
+
+function paymentMovement(row: {
+  id: string
+  fecha: string
+  haber: string
+  concepto: string
+  comprobanteAttachmentId: string | null
+}): CtacteMovementRow {
   return {
-    id: inserted.id,
-    fecha: inserted.fecha,
+    id: row.id,
+    fecha: row.fecha,
     tipo: 'CREDITO',
-    monto: params.monto,
-    concepto: params.concepto,
+    monto: Number(row.haber),
+    concepto: row.concepto,
     motivo: null,
-    comprobanteAttachmentId,
-    saldo: 0, // running balance is recomputed on the next read; the
-    // comprobante PDF flow computes it from debe/haber per row.
+    comprobanteAttachmentId: row.comprobanteAttachmentId,
+    saldo: 0,
   }
 }
 
@@ -167,7 +229,7 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
   }
 
-  const inserted = await insertCtacteRow(params.db, {
+  const result = await insertCtacteRow(params.db, {
     socioId: params.socioId,
     fecha: params.fecha,
     tipo: 'DEBITO',
@@ -176,11 +238,11 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     comprobanteAttachmentId: null,
   })
 
-  await emitDebitAudit(params.db, inserted, params.operatorId, params.motivo, params.monto)
+  await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
 
   return {
-    id: inserted.id,
-    fecha: inserted.fecha,
+    id: result.row.id,
+    fecha: result.row.fecha,
     tipo: 'DEBITO',
     monto: params.monto,
     concepto: null,

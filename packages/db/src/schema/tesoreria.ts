@@ -87,6 +87,8 @@ export const ctacte = tesoreriaSchema.table(
      *  target, so it's a loose UUID at the Drizzle layer (the SQL FK
      *  is added by migration 0031 with ON DELETE SET NULL). */
     comprobanteAttachmentId: uuid('comprobante_attachment_id'),
+    /** Client-supplied payment retry key. UNIQUE at the database layer. */
+    idempotencyKey: text('idempotency_key'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -94,6 +96,7 @@ export const ctacte = tesoreriaSchema.table(
     fechaIdx: index('ctacte_fecha_idx').on(table.fecha),
     cctcuentaIdx: index('ctacte_cctcuenta_idx').on(table.cctcuenta),
     legacyIdUnique: uniqueIndex('ctacte_legacy_id_unique').on(table.legacyId),
+    idempotencyKeyUnique: uniqueIndex('ctacte_idempotency_key_unique').on(table.idempotencyKey),
   }),
 )
 

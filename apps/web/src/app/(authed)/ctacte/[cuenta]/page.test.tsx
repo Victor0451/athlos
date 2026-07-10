@@ -35,7 +35,7 @@ const getCtacteMock = vi.fn()
 const getMovimientosMock = vi.fn()
 const getSocioMock = vi.fn()
 const getCtacteGastosLinksMock = vi.fn()
-const apiFetchMock = vi.fn()
+const getCtacteNotesMock = vi.fn()
 
 vi.mock('@/lib/api/ctacte', () => ({
   getCtacte: (...args: unknown[]) => getCtacteMock(...args),
@@ -50,8 +50,8 @@ vi.mock('@/lib/api/gastos-ctacte', () => ({
   getCtacteGastosLinks: (...args: unknown[]) => getCtacteGastosLinksMock(...args),
 }))
 
-vi.mock('@/lib/api', () => ({
-  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
+vi.mock('@/lib/api/ctacte-mutations', () => ({
+  getCtacteNotes: (...args: unknown[]) => getCtacteNotesMock(...args),
 }))
 
 // Mock the form + notes components
@@ -78,9 +78,19 @@ vi.mock('@/components/ctacte/CtacteComprobanteButton', () => ({
 }))
 
 vi.mock('@/components/ctacte/CtacteNotesSection', () => ({
-  CtacteNotesSection: ({ movementId, notes }: { movementId: string; notes: unknown[] }) => (
+  CtacteNotesSection: ({
+    movementId,
+    notes,
+    isLoading,
+    error,
+  }: {
+    movementId: string
+    notes: unknown[]
+    isLoading: boolean
+    error: string | null
+  }) => (
     <div data-testid="ctacte-notes-section">
-      movementId:{movementId} notes:{notes.length}
+      movementId:{movementId} notes:{notes.length} loading:{String(isLoading)} error:{error}
     </div>
   ),
 }))
@@ -213,7 +223,7 @@ describe('Ctacte detail page', () => {
     })
     getCtacteGastosLinksMock.mockResolvedValue({ items: [] })
     useQueryClientMock.mockReturnValue({ invalidateQueries: vi.fn() })
-    apiFetchMock.mockResolvedValue([])
+    getCtacteNotesMock.mockResolvedValue([])
   })
 
   afterEach(() => {

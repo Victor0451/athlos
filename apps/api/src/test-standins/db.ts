@@ -207,6 +207,7 @@ const CTACTE_SQL_TO_JS: Record<string, keyof CtacteRow> = {
   cctcuenta: 'cctcuenta',
   legacy_id: 'legacyId',
   comprobante_attachment_id: 'comprobanteAttachmentId',
+  idempotency_key: 'idempotencyKey',
   created_at: 'createdAt',
 }
 
@@ -735,6 +736,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         cctcuenta: (v['cctcuenta'] as string | null) ?? null,
         legacyId: (v['legacyId'] as string | null) ?? null,
         comprobanteAttachmentId: (v['comprobanteAttachmentId'] as string | null) ?? null,
+        idempotencyKey: (v['idempotencyKey'] as string | null) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as CtacteRow
     }
@@ -928,6 +930,14 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           (r as GastosCtacteMappingRow).anulado === false &&
           (r as GastosCtacteMappingRow).gastoId === v['gastoId'] &&
           (r as GastosCtacteMappingRow).ctacteId === v['ctacteId'],
+      )
+    }
+    if (tname === 'ctacte') {
+      return rows.some(
+        (r) =>
+          v['idempotencyKey'] !== null &&
+          v['idempotencyKey'] !== undefined &&
+          (r as CtacteRow).idempotencyKey === v['idempotencyKey'],
       )
     }
     return false

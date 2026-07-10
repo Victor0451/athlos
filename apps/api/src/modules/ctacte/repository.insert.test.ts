@@ -32,13 +32,13 @@ describe('insertCtacteRow', () => {
       concepto: 'Cuota social Julio',
       monto: '800.00',
     })
-    expect(inserted.id).toEqual(expect.any(String))
-    expect(inserted.socioId).toBe(SOCIO_ID)
-    expect(inserted.tipo).toBe('DEBITO')
-    expect(inserted.debe).toBe('800.00')
-    expect(inserted.haber).toBe('0.00')
-    expect(inserted.concepto).toBe('Cuota social Julio')
-    expect(inserted.comprobanteAttachmentId).toBeNull()
+    expect(inserted.row.id).toEqual(expect.any(String))
+    expect(inserted.row.socioId).toBe(SOCIO_ID)
+    expect(inserted.row.tipo).toBe('DEBITO')
+    expect(inserted.row.debe).toBe('800.00')
+    expect(inserted.row.haber).toBe('0.00')
+    expect(inserted.row.concepto).toBe('Cuota social Julio')
+    expect(inserted.row.comprobanteAttachmentId).toBeNull()
   })
 
   it('inserts a CREDITO row with haber populated and debe zero', async () => {
@@ -49,10 +49,10 @@ describe('insertCtacteRow', () => {
       concepto: 'Pago cuota',
       monto: '1500.00',
     })
-    expect(inserted.tipo).toBe('CREDITO')
-    expect(inserted.debe).toBe('0.00')
-    expect(inserted.haber).toBe('1500.00')
-    expect(inserted.concepto).toBe('Pago cuota')
+    expect(inserted.row.tipo).toBe('CREDITO')
+    expect(inserted.row.debe).toBe('0.00')
+    expect(inserted.row.haber).toBe('1500.00')
+    expect(inserted.row.concepto).toBe('Pago cuota')
   })
 
   it('persists comprobanteAttachmentId when provided', async () => {
@@ -65,7 +65,7 @@ describe('insertCtacteRow', () => {
       monto: '500.00',
       comprobanteAttachmentId: ATTACHMENT_ID,
     })
-    expect(inserted.comprobanteAttachmentId).toBe(ATTACHMENT_ID)
+    expect(inserted.row.comprobanteAttachmentId).toBe(ATTACHMENT_ID)
   })
 
   it('round-trip with getMovimientos returns the inserted row', async () => {
@@ -81,7 +81,7 @@ describe('insertCtacteRow', () => {
       page: 1,
       limit: 10,
     })
-    expect(page.items.map((r) => r.id)).toContain(inserted.id)
+    expect(page.items.map((r) => r.id)).toContain(inserted.row.id)
   })
 })
 

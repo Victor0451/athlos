@@ -38,7 +38,7 @@ vi.mock('@/lib/notifications', () => ({
 }))
 
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof ApiModule>('@/lib/api')()
+  const actual = await vi.importActual<typeof ApiModule>('@/lib/api')
   return {
     ...actual,
     apiFetchBlob: (...args: unknown[]) => apiFetchBlobMock(...args),
@@ -62,21 +62,10 @@ describe('EmitirSolicitudButton', () => {
     openSpy.mockReturnValue(null)
     // jsdom's window.open returns null silently — replace with our spy.
     window.open = openSpy as unknown as typeof window.open
-    // jsdom doesn't implement URL.createObjectURL — polyfill.
-    if (!('createObjectURL' in URL)) {
-      ;(URL as unknown as { createObjectURL: typeof createObjectURLMock }).createObjectURL =
-        createObjectURLMock as unknown as typeof URL.createObjectURL
-    } else {
-      ;(URL as unknown as { createObjectURL: typeof createObjectURLMock }).createObjectURL =
-        createObjectURLMock as unknown as typeof URL.createObjectURL
-    }
-    if (!('revokeObjectURL' in URL)) {
-      ;(URL as unknown as { revokeObjectURL: typeof revokeObjectURLMock }).revokeObjectURL =
-        revokeObjectURLMock as unknown as typeof URL.revokeObjectURL
-    } else {
-      ;(URL as unknown as { revokeObjectURL: typeof revokeObjectURLMock }).revokeObjectURL =
-        revokeObjectURLMock as unknown as typeof URL.revokeObjectURL
-    }
+    Object.assign(URL, {
+      createObjectURL: createObjectURLMock,
+      revokeObjectURL: revokeObjectURLMock,
+    })
   })
 
   afterEach(() => {

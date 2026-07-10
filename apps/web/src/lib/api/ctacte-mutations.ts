@@ -56,6 +56,8 @@ export interface CtactePaymentInput {
   concepto: string
   /** Optional comprobante file (PDF or image). */
   comprobante?: File
+  /** Stable key reused if a submission must be retried after an ambiguous response. */
+  idempotencyKey: string
 }
 
 /** Input for `registerCtacteDebit`. */
@@ -93,6 +95,7 @@ export async function registerCtactePayment(
   return apiFetch<CtactePaymentResponse>(`/api/v1/socios/${socioId}/ctacte/movements/payment`, {
     method: 'POST',
     body: formData,
+    headers: { 'Idempotency-Key': input.idempotencyKey },
   })
 }
 
@@ -126,6 +129,16 @@ export async function addCtacteNote(
   return apiFetch<CtacteNoteResponse>(
     `/api/v1/socios/${socioId}/ctacte/movements/${movementId}/notes`,
     { method: 'POST', body: { body } },
+  )
+}
+
+/** List active notes for a movement. */
+export async function getCtacteNotes(
+  socioId: string,
+  movementId: string,
+): Promise<CtacteNoteResponse[]> {
+  return apiFetch<CtacteNoteResponse[]>(
+    `/api/v1/socios/${socioId}/ctacte/movements/${movementId}/notes`,
   )
 }
 
