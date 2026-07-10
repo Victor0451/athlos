@@ -128,4 +128,28 @@ describe('PostgreSQL comprobante lease', () => {
       await store.claim('expiry-key', 'range-b', 'owner-b', now + 2, 1_000, 60_000),
     ).toMatchObject({ kind: 'owner' })
   })
+
+  it('rejects a changed fingerprint before reclaiming failed and stale rows', async () => {
+    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
+    const original = createPostgresComprobanteLeaseStore(first.db)
+    const retry = createPostgresComprobanteLeaseStore(second.db)
+    const now = Date.now()
+
+    expect(
+      await original.claim('failed-key', 'range-a', 'owner-a', now, 1_000, 60_000),
+    ).toMatchObject({
+      kind: 'owner',
+    })
+    expect(await original.fail('failed-key', 'owner-a')).toBe(true)
+    await expect(
+      retry.claim('failed-key', 'range-b', 'owner-b', now + 1, 1_000, 60_000),
+    ).resolves.toEqual({ kind: 'conflict' })
+
+    expect(await original.claim('stale-key', 'range-a', 'owner-a', now, 1, 60_000)).toMatchObject({
+      kind: 'owner',
+    })
+    await expect(
+      retry.claim('stale-key', 'range-b', 'owner-b', now + 2, 1_000, 60_000),
+    ).resolves.toEqual({ kind: 'conflict' })
+  })
 })

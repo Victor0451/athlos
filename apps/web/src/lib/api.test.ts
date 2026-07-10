@@ -24,7 +24,7 @@ vi.mock('next/navigation', () => ({
 }))
 
 // Import after mock so the api module sees the mocked next/navigation.
-const { apiFetch, get, post, patch, __resetApiForTests } = await import('./api.ts')
+const { apiFetch, apiFetchBlob, get, post, patch, __resetApiForTests } = await import('./api.ts')
 
 describe('api client', () => {
   beforeEach(() => {
@@ -110,6 +110,33 @@ describe('api client', () => {
       expect(init.method).toBe('POST')
       expect(JSON.parse(init.body as string)).toEqual({ name: 'bar' })
       expect(new Headers(init.headers).get('content-type')).toBe('application/json')
+    })
+  })
+
+  describe('apiFetchBlob()', () => {
+    it('delivers caller idempotency headers with the authenticated PDF request', async () => {
+      const authModule = await import('./auth.ts')
+      authModule.setAccessToken('test.jwt.token')
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response(new Blob(['%PDF-test'], { type: 'application/pdf' }), { status: 200 }),
+          ),
+      )
+
+      const blob = await apiFetchBlob('/api/v1/comprobante.pdf', {
+        headers: { 'Idempotency-Key': 'comprobante-intent-1' },
+      })
+
+      const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      const headers = new Headers(init.headers)
+      expect(headers.get('authorization')).toBe('Bearer test.jwt.token')
+      expect(headers.get('idempotency-key')).toBe('comprobante-intent-1')
+      expect(blob.size).toBe(13)
+      authModule.clearAccessToken()
     })
   })
 

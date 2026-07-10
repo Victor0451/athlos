@@ -225,6 +225,7 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
         SET status = 'rendering', lease_owner = ${owner}, lease_expires_at = ${leaseExpiresAt},
             attempt_count = attempt_count + 1, updated_at = now()
         WHERE idempotency_key = ${key}
+          AND request_fingerprint = ${fingerprint}
           AND (status = 'failed' OR (status = 'rendering' AND lease_expires_at <= ${new Date(now)}))
         RETURNING idempotency_key`)
       if (reclaimed.length) return { kind: 'owner' }

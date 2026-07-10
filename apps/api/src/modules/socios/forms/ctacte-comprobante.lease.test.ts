@@ -30,6 +30,7 @@ vi.mock('../repository.ts', () => ({
 vi.mock('@athlos/audit', () => ({ emitAudit: vi.fn().mockResolvedValue({ inserted: true }) }))
 
 type Row = {
+  fingerprint: string
   status: 'rendering' | 'complete' | 'failed'
   owner: string | null
   expiresAt: number
@@ -39,10 +40,15 @@ type Row = {
 function createSharedReplicaStore(): ComprobanteLeaseStore {
   const rows = new Map<string, Row>()
   return {
-    async claim(key, _fingerprint, owner, now, leaseMs) {
+    async claim(key, fingerprint, owner, now, leaseMs) {
       const row = rows.get(key)
-      if (!row || row.status === 'failed' || (row.status === 'rendering' && row.expiresAt <= now)) {
-        rows.set(key, { status: 'rendering', owner, expiresAt: now + leaseMs })
+      if (!row) {
+        rows.set(key, { fingerprint, status: 'rendering', owner, expiresAt: now + leaseMs })
+        return { kind: 'owner' }
+      }
+      if (row.fingerprint !== fingerprint) return { kind: 'conflict' }
+      if (row.status === 'failed' || (row.status === 'rendering' && row.expiresAt <= now)) {
+        rows.set(key, { fingerprint, status: 'rendering', owner, expiresAt: now + leaseMs })
         return { kind: 'owner' }
       }
       if (row.status === 'complete') return { kind: 'complete', result: row.result! }
@@ -59,7 +65,13 @@ function createSharedReplicaStore(): ComprobanteLeaseStore {
     async complete(key, owner, result) {
       const row = rows.get(key)
       if (!row || row.owner !== owner || row.status !== 'rendering') return false
-      rows.set(key, { status: 'complete', owner: null, expiresAt: Number.MAX_SAFE_INTEGER, result })
+      rows.set(key, {
+        fingerprint: row.fingerprint,
+        status: 'complete',
+        owner: null,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        result,
+      })
       return true
     },
     async fail(key, owner) {
@@ -128,5 +140,30 @@ describe('renderComprobante durable lease', () => {
     )
     expect(recovered.pdf.toString()).toBe('%PDF-recovered')
     expect(recovered.movementCount).toBe(1)
+  })
+
+  it('rejects a changed request fingerprint before reclaiming failed or stale claims', async () => {
+    const store = createSharedReplicaStore()
+    const now = Date.now()
+    await expect(
+      store.claim('failed-key', 'range-a', 'owner-a', now, 100, 60_000),
+    ).resolves.toEqual({
+      kind: 'owner',
+    })
+    await store.fail('failed-key', 'owner-a')
+    await expect(
+      store.claim('failed-key', 'range-b', 'owner-b', now + 1, 100, 60_000),
+    ).resolves.toEqual({
+      kind: 'conflict',
+    })
+
+    await expect(store.claim('stale-key', 'range-a', 'owner-a', now, 1, 60_000)).resolves.toEqual({
+      kind: 'owner',
+    })
+    await expect(
+      store.claim('stale-key', 'range-b', 'owner-b', now + 2, 100, 60_000),
+    ).resolves.toEqual({
+      kind: 'conflict',
+    })
   })
 })
