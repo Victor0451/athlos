@@ -69,4 +69,25 @@ describe('0033 ctacte comprobante retry migration', () => {
       'ctacte_comprobante_retries_expires_at_idx',
     )
   })
+
+  it('persists the debit idempotency owner so a reused key cannot be reassigned', async () => {
+    if (!pool) throw new Error('PostgreSQL pool was not initialized')
+    await pool.query('CREATE TABLE tesoreria.ctacte (id uuid PRIMARY KEY)')
+    const migration = await readFile(
+      new URL('../drizzle/0033_ctacte_comprobante_retries.sql', import.meta.url),
+      'utf8',
+    )
+    await pool.query(migration)
+    await pool.query(`ALTER TABLE tesoreria.ctacte ADD COLUMN idempotency_key text UNIQUE;
+      INSERT INTO tesoreria.ctacte (id, idempotency_key, idempotency_operator_id)
+      VALUES ('00000000-0000-4000-8000-000000000001', 'debit-key', '00000000-0000-4000-8000-000000000010')`)
+    const owner = await pool.query<{ idempotency_operator_id: string }>(
+      "SELECT idempotency_operator_id FROM tesoreria.ctacte WHERE idempotency_key = 'debit-key'",
+    )
+    expect(owner.rows[0]?.idempotency_operator_id).toBe('00000000-0000-4000-8000-000000000010')
+    await expect(
+      pool.query(`INSERT INTO tesoreria.ctacte (id, idempotency_key, idempotency_operator_id)
+        VALUES ('00000000-0000-4000-8000-000000000002', 'debit-key', '00000000-0000-4000-8000-000000000011')`),
+    ).rejects.toMatchObject({ code: '23505' })
+  })
 })
