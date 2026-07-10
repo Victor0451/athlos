@@ -3,6 +3,7 @@
 CREATE TABLE IF NOT EXISTS tesoreria.ctacte_comprobante_retries (
   idempotency_key text PRIMARY KEY,
   status text NOT NULL CHECK (status IN ('rendering', 'complete', 'failed')),
+  request_fingerprint text NOT NULL,
   pdf_base64 text,
   sha256 text,
   byte_size integer,
@@ -17,10 +18,14 @@ CREATE TABLE IF NOT EXISTS tesoreria.ctacte_comprobante_retries (
 );
 
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS movement_count integer;
+ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS request_fingerprint text;
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS lease_owner text;
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0;
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+UPDATE tesoreria.ctacte_comprobante_retries SET request_fingerprint = idempotency_key WHERE request_fingerprint IS NULL;
+ALTER TABLE tesoreria.ctacte_comprobante_retries ALTER COLUMN request_fingerprint SET NOT NULL;
+ALTER TABLE tesoreria.ctacte ADD COLUMN IF NOT EXISTS idempotency_operator_id uuid;
 
 DO $$
 BEGIN

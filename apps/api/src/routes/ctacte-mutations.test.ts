@@ -409,7 +409,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-401-key' },
         payload: { monto: 800, fecha, motivo: 'Cargo mora' },
       })
 
@@ -488,7 +488,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-happy-key' },
       payload: { body: 'Verificar comprobante' },
     })
     expect(res.statusCode).toBe(201)
@@ -503,7 +503,10 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-missing-key',
+      },
       payload: { body: '' },
     })
     expect(res.statusCode).toBe(400)
@@ -514,7 +517,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-range-key' },
       payload: { body: 'Nota sobre movimiento inexistente' },
     })
     expect(res.statusCode).toBe(404)
@@ -528,7 +531,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-query-key' },
       payload: { body: 'Cross-socio write' },
     })
 
@@ -549,7 +552,10 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
       app.inject({
         method: 'POST',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'idempotency-key': 'comprobante-audit-key',
+        },
         payload: { body },
       })
 
@@ -577,7 +583,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
       app.inject({
         method: 'POST',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-cap-key' },
         payload: { body: 'Concurrent retry' },
       })
 
@@ -613,7 +619,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =>
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-replay-key' },
     })
 
     expect(res.statusCode).toBe(200)
@@ -672,7 +678,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-happy-key' },
     })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/pdf')
@@ -685,7 +691,10 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-missing-key',
+      },
     })
     expect(res.statusCode).toBe(404)
     // PDF generator should NOT have been called
@@ -697,7 +706,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-31&to=2026-07-01&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-range-key' },
     })
     expect(res.statusCode).toBe(400)
     expect(res.json().error).toBe('VALIDATION_ERROR')
@@ -708,7 +717,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-query-key' },
     })
     expect(res.statusCode).toBe(400)
   })
@@ -735,7 +744,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-audit-key' },
     })
     expect(res.statusCode).toBe(200)
     const auditEvents = standin.state.auditEvents.filter(
@@ -772,7 +781,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-cap-key' },
     })
 
     expect(res.statusCode).toBe(400)
@@ -794,7 +803,10 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
       app.inject({
         method: 'GET',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'idempotency-key': 'comprobante-replay-key',
+        },
       })
 
     const first = await request()
@@ -809,5 +821,35 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
         (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
       ),
     ).toHaveLength(1)
+  })
+
+  it('requires a caller key and rejects a changed canonical request for the same key', async () => {
+    seedSocio()
+    const baseUrl = `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`
+    const missing = await app.inject({
+      method: 'GET',
+      url: baseUrl,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+    const first = await app.inject({
+      method: 'GET',
+      url: baseUrl,
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-conflict-key',
+      },
+    })
+    const changed = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-02&to=2026-07-31&cuenta=PRINCIPAL`,
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-conflict-key',
+      },
+    })
+    expect(missing.statusCode).toBe(400)
+    expect(first.statusCode).toBe(200)
+    expect(changed.statusCode).toBe(409)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
   })
 })

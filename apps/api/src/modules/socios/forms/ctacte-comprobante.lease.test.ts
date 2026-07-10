@@ -6,30 +6,26 @@ import {
 } from './ctacte-comprobante.ts'
 
 vi.mock('./ctacte-mutations.ts', () => ({
-  getMovementsForComprobante: vi
-    .fn()
-    .mockResolvedValue([
-      {
-        id: 'm-1',
-        fecha: '2026-07-05',
-        tipo: 'CREDITO',
-        monto: 1500,
-        concepto: 'Cuota',
-        motivo: null,
-        saldo: -1500,
-      },
-    ]),
+  getMovementsForComprobante: vi.fn().mockResolvedValue([
+    {
+      id: 'm-1',
+      fecha: '2026-07-05',
+      tipo: 'CREDITO',
+      monto: 1500,
+      concepto: 'Cuota',
+      motivo: null,
+      saldo: -1500,
+    },
+  ]),
 }))
 vi.mock('../repository.ts', () => ({
-  findById: vi
-    .fn()
-    .mockResolvedValue({
-      id: 's-1',
-      numeroSocio: '1',
-      apellido: 'Pérez',
-      nombre: 'Juan',
-      dni: '1',
-    }),
+  findById: vi.fn().mockResolvedValue({
+    id: 's-1',
+    numeroSocio: '1',
+    apellido: 'Pérez',
+    nombre: 'Juan',
+    dni: '1',
+  }),
 }))
 vi.mock('@athlos/audit', () => ({ emitAudit: vi.fn().mockResolvedValue({ inserted: true }) }))
 
@@ -43,7 +39,7 @@ type Row = {
 function createSharedReplicaStore(): ComprobanteLeaseStore {
   const rows = new Map<string, Row>()
   return {
-    async claim(key, owner, now, leaseMs) {
+    async claim(key, _fingerprint, owner, now, leaseMs) {
       const row = rows.get(key)
       if (!row || row.status === 'failed' || (row.status === 'rendering' && row.expiresAt <= now)) {
         rows.set(key, { status: 'rendering', owner, expiresAt: now + leaseMs })

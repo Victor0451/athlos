@@ -137,6 +137,7 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId,
     idempotencyKey: params.idempotencyKey,
+    idempotencyOperatorId: params.operatorId,
   })
 
   if (!result.created) {
@@ -249,12 +250,14 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId: null,
     idempotencyKey: params.idempotencyKey,
+    idempotencyOperatorId: params.operatorId,
   })
 
   if (!result.created) {
     const existing = result.row
     if (
       existing.socioId !== params.socioId ||
+      existing.idempotencyOperatorId !== params.operatorId ||
       existing.tipo !== 'DEBITO' ||
       existing.fecha !== params.fecha ||
       existing.concepto !== params.motivo ||
