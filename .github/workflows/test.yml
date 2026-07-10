@@ -149,13 +149,15 @@ jobs:
         run: docker run --rm athlos-api:smoke node --version
 
       - name: "Smoke test: entrypoint present"
-        run: docker run --rm athlos-api:smoke ls /usr/local/bin/docker-entrypoint.sh
+        run: docker run --rm --entrypoint /bin/ls athlos-api:smoke /usr/local/bin/docker-entrypoint.sh
 
       - name: "Smoke test: non-root user"
-        run: docker run --rm athlos-api:smoke id
+        run: docker run --rm --entrypoint /usr/bin/id athlos-api:smoke
 
   labeler:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/labeler@v5
         with:

@@ -45,15 +45,18 @@ beforeEach(() => {
 describe('registerDebit', () => {
   it('inserts a DEBITO row with motivo in concepto + emits 5-key metadata', async () => {
     repoInsertCtacteRow.mockResolvedValueOnce({
-      id: MOVEMENT_ID,
-      socioId: SOCIO_ID,
-      fecha: '2026-07-09',
-      tipo: 'DEBITO',
-      concepto: 'Cuota social Julio',
-      debe: '800.00',
-      haber: '0.00',
-      comprobanteAttachmentId: null,
-      createdAt: new Date(),
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'DEBITO',
+        concepto: 'Cuota social Julio',
+        debe: '800.00',
+        haber: '0.00',
+        comprobanteAttachmentId: null,
+        createdAt: new Date(),
+      },
+      created: true,
     })
     emitAuditMock.mockResolvedValueOnce({ inserted: true, id: 'audit-2' })
 
@@ -78,18 +81,23 @@ describe('registerDebit', () => {
       monto: '800.00',
       comprobanteAttachmentId: null,
     })
-    expect(emitAuditMock).toHaveBeenCalledTimes(1)
-    const auditCall = emitAuditMock.mock.calls[0]![1]
-    expect(auditCall.action).toBe('CTACTE_DEBIT_REGISTERED')
-    expect(Object.keys(auditCall.metadata).sort()).toEqual([
-      'ctacte_id',
-      'fecha',
-      'monto',
-      'motivo',
-      'movement_id',
-    ])
-    expect(auditCall.metadata.motivo).toBe('Cuota social Julio')
-    expect(auditCall.metadata.monto).toBe(800)
+    expect(emitAuditMock).toHaveBeenCalledOnce()
+    expect(emitAuditMock).toHaveBeenCalledWith(
+      dbMock,
+      expect.objectContaining({
+        operatorId: OPERATOR_ID,
+        action: 'CTACTE_DEBIT_REGISTERED',
+        entityType: 'ctacte_movement',
+        entityId: MOVEMENT_ID,
+        metadata: {
+          ctacte_id: SOCIO_ID,
+          movement_id: MOVEMENT_ID,
+          monto: 800,
+          fecha: '2026-07-09',
+          motivo: 'Cuota social Julio',
+        },
+      }),
+    )
   })
 
   it('throws VALIDATION_ERROR when monto <= 0', async () => {
