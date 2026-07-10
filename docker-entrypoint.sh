@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+# Permit image smoke/debug commands to run without a database. The normal
+# production command still follows the readiness and migration flow below.
+if [ "${1:-}" = "node" ]; then
+  exec "$@"
+fi
+
 # Source shared helpers (mirror B1a/B1b scripts/lib/common.sh pattern)
 # shellcheck source=scripts/lib/common.sh
 source /app/scripts/lib/common.sh

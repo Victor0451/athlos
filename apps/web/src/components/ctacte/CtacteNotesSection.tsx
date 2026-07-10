@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, MessageSquare, Pencil, Trash2, UserRound, X } from 'lucide-react'
-import { useAuth } from '@/lib/use-auth'
+import { ChevronDown, MessageSquare, UserRound } from 'lucide-react'
 import { addCtacteNote, type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
 import { Badge } from '@/components/ui/Badge'
@@ -31,6 +30,8 @@ interface CtacteNotesSectionProps {
   movementId: string
   /** Current notes for this movement — passed from parent to avoid prop-drilling queries. */
   notes: CtacteNoteResponse[]
+  isLoading: boolean
+  error: string | null
   onNoteAdded: () => void
 }
 
@@ -85,14 +86,12 @@ export function CtacteNotesSection({
   socioId,
   movementId,
   notes,
+  isLoading,
+  error,
   onNoteAdded,
 }: CtacteNotesSectionProps) {
-  const { user } = useAuth()
   const [draft, setDraft] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingDraft, setEditingDraft] = useState('')
-
-  const { toggle, displayExpanded } = useNotesCollapsed(movementId, editingId)
+  const { toggle, displayExpanded } = useNotesCollapsed(movementId, null)
 
   const sortedOperatorIds = useMemo(() => {
     const ids = notes
@@ -113,15 +112,6 @@ export function CtacteNotesSection({
     [operatorsQuery.data],
   )
 
-  const isAuthorOrAdmin = useCallback(
-    (note: CtacteNoteResponse): boolean => {
-      if (!user) return false
-      if (user.role === 'ADMIN') return true
-      return note.author_operator_id === user.operator_id
-    },
-    [user],
-  )
-
   async function handleSubmitDraft(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const trimmed = draft.trim()
@@ -134,30 +124,6 @@ export function CtacteNotesSection({
     } catch {
       notify('error', 'No se pudo crear la nota')
     }
-  }
-
-  function handleStartEdit(note: CtacteNoteResponse) {
-    setEditingId(note.id)
-    setEditingDraft(note.body)
-  }
-
-  function handleCancelEdit() {
-    setEditingId(null)
-    setEditingDraft('')
-  }
-
-  async function handleSaveEdit(_noteId: string) {
-    const trimmed = editingDraft.trim()
-    if (trimmed.length === 0) return
-    // Optimistic: just close the editing state since this component doesn't have an update endpoint yet
-    setEditingId(null)
-    setEditingDraft('')
-    notify('error', 'Editar nota no está implementado todavía')
-  }
-
-  async function handleDelete(_noteId: string) {
-    // Soft-delete not yet implemented on the backend; show a message
-    notify('error', 'Eliminar nota no está implementado todavía')
   }
 
   return (
@@ -209,148 +175,106 @@ export function CtacteNotesSection({
           aria-labelledby="ctacte-notes-heading"
           className="mt-6 space-y-6"
         >
-          {/* New note form */}
-          <form onSubmit={handleSubmitDraft} data-testid="ctacte-note-new-form">
-            <textarea
-              id="ctacte-note-new-body"
-              data-testid="ctacte-note-new-body"
-              rows={3}
-              maxLength={2000}
-              placeholder="Escribí una nota sobre este movimiento…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="font-body text-xs text-ink-500" data-testid="ctacte-note-charcount">
-                {draft.length} / 2000
-              </span>
-              <button
-                type="submit"
-                disabled={draft.trim().length === 0}
-                className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Agregar nota
-              </button>
-            </div>
-          </form>
-
-          {/* Notes list */}
-          {notes.length === 0 ? (
+          {isLoading ? (
             <p
-              data-testid="ctacte-notes-empty"
-              className="rounded-md border border-dashed border-ink-200 px-4 py-8 text-center font-body text-sm text-ink-500"
+              data-testid="ctacte-notes-loading"
+              role="status"
+              className="font-body text-sm text-ink-500"
             >
-              Aún no hay notas para este movimiento.
+              Cargando notas…
+            </p>
+          ) : error ? (
+            <p
+              data-testid="ctacte-notes-error"
+              role="alert"
+              className="font-body text-sm text-danger"
+            >
+              {error}
             </p>
           ) : (
-            <ul data-testid="ctacte-notes-list" className="space-y-3">
-              {notes.map((note) => {
-                const isEditing = editingId === note.id
-                const canEdit = isAuthorOrAdmin(note)
-                return (
-                  <li
-                    key={note.id}
-                    data-testid={`ctacte-note-${note.id}`}
-                    className="rounded-lg border border-ink-100 bg-surface-elevated p-4"
+            <>
+              {/* New note form */}
+              <form onSubmit={handleSubmitDraft} data-testid="ctacte-note-new-form">
+                <textarea
+                  id="ctacte-note-new-body"
+                  data-testid="ctacte-note-new-body"
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="Escribí una nota sobre este movimiento…"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span
+                    className="font-body text-xs text-ink-500"
+                    data-testid="ctacte-note-charcount"
                   >
-                    <div className="mb-2 flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft">
-                          <UserRound className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-                        </div>
-                        <div className="min-w-0">
-                          <div
-                            className="font-display text-[11px] font-semibold uppercase tracking-widest text-ink-500"
-                            data-testid={`ctacte-note-author-${note.id}`}
-                          >
-                            <OperatorChip
-                              operatorId={note.author_operator_id}
-                              operators={operatorMap}
-                            />
-                          </div>
-                          <div className="font-body text-xs text-ink-500">
-                            <span data-testid={`ctacte-note-created-${note.id}`}>
-                              {formatTimestamp(note.created_at)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      {canEdit && !isEditing ? (
-                        <div className="flex shrink-0 items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleStartEdit(note)}
-                            aria-label="Editar nota"
-                            data-testid={`ctacte-note-edit-${note.id}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-500 transition-colors duration-fast hover:bg-surface-sunken hover:text-ink-700"
-                          >
-                            <Pencil className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  '¿Eliminar esta nota? La acción no se puede deshacer.',
-                                )
-                              ) {
-                                handleDelete(note.id)
-                              }
-                            }}
-                            aria-label="Eliminar nota"
-                            data-testid={`ctacte-note-delete-${note.id}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-500 transition-colors duration-fast hover:bg-danger/10 hover:text-danger"
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
+                    {draft.length} / 2000
+                  </span>
+                  <button
+                    type="submit"
+                    disabled={draft.trim().length === 0}
+                    className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Agregar nota
+                  </button>
+                </div>
+              </form>
 
-                    {isEditing ? (
-                      <div data-testid={`ctacte-note-edit-form-${note.id}`}>
-                        <textarea
-                          data-testid={`ctacte-note-edit-body-${note.id}`}
-                          rows={3}
-                          maxLength={2000}
-                          value={editingDraft}
-                          onChange={(e) => setEditingDraft(e.target.value)}
-                          className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-                        />
-                        <div className="mt-2 flex items-end justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={handleCancelEdit}
-                            data-testid={`ctacte-note-edit-cancel-${note.id}`}
-                            className="rounded-[10px] border border-ink-200 bg-surface px-3 py-1.5 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-                          >
-                            <X className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
-                            Cancelar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSaveEdit(note.id)}
-                            data-testid={`ctacte-note-edit-save-${note.id}`}
-                            disabled={editingDraft.trim().length === 0}
-                            className="rounded-[10px] bg-night-900 px-3 py-1.5 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Guardar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <p
-                        className="font-body text-sm text-ink-700 whitespace-pre-wrap break-words"
-                        data-testid={`ctacte-note-body-${note.id}`}
+              {/* Notes list */}
+              {notes.length === 0 ? (
+                <p
+                  data-testid="ctacte-notes-empty"
+                  className="rounded-md border border-dashed border-ink-200 px-4 py-8 text-center font-body text-sm text-ink-500"
+                >
+                  Aún no hay notas para este movimiento.
+                </p>
+              ) : (
+                <ul data-testid="ctacte-notes-list" className="space-y-3">
+                  {notes.map((note) => {
+                    return (
+                      <li
+                        key={note.id}
+                        data-testid={`ctacte-note-${note.id}`}
+                        className="rounded-lg border border-ink-100 bg-surface-elevated p-4"
                       >
-                        {note.body}
-                      </p>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
+                        <div className="mb-2 flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft">
+                              <UserRound className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+                            </div>
+                            <div className="min-w-0">
+                              <div
+                                className="font-display text-[11px] font-semibold uppercase tracking-widest text-ink-500"
+                                data-testid={`ctacte-note-author-${note.id}`}
+                              >
+                                <OperatorChip
+                                  operatorId={note.author_operator_id}
+                                  operators={operatorMap}
+                                />
+                              </div>
+                              <div className="font-body text-xs text-ink-500">
+                                <span data-testid={`ctacte-note-created-${note.id}`}>
+                                  {formatTimestamp(note.created_at)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p
+                          className="font-body text-sm text-ink-700 whitespace-pre-wrap break-words"
+                          data-testid={`ctacte-note-body-${note.id}`}
+                        >
+                          {note.body}
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
           )}
         </div>
       ) : null}

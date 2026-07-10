@@ -60,23 +60,12 @@ describe('CtacteComprobanteButton', () => {
     urlRevokeObjectURLMock.mockResolvedValue(undefined)
 
     // jsdom's window.open returns null silently — replace with our spy.
-    // @ts-expect-error — replacing a readonly property in test environment
     window.open = windowOpenMock as typeof window.open
     // jsdom doesn't implement URL.createObjectURL — polyfill directly.
-    // @ts-expect-error — augmenting the URL global in test environment
-    ;(
-      URL as {
-        createObjectURL: typeof urlCreateObjectURLMock
-        revokeObjectURL: typeof urlRevokeObjectURLMock
-      }
-    ).createObjectURL = urlCreateObjectURLMock
-    // @ts-expect-error — augmenting the URL global in test environment
-    ;(
-      URL as {
-        createObjectURL: typeof urlCreateObjectURLMock
-        revokeObjectURL: typeof urlRevokeObjectURLMock
-      }
-    ).revokeObjectURL = urlRevokeObjectURLMock
+    Object.assign(URL, {
+      createObjectURL: urlCreateObjectURLMock,
+      revokeObjectURL: urlRevokeObjectURLMock,
+    })
   })
 
   it('renders the button with Printer icon and correct text', () => {

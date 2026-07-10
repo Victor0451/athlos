@@ -50,9 +50,9 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
-  } = useForm<DebitFormValues>({
+  } = useForm<DebitFormValues, unknown, DebitFormValues>({
     resolver: zodResolver(debitSchema),
-    defaultValues: { monto: undefined, fecha: '', motivo: '' },
+    defaultValues: { fecha: '', motivo: '' },
     mode: 'onSubmit',
   })
 

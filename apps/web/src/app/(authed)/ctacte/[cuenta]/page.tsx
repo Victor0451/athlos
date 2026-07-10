@@ -7,8 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCtacte, getMovimientos, type Movimiento } from '@/lib/api/ctacte'
 import { getSocio } from '@/lib/api/socios'
 import { getCtacteGastosLinks, type GastoLinkForCuenta } from '@/lib/api/gastos-ctacte'
-import { apiFetch } from '@/lib/api'
-import { type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
+import { getCtacteNotes } from '@/lib/api/ctacte-mutations'
 import { MovementList } from '@/components/ledger/MovementList'
 import { CtactePaymentForm } from '@/components/ctacte/CtactePaymentForm'
 import { CtacteDebitForm } from '@/components/ctacte/CtacteDebitForm'
@@ -87,10 +86,7 @@ export default function CtacteDetailPage() {
   // Notes for the selected movement
   const notesQuery = useQuery({
     queryKey: ['ctacte-notes', cuenta, selectedMovementId],
-    queryFn: () =>
-      apiFetch<CtacteNoteResponse[]>(
-        `/api/v1/socios/${cuenta}/ctacte/movements/${selectedMovementId}/notes`,
-      ),
+    queryFn: () => getCtacteNotes(cuenta, selectedMovementId!),
     enabled: selectedMovementId !== null,
   })
 
@@ -245,7 +241,10 @@ export default function CtacteDetailPage() {
         <CtacteNotesSection
           socioId={cuenta}
           movementId={selectedMovementId}
+          key={selectedMovementId}
           notes={notesQuery.data ?? []}
+          isLoading={notesQuery.isPending}
+          error={notesQuery.isError ? 'No pudimos cargar las notas del movimiento.' : null}
           onNoteAdded={handleNoteAdded}
         />
       )}

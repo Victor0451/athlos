@@ -151,6 +151,24 @@ export interface InsertCtacteRowInput {
   /** Optional FK to `socios.socio_attachments.id` (the comprobante
    *  upload). NULL when the pago was registered without a comprobante. */
   comprobanteAttachmentId?: string | null
+  idempotencyKey?: string
+}
+
+export interface InsertCtacteRowResult {
+  row: Ctacte
+  created: boolean
+}
+
+export async function findCtacteByIdempotencyKey(
+  db: Db,
+  idempotencyKey: string,
+): Promise<Ctacte | null> {
+  const [row] = await db
+    .select()
+    .from(ctacte)
+    .where(eq(ctacte.idempotencyKey, idempotencyKey))
+    .limit(1)
+  return row ?? null
 }
 
 /**
@@ -161,7 +179,10 @@ export interface InsertCtacteRowInput {
  * anomaly — defensive guard mirroring the pattern in
  * `notes-repository.ts:insert`).
  */
-export async function insertCtacteRow(db: Db, input: InsertCtacteRowInput): Promise<Ctacte> {
+export async function insertCtacteRow(
+  db: Db,
+  input: InsertCtacteRowInput,
+): Promise<InsertCtacteRowResult> {
   const row: NewCtacte = {
     socioId: input.socioId,
     fecha: input.fecha,
@@ -170,12 +191,27 @@ export async function insertCtacteRow(db: Db, input: InsertCtacteRowInput): Prom
     debe: input.tipo === 'DEBITO' ? input.monto : '0.00',
     haber: input.tipo === 'CREDITO' ? input.monto : '0.00',
     comprobanteAttachmentId: input.comprobanteAttachmentId ?? null,
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   }
-  const [inserted] = await db.insert(ctacte).values(row).returning()
+  const [inserted] = input.idempotencyKey
+    ? await db
+        .insert(ctacte)
+        .values(row)
+        .onConflictDoNothing({ target: ctacte.idempotencyKey })
+        .returning()
+    : await db.insert(ctacte).values(row).returning()
+  if (!inserted && input.idempotencyKey) {
+    const [existing] = await db
+      .select()
+      .from(ctacte)
+      .where(eq(ctacte.idempotencyKey, input.idempotencyKey))
+      .limit(1)
+    if (existing) return { row: existing, created: false }
+  }
   if (!inserted) {
     throw new Error('insertCtacteRow returned no row')
   }
-  return inserted
+  return { row: inserted, created: true }
 }
 
 export interface ListMovementsByDateRangeInput {

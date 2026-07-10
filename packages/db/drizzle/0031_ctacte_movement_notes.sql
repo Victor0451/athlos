@@ -33,3 +33,12 @@ CREATE INDEX IF NOT EXISTS "idx_ctacte_movement_notes_created"
 ALTER TABLE "tesoreria"."ctacte"
   ADD COLUMN IF NOT EXISTS "comprobante_attachment_id" uuid
   REFERENCES "socios"."socio_attachments"("id") ON DELETE set null ON UPDATE no action;
+--> statement-breakpoint
+
+ALTER TABLE "tesoreria"."ctacte"
+  ADD COLUMN IF NOT EXISTS "idempotency_key" text;
+--> statement-breakpoint
+
+CREATE UNIQUE INDEX IF NOT EXISTS "ctacte_idempotency_key_unique"
+  ON "tesoreria"."ctacte" ("idempotency_key")
+  WHERE "idempotency_key" IS NOT NULL;

@@ -2,12 +2,12 @@ import multipart from '@fastify/multipart'
 import type { FastifyPluginCallback } from 'fastify'
 import { z } from 'zod'
 import { Readable } from 'node:stream'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { idSchema } from '@athlos/validation'
 import { throwIfInvalid, ErrorCode } from '@athlos/errors'
 import { requireAuth } from '@athlos/auth'
 import { registerPayment, registerDebit } from '../modules/socios/forms/ctacte-mutations.ts'
-import { addNote } from '../modules/socios/ctacte_movement_notes.ts'
+import { addNote, listNotes } from '../modules/socios/ctacte_movement_notes.ts'
 import { renderComprobante } from '../modules/socios/forms/ctacte-comprobante.ts'
 import { ctacte } from '@athlos/db/schema'
 import { LocalFileStorage, readStorageEnv } from '../modules/file-storage/index.ts'
@@ -124,16 +124,31 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         return reply.code(401).send({ error: 'UNAUTHORIZED' })
       }
 
-      const file = await request.file()
-      if (!file) {
-        return apiError(reply, 'VALIDATION_ERROR', 'No multipart fields provided')
+      const idempotencyKey = request.headers['idempotency-key']
+      if (typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+        return apiError(reply, 'VALIDATION_ERROR', 'Idempotency-Key header is required')
       }
 
-      // Access fields as an object (same pattern as socios-attachments.ts)
-      const fields = file.fields as Record<string, { value?: string } | undefined>
-      const montoStr = fields['monto']?.value
-      const fechaVal = fields['fecha']?.value
-      const conceptoVal = fields['concepto']?.value
+      const fields: Record<string, string> = {}
+      let uploadedFile: { bytes: Buffer; mimeType: string; filename: string } | undefined
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          if (part.filename) {
+            uploadedFile = {
+              bytes: await part.toBuffer(),
+              mimeType: part.mimetype ?? 'application/octet-stream',
+              filename: part.filename.replace(/["\r\n]/g, '_'),
+            }
+          } else {
+            await part.toBuffer()
+          }
+        } else {
+          fields[part.fieldname] = String(part.value)
+        }
+      }
+      const montoStr = fields['monto']
+      const fechaVal = fields['fecha']
+      const conceptoVal = fields['concepto']
 
       // Parse the other fields
       const parsed = paymentSchema.safeParse({
@@ -152,8 +167,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
 
       // The comprobante is the uploaded file itself (not a separate field)
       let comprobante: { bytes: Buffer; mimeType: string; filename: string } | undefined
-      if (file.filename && file.filename !== '') {
-        const buf = await file.toBuffer()
+      if (uploadedFile) {
+        const buf = uploadedFile.bytes
         if (buf.byteLength === 0) {
           return apiError(reply, 'VALIDATION_ERROR', 'comprobante file is empty')
         }
@@ -165,8 +180,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         }
         comprobante = {
           bytes: buf,
-          mimeType: file.mimetype ?? 'application/octet-stream',
-          filename: (file.filename ?? 'comprobante').replace(/["\r\n]/g, '_'),
+          mimeType: uploadedFile.mimeType,
+          filename: uploadedFile.filename,
         }
       }
 
@@ -179,6 +194,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           monto,
           fecha,
           concepto,
+          idempotencyKey,
           ...(comprobante ? { comprobante } : {}),
         })
         return reply.code(201).send({
@@ -200,6 +216,9 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
             message: e.message,
             details: e.details,
           })
+        }
+        if (e.code === ErrorCode.CONFLICT) {
+          return reply.code(409).send({ error: 'CONFLICT', message: e.message })
         }
         const detected = (e.details as { detected?: string } | undefined)?.detected
         if (detected) {
@@ -267,6 +286,33 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           .code(400)
           .send({ error: 'VALIDATION_ERROR', message: e.message ?? 'Bad request' })
       }
+    },
+  )
+
+  // GET /api/v1/socios/:socioId/ctacte/movements/:movementId/notes
+  fastify.get<{ Params: { socioId: string; movementId: string } }>(
+    '/api/v1/socios/:socioId/ctacte/movements/:movementId/notes',
+    AUTH,
+    async (request, reply) => {
+      const paramsSchema = z.object({ socioId: idSchema, movementId: idSchema })
+      const params = throwIfInvalid(paramsSchema, request.params, 'params')
+      const [movementRow] = await container.db
+        .select({ id: ctacte.id })
+        .from(ctacte)
+        .where(and(eq(ctacte.id, params.movementId), eq(ctacte.socioId, params.socioId)))
+        .limit(1)
+      if (!movementRow) return movementNotFound(reply)
+
+      const notes = await listNotes(container.db, params.movementId)
+      return reply.send(
+        notes.map((note) => ({
+          id: note.id,
+          ctacte_movement_id: params.movementId,
+          body: note.body,
+          author_operator_id: note.authorOperatorId,
+          created_at: note.createdAt.toISOString(),
+        })),
+      )
     },
   )
 

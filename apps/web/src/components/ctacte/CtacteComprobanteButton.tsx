@@ -89,7 +89,6 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
       <Modal
         open={open}
         title="Generar Comprobante"
-        onClose={handleClose}
         dataTestid="ctacte-comprobante-modal"
         footer={
           <>
@@ -133,7 +132,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
                 value={from}
                 onChange={(e) => {
                   setFrom(e.target.value)
-                  setErrors((prev) => ({ ...prev, from: undefined, submit: undefined }))
+                  setErrors(({ to }) => (to ? { to } : {}))
                 }}
                 aria-invalid={Boolean(errors.from) || undefined}
                 aria-describedby={errors.from ? 'comprobante-from-error' : undefined}
@@ -160,7 +159,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
                 value={to}
                 onChange={(e) => {
                   setTo(e.target.value)
-                  setErrors((prev) => ({ ...prev, to: undefined, submit: undefined }))
+                  setErrors(({ from }) => (from ? { from } : {}))
                 }}
                 aria-invalid={Boolean(errors.to) || undefined}
                 aria-describedby={errors.to ? 'comprobante-to-error' : undefined}

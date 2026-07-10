@@ -11,20 +11,15 @@ import userEvent from '@testing-library/user-event'
  *   - expand toggles aria-expanded (localStorage persistence)
  *   - addCtacteNote called on submit
  *   - OperatorChip renders "username · ROLE"
- *   - soft-delete gated (non-author non-ADMIN button hidden)
+ *   - loading and request errors are surfaced instead of rendered as empty data
  */
 
-const useAuthMock = vi.fn()
 const getOperatorNamesMock = vi.fn()
 const addCtacteNoteMock = vi.fn()
 const notifyMock = vi.fn((..._args: unknown[]) => 'toast-mock')
 
 vi.mock('@/lib/notifications', () => ({
   notify: (...args: unknown[]) => notifyMock(...args),
-}))
-
-vi.mock('@/lib/use-auth', () => ({
-  useAuth: () => useAuthMock(),
 }))
 
 vi.mock('@/lib/api/operators', () => ({
@@ -51,16 +46,10 @@ const SAMPLE_NOTES = [
   },
 ]
 
-function makeAdminUser() {
-  return {
-    operator_id: 'op-admin',
-    role: 'ADMIN' as const,
-    username: 'admin',
-    permissions: { can_reprint: true, can_anulate: true },
-  }
-}
-
-function renderSection(notes = SAMPLE_NOTES) {
+function renderSection(
+  notes = SAMPLE_NOTES,
+  { isLoading = false, error = null }: { isLoading?: boolean; error?: string | null } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
@@ -70,6 +59,8 @@ function renderSection(notes = SAMPLE_NOTES) {
         socioId={SOCIO_ID}
         movementId={MOVEMENT_ID}
         notes={notes}
+        isLoading={isLoading}
+        error={error}
         onNoteAdded={vi.fn()}
       />
     </QueryClientProvider>,
@@ -78,12 +69,10 @@ function renderSection(notes = SAMPLE_NOTES) {
 
 describe('CtacteNotesSection', () => {
   beforeEach(() => {
-    useAuthMock.mockReset()
     getOperatorNamesMock.mockReset()
     addCtacteNoteMock.mockReset()
     notifyMock.mockReset()
 
-    useAuthMock.mockReturnValue({ user: makeAdminUser(), isAuthenticated: true })
     getOperatorNamesMock.mockResolvedValue([
       { id: 'op-1', username: 'juan_operador', role: 'OPERADOR' as const },
     ])
@@ -152,30 +141,21 @@ describe('CtacteNotesSection', () => {
     })
   })
 
-  it('hides delete button for non-author non-ADMIN users', async () => {
+  it('shows a loading state rather than an empty note list', async () => {
     const user = userEvent.setup()
-    useAuthMock.mockReturnValue({
-      user: {
-        operator_id: 'op-other',
-        role: 'OPERADOR' as const,
-        username: 'otro',
-        permissions: { can_reprint: false, can_anulate: false },
-      },
-      isAuthenticated: true,
-    })
-    renderSection()
+    renderSection([], { isLoading: true })
     await user.click(screen.getByTestId('ctacte-notes-toggle'))
     await waitFor(() => {
-      expect(screen.queryByTestId('ctacte-note-delete-note-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('ctacte-notes-loading')).toBeInTheDocument()
     })
   })
 
-  it('renders delete button for ADMIN users regardless of authorship', async () => {
+  it('shows the notes request error rather than masking it as empty data', async () => {
     const user = userEvent.setup()
-    renderSection()
+    renderSection([], { error: 'No pudimos cargar las notas del movimiento.' })
     await user.click(screen.getByTestId('ctacte-notes-toggle'))
     await waitFor(() => {
-      expect(screen.getByTestId('ctacte-note-delete-note-1')).toBeInTheDocument()
+      expect(screen.getByTestId('ctacte-notes-error')).toHaveTextContent(/no pudimos cargar/i)
     })
   })
 
