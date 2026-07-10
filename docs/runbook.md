@@ -2,6 +2,18 @@
 
 ## Deploy Checklist
 
+### Manual CTACTE comprobante replay migration (0031 → 0032 → 0033)
+
+> Do not use Drizzle for these migrations: the production journal is incomplete after 0020.
+> Stop immediately on backup, migration, or verification failure; do not roll out the API.
+
+1. Create and verify a database backup.
+2. Apply `0031_ctacte_movement_notes.sql`, `0032_ctacte_idempotency_key_unique.sql`, then `0033_ctacte_comprobante_retries.sql` in that order with `psql -v ON_ERROR_STOP=1 --single-transaction`.
+3. Verify `tesoreria.ctacte_comprobante_retries` has its status check, lease/result columns, and `ctacte_comprobante_retries_expires_at_idx`.
+4. Only then roll out the API version that uses durable comprobante replay.
+
+This repository change does not apply migrations, deploy, or access production.
+
 ### Pre-deploy
 
 - [ ] Verify all migrations have been applied (`pnpm db:migrate:status`)
@@ -261,6 +273,19 @@ ls -la ./backups/                                       # athlos-<ts>.sql.gz fro
 ### Migrations
 
 `RUN_MIGRATIONS=true` is set in the compose `environment:` block, so every `docker compose up -d` runs migrations before the API starts. Subsequent restarts are no-op (idempotent).
+
+### Manual 0033 comprobante replay rollout
+
+`0033_ctacte_comprobante_retries.sql` is deliberately outside the incomplete Drizzle production journal. Do not run `pnpm db:migrate` for this rollout. Before any API deployment, take and verify a database backup, then run these host commands in this exact order; each command stops on SQL error and executes as one transaction:
+
+```bash
+docker exec -i athlos-db-1 psql -v ON_ERROR_STOP=1 --single-transaction -U athlos -d athlos < packages/db/drizzle/0031_ctacte_movement_notes.sql
+docker exec -i athlos-db-1 psql -v ON_ERROR_STOP=1 --single-transaction -U athlos -d athlos < packages/db/drizzle/0032_ctacte_payment_idempotency.sql
+docker exec -i athlos-db-1 psql -v ON_ERROR_STOP=1 --single-transaction -U athlos -d athlos < packages/db/drizzle/0033_ctacte_comprobante_retries.sql
+docker exec -i athlos-db-1 psql -v ON_ERROR_STOP=1 -U athlos -d athlos -c "SELECT column_name FROM information_schema.columns WHERE table_schema = 'tesoreria' AND table_name = 'ctacte_comprobante_retries' ORDER BY column_name; SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'tesoreria.ctacte_comprobante_retries'::regclass AND contype = 'c'; SELECT indexname FROM pg_indexes WHERE schemaname = 'tesoreria' AND tablename = 'ctacte_comprobante_retries' AND indexname = 'ctacte_comprobante_retries_expires_at_idx';"
+```
+
+Deploy the API only when every migration and the verification query succeeds. The PR deployment note must state that this manual 0031 → 0032 → 0033 sequence is required before rollout; this procedure does not apply a migration or deploy an image.
 
 ### Backups
 

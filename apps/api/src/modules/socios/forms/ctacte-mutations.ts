@@ -137,6 +137,7 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId,
     idempotencyKey: params.idempotencyKey,
+    idempotencyOperatorId: params.operatorId,
   })
 
   if (!result.created) {
@@ -164,6 +165,7 @@ async function assertMatchingPaymentRetry(
     concepto: string
     haber: string
     comprobanteAttachmentId: string | null
+    idempotencyOperatorId: string | null
   },
 ): Promise<void> {
   const expectedAttachmentHash = params.comprobante
@@ -176,6 +178,7 @@ async function assertMatchingPaymentRetry(
   }
   if (
     existing.socioId !== params.socioId ||
+    existing.idempotencyOperatorId !== params.operatorId ||
     existing.tipo !== 'CREDITO' ||
     existing.fecha !== params.fecha ||
     existing.concepto !== params.concepto ||
@@ -215,6 +218,7 @@ export interface RegisterDebitParams {
   monto: number
   fecha: string
   motivo: string
+  idempotencyKey: string
 }
 
 /**
@@ -247,15 +251,36 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     concepto: params.motivo,
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId: null,
+    idempotencyKey: params.idempotencyKey,
+    idempotencyOperatorId: params.operatorId,
   })
 
-  await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
+  if (!result.created) {
+    const existing = result.row
+    if (
+      existing.socioId !== params.socioId ||
+      existing.idempotencyOperatorId !== params.operatorId ||
+      existing.tipo !== 'DEBITO' ||
+      existing.fecha !== params.fecha ||
+      existing.concepto !== params.motivo ||
+      existing.debe !== params.monto.toFixed(2)
+    ) {
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency-Key was already used for a different debit',
+      )
+    }
+  }
+
+  if (result.created) {
+    await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
+  }
 
   return {
     id: result.row.id,
     fecha: result.row.fecha,
     tipo: 'DEBITO',
-    monto: params.monto,
+    monto: Number(result.row.debe),
     concepto: null,
     motivo: params.motivo,
     comprobanteAttachmentId: null,

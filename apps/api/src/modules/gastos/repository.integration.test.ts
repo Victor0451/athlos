@@ -86,6 +86,7 @@ function makeCtacte(overrides: Partial<Ctacte>): Ctacte {
     legacyId: null as string | null,
     comprobanteAttachmentId: null as string | null,
     idempotencyKey: null,
+    idempotencyOperatorId: null,
     createdAt: new Date(),
     ...overrides,
   }

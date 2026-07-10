@@ -65,6 +65,7 @@ export interface CtacteDebitInput {
   monto: number
   fecha: string
   motivo: string
+  idempotencyKey: string
 }
 
 /**
@@ -111,7 +112,8 @@ export async function registerCtacteDebit(
 ): Promise<CtacteDebitResponse> {
   return apiFetch<CtacteDebitResponse>(`/api/v1/socios/${socioId}/ctacte/movements/debit`, {
     method: 'POST',
-    body: input,
+    body: { monto: input.monto, fecha: input.fecha, motivo: input.motivo },
+    headers: { 'Idempotency-Key': input.idempotencyKey },
   })
 }
 

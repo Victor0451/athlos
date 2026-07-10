@@ -174,12 +174,16 @@ describe('ctacte-mutations API', () => {
         monto: 300,
         fecha: '2026-01-20',
         motivo: 'Cargo por mora',
+        idempotencyKey: 'debit-intent-1',
       })
 
       expect(apiFetchMock).toHaveBeenCalledTimes(1)
       const call = apiFetchMock.mock.calls[0]!
       expect(call[0]).toBe(`/api/v1/socios/${SAMPLE_SOCIO_ID}/ctacte/movements/debit`)
-      expect(call[1]).toMatchObject({ method: 'POST' })
+      expect(call[1]).toMatchObject({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'debit-intent-1' },
+      })
       expect(call[1]?.body).toEqual({
         monto: 300,
         fecha: '2026-01-20',

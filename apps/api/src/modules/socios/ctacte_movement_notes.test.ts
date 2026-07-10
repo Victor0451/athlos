@@ -16,11 +16,16 @@ const repoListNotesByMovement = vi.fn()
 const repoInsertNote = vi.fn()
 const repoSoftDeleteNote = vi.fn()
 const operatorsValues = vi.fn()
+const emitAuditMock = vi.fn().mockResolvedValue({ inserted: true, id: 'audit-1' })
 
 vi.mock('./ctacte_movement_notes_repository.ts', () => ({
   listNotesByMovement: (...args: unknown[]) => repoListNotesByMovement(...args),
   insertNote: (...args: unknown[]) => repoInsertNote(...args),
   softDeleteNote: (...args: unknown[]) => repoSoftDeleteNote(...args),
+}))
+
+vi.mock('@athlos/audit', () => ({
+  emitAudit: (...args: unknown[]) => emitAuditMock(...args),
 }))
 
 vi.mock('@athlos/db/schema', async (importOriginal) => {
@@ -135,27 +140,24 @@ describe('addNote', () => {
     }
     repoInsertNote.mockResolvedValueOnce(inserted)
 
-    // Track the audit insert call separately
-    const auditValues = vi.fn().mockResolvedValueOnce({ id: 'audit-1' })
-    const auditDb = {
-      ...buildDb(),
-      insert: () => ({ values: (...args: unknown[]) => auditValues(...args) }),
-    }
-
-    const result = await addNote(auditDb as never, {
+    const result = await addNote(buildDb() as never, {
       ctacteMovementId: MOVEMENT_ID,
       operatorId: OPERATOR_ID,
       body: 'Verificar comprobante físico',
     })
 
     expect(result.id).toBe('n-1')
-    expect(repoInsertNote).toHaveBeenCalledWith(expect.anything(), {
-      ctacteMovementId: MOVEMENT_ID,
-      authorOperatorId: OPERATOR_ID,
-      body: 'Verificar comprobante físico',
-    })
-    expect(auditValues).toHaveBeenCalledTimes(1)
-    const auditRow = auditValues.mock.calls[0]![0]
+    expect(repoInsertNote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        ctacteMovementId: MOVEMENT_ID,
+        authorOperatorId: OPERATOR_ID,
+        body: 'Verificar comprobante físico',
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      }),
+    )
+    expect(emitAuditMock).toHaveBeenCalledTimes(1)
+    const auditRow = emitAuditMock.mock.calls[0]![1]
     expect(auditRow.action).toBe('CTACTE_MOVEMENT_NOTE_ADDED')
     expect(auditRow.entityType).toBe('ctacte_movement_note')
     expect(auditRow.entityId).toBe('n-1')
@@ -178,18 +180,12 @@ describe('addNote', () => {
 
 describe('softDeleteNote', () => {
   it('soft-deletes the row and does NOT emit any new audit event', async () => {
-    const auditValues = vi.fn()
-    const auditDb = {
-      ...buildDb(),
-      insert: () => ({ values: (...args: unknown[]) => auditValues(...args) }),
-    }
-
-    await softDeleteNote(auditDb as never, 'n-1', OPERATOR_ID)
+    await softDeleteNote(buildDb() as never, 'n-1', OPERATOR_ID)
 
     expect(repoSoftDeleteNote).toHaveBeenCalledWith(expect.anything(), 'n-1')
     // Spec invariant: the original CTACTE_MOVEMENT_NOTE_ADDED audit
     // row remains the historical record; soft-delete does not append
     // a new audit_events row.
-    expect(auditValues).not.toHaveBeenCalled()
+    expect(emitAuditMock).not.toHaveBeenCalled()
   })
 })

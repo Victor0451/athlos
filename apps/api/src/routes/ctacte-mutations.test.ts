@@ -378,7 +378,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-happy-key' },
       payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
     })
     expect(res.statusCode).toBe(201)
@@ -393,7 +393,10 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'debit-missing-socio-key',
+      },
       payload: { monto: -100, fecha: '2026-07-09', motivo: 'X' },
     })
     expect(res.statusCode).toBe(400)
@@ -406,7 +409,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-401-key' },
         payload: { monto: 800, fecha, motivo: 'Cargo mora' },
       })
 
@@ -423,10 +426,45 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'debit-missing-socio-key',
+      },
       payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('replays the same caller key and creates a distinct debit for a distinct key', async () => {
+    seedSocio()
+    const request = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-replay-key' },
+        payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
+      })
+
+    const first = await request()
+    const retry = await request()
+    const distinct = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-distinct-key' },
+      payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
+    })
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(distinct.statusCode).toBe(201)
+    expect(distinct.json().id).not.toBe(first.json().id)
+    expect(standin.state.ctacte).toHaveLength(2)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_DEBIT_REGISTERED',
+      ),
+    ).toHaveLength(2)
   })
 })
 
@@ -450,7 +488,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-happy-key' },
       payload: { body: 'Verificar comprobante' },
     })
     expect(res.statusCode).toBe(201)
@@ -465,7 +503,10 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-missing-key',
+      },
       payload: { body: '' },
     })
     expect(res.statusCode).toBe(400)
@@ -476,10 +517,87 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-range-key' },
       payload: { body: 'Nota sobre movimiento inexistente' },
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('rejects writes to a movement owned by another socio without note or audit side effects', async () => {
+    seedSocio()
+    seedSocio(OTHER_SOCIO_ID)
+    seedCtacteMovement()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-query-key' },
+      payload: { body: 'Cross-socio write' },
+    })
+
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'NOT_FOUND' })
+    expect(standin.state.ctacteMovementNotes).toHaveLength(0)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(0)
+  })
+
+  it('collapses same-body retries but keeps different note bodies distinct within a bucket', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    const postNote = (body: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'idempotency-key': 'comprobante-audit-key',
+        },
+        payload: { body },
+      })
+
+    const first = await postNote('A')
+    const retry = await postNote('A')
+    const differentBody = await postNote('B')
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(differentBody.statusCode).toBe(201)
+    expect(differentBody.json().id).not.toBe(first.json().id)
+    expect(standin.state.ctacteMovementNotes).toHaveLength(2)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(2)
+  })
+
+  it('emits one note audit event when identical requests race in the same bucket', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    const postNote = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-cap-key' },
+        payload: { body: 'Concurrent retry' },
+      })
+
+    const [first, retry] = await Promise.all([postNote(), postNote()])
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(standin.state.ctacteMovementNotes).toHaveLength(1)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(1)
   })
 })
 
@@ -501,7 +619,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =>
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-replay-key' },
     })
 
     expect(res.statusCode).toBe(200)
@@ -560,7 +678,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-happy-key' },
     })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('application/pdf')
@@ -573,7 +691,10 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-missing-key',
+      },
     })
     expect(res.statusCode).toBe(404)
     // PDF generator should NOT have been called
@@ -585,7 +706,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-31&to=2026-07-01&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-range-key' },
     })
     expect(res.statusCode).toBe(400)
     expect(res.json().error).toBe('VALIDATION_ERROR')
@@ -596,7 +717,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-query-key' },
     })
     expect(res.statusCode).toBe(400)
   })
@@ -623,7 +744,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-audit-key' },
     })
     expect(res.statusCode).toBe(200)
     const auditEvents = standin.state.auditEvents.filter(
@@ -660,7 +781,7 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'comprobante-cap-key' },
     })
 
     expect(res.statusCode).toBe(400)
@@ -674,5 +795,61 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
         (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
       ),
     ).toHaveLength(0)
+  })
+
+  it('returns the same comprobante retry without regenerating its PDF inside the bucket', async () => {
+    seedSocio()
+    const request = () =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'idempotency-key': 'comprobante-replay-key',
+        },
+      })
+
+    const first = await request()
+    const retry = await request()
+
+    expect(first.statusCode).toBe(200)
+    expect(retry.statusCode).toBe(200)
+    expect(retry.rawPayload).toEqual(first.rawPayload)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('requires a caller key and rejects a changed canonical request for the same key', async () => {
+    seedSocio()
+    const baseUrl = `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`
+    const missing = await app.inject({
+      method: 'GET',
+      url: baseUrl,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+    const first = await app.inject({
+      method: 'GET',
+      url: baseUrl,
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-conflict-key',
+      },
+    })
+    const changed = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-02&to=2026-07-31&cuenta=PRINCIPAL`,
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'comprobante-conflict-key',
+      },
+    })
+    expect(missing.statusCode).toBe(400)
+    expect(first.statusCode).toBe(200)
+    expect(changed.statusCode).toBe(409)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
   })
 })

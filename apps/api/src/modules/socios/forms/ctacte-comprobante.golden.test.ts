@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { renderComprobante } from './ctacte-comprobante.ts'
+import {
+  renderComprobante,
+  type ComprobanteLeaseStore,
+  type RenderComprobanteResult,
+} from './ctacte-comprobante.ts'
 import { getMovementsForComprobante } from './ctacte-mutations.ts'
 
 /**
@@ -61,6 +65,39 @@ function buildPdfGeneratorSpy() {
   }
 }
 
+function buildDurableReplayStore(): ComprobanteLeaseStore {
+  const rows = new Map<
+    string,
+    { status: string; owner: string | null; result?: RenderComprobanteResult }
+  >()
+  return {
+    async claim(key, _fingerprint, owner) {
+      const row = rows.get(key)
+      if (!row || row.status === 'failed') {
+        rows.set(key, { status: 'rendering', owner })
+        return { kind: 'owner' }
+      }
+      if (row.status === 'complete') return { kind: 'complete', result: row.result! }
+      return { kind: 'follower' }
+    },
+    async heartbeat() {
+      return true
+    },
+    async complete(key, owner, result) {
+      const row = rows.get(key)
+      if (!row || row.owner !== owner) return false
+      rows.set(key, { status: 'complete', owner: null, result })
+      return true
+    },
+    async fail(key, owner) {
+      const row = rows.get(key)
+      if (!row || row.owner !== owner) return false
+      rows.set(key, { status: 'failed', owner: null })
+      return true
+    },
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   findByIdMock.mockResolvedValue({
@@ -93,7 +130,9 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
+      idempotencyKey: 'golden-happy-comprobante-2026-07',
       db: {} as never,
+      leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
     })
 
@@ -138,12 +177,82 @@ describe('renderComprobante — happy path', () => {
         operatorId: OPERATOR_ID,
         from: '2026-07-01',
         to: '2026-07-31',
+        idempotencyKey: 'golden-missing-socio-comprobante-2026-07',
         db: {} as never,
+        leaseStore: buildDurableReplayStore(),
         pdfGenerator: pdfGenerator as never,
       }),
     ).rejects.toThrow(/Socio not found/i)
     // No PDF rendered, no audit emitted.
     expect(pdfGenerator.generate).not.toHaveBeenCalled()
     expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
+  it('generates one PDF and one audit event for concurrent identical retries', async () => {
+    let releaseGeneration: ((pdf: Buffer) => void) | undefined
+    const pdf = Buffer.from('%PDF-1.4 concurrent retry\n%%EOF')
+    const pdfGenerator = {
+      generate: vi.fn(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            releaseGeneration = resolve
+          }),
+      ),
+    }
+    const params = {
+      socioId: SOCIO_ID,
+      cuenta: 'PRINCIPAL',
+      operatorId: OPERATOR_ID,
+      from: '2026-07-01',
+      to: '2026-07-31',
+      idempotencyKey: 'golden-concurrent-comprobante-2026-07',
+      db: {} as never,
+      leaseStore: buildDurableReplayStore(),
+      pdfGenerator: pdfGenerator as never,
+    }
+
+    const firstRequest = renderComprobante(params)
+    const retryRequest = renderComprobante(params)
+    await vi.waitFor(() => expect(pdfGenerator.generate).toHaveBeenCalledTimes(1))
+    releaseGeneration?.(pdf)
+    const [first, retry] = await Promise.all([firstRequest, retryRequest])
+
+    expect(retry.pdf).toEqual(first.pdf)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+    expect(emitAuditMock).toHaveBeenCalledOnce()
+  })
+
+  it('replays the completed non-zero result after an owner renders longer than 500ms', async () => {
+    let releaseGeneration: ((pdf: Buffer) => void) | undefined
+    const pdfGenerator = {
+      generate: vi.fn(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            releaseGeneration = resolve
+          }),
+      ),
+    }
+    const params = {
+      socioId: SOCIO_ID,
+      cuenta: 'PRINCIPAL',
+      operatorId: OPERATOR_ID,
+      from: '2026-07-01',
+      to: '2026-07-31',
+      idempotencyKey: 'slow-replay-key',
+      db: {} as never,
+      leaseStore: buildDurableReplayStore(),
+      pdfGenerator: pdfGenerator as never,
+    }
+
+    const owner = renderComprobante(params)
+    const waiter = renderComprobante(params)
+    await vi.waitFor(() => expect(pdfGenerator.generate).toHaveBeenCalledOnce())
+    await new Promise((resolve) => setTimeout(resolve, 550))
+    releaseGeneration?.(Buffer.from('%PDF-1.4 slow replay\n%%EOF'))
+
+    const [first, replay] = await Promise.all([owner, waiter])
+    expect(replay).toEqual(first)
+    expect(replay.movementCount).toBe(1)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
   })
 })
