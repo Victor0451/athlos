@@ -165,6 +165,7 @@ async function assertMatchingPaymentRetry(
     concepto: string
     haber: string
     comprobanteAttachmentId: string | null
+    idempotencyOperatorId: string | null
   },
 ): Promise<void> {
   const expectedAttachmentHash = params.comprobante
@@ -177,6 +178,7 @@ async function assertMatchingPaymentRetry(
   }
   if (
     existing.socioId !== params.socioId ||
+    existing.idempotencyOperatorId !== params.operatorId ||
     existing.tipo !== 'CREDITO' ||
     existing.fecha !== params.fecha ||
     existing.concepto !== params.concepto ||
