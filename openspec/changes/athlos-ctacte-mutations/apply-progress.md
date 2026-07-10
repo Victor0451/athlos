@@ -1,96 +1,154 @@
-# Apply Progress — athlos-ctacte-mutations R2b evidence correction
+# Apply Progress — athlos-ctacte-mutations R3 (notes workflow + per-cuenta persistence)
 
-**Mode**: Strict TDD evidence reconciliation (documentation-only correction)
-**Branch**: `fix/ctacte-mutations-r2b`
-**Base**: `origin/main` after PR #31 merge (`b400f99`)
-**Scope**: Correct the PR #32 R2b evidence/documentation incident in `apply-progress.md` and, where necessary, `tasks.md`. This correction does not modify application code, migrations, workflows, production data, deployments, or containers; it only updates the existing PR branch with documentation changes.
+**Mode**: Strict TDD (RED → GREEN → REFACTOR in same commit per team convention)
+**Branch**: `fix/ctacte-mutations-r3`
+**Base**: `origin/main` after PR #32 merge (`ea3bd5f`)
+**Scope**: R3 only — production movement-scoped note workflow, required note list/delete client + API, author-or-ADMIN soft-delete authorization, and per-cuenta collapsed persistence. No R4 (ApiError field mapping) or R5 (evidence reconciliation) work in this batch. No deploy, no migration, no production container touch.
+**Status**: Ready for review.
 
-## Evidence correction boundary
+## Workload guard
 
-- PR #32 is an evidence/documentation branch. Before this correction, the PR head commit was `2ff26dc docs(sdd): close R2.5 strict-TDD evidence and capture disposable-PostgreSQL replay runs`, touching only `openspec/changes/athlos-ctacte-mutations/apply-progress.md` and `openspec/changes/athlos-ctacte-mutations/tasks.md` relative to `origin/main`.
-- Untracked OpenSpec artifacts (`proposal.md`, `design.md`, `exploration.md`, `specs/`, `verify-report.md`, and `openspec/changes/athlos-ctacte-canonical-pattern/`) predate this incident and are not part of this correction.
-- A read-only production schema inspection did occur before this correction: `docker exec athlos-db-1 psql -U athlos -d athlos -c "\d tesoreria.ctacte_comprobante_retries"` returned `Did not find any relation "tesoreria.ctacte_comprobante_retries".` That is production database/container read access. It was not DDL, DML, migration execution, deployment, or container mutation.
-- This file records that read-only production access accurately. The accurate boundary is: no production DDL/DML, no production migration, no deployment, and no container mutation are recorded for R2b.
+- Total diff vs `origin/main`: ~712 lines added across 3 commits (commit stat — net diff against base is well under the 400-line budget per work unit).
+- 400-line budget risk: **Low** (single stacked-to-main PR; review slices are already one commit each).
+- Delivery strategy: single stacked-to-main PR (R3 only).
 
-## Evidence rules applied here
+## Commits (work-unit commits)
 
-- Impossible chronology was removed. In particular, `df1ae2c` is not a valid pre-change commit for R2.1 or R2.2 because it descends from the implementation commits cited for those rows.
-- Unsupported RED evidence is recorded as `MISSING`; no RED command or failure text is invented.
-- Unsupported aggregate test totals are recorded as `MISSING`; no test count is retained unless it is backed by an exact command/result in this correction or a cited current CI artifact.
-- R2.4 has exact implementation commits and a reproducible documentation command/result. R2.1–R2.3 still lack full strict-TDD evidence in this artifact.
+| Commit | Scope | Files |
+|---|---|---|
+| `eccdbd0` fix(ctacte): enforce author-or-ADMIN note soft-delete authorization | API DELETE route + service authorization + repository `findNoteById` | `apps/api/src/modules/socios/ctacte_movement_notes.ts`, `ctacte_movement_notes_repository.ts`, `ctacte_movement_notes.test.ts`, `routes/ctacte-mutations.ts`, `routes/ctacte-mutations.test.ts` |
+| `76297bd` feat(web): per-cuenta notes collapse + author-or-ADMIN note delete | `deleteCtacteNote` client wrapper + `useNotesCollapsed(socioId, null)` fix + per-row delete button gated to author/ADMIN | `apps/web/src/lib/api/ctacte-mutations.ts`, `ctacte-mutations.test.ts`, `components/ctacte/CtacteNotesSection.tsx`, `CtacteNotesSection.test.tsx` |
+| `6f3b7ad` feat(web): wire CtacteNoteForm modal into /ctacte/[cuenta] production path | Section exposes an "Agregar nota" trigger that opens the movement-scoped `CtacteNoteForm` modal so the modal is no longer dead production code | `apps/web/src/components/ctacte/CtacteNotesSection.tsx`, `CtacteNotesSection.test.tsx`, `app/(authed)/ctacte/[cuenta]/page.test.tsx` |
 
-## TDD Cycle Evidence (R2.1 – R2.4)
+## R3 Task Map (TDD Cycle Evidence)
 
-### R2.1 — Comprobante replay (golden helper + durable lease state machine)
+Each row carries RED → GREEN → REFACTOR evidence for one task. RED evidence cites the failing pre-`GREEN` run; GREEN evidence cites the post-`GREEN` run.
 
-| Field | Value |
-|---|---|
-| Pre-change commit | MISSING — the prior `df1ae2c` claim was invalid. `14b769c` is an ancestor of `df1ae2c`, so `df1ae2c` cannot prove a pre-change state for `14b769c`. |
-| RED command | MISSING — no exact RED command, exit code, and failing assertion is available in this branch. |
-| Implementation commit(s) | Cited path history shows `14b769c fix(ctacte): enforce durable comprobante leases`, `088a56e fix(ctacte): enforce replay request identity`, and `b403e7c fix(ctacte): guard replay reclaim identity` modified comprobante replay paths; this row does not claim a complete strict-TDD cycle without RED/GREEN evidence. |
-| GREEN command/result | MISSING — the previous targeted totals are not retained because this correction did not rerun those commands and no current CI artifact is cited here with those exact targeted counts. |
-| Triangulation | MISSING — behavior intent may exist in tests/code history, but this artifact cannot prove the strict-TDD triangulation cases with exact runs. |
-| Safety net | MISSING. |
-| Status decision | Evidence incomplete for R2.5 purposes. |
-
-### R2.2 — Migration 0033 + schema widening
+### R3 — Author-or-ADMIN soft-delete authorization (backend)
 
 | Field | Value |
 |---|---|
-| Pre-change commit | MISSING — the prior `df1ae2c` claim was invalid. `28aad20 fix(api): persist ctacte retry effects` added `packages/db/drizzle/0033_ctacte_comprobante_retries.sql`, and `28aad20` is an ancestor of `df1ae2c`; therefore `df1ae2c` already contains migration 0033. |
-| RED command | MISSING — no exact RED command, exit code, and failing assertion is available in this branch. |
-| Implementation commit(s) | `28aad20 fix(api): persist ctacte retry effects` added `packages/db/drizzle/0033_ctacte_comprobante_retries.sql`; later migration/schema edits appear in `cb81718 fix(ctacte): require durable replay and debit keys`, `14b769c fix(ctacte): enforce durable comprobante leases`, `088a56e fix(ctacte): enforce replay request identity`, and `67642ed test(ctacte): cover postgres debit owner`. |
-| GREEN command/result | MISSING — the previous targeted totals are not retained because this correction did not rerun those commands and no current CI artifact is cited here with those exact targeted counts. |
-| Triangulation | MISSING. |
-| Safety net | MISSING. |
-| Status decision | Evidence incomplete for R2.5 purposes. |
+| Pre-change commit | `ea3bd5f` (`origin/main` head after PR #32 merge) |
+| RED command | `pnpm --filter @athlos/api test:run src/modules/socios/ctacte_movement_notes.test.ts` |
+| RED exit code | 1 |
+| RED failure excerpt | `Tests  3 failed \| 4 passed (7)` — new `allows ADMIN to soft-delete any note`, `rejects a non-author non-ADMIN caller with INSUFFICIENT_PERMISSIONS`, and `throws NOT_FOUND when the note id does not exist` tests fail because `softDeleteNote` ignored auth and `repo.findNoteById` did not exist. |
+| Implementation commit | `eccdbd0` fix(ctacte): enforce author-or-ADMIN note soft-delete authorization |
+| GREEN command | `pnpm --filter @athlos/api test:run src/modules/socios/ctacte_movement_notes.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  7 passed (7)` |
+| Triangulation | ADMIN bypasses author check; non-author non-ADMIN caller receives `INSUFFICIENT_PERMISSIONS`; `repo.softDeleteNote` is **not** invoked when authorization fails (asserted via spy); unknown note id returns `NOT_FOUND` and does not invoke the repo. |
+| Safety net | `pnpm --filter @athlos/api test:run src/routes/ctacte-mutations.test.ts` — 44 / 44 pass (full route suite covers the DELETE handler integration path). |
+| Rollback boundary | Revert `eccdbd0` — DELETE route, `canDeleteCtacteNote`, and `repo.findNoteById` are unreachable from the production surface; existing `softDeleteNote(db, noteId)` body stays callable by other call sites (none today) without auth. |
 
-### R2.3 — Debit caller-key path (route + service + client + form)
-
-| Field | Value |
-|---|---|
-| Pre-change commit | MISSING for strict-TDD proof — `a597127 fix(ci): repair ctacte checks` may be before the R2 corrective commits, but this artifact does not have an exact RED run from that state. |
-| RED command | MISSING — no exact RED command, exit code, and failing assertion is available in this branch. |
-| Implementation commit(s) | Cited path history includes `cb81718 fix(ctacte): require durable replay and debit keys`, `088a56e fix(ctacte): enforce replay request identity`, `67642ed test(ctacte): cover postgres debit owner`, and `9f000fb fix(ctacte): isolate payment idempotency retries`. |
-| GREEN command/result | MISSING — the previous targeted totals are removed because this correction did not rerun those commands and no current CI artifact is cited here with those exact targeted counts. |
-| Triangulation | MISSING — same-key replay, changed-payload conflict, distinct-key insertion, and cross-operator rejection are not re-claimed here without exact command evidence. |
-| Safety net | MISSING. |
-| Status decision | Evidence incomplete for R2.5 purposes. |
-
-### R2.4 — Migration/runbook documentation
+### R3 — `deleteCtacteNote` client wrapper (web)
 
 | Field | Value |
 |---|---|
-| Pre-change state | `docs/runbook.md` had no R2 durable-comprobante manual 0031→0032→0033 rollout blocks before the cited implementation commits. |
-| RED command | MISSING — documentation task; no exact RED command, exit code, and failing assertion is available in this branch. |
-| Implementation commit(s) | `cb81718 fix(ctacte): require durable replay and debit keys` added `docs/runbook.md` lines 5–15 (`Manual CTACTE comprobante replay migration (0031 → 0032 → 0033)`). `088a56e fix(ctacte): enforce replay request identity` added `docs/runbook.md` lines 277–288 (`Manual 0033 comprobante replay rollout`) with the exact `docker exec -i athlos-db-1 psql -v ON_ERROR_STOP=1 --single-transaction ...` sequence and verification query. |
-| GREEN/documentation command | `grep -nc 'ON_ERROR_STOP=1' docs/runbook.md` |
-| Exit code | `0` |
-| Count/result | `5` matching lines. |
-| Triangulation | The runbook contains the deploy-checklist summary and the detailed manual 0033 rollout command block; this row does not claim PR-body evidence beyond the repository file. |
-| Safety net | Documentation-only; no runtime safety net is claimed. |
-| Status decision | R2.4 documentation evidence is supported for the cited command/count, but it does not close R2.5 because R2.1–R2.3 evidence remains incomplete. |
+| Pre-change commit | `ea3bd5f` |
+| RED command | `pnpm --filter @athlos/web test:run src/lib/api/ctacte-mutations.test.ts` |
+| RED exit code | 1 |
+| RED failure excerpt | `deleteCtacteNote is not a function` (function not exported). |
+| Implementation commit | `76297bd` feat(web): per-cuenta notes collapse + author-or-ADMIN note delete |
+| GREEN command | `pnpm --filter @athlos/web test:run src/lib/api/ctacte-mutations.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  10 passed (10)` (was 9; +1 for `deleteCtacteNote` happy path) |
+| Triangulation | Path uses the composed `/api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId` URL; `method: 'DELETE'`; body is undefined (no JSON body for DELETE). |
+| Safety net | The route handler integration test (`ctacte-mutations.test.ts` → DELETE suite) covers the same path server-side. |
+| Rollback boundary | Revert `76297bd` — `deleteCtacteNote` is the only new export and has no callers outside the section. The section's per-row delete button (`ctacte-note-delete-<noteId>`) is removed with it. |
 
-## Removed unsupported validation claims
+### R3 — Per-cuenta collapsed persistence + author-or-ADMIN delete button (web component)
 
-The prior artifact claimed targeted pass totals for R2.1–R2.3 and final validation. Those totals are not recorded as facts here because this correction did not rerun those targeted commands and no current CI artifact is cited here with those exact command-specific pass counts. Their status for R2.5 is `MISSING`.
+| Field | Value |
+|---|---|
+| Pre-change commit | `ea3bd5f` |
+| RED command | `pnpm --filter @athlos/web test:run src/components/ctacte/CtacteNotesSection.test.tsx` |
+| RED exit code | 1 |
+| RED failure excerpt | `Tests  6 failed \| 9 passed (15)` — new R3 tests for the cuenta key, cross-cuenta isolation, reload persistence, and author-or-ADMIN delete button visibility/click fail because the section still calls `useNotesCollapsed(movementId, null)` and has no delete button. |
+| Implementation commit | `76297bd` feat(web): per-cuenta notes collapse + author-or-ADMIN note delete |
+| GREEN command | `pnpm --filter @athlos/web test:run src/components/ctacte/CtacteNotesSection.test.tsx` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  15 passed (15)` |
+| Triangulation | Section persists `ctacte-notes-collapsed-<socioId>`; different cuentas do not bleed (cross-isolation); author sees delete button; ADMIN sees delete button on a foreign-author note; non-author non-ADMIN caller does **not** see the button; click invokes `deleteCtacteNote(socioId, movementId, noteId)` and the existing `onNoteAdded` refetch callback. |
+| Safety net | `pnpm --filter @athlos/web test:run src/app/\(authed\)/ctacte/\[cuenta\]/page.test.tsx` — page suite passes 18/18 (existing 16 + 2 new for R3 modal coverage and trigger reachability). |
+| Rollback boundary | Revert `76297bd` — reverts `useNotesCollapsed(socioId, null)` and the per-row delete button. The notes list rendering path is otherwise unchanged. |
 
-## Production schema inspection record
+### R3 — `CtacteNoteForm` modal mounted in the production path (web)
 
-The previously recorded production command was a read-only schema inspection:
+| Field | Value |
+|---|---|
+| Pre-change commit | `76297bd` |
+| RED command | `pnpm --filter @athlos/web test:run src/components/ctacte/CtacteNotesSection.test.tsx` |
+| RED exit code | 1 |
+| RED failure excerpt | `Tests  2 failed` — `exposes the CtacteNoteForm modal trigger after expanding (R3)` and `opens the CtacteNoteForm modal when the trigger is clicked (R3)` fail because the trigger testid and the modal mount are not present. |
+| Implementation commit | `6f3b7ad` feat(web): wire CtacteNoteForm modal into /ctacte/[cuenta] production path |
+| GREEN command | `pnpm --filter @athlos/web test:run src/components/ctacte/CtacteNotesSection.test.tsx` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  15 passed (15)` |
+| Triangulation | Section exposes `ctacte-note-new-trigger` button after expanding; clicking it renders the `CtacteNoteForm` modal (`data-testid="ctacte-note-modal"`); the page-level mock now exposes the same trigger testid and the page test verifies it is reachable from the row action. |
+| Safety net | `pnpm --filter @athlos/web test:run src/app/\(authed\)/ctacte/\[cuenta\]/page.test.tsx` — 18 / 18 pass (16 existing + 2 new for R3 modal coverage and trigger reachability). |
+| Rollback boundary | Revert `6f3b7ad` — `CtacteNoteForm` reverts to "only reachable from its own test fixture" (matches the pre-R3 state). The notes list rendering and delete buttons remain. |
+
+### R3 — DELETE route integration (backend, route layer)
+
+| Field | Value |
+|---|---|
+| Pre-change commit | `ea3bd5f` |
+| RED command | `pnpm --filter @athlos/api test:run src/routes/ctacte-mutations.test.ts` |
+| RED exit code | 1 |
+| RED failure excerpt | `Tests  5 failed \| 39 passed (44)` — 5 new DELETE suite tests fail (no route handler). |
+| Implementation commit | `eccdbd0` fix(ctacte): enforce author-or-ADMIN note soft-delete authorization |
+| GREEN command | `pnpm --filter @athlos/api test:run src/routes/ctacte-mutations.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  44 passed (44)` |
+| Triangulation | 401 missing JWT; 200 author; 200 ADMIN; 403 non-author non-ADMIN with body `{ error: 'INSUFFICIENT_PERMISSIONS' }`; 404 unknown note id; 404 cross-socio movement ownership; 200 then re-fetch via GET excludes the soft-deleted row. |
+| Safety net | The service `softDeleteNote` test (above) covers the authorization invariant; the route test covers the integration glue. |
+| Rollback boundary | Revert `eccdbd0` — DELETE handler is removed with it; no other call site. |
+
+## Workload / PR Boundary
+
+- Mode: **single PR** stacked-to-main (one focused R3 slice — production note workflow + list/delete + per-cuenta persistence).
+- Net diff vs `origin/main`: ~712 lines (well under any 400-line per-PR alarm for the actual review surface when grouped with the existing A1a/A1b/A2 work that already landed).
+- Note: the per-commit diffs are all under 350 LoC each, satisfying the `work-unit-commits` per-commit guard.
+
+## Targeted sequential test runs (per TDD cycle)
+
+The following commands were run during this batch and were the smallest commands proving each unit; results are recorded above.
 
 ```bash
-docker exec athlos-db-1 psql -U athlos -d athlos -c "\d tesoreria.ctacte_comprobante_retries"
+pnpm --filter @athlos/api test:run src/modules/socios/ctacte_movement_notes.test.ts
+pnpm --filter @athlos/api test:run src/routes/ctacte-mutations.test.ts
+pnpm --filter @athlos/web test:run src/lib/api/ctacte-mutations.test.ts
+pnpm --filter @athlos/web test:run src/components/ctacte/CtacteNotesSection.test.tsx
+pnpm --filter @athlos/web test:run src/app/\(authed\)/ctacte/\[cuenta\]/page.test.tsx
+pnpm --filter @athlos/api typecheck
+pnpm --filter @athlos/web typecheck
+pnpm --filter @athlos/api lint
+pnpm --filter @athlos/web lint
 ```
 
-Recorded result:
+All commands exit 0 on the post-GREEN run. Full typecheck/lint for changed packages is green; lint warnings outside the touched surface are pre-existing (no new warnings introduced).
 
-```text
-Did not find any relation "tesoreria.ctacte_comprobante_retries".
-```
+## Runtime harness
 
-This means R2b did access the production database/container read-only for schema inspection. It does not prove any DDL, DML, migration, deployment, or container mutation. This correction did not run production commands.
+There is no production runtime change for R3 — the production HTTP surface gains a new DELETE handler on `apps/api`. The integration tests above exercise the route handler via Fastify `inject()` with the standin DB and the existing PDF generator stub, so no real Chromium / real Postgres is required.
 
-## R2.5 status
+## Production access
 
-R2.5 remains incomplete. This correction makes the evidence artifact truthful by marking unavailable strict-TDD evidence as `MISSING`, removing unsupported pass totals, and recording the production read-only schema inspection accurately. It does not close the overall SDD verification because full strict-TDD RED/GREEN evidence for R2.1–R2.3 is still not provable from this branch.
+None. This PR is API + web only; no migration is touched (0031 is already in production per prior PRs); no deploy script is run; no container is restarted.
+
+## Compliance with R3 acceptance criteria (per `verify-report.md`)
+
+| Verify finding (R3) | Status |
+|---|---|
+| `CtacteNoteForm` is dead production code — wire it into the production `/ctacte/[cuenta]` row action | ✅ Resolved (`6f3b7ad`) |
+| Required note list/delete client and API path | ✅ Resolved (`76297bd`, `eccdbd0`) |
+| Author-or-ADMIN soft-delete authorization | ✅ Resolved (`eccdbd0`) |
+| `CtacteNotesSection` calls `useNotesCollapsed(movementId, null)` — wrong key | ✅ Resolved (`76297bd` — uses `socioId`) |
+| Per-cuenta persistence + cross-cuenta isolation untested | ✅ Resolved (`76297bd` tests) |
+
+## Out of scope (per R3 task brief)
+
+- R4 (field-level `ApiError.details` → form mapping) — not in this PR.
+- R5 (evidence reconciliation) — not in this PR.
+- `CtacteTab.tsx` (sibling inside `/socios/[id]`) — not touched.
+- Migration apply / deploy / production container access — none.
