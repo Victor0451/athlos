@@ -4,6 +4,7 @@ import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { Db } from '@athlos/db'
 import type { LocalFileStorage } from '../../file-storage/local-file-storage.ts'
 import {
+  countMovementsByDateRange,
   findCtacteByIdempotencyKey,
   insertCtacteRow,
   listMovementsByDateRange,
@@ -98,6 +99,11 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
   const socio = await findSocioById(params.db, params.socioId)
   if (!socio) {
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
+  }
+  if (params.fecha < socio.fechaAlta || params.fecha > todayIsoDate()) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, "fecha is outside socio's relationship range", [
+      { field: 'fecha', message: "outside socio's relationship range" },
+    ])
   }
 
   const existing = await findCtacteByIdempotencyKey(params.db, params.idempotencyKey)
@@ -277,18 +283,23 @@ export interface GetMovementsForComprobanteParams {
 export async function getMovementsForComprobante(
   params: GetMovementsForComprobanteParams,
 ): Promise<CtacteMovementRow[]> {
+  const requested = await countMovementsByDateRange(params.db, {
+    socioId: params.socioId,
+    from: params.from,
+    to: params.to,
+  })
+  if (requested > 50) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'too_many_movements', {
+      cap: 50,
+      requested,
+    })
+  }
   const rows = await listMovementsByDateRange(params.db, {
     socioId: params.socioId,
     from: params.from,
     to: params.to,
     limit: 50,
   })
-  if (rows.length > 50) {
-    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'too_many_movements', {
-      cap: 50,
-      requested: rows.length,
-    })
-  }
   return rows.map((row) => ({
     id: row.id,
     fecha: row.fecha,
@@ -299,6 +310,10 @@ export async function getMovementsForComprobante(
     comprobanteAttachmentId: row.comprobanteAttachmentId ?? null,
     saldo: 0,
   }))
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 /**
