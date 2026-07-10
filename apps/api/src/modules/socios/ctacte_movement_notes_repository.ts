@@ -21,6 +21,7 @@ import {
  * remains queryable").
  */
 export interface InsertNoteInput {
+  id?: string
   ctacteMovementId: string
   authorOperatorId: string
   body: string
@@ -32,11 +33,26 @@ export interface InsertNoteInput {
  */
 export async function insertNote(db: Db, input: InsertNoteInput): Promise<CtacteMovementNote> {
   const row: NewCtacteMovementNote = {
+    ...(input.id ? { id: input.id } : {}),
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.authorOperatorId,
     body: input.body,
   }
-  const [inserted] = await db.insert(ctacteMovementNotes).values(row).returning()
+  const [inserted] = input.id
+    ? await db
+        .insert(ctacteMovementNotes)
+        .values(row)
+        .onConflictDoNothing({ target: ctacteMovementNotes.id })
+        .returning()
+    : await db.insert(ctacteMovementNotes).values(row).returning()
+  if (!inserted && input.id) {
+    const [existing] = await db
+      .select()
+      .from(ctacteMovementNotes)
+      .where(eq(ctacteMovementNotes.id, input.id))
+      .limit(1)
+    if (existing) return existing
+  }
   if (!inserted) {
     throw new Error('insert returned no row')
   }

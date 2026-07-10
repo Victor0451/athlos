@@ -73,14 +73,18 @@ describe('registerDebit', () => {
     expect(result.monto).toBe(800)
     expect(result.motivo).toBe('Cuota social Julio')
     expect(result.concepto).toBeNull()
-    expect(repoInsertCtacteRow).toHaveBeenCalledWith(dbMock, {
-      socioId: SOCIO_ID,
-      fecha: '2026-07-09',
-      tipo: 'DEBITO',
-      concepto: 'Cuota social Julio',
-      monto: '800.00',
-      comprobanteAttachmentId: null,
-    })
+    expect(repoInsertCtacteRow).toHaveBeenCalledWith(
+      dbMock,
+      expect.objectContaining({
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'DEBITO',
+        concepto: 'Cuota social Julio',
+        monto: '800.00',
+        comprobanteAttachmentId: null,
+        idempotencyKey: expect.any(String),
+      }),
+    )
     expect(emitAuditMock).toHaveBeenCalledOnce()
     expect(emitAuditMock).toHaveBeenCalledWith(
       dbMock,

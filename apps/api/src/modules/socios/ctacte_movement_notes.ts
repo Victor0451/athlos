@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { inArray } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { auditEvents, operators, type CtacteMovementNote } from '@athlos/db/schema'
@@ -99,6 +100,8 @@ export interface AddNoteInput {
   body: string
 }
 
+const retries = new WeakMap<object, Map<string, CtacteMovementNote>>()
+
 /**
  * Add a note to a movement. Trims the body, inserts the row, and
  * emits a `CTACTE_MOVEMENT_NOTE_ADDED` audit event with the exact
@@ -116,13 +119,30 @@ export interface AddNoteInput {
  *   - author_operator_id (string)
  */
 export async function addNote(db: Db, input: AddNoteInput): Promise<CtacteMovementNote> {
+  const body = input.body.trim()
+  const retryKey = noteRetryKey(input.ctacteMovementId, input.operatorId, body)
+  const cached = retries.get(db as object)?.get(retryKey)
+  if (cached) return cached
+
   const inserted = await repo.insertNote(db, {
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.operatorId,
-    body: input.body.trim(),
+    body,
+    id: retryKey,
   })
+  const byDb = retries.get(db as object) ?? new Map<string, CtacteMovementNote>()
+  byDb.set(retryKey, inserted)
+  retries.set(db as object, byDb)
   await emitNoteAddedAudit(db, inserted, input.operatorId)
   return inserted
+}
+
+function noteRetryKey(movementId: string, operatorId: string, body: string): string {
+  const bucket = Math.floor(Date.now() / 10_000)
+  const hash = createHash('sha256')
+    .update(`note|${movementId}|${operatorId}|${body}|${bucket}`)
+    .digest('hex')
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`
 }
 
 /**

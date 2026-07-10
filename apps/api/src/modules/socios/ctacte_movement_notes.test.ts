@@ -149,11 +149,15 @@ describe('addNote', () => {
     })
 
     expect(result.id).toBe('n-1')
-    expect(repoInsertNote).toHaveBeenCalledWith(expect.anything(), {
-      ctacteMovementId: MOVEMENT_ID,
-      authorOperatorId: OPERATOR_ID,
-      body: 'Verificar comprobante físico',
-    })
+    expect(repoInsertNote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        ctacteMovementId: MOVEMENT_ID,
+        authorOperatorId: OPERATOR_ID,
+        body: 'Verificar comprobante físico',
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      }),
+    )
     expect(auditValues).toHaveBeenCalledTimes(1)
     const auditRow = auditValues.mock.calls[0]![0]
     expect(auditRow.action).toBe('CTACTE_MOVEMENT_NOTE_ADDED')
