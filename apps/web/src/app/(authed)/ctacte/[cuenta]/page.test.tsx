@@ -35,6 +35,7 @@ const getCtacteMock = vi.fn()
 const getMovimientosMock = vi.fn()
 const getSocioMock = vi.fn()
 const getCtacteGastosLinksMock = vi.fn()
+const getCtacteNotesMock = vi.fn()
 
 vi.mock('@/lib/api/ctacte', () => ({
   getCtacte: (...args: unknown[]) => getCtacteMock(...args),
@@ -49,10 +50,66 @@ vi.mock('@/lib/api/gastos-ctacte', () => ({
   getCtacteGastosLinks: (...args: unknown[]) => getCtacteGastosLinksMock(...args),
 }))
 
+vi.mock('@/lib/api/ctacte-mutations', () => ({
+  getCtacteNotes: (...args: unknown[]) => getCtacteNotesMock(...args),
+}))
+
+// Mock the form + notes components
+vi.mock('@/components/ctacte/CtactePaymentForm', () => ({
+  CtactePaymentForm: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? (
+      <button onClick={onClose} data-testid="ctacte-payment-form">
+        PaymentForm
+      </button>
+    ) : null,
+}))
+
+vi.mock('@/components/ctacte/CtacteDebitForm', () => ({
+  CtacteDebitForm: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? (
+      <button onClick={onClose} data-testid="ctacte-debit-form">
+        DebitForm
+      </button>
+    ) : null,
+}))
+
+vi.mock('@/components/ctacte/CtacteComprobanteButton', () => ({
+  CtacteComprobanteButton: () => <button data-testid="ctacte-comprobante-btn">Comprobante</button>,
+}))
+
+vi.mock('@/components/ctacte/CtacteNotesSection', () => ({
+  CtacteNotesSection: ({
+    movementId,
+    notes,
+    isLoading,
+    error,
+  }: {
+    movementId: string
+    notes: unknown[]
+    isLoading: boolean
+    error: string | null
+  }) => (
+    <div data-testid="ctacte-notes-section">
+      movementId:{movementId} notes:{notes.length} loading:{String(isLoading)} error:{error}
+    </div>
+  ),
+}))
+
 const useAuthMock = vi.fn()
+const useQueryClientMock = vi.fn()
+
 vi.mock('@/lib/use-auth', () => ({
   useAuth: () => useAuthMock(),
 }))
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock('@tanstack/react-query', async (actual: () => Promise<any>) => {
+  const mod = await actual()
+  return {
+    ...mod,
+    useQueryClient: () => useQueryClientMock(),
+  }
+})
 
 const { default: CtacteDetailPage } = await import('./page')
 
@@ -165,6 +222,8 @@ describe('Ctacte detail page', () => {
       has_more: false,
     })
     getCtacteGastosLinksMock.mockResolvedValue({ items: [] })
+    useQueryClientMock.mockReturnValue({ invalidateQueries: vi.fn() })
+    getCtacteNotesMock.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -270,6 +329,64 @@ describe('Ctacte detail page', () => {
     })
     expect(screen.getByRole('button', { name: /siguiente/i })).toBeInTheDocument()
     expect(screen.getByText(/página 1 de 3/i)).toBeInTheDocument()
+  })
+
+  it('shows PaymentForm when "Registrar pago" button is clicked', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-action-payment')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('ctacte-payment-form')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('ctacte-action-payment'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-payment-form')).toBeInTheDocument()
+    })
+  })
+
+  it('shows DebitForm when "Registrar débito" button is clicked', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-action-debit')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('ctacte-debit-form')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('ctacte-action-debit'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-debit-form')).toBeInTheDocument()
+    })
+  })
+
+  it('renders the Comprobante button in the header', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-comprobante-btn')).toBeInTheDocument()
+    })
+  })
+
+  it('shows the notes section when a movement nota button is clicked', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText('Cuota enero')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('ctacte-notes-section')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('movement-row-mv-1-nota'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-notes-section')).toBeInTheDocument()
+    })
+  })
+
+  it('passes the correct movementId to CtacteNotesSection', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText('Cuota enero')).toBeInTheDocument()
+    })
+    await user.click(screen.getByTestId('movement-row-mv-1-nota'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-notes-section')).toHaveTextContent('movementId:mv-1')
+    })
   })
 
   it('calls getMovimientos when the user navigates to page 2', async () => {

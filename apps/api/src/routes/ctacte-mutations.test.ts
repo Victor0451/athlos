@@ -83,7 +83,9 @@ function bearer(role: JWTPayload['role'] = 'OPERADOR'): string {
 }
 
 const SOCIO_ID = '11111111-1111-4111-8111-111111111111'
+const OTHER_SOCIO_ID = '33333333-3333-4333-8333-333333333333'
 const MOVEMENT_ID = '22222222-2222-4222-8222-222222222222'
+const IDEMPOTENCY_KEY = 'payment-retry-key-1'
 
 let app: FastifyInstance
 let standin: ReturnType<typeof createStandinDb>
@@ -98,9 +100,9 @@ function stubPdfGenerator(): PdfGenerator {
   }
 }
 
-function seedSocio(): void {
+function seedSocio(id = SOCIO_ID): void {
   standin.state.socios.push({
-    id: SOCIO_ID,
+    id,
     numeroSocio: '12345',
     nombre: 'Juan',
     apellido: 'Pérez',
@@ -188,6 +190,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/payment', () => {
       headers: {
         authorization: `Bearer ${bearer()}`,
         'content-type': 'multipart/form-data; boundary=----TestBoundary',
+        'idempotency-key': IDEMPOTENCY_KEY,
       },
       payload: body,
     })
@@ -212,6 +215,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/payment', () => {
       headers: {
         authorization: `Bearer ${bearer()}`,
         'content-type': 'multipart/form-data; boundary=----TestBoundary',
+        'idempotency-key': IDEMPOTENCY_KEY,
       },
       payload: body,
     })
@@ -227,10 +231,71 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/payment', () => {
       headers: {
         authorization: `Bearer ${bearer()}`,
         'content-type': 'multipart/form-data; boundary=----TestBoundary',
+        'idempotency-key': IDEMPOTENCY_KEY,
       },
       payload: body,
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('returns the original movement without inserting a duplicate for the same retry key', async () => {
+    seedSocio()
+    const body = buildMultipartText({ monto: '1500', fecha: '2026-07-09', concepto: 'Cuota Julio' })
+    const headers = {
+      authorization: `Bearer ${bearer()}`,
+      'content-type': 'multipart/form-data; boundary=----TestBoundary',
+      'idempotency-key': IDEMPOTENCY_KEY,
+    }
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+      headers,
+      payload: body,
+    })
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+      headers,
+      payload: body,
+    })
+
+    expect(first.statusCode).toBe(201)
+    expect(second.statusCode).toBe(201)
+    expect(second.json().id).toBe(first.json().id)
+    expect(standin.state.ctacte).toHaveLength(1)
+  })
+
+  it('returns 409 when the same retry key is used for a changed payload or socio', async () => {
+    seedSocio()
+    seedSocio(OTHER_SOCIO_ID)
+    const headers = {
+      authorization: `Bearer ${bearer()}`,
+      'content-type': 'multipart/form-data; boundary=----TestBoundary',
+      'idempotency-key': IDEMPOTENCY_KEY,
+    }
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+      headers,
+      payload: buildMultipartText({ monto: '1500', fecha: '2026-07-09', concepto: 'Cuota Julio' }),
+    })
+    const changedPayload = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+      headers,
+      payload: buildMultipartText({ monto: '1600', fecha: '2026-07-09', concepto: 'Cuota Julio' }),
+    })
+    const changedSocio = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/payment`,
+      headers,
+      payload: buildMultipartText({ monto: '1500', fecha: '2026-07-09', concepto: 'Cuota Julio' }),
+    })
+
+    expect(first.statusCode).toBe(201)
+    expect(changedPayload.statusCode).toBe(409)
+    expect(changedSocio.statusCode).toBe(409)
+    expect(standin.state.ctacte).toHaveLength(1)
   })
 })
 
@@ -333,6 +398,48 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
       headers: { authorization: `Bearer ${bearer()}` },
       payload: { body: 'Nota sobre movimiento inexistente' },
     })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
+// ─── GET /ctacte/movements/:movementId/notes ──────────────────────────────────
+
+describe('GET /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () => {
+  it('returns active notes for an existing movement', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    standin.state.ctacteMovementNotes.push({
+      id: '33333333-3333-4333-8333-333333333333',
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'Verificar comprobante',
+      authorOperatorId: '00000000-0000-4000-8000-000000000001',
+      createdAt: new Date('2026-07-09T12:00:00.000Z'),
+      deletedAt: null,
+    } as never)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual([
+      expect.objectContaining({ ctacte_movement_id: MOVEMENT_ID, body: 'Verificar comprobante' }),
+    ])
+  })
+
+  it('returns 404 instead of another socio’s movement notes', async () => {
+    seedSocio()
+    seedSocio(OTHER_SOCIO_ID)
+    seedCtacteMovement()
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+
     expect(res.statusCode).toBe(404)
   })
 })

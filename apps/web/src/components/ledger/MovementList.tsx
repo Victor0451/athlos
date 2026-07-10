@@ -1,3 +1,4 @@
+import { MessageSquare } from 'lucide-react'
 import type { Movimiento } from '@/lib/api/ctacte'
 import { downloadCSV, toCSV } from '@/lib/csv-export'
 
@@ -52,9 +53,17 @@ export interface MovementListProps {
   saldo: string
   movimientos: Movimiento[]
   loading?: boolean
+  /** Optional callback to open the Nota modal for a given movement. */
+  onNotaClick?: (movementId: string) => void
 }
 
-export function MovementList({ socioId, saldo, movimientos, loading = false }: MovementListProps) {
+export function MovementList({
+  socioId,
+  saldo,
+  movimientos,
+  loading = false,
+  onNotaClick,
+}: MovementListProps) {
   function handleExport(): void {
     const csv = toCSV(movimientos, CSV_COLUMNS)
     const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
@@ -193,6 +202,11 @@ export function MovementList({ socioId, saldo, movimientos, loading = false }: M
               >
                 Haber
               </th>
+              {onNotaClick ? (
+                <th scope="col" className="w-10">
+                  <span className="sr-only">Acciones</span>
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -226,6 +240,19 @@ export function MovementList({ socioId, saldo, movimientos, loading = false }: M
                 <td className="px-4 py-3 text-right font-body text-sm tabular-nums text-ink-700">
                   {Number(m.haber) > 0 ? ARS.format(Number(m.haber)) : '—'}
                 </td>
+                {onNotaClick ? (
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      aria-label={`Agregar nota al movimiento ${m.id}`}
+                      data-testid={`movement-row-${m.id}-nota`}
+                      onClick={() => onNotaClick(m.id)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-400 transition-colors duration-fast hover:bg-surface-sunken hover:text-ink-600"
+                    >
+                      <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>

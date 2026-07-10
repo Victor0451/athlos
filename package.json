@@ -15,7 +15,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,cjs,mjs,json,css,md}\"",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "pnpm -r --workspace-concurrency=1 test:run",
     "test:coverage": "vitest run --coverage",
     "db:generate": "pnpm --filter @athlos/db generate",
     "db:migrate": "pnpm --filter @athlos/db migrate",
