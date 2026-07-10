@@ -27,6 +27,7 @@ describe('ctacte_movement_notes schema', () => {
       authorOperatorId: string
       createdAt: Date
       deletedAt: Date | null
+      idempotencyKey: string | null
     }
     type _Check = CtacteMovementNote extends Expected ? true : false
     const _typeCheck: _Check = true
@@ -63,5 +64,14 @@ describe('0031_ctacte_movement_notes migration', () => {
     // Column addition (idempotent).
     expect(content).toContain('ADD COLUMN IF NOT EXISTS "comprobante_attachment_id" uuid')
     expect(content).toContain('REFERENCES "socios"."socio_attachments"("id")')
+  })
+
+  it('migration file declares the idempotency_key column + UNIQUE partial index (R3)', async () => {
+    const fs = await import('node:fs/promises')
+    const migrationPath = path.join(PACKAGE_ROOT, 'drizzle/0031_ctacte_movement_notes.sql')
+    const content = await fs.readFile(migrationPath, 'utf-8')
+    expect(content).toContain('ADD COLUMN IF NOT EXISTS "idempotency_key" text')
+    expect(content).toContain('ctacte_movement_notes_idempotency_key_unique')
+    expect(content).toMatch(/WHERE\s+"idempotency_key"\s+IS\s+NOT\s+NULL/)
   })
 })

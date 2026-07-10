@@ -118,19 +118,34 @@ export async function registerCtacteDebit(
 }
 
 /**
- * `addCtacteNote(socioId, movementId, body)` — POST
+ * `addCtacteNote(socioId, movementId, body, idempotencyKey?)` — POST
  * `/api/v1/socios/:socioId/ctacte/movements/:movementId/notes`.
  *
- * JSON body: { body }. Returns the created note DTO.
+ * JSON body: { body }. The caller-supplied opaque `idempotencyKey`
+ * (1–128 chars) is forwarded in the `Idempotency-Key` header so
+ * ambiguous retries (network glitch on the response, double-click,
+ * page reload mid-submit) replay the previously-persisted note
+ * instead of creating a duplicate.
+ *
+ * R3 fix #2 — durable idempotency. The form layer is expected to
+ * retain a single key across retries of the same intent and rotate
+ * to a new key when the user changes the body. The route rejects
+ * missing / empty / over-128-char keys with 400, and reuse of the
+ * same key with a different payload with 409.
  */
 export async function addCtacteNote(
   socioId: string,
   movementId: string,
   body: string,
+  idempotencyKey: string,
 ): Promise<CtacteNoteResponse> {
   return apiFetch<CtacteNoteResponse>(
     `/api/v1/socios/${socioId}/ctacte/movements/${movementId}/notes`,
-    { method: 'POST', body: { body } },
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: { body },
+    },
   )
 }
 
