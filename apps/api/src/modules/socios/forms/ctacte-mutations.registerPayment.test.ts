@@ -93,6 +93,7 @@ describe('registerPayment — happy path', () => {
       monto: '1500.00',
       comprobanteAttachmentId: null,
       idempotencyKey: IDEMPOTENCY_KEY,
+      idempotencyOperatorId: OPERATOR_ID,
     })
     expect(emitAuditMock).toHaveBeenCalledTimes(1)
     const auditCall = emitAuditMock.mock.calls[0]![1]
