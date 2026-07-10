@@ -99,6 +99,14 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
   if (!socio) {
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
   }
+  if (!isValidIsoCalendarDate(params.fecha)) {
+    throw invalidFechaError()
+  }
+  if (params.fecha < socio.fechaAlta || params.fecha > todayIsoDate()) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, "fecha is outside socio's relationship range", [
+      { field: 'fecha', message: "outside socio's relationship range" },
+    ])
+  }
 
   const existing = await findCtacteByIdempotencyKey(params.db, params.idempotencyKey)
   if (existing) {
@@ -228,6 +236,9 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
   if (!socio) {
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
   }
+  if (!isValidIsoCalendarDate(params.fecha)) {
+    throw invalidFechaError()
+  }
 
   const result = await insertCtacteRow(params.db, {
     socioId: params.socioId,
@@ -266,13 +277,13 @@ export interface GetMovementsForComprobanteParams {
 
 /**
  * Fetch the movements for a comprobante PDF — date range, ordered
- * by `fecha ASC`, hard-capped at 50 movements. Throws a typed
- * `BusinessError(QUOTA_EXCEEDED)` when the repository returns more
+ * by `fecha ASC`, fetching at most 51 movements to distinguish an
+ * exact 50-row result from an over-cap range. Throws a typed
+ * `BusinessError(VALIDATION_ERROR)` when the snapshot contains more
  * than 50 — the route layer maps this to `400 VALIDATION_ERROR`.
  *
- * The cap is also enforced at SQL level in the repository (defense
- * in depth). This service-level check is the authoritative contract
- * for the comprobante route.
+ * The 51-row query and service-level check are the authoritative
+ * comprobante contract; they avoid a separate count/fetch snapshot.
  */
 export async function getMovementsForComprobante(
   params: GetMovementsForComprobanteParams,
@@ -281,7 +292,7 @@ export async function getMovementsForComprobante(
     socioId: params.socioId,
     from: params.from,
     to: params.to,
-    limit: 50,
+    limit: 51,
   })
   if (rows.length > 50) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'too_many_movements', {
@@ -299,6 +310,36 @@ export async function getMovementsForComprobante(
     comprobanteAttachmentId: row.comprobanteAttachmentId ?? null,
     saldo: 0,
   }))
+}
+
+function todayIsoDate(): string {
+  return argentinaBusinessDate(new Date())
+}
+
+export function argentinaBusinessDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+export function isValidIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(Date.UTC(year!, month! - 1, day!))
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day
+  )
+}
+
+function invalidFechaError() {
+  return BusinessError(ErrorCode.VALIDATION_ERROR, 'fecha must be a valid ISO calendar date', [
+    { field: 'fecha', message: 'must be a valid ISO calendar date' },
+  ])
 }
 
 /**
