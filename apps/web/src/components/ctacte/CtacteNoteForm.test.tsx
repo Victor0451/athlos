@@ -47,6 +47,11 @@ describe('CtacteNoteForm', () => {
     notifyMock.mockReset()
     onSuccessMock.mockReset()
     onCloseMock.mockReset()
+    // Wipe any localStorage state from prior tests so each test starts
+    // with a clean cache — the modal persists the idempotency key
+    // across reloads and that cross-test contamination would otherwise
+    // flip flaky tests.
+    window.localStorage.clear()
     addCtacteNoteMock.mockResolvedValue({
       id: 'note-1',
       ctacte_movement_id: MOVEMENT_ID,
@@ -199,5 +204,100 @@ describe('CtacteNoteForm', () => {
     })
     const secondKey = (addCtacteNoteMock.mock.calls[1] as unknown[])[3] as string
     expect(secondKey).not.toBe(firstKey)
+  })
+
+  // R3 fix batch — defect #3 (reload-safe note retry).
+  // The Idempotency-Key MUST survive a page reload so that an
+  // interrupted submit (network glitch mid-submit, dev-tools
+  // refresh, accidental tab close) does NOT generate a duplicate
+  // note on the next mount. The key is pinned per
+  // (socioId, movementId, body-hash) in localStorage; a body change
+  // mints a fresh key and the success path clears the cache so the
+  // form opens clean next time.
+  it('persists the Idempotency-Key in localStorage keyed by (socioId, movementId, body) — even after a 5xx', async () => {
+    renderForm()
+    const textbox = screen.getByRole('textbox')
+    // Force a network-style failure so the cache survives — the
+    // success path explicitly clears the entry.
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('boom: network glitch'))
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Reload me' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(1)
+    })
+    const key = (addCtacteNoteMock.mock.calls[0] as unknown[])[3] as string
+
+    // The form MUST have written the key under a stable localStorage
+    // entry that survives process restarts. Reading via a stable
+    // (socioId, movementId) key.
+    const stored = window.localStorage.getItem(`ctacte-note-idem:${SOCIO_ID}:${MOVEMENT_ID}`)
+    expect(stored).toBeTruthy()
+    const parsed = JSON.parse(stored!) as { bodyHash: string; key: string }
+    expect(parsed.bodyHash.length).toBeGreaterThan(0)
+    expect(parsed.key).toBe(key)
+  })
+
+  it('reuses the cached key when the form is remounted for the same body (page reload simulation)', async () => {
+    // First instance: type, submit (fails), unmount.
+    const first = renderForm()
+    const textbox = screen.getByRole('textbox')
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('network glitch'))
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Survives reload' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(1)
+    })
+    const firstKey = (addCtacteNoteMock.mock.calls[0] as unknown[])[3] as string
+    first.unmount()
+
+    // "Reload": unmount + remount with the same persisted localStorage.
+    // A second submit MUST reuse the cached key, not mint a new one.
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('still flaky'))
+    renderForm() // remount — reads from localStorage
+    const textbox2 = screen.getByRole('textbox')
+    await act(async () => {
+      fireEvent.input(textbox2, { target: { value: 'Survives reload' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(2)
+    })
+    const secondKey = (addCtacteNoteMock.mock.calls[1] as unknown[])[3] as string
+    expect(secondKey).toBe(firstKey)
+  })
+
+  it('clears the cached key after a successful submit (next open starts fresh)', async () => {
+    renderForm()
+    const textbox = screen.getByRole('textbox')
+    addCtacteNoteMock.mockResolvedValueOnce({
+      id: 'note-success',
+      ctacte_movement_id: MOVEMENT_ID,
+      body: 'Will succeed',
+      author_operator_id: 'op-1',
+      created_at: '2026-01-15T12:15:00.000Z',
+    })
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Will succeed' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(notifyMock).toHaveBeenCalledWith('success', 'Nota agregada')
+    })
+    // The cached key MUST be cleared so the next open of the modal
+    // mints a NEW key (no stale-key 409).
+    const stored = window.localStorage.getItem(`ctacte-note-idem:${SOCIO_ID}:${MOVEMENT_ID}`)
+    expect(stored).toBeNull()
   })
 })
