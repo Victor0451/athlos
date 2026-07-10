@@ -453,8 +453,8 @@ Chain strategy: feature-branch-chain
 - [ ] R2 — Superseded/not complete: the prior time-bucket debit/comprobante implementation does not meet the amended caller-key and durable replay contracts.
 - [x] R2 — Validate `movementId` ownership against `:socioId` before every POST note write; return the specified not-found/error envelope and add a cross-socio write rejection test with no note or audit side effect.
 - [x] R2 corrective re-run — Durable comprobante owner leases now heartbeat, complete/fail by owner only, reclaim failed/stale attempts atomically, and return the persisted full result to followers; the debit caller-key work remains intact.
-- [ ] R3 — Wire movement-scoped `CtacteNoteForm` into the production `/ctacte/[cuenta]` row action, expose the required note list/delete client and API path, and enforce author-or-ADMIN soft-delete authorization; add route, component, and page coverage.
-- [ ] R3 — Change `CtacteNotesSection` to call `useNotesCollapsed(cuentaId, null)` and test the `ctacte-notes-collapsed-<cuenta>` key, reload persistence, and cross-cuenta isolation.
+- [x] R3 — Wire movement-scoped `CtacteNoteForm` into the production `/ctacte/[cuenta]` row action, expose the required note list/delete client and API path, and enforce author-or-ADMIN soft-delete authorization; add route, component, and page coverage.
+- [x] R3 — Change `CtacteNotesSection` to call `useNotesCollapsed(cuentaId, null)` and test the `ctacte-notes-collapsed-<cuenta>` key, reload persistence, and cross-cuenta isolation.
 - [ ] R4 — Map server `ApiError.details: [{ field, message }]` into the corresponding Pago, Débito, Nota, and comprobante form fields while retaining top-level failure toasts; add component tests for field errors and cap-range feedback.
 - [ ] R5 — Reconcile `sdd/athlos-ctacte-mutations/apply-progress` against real commits and test records, adding a Strict TDD Cycle Evidence table only for evidence that can be cited; explicitly leave uncited RED/GREEN, triangulation, or safety-net entries unrecorded rather than fabricating them.
 
