@@ -71,7 +71,7 @@ function buildDurableReplayStore(): ComprobanteLeaseStore {
     { status: string; owner: string | null; result?: RenderComprobanteResult }
   >()
   return {
-    async claim(key, owner) {
+    async claim(key, _fingerprint, owner) {
       const row = rows.get(key)
       if (!row || row.status === 'failed') {
         rows.set(key, { status: 'rendering', owner })
@@ -130,6 +130,7 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
+      idempotencyKey: 'golden-happy-comprobante-2026-07',
       db: {} as never,
       leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
@@ -176,6 +177,7 @@ describe('renderComprobante — happy path', () => {
         operatorId: OPERATOR_ID,
         from: '2026-07-01',
         to: '2026-07-31',
+        idempotencyKey: 'golden-missing-socio-comprobante-2026-07',
         db: {} as never,
         leaseStore: buildDurableReplayStore(),
         pdfGenerator: pdfGenerator as never,
@@ -203,6 +205,7 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
+      idempotencyKey: 'golden-concurrent-comprobante-2026-07',
       db: {} as never,
       leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
