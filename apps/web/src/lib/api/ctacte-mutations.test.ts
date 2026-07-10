@@ -209,6 +209,7 @@ describe('ctacte-mutations API', () => {
         SAMPLE_SOCIO_ID,
         SAMPLE_MOVEMENT_ID,
         'Llamó el socio consultando por el saldo.',
+        'opaque-key-happy-path',
       )
 
       expect(apiFetchMock).toHaveBeenCalledTimes(1)
@@ -216,10 +217,18 @@ describe('ctacte-mutations API', () => {
       expect(call[0]).toBe(
         `/api/v1/socios/${SAMPLE_SOCIO_ID}/ctacte/movements/${SAMPLE_MOVEMENT_ID}/notes`,
       )
-      expect(call[1]).toMatchObject({ method: 'POST' })
+      expect(call[1]).toMatchObject({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'opaque-key-happy-path' },
+      })
       expect(call[1]?.body).toEqual({ body: 'Llamó el socio consultando por el saldo.' })
       expect(result.id).toBe('note-1')
     })
+
+    // R3 fix #2 — web layer durable Idempotency-Key contract.
+    // The API wrapper MUST forward the caller-provided key on the
+    // `Idempotency-Key` header so ambiguous retries replay the
+    // previously-persisted note instead of creating a duplicate.
   })
 
   // ─── deleteCtacteNote ──────────────────────────────────────────────

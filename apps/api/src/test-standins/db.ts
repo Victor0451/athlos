@@ -237,6 +237,8 @@ const CTACTE_MOVEMENT_NOTES_SQL_TO_JS: Record<string, keyof CtacteMovementNoteRo
   author_operator_id: 'authorOperatorId',
   created_at: 'createdAt',
   deleted_at: 'deletedAt',
+  // R3 fix #2 — durable caller-supplied Idempotency-Key column.
+  idempotency_key: 'idempotencyKey',
 }
 
 const CTACTE_COMPROBANTE_RETRIES_SQL_TO_JS: Record<string, keyof CtacteComprobanteRetryRow> = {
@@ -785,6 +787,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         authorOperatorId: v['authorOperatorId']!,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
         deletedAt: (v['deletedAt'] as Date | null) ?? null,
+        idempotencyKey: (v['idempotencyKey'] as string | null) ?? null,
       } as CtacteMovementNoteRow
     }
     if (tname === 'ctacte_comprobante_retries') {
@@ -993,6 +996,20 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           v['idempotencyKey'] !== null &&
           v['idempotencyKey'] !== undefined &&
           (r as CtacteRow).idempotencyKey === v['idempotencyKey'],
+      )
+    }
+    if (tname === 'ctacte_movement_notes') {
+      // R3 fix #2 — durable caller-key UNIQUE partial index. Only
+      // active (not soft-deleted) rows block a new INSERT for the
+      // same key, matching `WHERE idempotency_key IS NOT NULL` AND
+      // the soft-delete semantics already used by the rest of the
+      // ctacte surface.
+      return rows.some(
+        (r) =>
+          v['idempotencyKey'] !== null &&
+          v['idempotencyKey'] !== undefined &&
+          (r as CtacteMovementNoteRow).idempotencyKey === v['idempotencyKey'] &&
+          (r as CtacteMovementNoteRow).deletedAt === null,
       )
     }
     if (tname === 'ctacte_comprobante_retries') {

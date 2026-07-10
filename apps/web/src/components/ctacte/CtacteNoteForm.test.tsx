@@ -72,7 +72,12 @@ describe('CtacteNoteForm', () => {
     await waitFor(() => {
       expect(addCtacteNoteMock).toHaveBeenCalledTimes(1)
     })
-    expect(addCtacteNoteMock).toHaveBeenCalledWith(SOCIO_ID, MOVEMENT_ID, 'Llamó el socio.')
+    expect(addCtacteNoteMock.mock.calls[0]).toEqual([
+      SOCIO_ID,
+      MOVEMENT_ID,
+      'Llamó el socio.',
+      expect.stringMatching(/^.{1,128}$/),
+    ])
   })
 
   it('calls notify("success") and onClose on successful submit', async () => {
@@ -119,5 +124,80 @@ describe('CtacteNoteForm', () => {
   it('renders nothing when open is false', () => {
     const { container } = renderForm(false)
     expect(container).toBeEmptyDOMElement()
+  })
+
+  // R3 fix #2 — web layer Idempotency-Key retention on retries.
+  // The form MUST generate an opaque Idempotency-Key on first
+  // submit and REUSE the SAME key across ambiguous retries of the
+  // same intent (a network 5xx on the first attempt MUST replay with
+  // the same key, not generate a duplicate). Editing the body must
+  // mint a FRESH key so the server recognises a new intent.
+  it('forwards one stable Idempotency-Key across ambiguous retries of the same submission', async () => {
+    renderForm()
+    const textbox = screen.getByRole('textbox')
+
+    // First attempt: simulate a network/5xx failure on the first call.
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('boom: network glitch'))
+
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Verificar comprobante físico' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(1)
+    })
+    const firstCallKey = (addCtacteNoteMock.mock.calls[0] as unknown[])[3] as string
+    expect(typeof firstCallKey).toBe('string')
+    expect(firstCallKey.length).toBeGreaterThan(0)
+    expect(firstCallKey.length).toBeLessThanOrEqual(128)
+
+    // Second attempt: same body, success.
+    addCtacteNoteMock.mockResolvedValueOnce({
+      id: 'note-2',
+      ctacte_movement_id: MOVEMENT_ID,
+      body: 'Verificar comprobante físico',
+      author_operator_id: 'op-1',
+      created_at: '2026-01-15T12:05:00.000Z',
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(2)
+    })
+    const secondCallKey = (addCtacteNoteMock.mock.calls[1] as unknown[])[3] as string
+    expect(secondCallKey).toBe(firstCallKey)
+  })
+
+  it('rotates the Idempotency-Key when the user changes the body (new intent)', async () => {
+    renderForm()
+    const textbox = screen.getByRole('textbox')
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('boom'))
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Original intent' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(1)
+    })
+    const firstKey = (addCtacteNoteMock.mock.calls[0] as unknown[])[3] as string
+
+    // Edit the body to a clearly-different intent.
+    addCtacteNoteMock.mockRejectedValueOnce(new Error('boom'))
+    await act(async () => {
+      fireEvent.input(textbox, { target: { value: 'Edited intent' } })
+    })
+    await act(async () => {
+      fireEvent.submit(document.getElementById('ctacte-note-form')!)
+    })
+    await waitFor(() => {
+      expect(addCtacteNoteMock).toHaveBeenCalledTimes(2)
+    })
+    const secondKey = (addCtacteNoteMock.mock.calls[1] as unknown[])[3] as string
+    expect(secondKey).not.toBe(firstKey)
   })
 })
