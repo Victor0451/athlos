@@ -3,6 +3,7 @@ import { inArray } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { operators, type CtacteMovementNote } from '@athlos/db/schema'
 import { emitAudit } from '@athlos/audit'
+import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as repo from './ctacte_movement_notes_repository.ts'
 
 /**
@@ -143,10 +144,37 @@ function noteRetryKey(movementId: string, operatorId: string, body: string): str
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`
 }
 
+export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
+
+export interface SoftDeleteNoteAuth {
+  callerOperatorId: string
+  callerRole: CtacteNoteCallerRole | string
+}
+
+/**
+ * Pure helper: soft-delete permission gate. Mirrors the rule used
+ * by `notes.ts` for the per-socio notes surface — only the original
+ * author OR an ADMIN may delete. Exported so the route layer can
+ * re-use the same rule for pre-checks (e.g. showing or hiding the
+ * delete button in the UI).
+ */
+export function canDeleteCtacteNote(
+  note: { authorOperatorId: string },
+  auth: SoftDeleteNoteAuth,
+): boolean {
+  if (auth.callerRole === 'ADMIN') return true
+  return note.authorOperatorId === auth.callerOperatorId
+}
+
 /**
  * Soft-delete a note. Sets `deleted_at = now()` and preserves the
  * `CTACTE_MOVEMENT_NOTE_ADDED` audit row as the historical record
  * (spec delta §"Audit event for soft-deleted note remains queryable").
+ *
+ * Authorization (R3): only the original author OR an ADMIN may delete.
+ * Non-author non-ADMIN callers receive `INSUFFICIENT_PERMISSIONS`
+ * (mapped to 403 by the global error handler). Unknown note ids
+ * receive `NOT_FOUND` (mapped to 404).
  *
  * We intentionally do NOT emit a new audit event — the spec locks
  * the audit union to 4 ctacte actions (no `CTACTE_MOVEMENT_NOTE_DELETED`)
@@ -154,7 +182,21 @@ function noteRetryKey(movementId: string, operatorId: string, body: string): str
  * change can add a DELETED action and emit it here if product asks
  * for the explicit timeline event.
  */
-export async function softDeleteNote(db: Db, noteId: string, _operatorId: string): Promise<void> {
+export async function softDeleteNote(
+  db: Db,
+  noteId: string,
+  auth: SoftDeleteNoteAuth,
+): Promise<void> {
+  const existing = await repo.findNoteById(db, noteId)
+  if (!existing) {
+    throw BusinessError(ErrorCode.NOT_FOUND, 'Note not found')
+  }
+  if (!canDeleteCtacteNote(existing, auth)) {
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Only the author or an ADMIN can delete this note',
+    )
+  }
   await repo.softDeleteNote(db, noteId)
 }
 

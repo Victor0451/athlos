@@ -82,6 +82,17 @@ function bearer(role: JWTPayload['role'] = 'OPERADOR'): string {
   )
 }
 
+function bearerAs(sub: string, role: JWTPayload['role']): string {
+  return signAccessToken(
+    {
+      sub,
+      role,
+      permissions: { can_reprint: true, can_anulate: true },
+    },
+    makeEnv(),
+  )
+}
+
 const SOCIO_ID = '11111111-1111-4111-8111-111111111111'
 const OTHER_SOCIO_ID = '33333333-3333-4333-8333-333333333333'
 const MOVEMENT_ID = '22222222-2222-4222-8222-222222222222'
@@ -851,5 +862,157 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     expect(first.statusCode).toBe(200)
     expect(changed.statusCode).toBe(409)
     expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+  })
+})
+
+// ─── DELETE /ctacte/movements/:movementId/notes/:noteId (R3) ──────────────────
+
+const NOTE_ID = '55555555-5555-4555-8555-555555555555'
+const AUTHOR_OPERATOR_ID = '00000000-0000-4000-8000-000000000001'
+const OTHER_AUTHOR_OPERATOR_ID = '00000000-0000-4000-8000-000000000002'
+
+function seedNote(): void {
+  standin.state.ctacteMovementNotes.push({
+    id: NOTE_ID,
+    ctacteMovementId: MOVEMENT_ID,
+    body: 'Verificar comprobante físico',
+    authorOperatorId: AUTHOR_OPERATOR_ID,
+    createdAt: new Date('2026-07-09T12:00:00.000Z'),
+    deletedAt: null,
+  } as never)
+}
+
+describe('DELETE /api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId (R3)', () => {
+  it('returns 401 when the JWT is missing', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    seedNote()
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('returns 200 when the original author soft-deletes the note', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    seedNote()
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${bearerAs(AUTHOR_OPERATOR_ID, 'OPERADOR')}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const deleted = standin.state.ctacteMovementNotes.find(
+      (n: { id: string }) => n.id === NOTE_ID,
+    ) as { deletedAt: Date | null } | undefined
+    expect(deleted?.deletedAt).not.toBeNull()
+  })
+
+  it('returns 200 when an ADMIN soft-deletes another operator note', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    standin.state.ctacteMovementNotes.push({
+      id: NOTE_ID,
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'foreign author',
+      authorOperatorId: OTHER_AUTHOR_OPERATOR_ID,
+      createdAt: new Date('2026-07-09T12:00:00.000Z'),
+      deletedAt: null,
+    } as never)
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${bearerAs(AUTHOR_OPERATOR_ID, 'ADMIN')}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const deleted = standin.state.ctacteMovementNotes.find(
+      (n: { id: string }) => n.id === NOTE_ID,
+    ) as { deletedAt: Date | null } | undefined
+    expect(deleted?.deletedAt).not.toBeNull()
+  })
+
+  it('returns 403 when a non-author non-ADMIN caller attempts the delete', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    standin.state.ctacteMovementNotes.push({
+      id: NOTE_ID,
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'foreign author',
+      authorOperatorId: OTHER_AUTHOR_OPERATOR_ID,
+      createdAt: new Date('2026-07-09T12:00:00.000Z'),
+      deletedAt: null,
+    } as never)
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${bearerAs(AUTHOR_OPERATOR_ID, 'OPERADOR')}` },
+    })
+
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: 'INSUFFICIENT_PERMISSIONS' })
+    const note = standin.state.ctacteMovementNotes.find((n: { id: string }) => n.id === NOTE_ID) as
+      | { deletedAt: Date | null }
+      | undefined
+    expect(note?.deletedAt).toBeNull()
+  })
+
+  it('returns 404 when the note id does not exist', async () => {
+    seedSocio()
+    seedCtacteMovement()
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/99999999-9999-4999-8999-999999999999`,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 404 when the movement belongs to another socio', async () => {
+    seedSocio()
+    seedSocio(OTHER_SOCIO_ID)
+    seedCtacteMovement()
+    seedNote()
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${bearerAs(AUTHOR_OPERATOR_ID, 'ADMIN')}` },
+    })
+
+    expect(res.statusCode).toBe(404)
+    const note = standin.state.ctacteMovementNotes.find((n: { id: string }) => n.id === NOTE_ID) as
+      | { deletedAt: Date | null }
+      | undefined
+    expect(note?.deletedAt).toBeNull()
+  })
+
+  it('returns 200 then excludes the note from the subsequent list endpoint', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    seedNote()
+
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes/${NOTE_ID}`,
+      headers: { authorization: `Bearer ${bearerAs(AUTHOR_OPERATOR_ID, 'OPERADOR')}` },
+    })
+    expect(del.statusCode).toBe(200)
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+    expect(list.statusCode).toBe(200)
+    expect(list.json()).toEqual([])
   })
 })

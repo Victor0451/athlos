@@ -95,3 +95,17 @@ export async function softDeleteNote(db: Db, noteId: string): Promise<void> {
     .set({ deletedAt: new Date() })
     .where(and(eq(ctacteMovementNotes.id, noteId), isNull(ctacteMovementNotes.deletedAt)))
 }
+
+/**
+ * Find a note by id (including soft-deleted rows). Returns `null`
+ * when no row matches. Used by the service to enforce author-or-ADMIN
+ * authorization before soft-deleting.
+ */
+export async function findNoteById(db: Db, noteId: string): Promise<CtacteMovementNote | null> {
+  const [row] = await db
+    .select()
+    .from(ctacteMovementNotes)
+    .where(eq(ctacteMovementNotes.id, noteId))
+    .limit(1)
+  return row ?? null
+}

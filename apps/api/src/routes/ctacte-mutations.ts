@@ -11,7 +11,7 @@ import {
   registerPayment,
   registerDebit,
 } from '../modules/socios/forms/ctacte-mutations.ts'
-import { addNote, listNotes } from '../modules/socios/ctacte_movement_notes.ts'
+import { addNote, listNotes, softDeleteNote } from '../modules/socios/ctacte_movement_notes.ts'
 import { renderComprobante } from '../modules/socios/forms/ctacte-comprobante.ts'
 import { ctacte } from '@athlos/db/schema'
 import { LocalFileStorage, readStorageEnv } from '../modules/file-storage/index.ts'
@@ -398,6 +398,56 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       } catch (err) {
         request.log.warn({ err }, 'addNote failed')
         return apiError(reply, 'VALIDATION_ERROR', 'Failed to add note')
+      }
+    },
+  )
+
+  // DELETE /api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId (R3)
+  // Soft-delete a note. Authorization: original author OR ADMIN only.
+  // 401 missing JWT, 404 unknown note / cross-socio movement, 403 not allowed.
+  fastify.delete<{ Params: { socioId: string; movementId: string; noteId: string } }>(
+    '/api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId',
+    AUTH,
+    async (request, reply) => {
+      const paramsSchema = z.object({
+        socioId: idSchema,
+        movementId: idSchema,
+        noteId: idSchema,
+      })
+      const params = throwIfInvalid(paramsSchema, request.params, 'params')
+      const operatorId = request.operator?.sub
+      if (!operatorId) {
+        return reply.code(401).send({ error: 'UNAUTHORIZED' })
+      }
+      const operatorRole = request.operator?.role ?? 'OPERADOR'
+
+      // Verify the movement belongs to the requested socio (404 if not).
+      // This is the ownership gate that prevents cross-socio note deletion.
+      const [movementRow] = await container.db
+        .select({ id: ctacte.id })
+        .from(ctacte)
+        .where(and(eq(ctacte.id, params.movementId), eq(ctacte.socioId, params.socioId)))
+        .limit(1)
+      if (!movementRow) {
+        return movementNotFound(reply)
+      }
+
+      try {
+        await softDeleteNote(container.db, params.noteId, {
+          callerOperatorId: operatorId,
+          callerRole: operatorRole,
+        })
+        return reply.code(200).send({ id: params.noteId, deleted: true })
+      } catch (err) {
+        const e = err as { code?: string; message?: string }
+        if (e.code === ErrorCode.NOT_FOUND) {
+          return reply.code(404).send({ error: 'NOT_FOUND' })
+        }
+        if (e.code === ErrorCode.INSUFFICIENT_PERMISSIONS) {
+          return reply.code(403).send({ error: 'INSUFFICIENT_PERMISSIONS', message: e.message })
+        }
+        request.log.warn({ err }, 'softDeleteNote failed')
+        return apiError(reply, 'VALIDATION_ERROR', 'Failed to delete note')
       }
     },
   )
