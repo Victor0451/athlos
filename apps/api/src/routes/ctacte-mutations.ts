@@ -356,11 +356,11 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         return apiError(reply, 'VALIDATION_ERROR', parsed.error.errors[0]!.message)
       }
 
-      // Verify the movement exists (404 if not)
+      // Verify the movement belongs to the requested socio (404 if not).
       const [movementRow] = await container.db
         .select({ id: ctacte.id })
         .from(ctacte)
-        .where(eq(ctacte.id, params.movementId))
+        .where(and(eq(ctacte.id, params.movementId), eq(ctacte.socioId, params.socioId)))
         .limit(1)
       if (!movementRow) {
         return movementNotFound(reply)

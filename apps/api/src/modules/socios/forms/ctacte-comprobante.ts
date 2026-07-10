@@ -55,9 +55,14 @@ export interface RenderComprobanteResult {
   movementCount: number
 }
 
+const comprobanteRetries = new WeakMap<object, Map<string, RenderComprobanteResult>>()
+
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
+  const retryKey = comprobanteRetryKey(params)
+  const cached = comprobanteRetries.get(params.db as object)?.get(retryKey)
+  if (cached) return cached
   const socio = await findById(params.db, params.socioId)
   if (!socio) {
     throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
@@ -116,7 +121,21 @@ export async function renderComprobante(
     byteSize,
   })
 
-  return { pdf, filename, sha256, byteSize, movementCount: movements.length }
+  const result = { pdf, filename, sha256, byteSize, movementCount: movements.length }
+  const byDb =
+    comprobanteRetries.get(params.db as object) ?? new Map<string, RenderComprobanteResult>()
+  byDb.set(retryKey, result)
+  comprobanteRetries.set(params.db as object, byDb)
+  return result
+}
+
+function comprobanteRetryKey(params: RenderComprobanteParams): string {
+  const bucket = Math.floor((params.now ?? defaultNow)().valueOf() / 10_000)
+  return createHash('sha256')
+    .update(
+      `comprobante|${params.operatorId}|${params.socioId}|${params.cuenta}|${params.from}|${params.to}|${bucket}`,
+    )
+    .digest('hex')
 }
 
 function formatFechaEmision(d: Date): string {

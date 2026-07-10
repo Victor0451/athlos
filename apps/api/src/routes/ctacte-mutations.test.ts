@@ -428,6 +428,37 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     })
     expect(res.statusCode).toBe(404)
   })
+
+  it('collapses an in-bucket retry and creates a new debit after the bucket expires', async () => {
+    seedSocio()
+    const now = vi
+      .spyOn(Date, 'now')
+      .mockReturnValue(new Date('2026-07-10T12:00:00.000Z').valueOf())
+    const request = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
+        headers: { authorization: `Bearer ${bearer()}` },
+        payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
+      })
+
+    const first = await request()
+    const retry = await request()
+    now.mockReturnValue(new Date('2026-07-10T12:00:11.000Z').valueOf())
+    const afterBucket = await request()
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(afterBucket.statusCode).toBe(201)
+    expect(afterBucket.json().id).not.toBe(first.json().id)
+    expect(standin.state.ctacte).toHaveLength(2)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_DEBIT_REGISTERED',
+      ),
+    ).toHaveLength(2)
+  })
 })
 
 // ─── POST /ctacte/movements/:movementId/notes ─────────────────────────────────
@@ -480,6 +511,56 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
       payload: { body: 'Nota sobre movimiento inexistente' },
     })
     expect(res.statusCode).toBe(404)
+  })
+
+  it('rejects writes to a movement owned by another socio without note or audit side effects', async () => {
+    seedSocio()
+    seedSocio(OTHER_SOCIO_ID)
+    seedCtacteMovement()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${OTHER_SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+      headers: { authorization: `Bearer ${bearer()}` },
+      payload: { body: 'Cross-socio write' },
+    })
+
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'NOT_FOUND' })
+    expect(standin.state.ctacteMovementNotes).toHaveLength(0)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(0)
+  })
+
+  it('collapses same-body retries but keeps different note bodies distinct within a bucket', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    const postNote = (body: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+        headers: { authorization: `Bearer ${bearer()}` },
+        payload: { body },
+      })
+
+    const first = await postNote('A')
+    const retry = await postNote('A')
+    const differentBody = await postNote('B')
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(differentBody.statusCode).toBe(201)
+    expect(differentBody.json().id).not.toBe(first.json().id)
+    expect(standin.state.ctacteMovementNotes).toHaveLength(2)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(2)
   })
 })
 
@@ -674,5 +755,28 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
         (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
       ),
     ).toHaveLength(0)
+  })
+
+  it('returns the same comprobante retry without regenerating its PDF inside the bucket', async () => {
+    seedSocio()
+    const request = () =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
+        headers: { authorization: `Bearer ${bearer()}` },
+      })
+
+    const first = await request()
+    const retry = await request()
+
+    expect(first.statusCode).toBe(200)
+    expect(retry.statusCode).toBe(200)
+    expect(retry.rawPayload).toEqual(first.rawPayload)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
+      ),
+    ).toHaveLength(1)
   })
 })

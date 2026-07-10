@@ -247,9 +247,18 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     concepto: params.motivo,
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId: null,
+    idempotencyKey: mutationBucketKey('debit', [
+      params.operatorId,
+      params.socioId,
+      params.monto.toFixed(2),
+      params.fecha,
+      params.motivo,
+    ]),
   })
 
-  await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
+  if (result.created) {
+    await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
+  }
 
   return {
     id: result.row.id,
@@ -261,6 +270,13 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     comprobanteAttachmentId: null,
     saldo: 0,
   }
+}
+
+export function mutationBucketKey(action: string, values: string[]): string {
+  const bucket = Math.floor(Date.now() / 10_000)
+  return createHash('sha256')
+    .update([action, ...values, String(bucket)].join('|'))
+    .digest('hex')
 }
 
 export interface GetMovementsForComprobanteParams {
