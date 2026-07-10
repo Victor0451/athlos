@@ -378,7 +378,7 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-happy-key' },
       payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
     })
     expect(res.statusCode).toBe(201)
@@ -393,7 +393,10 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'debit-missing-socio-key',
+      },
       payload: { monto: -100, fecha: '2026-07-09', motivo: 'X' },
     })
     expect(res.statusCode).toBe(400)
@@ -423,35 +426,39 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-      headers: { authorization: `Bearer ${bearer()}` },
+      headers: {
+        authorization: `Bearer ${bearer()}`,
+        'idempotency-key': 'debit-missing-socio-key',
+      },
       payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
     })
     expect(res.statusCode).toBe(404)
   })
 
-  it('collapses an in-bucket retry and creates a new debit after the bucket expires', async () => {
+  it('replays the same caller key and creates a distinct debit for a distinct key', async () => {
     seedSocio()
-    const now = vi
-      .spyOn(Date, 'now')
-      .mockReturnValue(new Date('2026-07-10T12:00:00.000Z').valueOf())
     const request = () =>
       app.inject({
         method: 'POST',
         url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
-        headers: { authorization: `Bearer ${bearer()}` },
+        headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-replay-key' },
         payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
       })
 
     const first = await request()
     const retry = await request()
-    now.mockReturnValue(new Date('2026-07-10T12:00:11.000Z').valueOf())
-    const afterBucket = await request()
+    const distinct = await app.inject({
+      method: 'POST',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
+      headers: { authorization: `Bearer ${bearer()}`, 'idempotency-key': 'debit-distinct-key' },
+      payload: { monto: 800, fecha: '2026-07-09', motivo: 'Cargo mora' },
+    })
 
     expect(first.statusCode).toBe(201)
     expect(retry.statusCode).toBe(201)
     expect(retry.json().id).toBe(first.json().id)
-    expect(afterBucket.statusCode).toBe(201)
-    expect(afterBucket.json().id).not.toBe(first.json().id)
+    expect(distinct.statusCode).toBe(201)
+    expect(distinct.json().id).not.toBe(first.json().id)
     expect(standin.state.ctacte).toHaveLength(2)
     expect(
       standin.state.auditEvents.filter(

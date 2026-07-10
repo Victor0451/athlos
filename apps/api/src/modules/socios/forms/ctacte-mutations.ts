@@ -215,6 +215,7 @@ export interface RegisterDebitParams {
   monto: number
   fecha: string
   motivo: string
+  idempotencyKey: string
 }
 
 /**
@@ -247,14 +248,24 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     concepto: params.motivo,
     monto: params.monto.toFixed(2),
     comprobanteAttachmentId: null,
-    idempotencyKey: mutationBucketKey('debit', [
-      params.operatorId,
-      params.socioId,
-      params.monto.toFixed(2),
-      params.fecha,
-      params.motivo,
-    ]),
+    idempotencyKey: params.idempotencyKey,
   })
+
+  if (!result.created) {
+    const existing = result.row
+    if (
+      existing.socioId !== params.socioId ||
+      existing.tipo !== 'DEBITO' ||
+      existing.fecha !== params.fecha ||
+      existing.concepto !== params.motivo ||
+      existing.debe !== params.monto.toFixed(2)
+    ) {
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency-Key was already used for a different debit',
+      )
+    }
+  }
 
   if (result.created) {
     await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
@@ -264,19 +275,12 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     id: result.row.id,
     fecha: result.row.fecha,
     tipo: 'DEBITO',
-    monto: params.monto,
+    monto: Number(result.row.debe),
     concepto: null,
     motivo: params.motivo,
     comprobanteAttachmentId: null,
     saldo: 0,
   }
-}
-
-export function mutationBucketKey(action: string, values: string[]): string {
-  const bucket = Math.floor(Date.now() / 10_000)
-  return createHash('sha256')
-    .update([action, ...values, String(bucket)].join('|'))
-    .digest('hex')
 }
 
 export interface GetMovementsForComprobanteParams {

@@ -43,6 +43,7 @@ export interface RenderComprobanteParams {
   operatorId: string
   from: string
   to: string
+  idempotencyKey?: string
   db: Db
   pdfGenerator: PdfGenerator
   /** Override the clock for tests. */
@@ -60,7 +61,7 @@ export interface RenderComprobanteResult {
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
-  const retryKey = comprobanteRetryKey(params)
+  const retryKey = params.idempotencyKey ?? comprobanteRetryKey(params)
   const cached = await claimOrReadComprobanteRetry(params.db, retryKey)
   if (cached) return cached
   const socio = await findById(params.db, params.socioId)
@@ -101,7 +102,13 @@ export async function renderComprobante(
     },
   )
 
-  const pdf = await params.pdfGenerator.generate(html)
+  let pdf: Buffer
+  try {
+    pdf = await params.pdfGenerator.generate(html)
+  } catch (error) {
+    await failComprobanteRetry(params.db, retryKey)
+    throw error
+  }
   const sha256 = createHash('sha256').update(pdf).digest('hex')
   const byteSize = pdf.byteLength
 
@@ -144,7 +151,7 @@ async function claimOrReadComprobanteRetry(
     .returning()
   if (claimed) return null
 
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; ; attempt += 1) {
     const [existing] = await db
       .select()
       .from(ctacteComprobanteRetries)
@@ -162,12 +169,12 @@ async function claimOrReadComprobanteRetry(
         filename: existing.filename,
         sha256: existing.sha256,
         byteSize: existing.byteSize,
-        movementCount: 0,
+        movementCount: existing.movementCount ?? 0,
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    if (existing?.status === 'failed') return null
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100, 10 + attempt * 5)))
   }
-  throw BusinessError(ErrorCode.CONFLICT, 'Comprobante generation is still in progress')
 }
 
 async function completeComprobanteRetry(
@@ -183,7 +190,15 @@ async function completeComprobanteRetry(
       sha256: result.sha256,
       byteSize: result.byteSize,
       filename: result.filename,
+      movementCount: result.movementCount,
     })
+    .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
+}
+
+async function failComprobanteRetry(db: Db, key: string): Promise<void> {
+  await db
+    .update(ctacteComprobanteRetries)
+    .set({ status: 'failed' })
     .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
 }
 

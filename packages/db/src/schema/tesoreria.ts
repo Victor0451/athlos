@@ -111,6 +111,11 @@ export const ctacteComprobanteRetries = tesoreriaSchema.table('ctacte_comprobant
   sha256: text('sha256'),
   byteSize: integer('byte_size'),
   filename: text('filename'),
+  movementCount: integer('movement_count'),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

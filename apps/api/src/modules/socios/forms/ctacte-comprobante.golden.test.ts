@@ -208,4 +208,37 @@ describe('renderComprobante — happy path', () => {
     expect(pdfGenerator.generate).toHaveBeenCalledOnce()
     expect(emitAuditMock).toHaveBeenCalledOnce()
   })
+
+  it('replays the completed non-zero result after an owner renders longer than 500ms', async () => {
+    let releaseGeneration: ((pdf: Buffer) => void) | undefined
+    const pdfGenerator = {
+      generate: vi.fn(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            releaseGeneration = resolve
+          }),
+      ),
+    }
+    const params = {
+      socioId: SOCIO_ID,
+      cuenta: 'PRINCIPAL',
+      operatorId: OPERATOR_ID,
+      from: '2026-07-01',
+      to: '2026-07-31',
+      idempotencyKey: 'slow-replay-key',
+      db: buildDurableReplayDb() as never,
+      pdfGenerator: pdfGenerator as never,
+    }
+
+    const owner = renderComprobante(params)
+    const waiter = renderComprobante(params)
+    await vi.waitFor(() => expect(pdfGenerator.generate).toHaveBeenCalledOnce())
+    await new Promise((resolve) => setTimeout(resolve, 550))
+    releaseGeneration?.(Buffer.from('%PDF-1.4 slow replay\n%%EOF'))
+
+    const [first, replay] = await Promise.all([owner, waiter])
+    expect(replay).toEqual(first)
+    expect(replay.movementCount).toBe(1)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+  })
 })

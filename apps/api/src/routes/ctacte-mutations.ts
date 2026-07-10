@@ -270,6 +270,18 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       }
 
       const { monto, fecha, motivo } = parsed.data
+      const idempotencyKey = request.headers['idempotency-key']
+      if (
+        typeof idempotencyKey !== 'string' ||
+        idempotencyKey.trim().length === 0 ||
+        idempotencyKey.length > 128
+      ) {
+        return apiError(
+          reply,
+          'VALIDATION_ERROR',
+          'Idempotency-Key header must be 1–128 characters',
+        )
+      }
       if (monto <= 0) {
         return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0')
       }
@@ -282,6 +294,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           monto,
           fecha,
           motivo,
+          idempotencyKey,
         })
         return reply.code(201).send({
           id: movement.id,
@@ -299,6 +312,9 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           return reply
             .code(400)
             .send({ error: 'VALIDATION_ERROR', message: e.message, details: e.details })
+        }
+        if (e.code === ErrorCode.CONFLICT) {
+          return reply.code(409).send({ error: 'CONFLICT', message: e.message })
         }
         request.log.warn({ err }, 'registerDebit failed')
         return reply

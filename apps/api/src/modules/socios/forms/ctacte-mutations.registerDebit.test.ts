@@ -67,6 +67,7 @@ describe('registerDebit', () => {
       monto: 800,
       fecha: '2026-07-09',
       motivo: 'Cuota social Julio',
+      idempotencyKey: 'debit-intent-1',
     })
 
     expect(result.tipo).toBe('DEBITO')
@@ -82,7 +83,7 @@ describe('registerDebit', () => {
         concepto: 'Cuota social Julio',
         monto: '800.00',
         comprobanteAttachmentId: null,
-        idempotencyKey: expect.any(String),
+        idempotencyKey: 'debit-intent-1',
       }),
     )
     expect(emitAuditMock).toHaveBeenCalledOnce()
@@ -104,6 +105,35 @@ describe('registerDebit', () => {
     )
   })
 
+  it('replays an existing debit only when the caller key has the same canonical payload', async () => {
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'DEBITO',
+        concepto: 'Cuota social Julio',
+        debe: '800.00',
+        haber: '0.00',
+        comprobanteAttachmentId: null,
+      },
+      created: false,
+    })
+
+    const replay = await registerDebit({
+      db: dbMock,
+      socioId: SOCIO_ID,
+      operatorId: OPERATOR_ID,
+      monto: 800,
+      fecha: '2026-07-09',
+      motivo: 'Cuota social Julio',
+      idempotencyKey: 'debit-intent-1',
+    })
+
+    expect(replay.id).toBe(MOVEMENT_ID)
+    expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
   it('throws VALIDATION_ERROR when monto <= 0', async () => {
     await expect(
       registerDebit({
@@ -113,6 +143,7 @@ describe('registerDebit', () => {
         monto: 0,
         fecha: '2026-07-09',
         motivo: 'X',
+        idempotencyKey: 'invalid-debit-intent',
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
     expect(repoInsertCtacteRow).not.toHaveBeenCalled()
@@ -128,6 +159,7 @@ describe('registerDebit', () => {
         monto: 500,
         fecha: '2026-07-09',
         motivo: 'X',
+        idempotencyKey: 'missing-socio-debit-intent',
       }),
     ).rejects.toBeInstanceOf(ApiError)
   })
