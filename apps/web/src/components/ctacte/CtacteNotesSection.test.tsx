@@ -148,26 +148,25 @@ describe('CtacteNotesSection', () => {
     expect(screen.getByTestId('ctacte-notes-panel')).toBeInTheDocument()
   })
 
-  it('shows the new-note form after expanding', async () => {
+  it('exposes the CtacteNoteForm modal trigger after expanding (R3)', async () => {
     const user = userEvent.setup()
     renderSection([])
     await user.click(screen.getByTestId('ctacte-notes-toggle'))
     await waitFor(() => {
-      expect(screen.getByTestId('ctacte-note-new-form')).toBeInTheDocument()
+      expect(screen.getByTestId('ctacte-note-new-trigger')).toBeInTheDocument()
     })
   })
 
-  it('calls addCtacteNote on submit with correct args', async () => {
+  it('opens the CtacteNoteForm modal when the trigger is clicked (R3)', async () => {
     const user = userEvent.setup()
     renderSection([])
     await user.click(screen.getByTestId('ctacte-notes-toggle'))
     await waitFor(() => {
-      expect(screen.getByTestId('ctacte-note-new-form')).toBeInTheDocument()
+      expect(screen.getByTestId('ctacte-note-new-trigger')).toBeInTheDocument()
     })
-    await user.type(screen.getByTestId('ctacte-note-new-body'), 'El socio llamó.')
-    await user.click(screen.getByRole('button', { name: /agregar nota/i }))
+    await user.click(screen.getByTestId('ctacte-note-new-trigger'))
     await waitFor(() => {
-      expect(addCtacteNoteMock).toHaveBeenCalledWith(SOCIO_ID, MOVEMENT_ID, 'El socio llamó.')
+      expect(screen.getByTestId('ctacte-note-modal')).toBeInTheDocument()
     })
   })
 

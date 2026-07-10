@@ -2,15 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, MessageSquare, Trash2, UserRound } from 'lucide-react'
-import {
-  addCtacteNote,
-  deleteCtacteNote,
-  type CtacteNoteResponse,
-} from '@/lib/api/ctacte-mutations'
+import { ChevronDown, MessageSquare, Plus, Trash2, UserRound } from 'lucide-react'
+import { deleteCtacteNote, type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
 import { Badge } from '@/components/ui/Badge'
 import { OperatorChip } from '@/components/socios/OperatorChip'
+import { CtacteNoteForm } from '@/components/ctacte/CtacteNoteForm'
 import { notify } from '@/lib/notifications'
 import { useAuth } from '@/lib/use-auth'
 
@@ -110,7 +107,7 @@ export function CtacteNotesSection({
   error,
   onNoteAdded,
 }: CtacteNotesSectionProps) {
-  const [draft, setDraft] = useState('')
+  const [showNoteForm, setShowNoteForm] = useState(false)
   const { toggle, displayExpanded } = useNotesCollapsed(socioId, null)
   const { user } = useAuth()
   const currentOperatorId = user?.operator_id ?? null
@@ -149,20 +146,6 @@ export function CtacteNotesSection({
     [currentOperatorId, currentRole],
   )
 
-  async function handleSubmitDraft(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const trimmed = draft.trim()
-    if (trimmed.length === 0) return
-    try {
-      await addCtacteNote(socioId, movementId, trimmed)
-      notify('success', 'Nota creada')
-      setDraft('')
-      onNoteAdded()
-    } catch {
-      notify('error', 'No se pudo crear la nota')
-    }
-  }
-
   async function handleDeleteClick(note: CtacteNoteResponse) {
     if (!canDeleteNote(note)) {
       notify('error', 'No tenés permiso para borrar esta nota')
@@ -175,6 +158,15 @@ export function CtacteNotesSection({
     } catch {
       notify('error', 'No se pudo eliminar la nota')
     }
+  }
+
+  function handleNoteFormSuccess() {
+    setShowNoteForm(false)
+    onNoteAdded()
+  }
+
+  function handleNoteFormClose() {
+    setShowNoteForm(false)
   }
 
   return (
@@ -244,34 +236,24 @@ export function CtacteNotesSection({
             </p>
           ) : (
             <>
-              {/* New note form */}
-              <form onSubmit={handleSubmitDraft} data-testid="ctacte-note-new-form">
-                <textarea
-                  id="ctacte-note-new-body"
-                  data-testid="ctacte-note-new-body"
-                  rows={3}
-                  maxLength={2000}
-                  placeholder="Escribí una nota sobre este movimiento…"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span
-                    className="font-body text-xs text-ink-500"
-                    data-testid="ctacte-note-charcount"
-                  >
-                    {draft.length} / 2000
-                  </span>
-                  <button
-                    type="submit"
-                    disabled={draft.trim().length === 0}
-                    className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Agregar nota
-                  </button>
-                </div>
-              </form>
+              {/* New note modal trigger (R3): the production add-note
+                  surface is the movement-scoped CtacteNoteForm modal,
+                  so it is reachable from the row action on
+                  /ctacte/[cuenta] (per verify-report R3 findings). */}
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-body text-sm text-ink-500">
+                  Registrá una nota sobre este movimiento. Cada nota queda asentada en la auditoría.
+                </p>
+                <button
+                  type="button"
+                  data-testid="ctacte-note-new-trigger"
+                  onClick={() => setShowNoteForm(true)}
+                  className="shrink-0 rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+                >
+                  <Plus className="-ml-0.5 mr-1 inline h-4 w-4" aria-hidden="true" />
+                  Agregar nota
+                </button>
+              </div>
 
               {/* Notes list */}
               {notes.length === 0 ? (
@@ -341,6 +323,17 @@ export function CtacteNotesSection({
           )}
         </div>
       ) : null}
+
+      {/* Movement-scoped add-note modal (R3). Mounted here so the
+          production /ctacte/[cuenta] row action has a real
+          CtacteNoteForm path (the modal was previously dead code). */}
+      <CtacteNoteForm
+        open={showNoteForm}
+        socioId={socioId}
+        movementId={movementId}
+        onSuccess={handleNoteFormSuccess}
+        onClose={handleNoteFormClose}
+      />
     </section>
   )
 }
