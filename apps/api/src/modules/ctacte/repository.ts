@@ -136,8 +136,8 @@ export const ASC = asc
  * `listMovementsByDateRange` is the comprobante-PDF query: a
  * date-filtered slice ordered by `fecha ASC` (the comprovante lists
  * movements chronologically). The `limit` cap is enforced at SQL
- * level — the route layer also enforces `limit <= 50` BEFORE calling
- * puppeteer (defense-in-depth, per the spec delta).
+ * level — the comprobante service requests 51 rows in one snapshot
+ * to detect its 50-movement cap before calling puppeteer.
  */
 
 export interface InsertCtacteRowInput {
@@ -220,8 +220,8 @@ export interface ListMovementsByDateRangeInput {
   from: string
   /** YYYY-MM-DD inclusive. */
   to: string
-  /** Hard cap on the result size. The comprobante route enforces 50
-   *  before invoking puppeteer; the SQL cap is defense-in-depth. */
+  /** Hard cap on the result size. The comprobante service requests
+   *  51 rows to detect an over-cap range before invoking puppeteer. */
   limit: number
 }
 
@@ -249,10 +249,10 @@ export async function countMovementsByDateRange(
  * receipt order). Anuladas are excluded to match the read endpoint.
  *
  * The `limit` cap is applied at SQL level. The route layer is
- * expected to enforce a stricter cap (50 for the comprobante PDF)
- * before calling puppeteer — this SQL-level cap is the belt-and-
- * suspenders guard for the unlikely case a future caller bypasses
- * the route layer.
+ * expected to request 51 rows for the comprobante PDF and reject an
+ * over-cap range before calling puppeteer — this SQL-level cap is the
+ * belt-and-suspenders guard for the unlikely case a future caller
+ * bypasses the service layer.
  */
 export async function listMovementsByDateRange(
   db: Db,
