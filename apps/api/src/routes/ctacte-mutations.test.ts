@@ -562,6 +562,30 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/:movementId/notes', () =
       ),
     ).toHaveLength(2)
   })
+
+  it('emits one note audit event when identical requests race in the same bucket', async () => {
+    seedSocio()
+    seedCtacteMovement()
+    const postNote = () =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/${MOVEMENT_ID}/notes`,
+        headers: { authorization: `Bearer ${bearer()}` },
+        payload: { body: 'Concurrent retry' },
+      })
+
+    const [first, retry] = await Promise.all([postNote(), postNote()])
+
+    expect(first.statusCode).toBe(201)
+    expect(retry.statusCode).toBe(201)
+    expect(retry.json().id).toBe(first.json().id)
+    expect(standin.state.ctacteMovementNotes).toHaveLength(1)
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_MOVEMENT_NOTE_ADDED',
+      ),
+    ).toHaveLength(1)
+  })
 })
 
 // ─── GET /ctacte/movements/:movementId/notes ──────────────────────────────────

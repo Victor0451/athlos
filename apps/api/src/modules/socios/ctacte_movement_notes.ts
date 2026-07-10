@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { inArray } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
-import { auditEvents, operators, type CtacteMovementNote } from '@athlos/db/schema'
+import { operators, type CtacteMovementNote } from '@athlos/db/schema'
+import { emitAudit } from '@athlos/audit'
 import * as repo from './ctacte_movement_notes_repository.ts'
 
 /**
@@ -13,11 +14,8 @@ import * as repo from './ctacte_movement_notes_repository.ts'
  *   2. A `public.operators` lookup to enrich each note with the
  *      author's username + role for the `OperatorChip` component
  *      (the chip renders `username · ROLE` in the UI).
- *   3. Best-effort audit emission via `audit_events` (the DB-direct
- *      path; the @athlos/audit `emitAudit` wrapper is reserved for
- *      routes that want the SHA-256 10s idempotency bucket — the
- *      notes path matches the existing `socios/notes.ts` pattern
- *      which writes directly to `audit_events`).
+ *   3. Durable audit emission via `@athlos/audit` using the same
+ *      deterministic note identity as the insert.
  *
  * The route layer is thin: parse + auth → call into here → shape
  * response. No new routes are added in PR A1a (those land in A1b).
@@ -163,11 +161,10 @@ export async function softDeleteNote(db: Db, noteId: string, _operatorId: string
 /**
  * Best-effort audit emission for `CTACTE_MOVEMENT_NOTE_ADDED`.
  *
- * Mirrors the pattern in `socios/notes.ts` (DB-direct insert). The
- * `emitAudit` wrapper in @athlos/audit is reserved for routes that
- * benefit from the SHA-256 10s bucket dedupe — note writes are not
- * idempotent targets (different bodies must produce distinct rows)
- * so the dedup wrapper would only confuse the audit trail here.
+ * `emitAudit` persists the deduplication decision in the shared audit
+ * table. Including the deterministic note ID and body in its payload
+ * makes concurrent retries, restarts, and different API replicas emit
+ * exactly one matching audit row while keeping different bodies distinct.
  */
 async function emitNoteAddedAudit(
   db: Db,
@@ -175,7 +172,7 @@ async function emitNoteAddedAudit(
   operatorId: string,
 ): Promise<void> {
   try {
-    await db.insert(auditEvents).values({
+    await emitAudit(db, {
       operatorId,
       action: 'CTACTE_MOVEMENT_NOTE_ADDED',
       entityType: 'ctacte_movement_note',
@@ -188,6 +185,11 @@ async function emitNoteAddedAudit(
         author_operator_id: row.authorOperatorId,
       },
       sourceIp: null,
+      payload: {
+        note_id: row.id,
+        ctacte_movement_id: row.ctacteMovementId,
+        body: row.body,
+      },
       metadata: {
         ctacte_id: row.ctacteMovementId,
         movement_id: row.ctacteMovementId,

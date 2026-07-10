@@ -61,6 +61,36 @@ function buildPdfGeneratorSpy() {
   }
 }
 
+function buildDurableReplayDb() {
+  const rows = new Map<string, Record<string, unknown>>()
+  return {
+    delete: () => ({ where: async () => undefined }),
+    insert: () => ({
+      values: (value: Record<string, unknown>) => ({
+        onConflictDoNothing: () => ({
+          returning: async () => {
+            const key = value.idempotencyKey as string
+            if (rows.has(key)) return []
+            rows.set(key, { ...value })
+            return [rows.get(key)]
+          },
+        }),
+      }),
+    }),
+    select: () => ({
+      from: () => ({ where: () => ({ limit: async () => Array.from(rows.values()) }) }),
+    }),
+    update: () => ({
+      set: (values: Record<string, unknown>) => ({
+        where: async () => {
+          const [key] = rows.keys()
+          if (key) rows.set(key, { ...rows.get(key), ...values })
+        },
+      }),
+    }),
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   findByIdMock.mockResolvedValue({
@@ -93,7 +123,7 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
-      db: {} as never,
+      db: buildDurableReplayDb() as never,
       pdfGenerator: pdfGenerator as never,
     })
 
@@ -138,12 +168,44 @@ describe('renderComprobante — happy path', () => {
         operatorId: OPERATOR_ID,
         from: '2026-07-01',
         to: '2026-07-31',
-        db: {} as never,
+        db: buildDurableReplayDb() as never,
         pdfGenerator: pdfGenerator as never,
       }),
     ).rejects.toThrow(/Socio not found/i)
     // No PDF rendered, no audit emitted.
     expect(pdfGenerator.generate).not.toHaveBeenCalled()
     expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
+  it('generates one PDF and one audit event for concurrent identical retries', async () => {
+    let releaseGeneration: ((pdf: Buffer) => void) | undefined
+    const pdf = Buffer.from('%PDF-1.4 concurrent retry\n%%EOF')
+    const pdfGenerator = {
+      generate: vi.fn(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            releaseGeneration = resolve
+          }),
+      ),
+    }
+    const params = {
+      socioId: SOCIO_ID,
+      cuenta: 'PRINCIPAL',
+      operatorId: OPERATOR_ID,
+      from: '2026-07-01',
+      to: '2026-07-31',
+      db: buildDurableReplayDb() as never,
+      pdfGenerator: pdfGenerator as never,
+    }
+
+    const firstRequest = renderComprobante(params)
+    const retryRequest = renderComprobante(params)
+    await vi.waitFor(() => expect(pdfGenerator.generate).toHaveBeenCalledTimes(1))
+    releaseGeneration?.(pdf)
+    const [first, retry] = await Promise.all([firstRequest, retryRequest])
+
+    expect(retry.pdf).toEqual(first.pdf)
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+    expect(emitAuditMock).toHaveBeenCalledOnce()
   })
 })
