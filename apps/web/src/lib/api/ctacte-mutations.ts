@@ -144,6 +144,27 @@ export async function getCtacteNotes(
   )
 }
 
+/**
+ * `deleteCtacteNote(socioId, movementId, noteId)` — DELETE
+ * `/api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId`.
+ *
+ * Soft-delete a single note. Server enforces author-or-ADMIN authorization;
+ * non-author non-ADMIN callers receive 403. The mutation surface exists
+ * to satisfy the R3 verify findings (per-row delete + authorization) so
+ * the production `/ctacte/[cuenta]` row action has a real backend path
+ * to call.
+ */
+export async function deleteCtacteNote(
+  socioId: string,
+  movementId: string,
+  noteId: string,
+): Promise<{ id: string; deleted: boolean }> {
+  return apiFetch<{ id: string; deleted: boolean }>(
+    `/api/v1/socios/${socioId}/ctacte/movements/${movementId}/notes/${noteId}`,
+    { method: 'DELETE' },
+  )
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
 
 /**

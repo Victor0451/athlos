@@ -40,7 +40,7 @@ vi.mock('@/lib/api', () => ({
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
 
-const { registerCtactePayment, registerCtacteDebit, addCtacteNote } =
+const { registerCtactePayment, registerCtacteDebit, addCtacteNote, deleteCtacteNote } =
   await import('./ctacte-mutations')
 
 // getCtacteComprobanteUrl is re-imported per-test below (see note above)
@@ -219,6 +219,27 @@ describe('ctacte-mutations API', () => {
       expect(call[1]).toMatchObject({ method: 'POST' })
       expect(call[1]?.body).toEqual({ body: 'Llamó el socio consultando por el saldo.' })
       expect(result.id).toBe('note-1')
+    })
+  })
+
+  // ─── deleteCtacteNote ──────────────────────────────────────────────
+
+  describe('deleteCtacteNote()', () => {
+    const SAMPLE_NOTE_ID = 'note-1234'
+
+    it('DELETEs /api/v1/socios/:id/ctacte/movements/:movementId/notes/:noteId', async () => {
+      apiFetchMock.mockResolvedValueOnce({ id: SAMPLE_NOTE_ID, deleted: true })
+
+      const result = await deleteCtacteNote(SAMPLE_SOCIO_ID, SAMPLE_MOVEMENT_ID, SAMPLE_NOTE_ID)
+
+      expect(apiFetchMock).toHaveBeenCalledTimes(1)
+      const call = apiFetchMock.mock.calls[0]!
+      expect(call[0]).toBe(
+        `/api/v1/socios/${SAMPLE_SOCIO_ID}/ctacte/movements/${SAMPLE_MOVEMENT_ID}/notes/${SAMPLE_NOTE_ID}`,
+      )
+      expect(call[1]).toMatchObject({ method: 'DELETE' })
+      expect(call[1]?.body).toBeUndefined()
+      expect(result).toEqual({ id: SAMPLE_NOTE_ID, deleted: true })
     })
   })
 
