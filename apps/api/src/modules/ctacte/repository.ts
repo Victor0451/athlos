@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, lt, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, lte, lt, sql, type SQL } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { ctacte, type Ctacte, type NewCtacte } from '@athlos/db/schema'
 import { parseCents, centsToString } from '../../test-standins/db.ts'
@@ -223,6 +223,24 @@ export interface ListMovementsByDateRangeInput {
   /** Hard cap on the result size. The comprobante route enforces 50
    *  before invoking puppeteer; the SQL cap is defense-in-depth. */
   limit: number
+}
+
+export async function countMovementsByDateRange(
+  db: Db,
+  input: Omit<ListMovementsByDateRangeInput, 'limit'>,
+): Promise<number> {
+  const conds: Array<SQL | undefined> = [
+    eq(ctacte.socioId, input.socioId),
+    gte(ctacte.fecha, input.from),
+    lte(ctacte.fecha, input.to),
+    eq(ctacte.anulado, false),
+  ]
+  const where = and(...conds.filter((c): c is SQL => c !== undefined))
+  const [result] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(ctacte)
+    .where(where)
+  return Number(result?.n ?? 0)
 }
 
 /**

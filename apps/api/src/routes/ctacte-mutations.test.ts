@@ -223,6 +223,40 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/payment', () => {
     expect(res.json().error).toBe('VALIDATION_ERROR')
   })
 
+  it.each([
+    ['before fecha_alta', '2023-12-30'],
+    ['in the future', '2099-01-01'],
+  ])(
+    'returns field-level fecha validation without side effects when the date is %s',
+    async (_case, fecha) => {
+      seedSocio()
+      const body = buildMultipartText({ monto: '1500', fecha, concepto: 'Cuota Julio' })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'content-type': 'multipart/form-data; boundary=----TestBoundary',
+          'idempotency-key': IDEMPOTENCY_KEY,
+        },
+        payload: body,
+      })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toMatchObject({
+        error: 'VALIDATION_ERROR',
+        details: [{ field: 'fecha', message: "outside socio's relationship range" }],
+      })
+      expect(standin.state.ctacte).toHaveLength(0)
+      expect(
+        standin.state.auditEvents.filter(
+          (event: { action?: string }) => event.action === 'CTACTE_PAYMENT_REGISTERED',
+        ),
+      ).toHaveLength(0)
+    },
+  )
+
   it('returns 404 when the socio does not exist', async () => {
     const body = buildMultipartText({ monto: '1500', fecha: '2026-07-09', concepto: 'Cuota Julio' })
     const res = await app.inject({
@@ -553,5 +587,45 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     expect(audit.action).toBe('CTACTE_COMPROBANTE_PRINTED')
     expect((audit.metadata as Record<string, unknown>)?.sha256).toBeDefined()
     expect((audit.metadata as Record<string, unknown>)?.byte_size).toBeDefined()
+  })
+
+  it('returns the actual 51-row count without generating or auditing a PDF', async () => {
+    seedSocio()
+    for (let index = 0; index < 51; index += 1) {
+      standin.state.ctacte.push({
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-10',
+        tipo: 'CREDITO',
+        concepto: `Cuota ${index}`,
+        debe: '0.00',
+        haber: '1500.00',
+        anulado: false,
+        anuladoAt: null,
+        anuladoMotivo: null,
+        cctcuenta: 'PRINCIPAL',
+        legacyId: null,
+        comprobanteAttachmentId: null,
+        createdAt: new Date(),
+      } as never)
+    }
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`,
+      headers: { authorization: `Bearer ${bearer()}` },
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({
+      error: 'VALIDATION_ERROR',
+      details: { cap: 50, requested: 51 },
+    })
+    expect(pdfGenerator.generate).not.toHaveBeenCalled()
+    expect(
+      standin.state.auditEvents.filter(
+        (event: { action?: string }) => event.action === 'CTACTE_COMPROBANTE_PRINTED',
+      ),
+    ).toHaveLength(0)
   })
 })

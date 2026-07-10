@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getMovementsForComprobante } from './ctacte-mutations.ts'
 
 /**
@@ -7,12 +7,14 @@ import { getMovementsForComprobante } from './ctacte-mutations.ts'
  */
 
 const repoInsertCtacteRow = vi.fn()
+const repoCountMovementsByDateRange = vi.fn()
 const repoListMovementsByDateRange = vi.fn()
 const repoFindSocio = vi.fn()
 const emitAuditMock = vi.fn()
 
 vi.mock('../../ctacte/repository.ts', () => ({
   insertCtacteRow: (...args: unknown[]) => repoInsertCtacteRow(...args),
+  countMovementsByDateRange: (...args: unknown[]) => repoCountMovementsByDateRange(...args),
   listMovementsByDateRange: (...args: unknown[]) => repoListMovementsByDateRange(...args),
 }))
 
@@ -33,12 +35,17 @@ vi.mock('@athlos/audit', () => ({
 const dbMock = {} as never
 const SOCIO_ID = '11111111-1111-4111-8111-111111111111'
 
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
 describe('getMovementsForComprobante', () => {
   it('returns the movements from the repository', async () => {
     const rows = [
       { id: 'm-1', fecha: '2026-07-15', tipo: 'CREDITO' as const, debe: '0.00', haber: '50.00' },
       { id: 'm-2', fecha: '2026-07-20', tipo: 'DEBITO' as const, debe: '200.00', haber: '0.00' },
     ]
+    repoCountMovementsByDateRange.mockResolvedValueOnce(2)
     repoListMovementsByDateRange.mockResolvedValueOnce(rows)
 
     const movements = await getMovementsForComprobante({
@@ -58,17 +65,15 @@ describe('getMovementsForComprobante', () => {
         limit: 50,
       }),
     )
+    expect(repoCountMovementsByDateRange).toHaveBeenCalledWith(dbMock, {
+      socioId: SOCIO_ID,
+      from: '2026-07-01',
+      to: '2026-07-31',
+    })
   })
 
-  it('throws VALIDATION_ERROR with cap details when the repo returns > 50 rows', async () => {
-    const rows = Array.from({ length: 51 }, (_, i) => ({
-      id: `m-${i}`,
-      fecha: '2026-07-01',
-      tipo: 'CREDITO' as const,
-      debe: '0.00',
-      haber: '10.00',
-    }))
-    repoListMovementsByDateRange.mockResolvedValueOnce(rows)
+  it('throws VALIDATION_ERROR with the full range count before fetching PDF rows', async () => {
+    repoCountMovementsByDateRange.mockResolvedValueOnce(51)
 
     await expect(
       getMovementsForComprobante({
@@ -82,5 +87,6 @@ describe('getMovementsForComprobante', () => {
       code: 'VALIDATION_ERROR',
       details: { cap: 50, requested: 51 },
     })
+    expect(repoListMovementsByDateRange).not.toHaveBeenCalled()
   })
 })
