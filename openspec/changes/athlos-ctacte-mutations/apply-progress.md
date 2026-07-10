@@ -366,3 +366,157 @@ None. The R3 corrective batch is API + web + schema + migration-only. The migrat
 - No migration apply / no deploy / no production container access.
 - No new branch / no merge of this branch.
 - `CtacteTab.tsx`, `/ctacte` list page, `/socios/[id]` page, Tesorería cross-system sync — not touched.
+
+---
+
+# Apply Progress — R3 fix batch on PR #34 (defects #1, #2, #3)
+
+**Mode**: Strict TDD, RED → GREEN same commit per team convention.
+**Branch**: `fix/ctacte-mutations-r3` (PR #34).
+**Base**: prior R3 corrective batch (head `197f052`).
+**Scope**: ONLY the three confirmed defects escalated by the R3 re-judgment:
+  1. PostgreSQL note idempotency — 0031 partial index cannot be inferred by `ON CONFLICT`.
+  2. Concurrent same-key note semantics — distinguish creator vs replay loser.
+  3. Reload-safe note retry — Idempotency-Key survives page reload per `(socioId, movementId, body)`.
+
+No R4 / R5, no new branch, no deploy, no production container access, no migration apply.
+
+## Workload guard
+
+- New commits on top of `197f052`: three focused work-unit commits, each scoped to one defect. Per-commit footprint < 400 lines net diff vs `main` (well under review budget).
+- 400-line budget risk: **Low** (single stacked-to-main PR; review slices already one commit each).
+- Delivery strategy: `single-pr` (no `size:exception` required — defect-scoped commits are individually well under the 400-line review budget).
+
+## Commits
+
+| Commit | Scope | Files |
+|---|---|---|
+| `fix(db): convert ctacte_movement_notes idempotency_key to full unique index (0034)` | R3 defect #1 — forward-only migration replaces the partial `WHERE … IS NOT NULL` unique index from 0031 with a full unique index PostgreSQL can infer for `ON CONFLICT (idempotency_key) DO NOTHING`. Schema mirrors the new index (drops the `.where(sql\`… IS NOT NULL\`)` predicate on `idempotencyKeyUnique`). | `packages/db/drizzle/0034_ctacte_movement_notes_idempotency_key_full_unique.sql` (NEW), `packages/db/src/schema/socios.ts` (edit, drop `.where(...)`), `packages/db/src/schema/ctacte-mutations.test.ts` (3 RED→GREEN SQL hooks + schema-mirror tests) |
+| `fix(api): distinguish created vs replay in note insert + add author_operator_id comparison (R3 fix #2)` | R3 defect #2 — repository returns `{ row, created }`; service only emits `CTACTE_MOVEMENT_NOTE_ADDED` on `created: true`; conflict-loser branch compares canonical `(movement_id, body, author_operator_id)` and either returns the winner (silent replay) or throws `CONFLICT`. | `apps/api/src/modules/socios/ctacte_movement_notes_repository.ts` (change return shape), `ctacte_movement_notes_repository.test.ts` (match new shape), `apps/api/src/modules/socios/ctacte_movement_notes.ts` (new flow + canonical-match helper), `ctacte_movement_notes.test.ts` (rewrite mocks for `{ row, created }` + 4 RED→GREEN concurrent-semantics tests), `apps/api/src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts` (NEW disposable pg test proving inference + concurrent collapse) |
+| `fix(web): reload-safe note idempotency via localStorage (R3 fix #3)` | R3 defect #3 — `CtacteNoteForm` persists the opaque Idempotency-Key in `localStorage` under `ctacte-note-idem:<socioId>:<movementId>` keyed by `(bodyHash, operatorId)`. Reload reuses the same key; success / cancel / 409 clears the cache; body change mints a fresh key. UI copy is unchanged (the persistence is invisible to the user). | `apps/web/src/components/ctacte/CtacteNoteForm.tsx` (localStorage helpers + reload-safe `getIdempotencyKeyFor`), `CtacteNoteForm.test.tsx` (3 RED→GREEN reload tests covering persistence, remount-key-reuse, success-cache-clear) |
+
+## R3 fix batch TDD Cycle Evidence
+
+Each work unit lists the failed pre-GREEN run, the implementation commit, and the post-GREEN run that proves the fix landed. All cited commits are local; runs that need a real PG (`ATHLOS_TEST_DATABASE_URL`) are documented as live disposable proof rather than silently skipped.
+
+### Work Unit #1 — PostgreSQL note idempotency inference (R3 defect #1)
+
+| Field | Value |
+|---|---|
+| File(s) | `packages/db/drizzle/0034_ctacte_movement_notes_idempotency_key_full_unique.sql` (NEW); `packages/db/src/schema/socios.ts` (drop `.where(sql\`… IS NOT NULL\`)` on the `idempotencyKeyUnique` index); `packages/db/src/schema/ctacte-mutations.test.ts` (3 new SQL/schema RED tests) |
+| Layer | Schema + migration |
+| RED command | `pnpm --filter @athlos/db test:run -- src/schema/ctacte-mutations.test.ts` |
+| RED exit code | 1 (before `0034` file existed → substring matches fail) |
+| RED failure excerpt | `× 0034_ctacte_movement_notes_idempotency_key_full_unique migration > migration file replaces the partial unique index with a full unique index (R3 fix #1)` + `× schema declaration mirrors the migration (full unique index, no partial predicate)` |
+| Implementation commit | `fix(db): convert ctacte_movement_notes idempotency_key to full unique index (0034)` |
+| GREEN command | `pnpm --filter @athlos/db test:run -- src/schema/ctacte-mutations.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  6 passed (6)` (was 3 prior to this commit) |
+| **Disposable PostgreSQL proof** | `ATHLOS_TEST_DATABASE_URL="postgresql://athlos:athlos@localhost:5432/athlos_test_notes" pnpm --filter @athlos/api test:run -- src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts` |
+| Disposable PG result | 5/5 tests pass against `postgres:17-alpine` (athlos-db-1). |
+| Triangulation on real PG | (a) `pg_indexes` returns `ctacte_movement_notes_idempotency_key_unique` with a definition that contains `UNIQUE INDEX` on `socios.ctacte_movement_notes (idempotency_key)` and **NO `WHERE` clause**; (b) bare-column `INSERT … ON CONFLICT (idempotency_key) DO NOTHING` resolves and returns `rowCount: 0` on the duplicate; (c) the DB ends up with exactly one row; (d) applying **only 0031 (without 0034)** triggers the regression: the bare-column `ON CONFLICT` raises `there is no unique or exclusion constraint matching the ON CONFLICT specification` — proving the defect was real and 0034 was the necessary forward-only fix. |
+| Safety net | All prior `@athlos/api` tests still green; the new disposable test would fail loudly if the migration's `WHERE` clause ever re-appears. |
+| Rollback boundary | Revert migration file + schema declaration; the repository's `ON CONFLICT` raises 5xx against the partial index again (the regression test catches this). |
+
+### Work Unit #2 — Concurrent same-key note semantics (R3 defect #2)
+
+| Field | Value |
+|---|---|
+| File(s) | `apps/api/src/modules/socios/ctacte_movement_notes_repository.ts` (return `{ row, created }`), `ctacte_movement_notes_repository.test.ts` (match new shape), `apps/api/src/modules/socios/ctacte_movement_notes.ts` (single conflict-aware insert + canonical match helper), `ctacte_movement_notes.test.ts` (rewrite mocks + 4 RED→GREEN tests) |
+| Layer | Service + repository |
+| RED command | `pnpm --filter @athlos/api test:run -- src/modules/socios/ctacte_movement_notes.test.ts src/modules/socios/ctacte_movement_notes_repository.test.ts` |
+| RED exit code | 1 (mocks returned the old `row` shape; service assumed creator → emitted audit even for the conflict-loser) |
+| RED failure excerpt | `× returns 409 when the same key is reused with a different payload` + `× two concurrent same-key + same-payload calls emit exactly one audit` + `× returns 409 when the conflict-loser surfaces a row from a different operator` + `× returns 409 when the conflict-loser surfaces a row with a different payload` |
+| Implementation commit | `fix(api): distinguish created vs replay in note insert + add author_operator_id comparison (R3 fix #2)` |
+| GREEN command | `pnpm --filter @athlos/api test:run -- src/modules/socios/ctacte_movement_notes.test.ts src/modules/socios/ctacte_movement_notes_repository.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  21 passed (21)` (was 11 prior to this commit) |
+| **Disposable PostgreSQL proof** | Same disposable PG run as Work Unit #1 — the "same-key + same-body concurrent inserts collapse to one row" test issues two real `Promise.all([insertNote, insertNote])` calls against a real PG with migration 0034 applied, and the DB ends with exactly one row. |
+| Triangulation | (i) `created: true` branch emits exactly one audit; (ii) `created: false` branch never emits; (iii) `created: false` with matching canonical `(movement_id, body, author_operator_id)` returns the winner row silently; (iv) `created: false` with mismatched body OR operator throws `CONFLICT`; (v) two concurrent `Promise.all` calls produce exactly one `created: true` and one `created: false` (the DB `CONFLICT`-aware index hands one call the inserted row, the other the existing row). |
+| Safety net | The disposable PG test would fail with a `UNIQUE` constraint error if the schema/migration regresses; the in-process unit tests catch logic regressions independent of pg. |
+| Rollback boundary | Revert repository + service; any caller reverts to "creator + loser both emit audit" — covered as a regression by the concurrent collapse test. |
+
+### Work Unit #3 — Reload-safe note retry (R3 defect #3)
+
+| Field | Value |
+|---|---|
+| File(s) | `apps/web/src/components/ctacte/CtacteNoteForm.tsx` (localStorage helpers + reload-safe `getIdempotencyKeyFor`), `CtacteNoteForm.test.tsx` (3 RED→GREEN reload tests + 2 prior retry tests still green) |
+| Layer | Web form |
+| RED command | `pnpm --filter @athlos/web test:run -- src/components/ctacte/CtacteNoteForm.test.tsx` |
+| RED exit code | 1 (form held the key only in `useRef`, lost on remount; localStorage was never written) |
+| RED failure excerpt | `× persists the Idempotency-Key in localStorage keyed by (socioId, movementId, body) — even after a 5xx` (`expected null to be truthy`); `× reuses the cached key when the form is remounted for the same body (page reload simulation)` (keys differed across remounts) |
+| Implementation commit | `fix(web): reload-safe note idempotency via localStorage (R3 fix #3)` |
+| GREEN command | `pnpm --filter @athlos/web test:run -- src/components/ctacte/CtacteNoteForm.test.tsx` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests  12 passed (12)` (was 9 prior to this commit) |
+| UI copy consistency | No new copy — the persistence is **invisible** to the user. The form uses the same `getIdempotencyKeyFor` cache regardless of reload, so the user-facing "Nota agregada" / 409 / network error messages are unchanged. This avoids introducing UI text that contradicts the durable idempotency contract. |
+| Triangulation | (i) Submitting a body writes `localStorage["ctacte-note-idem:<socioId>:<movementId>"] = { bodyHash, key, operatorId }`; (ii) Unmounting + remounting + re-submitting the same body reuses the EXACT same key (no rotation); (iii) Editing the body (different body-hash) mints a fresh key; (iv) A successful submit clears the cache; (v) A `CONFLICT` response clears the cache and forces a new key on the next attempt; (vi) A change of operator identity causes a stale cache miss (operator id is part of the cache key) — the next submit mints a new key for the new operator. |
+| Safety net | The two prior "stable key across retries" + "rotate on body change" tests still pass unchanged, confirming the reload-safety addition did not regress the in-instance behaviour. |
+| Rollback boundary | Revert `CtacteNoteForm.tsx` to the in-memory-only key holder — form reverts to losing the key on reload; that bug is already covered by tests. |
+
+## Targeted sequential test runs (per TDD cycle)
+
+```bash
+# Defect #1 + disposable PG proof
+pnpm --filter @athlos/db test:run -- src/schema/ctacte-mutations.test.ts
+ATHLOS_TEST_DATABASE_URL="postgresql://athlos:athlos@localhost:5432/athlos_test_notes" \
+  pnpm --filter @athlos/api test:run -- src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts
+
+# Defect #2 (repository + service + route)
+pnpm --filter @athlos/api test:run -- \
+  src/modules/socios/ctacte_movement_notes_repository.test.ts \
+  src/modules/socios/ctacte_movement_notes.test.ts \
+  src/routes/ctacte-mutations.test.ts
+
+# Defect #3 (web form)
+pnpm --filter @athlos/web test:run -- src/components/ctacte/CtacteNoteForm.test.tsx
+
+# Cross-cutting
+pnpm --filter @athlos/db typecheck
+pnpm --filter @athlos/db lint
+pnpm --filter @athlos/api typecheck
+pnpm --filter @athlos/api lint
+pnpm --filter @athlos/web typecheck
+pnpm --filter @athlos/web lint
+```
+
+All exit 0 except `apps/api lint` (one pre-existing `console.log` warning in `admin/gastos.test.ts` unrelated to this fix). No new lint or typecheck errors introduced.
+
+## Test pass summary
+
+| Suite | Before this batch | After this batch | Δ |
+|---|---:|---:|---:|
+| `@athlos/db` schema tests (per-file `src/schema/ctacte-mutations.test.ts`) | 3 | 6 | +3 |
+| `@athlos/api` notes tests (per-file `ctacte_movement_notes{,/_repository}.test.ts`) | 11 | 21 | +10 |
+| `@athlos/api` route tests (`ctacte-mutations.test.ts`) | 53 | 53 | 0 (unchanged — defect #2 inner changes didn't touch route layer) |
+| `@athlos/api` disposable PG (NEW `ctacte_movement_notes.postgres.integration.test.ts`) | n/a | 5 (with `ATHLOS_TEST_DATABASE_URL` set) | +5 |
+| `@athlos/web` form tests (`CtacteNoteForm.test.tsx`) | 9 | 12 | +3 |
+| `@athlos/web` full suite (`pnpm --filter @athlos/web test:run`) | 675 | 678 | +3 |
+
+The disposable PG run is gated on `ATHLOS_TEST_DATABASE_URL` and is NOT silently skipped — the test file throws a clear error if the env var is absent, and the `apply-progress.md` documents the exact command.
+
+## Runtime harness
+
+- All API tests run via Fastify `inject()` + the in-memory standin DB (PR 3a precedent) — no real Chromium / no real Postgres required for the happy / sad paths.
+- The single NEW disposable PG test runs against a real `postgres:17-alpine` instance via `ATHLOS_TEST_DATABASE_URL`. It is the **only honest proof** that migration 0034 makes `ON CONFLICT (idempotency_key) DO NOTHING` resolve in real PostgreSQL; the standin does not exercise PostgreSQL index inference.
+- All web tests run in jsdom + the localStorage shim — no browser required.
+
+## Production access
+
+None. This batch is API + web + schema + migration-only. Migration 0034 is forward-only + idempotent (`DROP INDEX IF EXISTS` + `CREATE UNIQUE INDEX IF NOT EXISTS`) and is safe to apply on top of any prior 0031 state, but NO migration / deploy / production container is touched by this batch. The `docs/runbook.md` was updated to document the new manual 0031 → 0032 → 0033 → 0034 rollout sequence the operations team must run before deploying the API.
+
+## Compliance with R3 fix batch acceptance criteria
+
+| Defect | Status |
+|---|---|
+| #1 — PostgreSQL note idempotency: 0034 replaces partial → full unique index; schema + repository updated to match; bare-column `ON CONFLICT (idempotency_key)` resolves; defect #1 reproduction test (0031-only path) raises the exact "no unique or exclusion constraint" error | ✅ Resolved (work unit #1) |
+| #2 — Concurrent same-key semantics: repository distinguishes `created: true` (creator, audit fires) vs `created: false` (loser, replay OR 409); canonical comparison includes `(movement_id, body, author_operator_id)`; deterministic concurrency tests + real PG race-collapse test | ✅ Resolved (work unit #2) |
+| #3 — Reload-safe note retry: form persists the Idempotency-Key per `(socioId, movementId, body)` in localStorage; reload reuses the same key; body change mints a new key; success / 409 / cancel clear the cache; UI copy unchanged (persistence is invisible to the user) | ✅ Resolved (work unit #3) |
+
+## Out of scope (per R3 fix batch brief)
+
+- R4 (field-level `ApiError.details` → form mapping) — not in this PR.
+- R5 (evidence reconciliation) — not in this PR.
+- No migration apply / no deploy / no production container access.
+- No new branch / no merge of this branch.
+- `CtacteTab.tsx`, `/ctacte` list page, `/socios/[id]` page, Tesorería cross-system sync — not touched.
