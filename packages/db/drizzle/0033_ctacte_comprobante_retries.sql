@@ -22,5 +22,18 @@ ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS lease_
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0;
 ALTER TABLE tesoreria.ctacte_comprobante_retries ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ctacte_comprobante_retries_status_check'
+      AND conrelid = 'tesoreria.ctacte_comprobante_retries'::regclass
+  ) THEN
+    ALTER TABLE tesoreria.ctacte_comprobante_retries
+      ADD CONSTRAINT ctacte_comprobante_retries_status_check
+      CHECK (status IN ('rendering', 'complete', 'failed'));
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS ctacte_comprobante_retries_expires_at_idx
   ON tesoreria.ctacte_comprobante_retries (expires_at);

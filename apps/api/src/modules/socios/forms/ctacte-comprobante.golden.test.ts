@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { renderComprobante } from './ctacte-comprobante.ts'
+import {
+  renderComprobante,
+  type ComprobanteLeaseStore,
+  type RenderComprobanteResult,
+} from './ctacte-comprobante.ts'
 import { getMovementsForComprobante } from './ctacte-mutations.ts'
 
 /**
@@ -61,33 +65,36 @@ function buildPdfGeneratorSpy() {
   }
 }
 
-function buildDurableReplayDb() {
-  const rows = new Map<string, Record<string, unknown>>()
+function buildDurableReplayStore(): ComprobanteLeaseStore {
+  const rows = new Map<
+    string,
+    { status: string; owner: string | null; result?: RenderComprobanteResult }
+  >()
   return {
-    delete: () => ({ where: async () => undefined }),
-    insert: () => ({
-      values: (value: Record<string, unknown>) => ({
-        onConflictDoNothing: () => ({
-          returning: async () => {
-            const key = value.idempotencyKey as string
-            if (rows.has(key)) return []
-            rows.set(key, { ...value })
-            return [rows.get(key)]
-          },
-        }),
-      }),
-    }),
-    select: () => ({
-      from: () => ({ where: () => ({ limit: async () => Array.from(rows.values()) }) }),
-    }),
-    update: () => ({
-      set: (values: Record<string, unknown>) => ({
-        where: async () => {
-          const [key] = rows.keys()
-          if (key) rows.set(key, { ...rows.get(key), ...values })
-        },
-      }),
-    }),
+    async claim(key, owner) {
+      const row = rows.get(key)
+      if (!row || row.status === 'failed') {
+        rows.set(key, { status: 'rendering', owner })
+        return { kind: 'owner' }
+      }
+      if (row.status === 'complete') return { kind: 'complete', result: row.result! }
+      return { kind: 'follower' }
+    },
+    async heartbeat() {
+      return true
+    },
+    async complete(key, owner, result) {
+      const row = rows.get(key)
+      if (!row || row.owner !== owner) return false
+      rows.set(key, { status: 'complete', owner: null, result })
+      return true
+    },
+    async fail(key, owner) {
+      const row = rows.get(key)
+      if (!row || row.owner !== owner) return false
+      rows.set(key, { status: 'failed', owner: null })
+      return true
+    },
   }
 }
 
@@ -123,7 +130,8 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
-      db: buildDurableReplayDb() as never,
+      db: {} as never,
+      leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
     })
 
@@ -168,7 +176,8 @@ describe('renderComprobante — happy path', () => {
         operatorId: OPERATOR_ID,
         from: '2026-07-01',
         to: '2026-07-31',
-        db: buildDurableReplayDb() as never,
+        db: {} as never,
+        leaseStore: buildDurableReplayStore(),
         pdfGenerator: pdfGenerator as never,
       }),
     ).rejects.toThrow(/Socio not found/i)
@@ -194,7 +203,8 @@ describe('renderComprobante — happy path', () => {
       operatorId: OPERATOR_ID,
       from: '2026-07-01',
       to: '2026-07-31',
-      db: buildDurableReplayDb() as never,
+      db: {} as never,
+      leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
     }
 
@@ -226,7 +236,8 @@ describe('renderComprobante — happy path', () => {
       from: '2026-07-01',
       to: '2026-07-31',
       idempotencyKey: 'slow-replay-key',
-      db: buildDurableReplayDb() as never,
+      db: {} as never,
+      leaseStore: buildDurableReplayStore(),
       pdfGenerator: pdfGenerator as never,
     }
 

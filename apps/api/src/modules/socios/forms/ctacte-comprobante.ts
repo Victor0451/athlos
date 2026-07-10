@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto'
-import { eq, lt } from 'drizzle-orm'
+import { createHash, randomUUID } from 'node:crypto'
+import { sql } from 'drizzle-orm'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { Db } from '@athlos/db'
 import { emitAudit } from '@athlos/audit'
-import { ctacteComprobanteRetries } from '@athlos/db/schema'
 import { findById } from '../repository.ts'
 import { getMovementsForComprobante } from './ctacte-mutations.ts'
 import type { PdfGenerator } from './pdf-generator.ts'
@@ -48,6 +47,10 @@ export interface RenderComprobanteParams {
   pdfGenerator: PdfGenerator
   /** Override the clock for tests. */
   now?: () => Date
+  /** Test seam for deterministic replica and restart coverage. */
+  leaseStore?: ComprobanteLeaseStore
+  leaseDurationMs?: number
+  heartbeatMs?: number
 }
 
 export interface RenderComprobanteResult {
@@ -58,16 +61,60 @@ export interface RenderComprobanteResult {
   movementCount: number
 }
 
+type LeaseClaim =
+  | { kind: 'owner' }
+  | { kind: 'follower' }
+  | { kind: 'complete'; result: RenderComprobanteResult }
+
+/** The durable state-machine boundary. Production uses PostgreSQL; tests share an equivalent store. */
+export interface ComprobanteLeaseStore {
+  claim(key: string, owner: string, now: number, leaseMs: number): Promise<LeaseClaim>
+  heartbeat(key: string, owner: string, now: number, leaseMs: number): Promise<boolean>
+  complete(key: string, owner: string, result: RenderComprobanteResult): Promise<boolean>
+  fail(key: string, owner: string): Promise<boolean>
+}
+
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
   const retryKey = params.idempotencyKey ?? comprobanteRetryKey(params)
-  const cached = await claimOrReadComprobanteRetry(params.db, retryKey)
-  if (cached) return cached
-  const socio = await findById(params.db, params.socioId)
-  if (!socio) {
-    throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
+  const store = params.leaseStore ?? createPostgresComprobanteLeaseStore(params.db)
+  const owner = randomUUID()
+  const leaseDurationMs = params.leaseDurationMs ?? 5_000
+  const heartbeatMs = params.heartbeatMs ?? Math.max(100, Math.floor(leaseDurationMs / 3))
+  const now = params.now ?? defaultNow
+
+  for (let attempt = 0; ; attempt += 1) {
+    const claim = await store.claim(retryKey, owner, now().valueOf(), leaseDurationMs)
+    if (claim.kind === 'complete') return claim.result
+    if (claim.kind === 'follower') {
+      await delay(Math.min(250, 15 + attempt * 10))
+      continue
+    }
+
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    try {
+      heartbeat = setInterval(() => {
+        void store.heartbeat(retryKey, owner, now().valueOf(), leaseDurationMs)
+      }, heartbeatMs)
+      return await generateOwnedComprobante(params, retryKey, owner, store)
+    } catch (error) {
+      await store.fail(retryKey, owner)
+      throw error
+    } finally {
+      if (heartbeat) clearInterval(heartbeat)
+    }
   }
+}
+
+async function generateOwnedComprobante(
+  params: RenderComprobanteParams,
+  retryKey: string,
+  owner: string,
+  store: ComprobanteLeaseStore,
+): Promise<RenderComprobanteResult> {
+  const socio = await findById(params.db, params.socioId)
+  if (!socio) throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
 
   const movements = await getMovementsForComprobante({
     db: params.db,
@@ -102,13 +149,7 @@ export async function renderComprobante(
     },
   )
 
-  let pdf: Buffer
-  try {
-    pdf = await params.pdfGenerator.generate(html)
-  } catch (error) {
-    await failComprobanteRetry(params.db, retryKey)
-    throw error
-  }
+  const pdf = await params.pdfGenerator.generate(html)
   const sha256 = createHash('sha256').update(pdf).digest('hex')
   const byteSize = pdf.byteLength
 
@@ -117,6 +158,11 @@ export async function renderComprobante(
     from: params.from,
     to: params.to,
   })
+
+  const result = { pdf, filename, sha256, byteSize, movementCount: movements.length }
+  if (!(await store.complete(retryKey, owner, result))) {
+    throw new Error('Comprobante lease ownership was lost before completion')
+  }
 
   await emitComprobantePrintedAudit(params.db, {
     operatorId: params.operatorId,
@@ -128,78 +174,93 @@ export async function renderComprobante(
     byteSize,
   })
 
-  const result = { pdf, filename, sha256, byteSize, movementCount: movements.length }
-  await completeComprobanteRetry(params.db, retryKey, result)
   return result
 }
 
-async function claimOrReadComprobanteRetry(
-  db: Db,
-  key: string,
-): Promise<RenderComprobanteResult | null> {
-  // Results are intentionally short-lived: this table is a replay ledger,
-  // not an in-process PDF cache. Opportunistic cleanup bounds durable PDF
-  // retention without retaining Buffers in module memory.
-  await db
-    .delete(ctacteComprobanteRetries)
-    .where(lt(ctacteComprobanteRetries.expiresAt, new Date()))
-  const expiresAt = new Date((Math.floor(Date.now() / 10_000) + 1) * 10_000)
-  const [claimed] = await db
-    .insert(ctacteComprobanteRetries)
-    .values({ idempotencyKey: key, status: 'rendering', expiresAt })
-    .onConflictDoNothing({ target: ctacteComprobanteRetries.idempotencyKey })
-    .returning()
-  if (claimed) return null
-
-  for (let attempt = 0; ; attempt += 1) {
-    const [existing] = await db
-      .select()
-      .from(ctacteComprobanteRetries)
-      .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
-      .limit(1)
-    if (
-      existing?.status === 'complete' &&
-      existing.pdfBase64 &&
-      existing.sha256 &&
-      existing.byteSize != null &&
-      existing.filename
-    ) {
-      return {
-        pdf: Buffer.from(existing.pdfBase64, 'base64'),
-        filename: existing.filename,
-        sha256: existing.sha256,
-        byteSize: existing.byteSize,
-        movementCount: existing.movementCount ?? 0,
+export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseStore {
+  const rows = async <T>(query: ReturnType<typeof sql>): Promise<T[]> => {
+    const result = await db.execute(query)
+    return result.rows as unknown as T[]
+  }
+  return {
+    async claim(key, owner, now, leaseMs) {
+      const leaseExpiresAt = new Date(now + leaseMs)
+      const expiresAt = new Date(now + 24 * 60 * 60 * 1000)
+      const inserted = await rows<{ idempotency_key: string }>(sql`
+        INSERT INTO tesoreria.ctacte_comprobante_retries
+          (idempotency_key, status, lease_owner, lease_expires_at, attempt_count, expires_at, updated_at)
+        VALUES (${key}, 'rendering', ${owner}, ${leaseExpiresAt}, 1, ${expiresAt}, now())
+        ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key`)
+      if (inserted.length) return { kind: 'owner' }
+      const reclaimed = await rows<{ idempotency_key: string }>(sql`
+        UPDATE tesoreria.ctacte_comprobante_retries
+        SET status = 'rendering', lease_owner = ${owner}, lease_expires_at = ${leaseExpiresAt},
+            attempt_count = attempt_count + 1, updated_at = now()
+        WHERE idempotency_key = ${key}
+          AND (status = 'failed' OR (status = 'rendering' AND lease_expires_at <= ${new Date(now)}))
+        RETURNING idempotency_key`)
+      if (reclaimed.length) return { kind: 'owner' }
+      const [existing] = await rows<{
+        status: string
+        pdf_base64: string | null
+        sha256: string | null
+        byte_size: number | null
+        filename: string | null
+        movement_count: number | null
+      }>(sql`
+        SELECT status, pdf_base64, sha256, byte_size, filename, movement_count
+        FROM tesoreria.ctacte_comprobante_retries WHERE idempotency_key = ${key}`)
+      if (
+        existing?.status === 'complete' &&
+        existing.pdf_base64 &&
+        existing.sha256 &&
+        existing.byte_size != null &&
+        existing.filename
+      ) {
+        return {
+          kind: 'complete',
+          result: {
+            pdf: Buffer.from(existing.pdf_base64, 'base64'),
+            filename: existing.filename,
+            sha256: existing.sha256,
+            byteSize: existing.byte_size,
+            movementCount: existing.movement_count ?? 0,
+          },
+        }
       }
-    }
-    if (existing?.status === 'failed') return null
-    await new Promise((resolve) => setTimeout(resolve, Math.min(100, 10 + attempt * 5)))
+      return { kind: 'follower' }
+    },
+    async heartbeat(key, owner, now, leaseMs) {
+      const updated = await rows<{ idempotency_key: string }>(sql`
+        UPDATE tesoreria.ctacte_comprobante_retries
+        SET lease_expires_at = ${new Date(now + leaseMs)}, updated_at = now()
+        WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
+        RETURNING idempotency_key`)
+      return updated.length === 1
+    },
+    async complete(key, owner, result) {
+      const updated = await rows<{ idempotency_key: string }>(sql`
+        UPDATE tesoreria.ctacte_comprobante_retries
+        SET status = 'complete', pdf_base64 = ${result.pdf.toString('base64')}, sha256 = ${result.sha256},
+            byte_size = ${result.byteSize}, filename = ${result.filename}, movement_count = ${result.movementCount},
+            lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+        WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
+        RETURNING idempotency_key`)
+      return updated.length === 1
+    },
+    async fail(key, owner) {
+      const updated = await rows<{ idempotency_key: string }>(sql`
+        UPDATE tesoreria.ctacte_comprobante_retries
+        SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+        WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
+        RETURNING idempotency_key`)
+      return updated.length === 1
+    },
   }
 }
 
-async function completeComprobanteRetry(
-  db: Db,
-  key: string,
-  result: RenderComprobanteResult,
-): Promise<void> {
-  await db
-    .update(ctacteComprobanteRetries)
-    .set({
-      status: 'complete',
-      pdfBase64: result.pdf.toString('base64'),
-      sha256: result.sha256,
-      byteSize: result.byteSize,
-      filename: result.filename,
-      movementCount: result.movementCount,
-    })
-    .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
-}
-
-async function failComprobanteRetry(db: Db, key: string): Promise<void> {
-  await db
-    .update(ctacteComprobanteRetries)
-    .set({ status: 'failed' })
-    .where(eq(ctacteComprobanteRetries.idempotencyKey, key))
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function comprobanteRetryKey(params: RenderComprobanteParams): string {
