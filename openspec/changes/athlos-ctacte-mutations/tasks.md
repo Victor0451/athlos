@@ -452,7 +452,7 @@ Chain strategy: feature-branch-chain
 - [x] R1.3 — Replace the comprobante count/fetch TOCTOU with a single `LIMIT 51` snapshot query and deterministic interleaving coverage.
 - [ ] R2 — Superseded/not complete: the prior time-bucket debit/comprobante implementation does not meet the amended caller-key and durable replay contracts.
 - [x] R2 — Validate `movementId` ownership against `:socioId` before every POST note write; return the specified not-found/error envelope and add a cross-socio write rejection test with no note or audit side effect.
-- [ ] R2 corrective re-run — Superseded/not complete: PR #31 leaves failed claims stuck, limits waiters to 500 ms, hard-codes replay `movementCount`, and retains content-derived debit identity.
+- [x] R2 corrective re-run — Durable comprobante owner leases now heartbeat, complete/fail by owner only, reclaim failed/stale attempts atomically, and return the persisted full result to followers; the debit caller-key work remains intact.
 - [ ] R3 — Wire movement-scoped `CtacteNoteForm` into the production `/ctacte/[cuenta]` row action, expose the required note list/delete client and API path, and enforce author-or-ADMIN soft-delete authorization; add route, component, and page coverage.
 - [ ] R3 — Change `CtacteNotesSection` to call `useNotesCollapsed(cuentaId, null)` and test the `ctacte-notes-collapsed-<cuenta>` key, reload persistence, and cross-cuenta isolation.
 - [ ] R4 — Map server `ApiError.details: [{ field, message }]` into the corresponding Pago, Débito, Nota, and comprobante form fields while retaining top-level failure toasts; add component tests for field errors and cap-range feedback.
@@ -461,7 +461,7 @@ Chain strategy: feature-branch-chain
 ### R2 Amendment — Corrective Tasks
 
 - [x] R2.1 — RED→GREEN `apps/api/src/modules/socios/forms/ctacte-comprobante.ts` and golden tests: remove the fixed 500 ms waiter conflict and replay the persisted non-zero movement count.
-- [ ] R2.2 — RED→GREEN `packages/db/drizzle/0033_ctacte_comprobante_retries.sql` and `packages/db/src/schema/tesoreria.ts`: add forward-compatible status CHECK, lease owner/expiry, attempt/update fields, result fields, `movement_count`, and expiry index; add an ephemeral PostgreSQL test applying 0033 twice and introspecting the schema.
+- [x] R2.2 — RED→GREEN `packages/db/drizzle/0033_ctacte_comprobante_retries.sql` and `packages/db/src/schema/tesoreria.ts`: add forward-compatible status CHECK, lease owner/expiry, attempt/update fields, result fields, `movement_count`, and expiry index; add an ephemeral PostgreSQL test applying 0033 twice and introspecting the schema.
 - [x] R2.3 — RED→GREEN debit route/service/client/form tests and `CtacteDebitInput`: require/send one 1–128-character `Idempotency-Key` per submit intent; same key/canonical payload replays, changed payload returns 409, and identical payloads with distinct keys create distinct debits; retain on ambiguous retry and rotate only on success/cancel.
 - [x] R2.4 — Document the manual 0031→0032→0033 backup, `psql -v ON_ERROR_STOP=1 --single-transaction`, schema-verification, then API-rollout sequence in `docs/runbook.md`; do not run migrations, deploy, or access production.
 - [ ] R2.5 — Close Strict-TDD evidence in `apply-progress.md`: for R2.1–R2.4 record cited pre-change commit, exact RED command/exit/failure, implementation commit, exact GREEN command/exit/pass count, triangulation, and safety net; explicitly mark unavailable RED evidence missing.

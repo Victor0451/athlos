@@ -27,6 +27,8 @@
 | R2 corrective: note audit persistence | `apps/api/src/routes/ctacte-mutations.test.ts`, `apps/api/src/modules/socios/ctacte_movement_notes.test.ts` | Integration + Unit | ✅ Targeted route baseline: 36/36 | ⚠️ No valid RED command captured: the initial route-level concurrent assertion passed because Fastify injection serialized the handler. No RED evidence is fabricated. | ✅ Route 36/36; service 4/4 | ✅ Same body versus distinct body; concurrent route assertion | ➖ None needed |
 | R2a comprobante slow replay | `apps/api/src/modules/socios/forms/ctacte-comprobante.golden.test.ts` | Unit | ✅ 3/3 before change | ✅ `pnpm --filter @athlos/api test:run src/modules/socios/forms/ctacte-comprobante.golden.test.ts` exited 1: `Comprobante generation is still in progress` after 500ms | ✅ same command exited 0: 4/4 | ✅ 550ms owner render, exact non-zero movementCount replay | ➖ None needed |
 | R2a debit opaque key | API/service/web debit targets | Unit + Component | ✅ debit 3/3; web client 9/9; form 7/7 | ✅ targeted service/client/form RED exits 1: content-derived key or missing header/key forwarding | ✅ service 4/4; web client 9/9; form 7/7 | ✅ same-key replay and client-generated key | ➖ None needed |
+| R2a durable owner lease | `ctacte-comprobante.lease.test.ts`, `ctacte-comprobante.postgres.integration.test.ts` | Deterministic replica + PostgreSQL integration | ✅ golden replay 4/4 at `cb81718` | ✅ pre-change `pnpm --filter @athlos/api test:run src/modules/socios/forms/ctacte-comprobante.lease.test.ts` exited 1: `db.delete is not a function`; PostgreSQL adapter test exited 1: `createPostgresComprobanteLeaseStore is not a function` | ✅ implementation `14b769c`; deterministic 2/2, PostgreSQL 2/2 | ✅ slow 160 ms render retains lease; failed retry; stale reclaim; two DB clients accept one owner and reject non-owner completion | ✅ extracted a lease-store boundary; targeted API typecheck passed |
+| R2.2 PostgreSQL migration repair | `packages/db/src/ctacte-comprobante-retries.integration.test.ts` | PostgreSQL integration | N/A (new test) | ✅ `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:55432/athlos pnpm --filter @athlos/db test:run src/ctacte-comprobante-retries.integration.test.ts` exited 1: missing status CHECK | ✅ implementation `14b769c`; same command exited 0: 1/1 | ✅ applies migration twice over the prior draft shape; introspects required columns, CHECK, and expiry index | ➖ None needed |
 
 ## Test Summary
 
@@ -39,8 +41,12 @@
 - `pnpm --filter @athlos/api test:run src/routes/ctacte-mutations.test.ts` — passed (36 tests).
 - `pnpm --filter @athlos/api typecheck` — passed.
 - `pnpm --filter @athlos/db typecheck` — passed.
+- `pnpm --filter @athlos/api test:run src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` with ephemeral PostgreSQL — passed (2 tests).
+- `pnpm --filter @athlos/api test:run src/modules/socios/forms/ctacte-comprobante.lease.test.ts` — passed (2 tests).
+- `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:55432/athlos pnpm --filter @athlos/db test:run src/ctacte-comprobante-retries.integration.test.ts` — passed (1 test).
+- `pnpm --filter @athlos/api typecheck` and `pnpm --filter @athlos/db typecheck` — passed; API lint passed with the existing unrelated `no-console` warning in `src/routes/admin/gastos.test.ts:367`.
 - No full suite run; targeted tests ran sequentially.
-- PostgreSQL double-apply and production rollout validation remain intentionally unrun in this R2a slice.
+- PostgreSQL double-apply ran against an ephemeral local `postgres:16-alpine` container; no production database, migration, deployment, or production container was accessed.
 
 ## Remaining Remediation
 
@@ -48,3 +54,4 @@
 - [ ] R3 — Per-cuenta collapsed state.
 - [ ] R4 — Field-level ApiError mapping.
 - [ ] R5 — Evidence reconciliation.
+- [ ] R2.5 — Earlier R2.1–R2.4 rows still lack every required cited pre-change/implementation command. This R2a evidence is complete only for the durable lease and 0033 migration-repair work; no missing historical evidence is inferred.
