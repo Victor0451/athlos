@@ -2,6 +2,18 @@
 
 ## Deploy Checklist
 
+### Manual CTACTE comprobante replay migration (0031 → 0032 → 0033)
+
+> Do not use Drizzle for these migrations: the production journal is incomplete after 0020.
+> Stop immediately on backup, migration, or verification failure; do not roll out the API.
+
+1. Create and verify a database backup.
+2. Apply `0031_ctacte_movement_notes.sql`, `0032_ctacte_idempotency_key_unique.sql`, then `0033_ctacte_comprobante_retries.sql` in that order with `psql -v ON_ERROR_STOP=1 --single-transaction`.
+3. Verify `tesoreria.ctacte_comprobante_retries` has its status check, lease/result columns, and `ctacte_comprobante_retries_expires_at_idx`.
+4. Only then roll out the API version that uses durable comprobante replay.
+
+This repository change does not apply migrations, deploy, or access production.
+
 ### Pre-deploy
 
 - [ ] Verify all migrations have been applied (`pnpm db:migrate:status`)

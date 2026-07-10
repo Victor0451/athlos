@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -45,6 +45,7 @@ interface CtacteDebitFormProps {
 }
 
 export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDebitFormProps) {
+  const idempotencyKeyRef = useRef<string | null>(null)
   const {
     register,
     handleSubmit,
@@ -59,13 +60,16 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
   const onSubmit = useCallback(
     async (values: DebitFormValues) => {
       try {
+        idempotencyKeyRef.current ??= crypto.randomUUID()
         await registerCtacteDebit(socioId, {
           monto: values.monto,
           fecha: values.fecha,
           motivo: values.motivo,
+          idempotencyKey: idempotencyKeyRef.current,
         })
         notify('success', 'Débito registrado')
         reset()
+        idempotencyKeyRef.current = null
         onSuccess?.()
         onClose()
       } catch {
@@ -77,6 +81,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
 
   const handleCancel = useCallback(() => {
     reset()
+    idempotencyKeyRef.current = null
     onClose()
   }, [reset, onClose])
 
