@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError, ErrorCode } from '@athlos/errors'
 import { addNote, listNotes, softDeleteNote } from './ctacte_movement_notes.ts'
 
 /**
@@ -15,6 +16,7 @@ import { addNote, listNotes, softDeleteNote } from './ctacte_movement_notes.ts'
 const repoListNotesByMovement = vi.fn()
 const repoInsertNote = vi.fn()
 const repoSoftDeleteNote = vi.fn()
+const repoFindNoteById = vi.fn()
 const operatorsValues = vi.fn()
 const emitAuditMock = vi.fn().mockResolvedValue({ inserted: true, id: 'audit-1' })
 
@@ -22,6 +24,7 @@ vi.mock('./ctacte_movement_notes_repository.ts', () => ({
   listNotesByMovement: (...args: unknown[]) => repoListNotesByMovement(...args),
   insertNote: (...args: unknown[]) => repoInsertNote(...args),
   softDeleteNote: (...args: unknown[]) => repoSoftDeleteNote(...args),
+  findNoteById: (...args: unknown[]) => repoFindNoteById(...args),
 }))
 
 vi.mock('@athlos/audit', () => ({
@@ -180,12 +183,74 @@ describe('addNote', () => {
 
 describe('softDeleteNote', () => {
   it('soft-deletes the row and does NOT emit any new audit event', async () => {
-    await softDeleteNote(buildDb() as never, 'n-1', OPERATOR_ID)
+    repoFindNoteById.mockResolvedValueOnce({
+      id: 'n-1',
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'old body',
+      authorOperatorId: OPERATOR_ID,
+      createdAt: new Date('2026-07-09T12:00:00Z'),
+      deletedAt: null,
+    })
 
+    await softDeleteNote(buildDb() as never, 'n-1', {
+      callerOperatorId: OPERATOR_ID,
+      callerRole: 'OPERADOR',
+    })
+
+    expect(repoFindNoteById).toHaveBeenCalledWith(expect.anything(), 'n-1')
     expect(repoSoftDeleteNote).toHaveBeenCalledWith(expect.anything(), 'n-1')
     // Spec invariant: the original CTACTE_MOVEMENT_NOTE_ADDED audit
     // row remains the historical record; soft-delete does not append
     // a new audit_events row.
     expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
+  it('allows ADMIN to soft-delete any note', async () => {
+    repoFindNoteById.mockResolvedValueOnce({
+      id: 'n-2',
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'foreign author',
+      authorOperatorId: OTHER_OPERATOR_ID,
+      createdAt: new Date('2026-07-09T12:00:00Z'),
+      deletedAt: null,
+    })
+
+    await softDeleteNote(buildDb() as never, 'n-2', {
+      callerOperatorId: OPERATOR_ID,
+      callerRole: 'ADMIN',
+    })
+
+    expect(repoSoftDeleteNote).toHaveBeenCalledWith(expect.anything(), 'n-2')
+  })
+
+  it('rejects a non-author non-ADMIN caller with INSUFFICIENT_PERMISSIONS', async () => {
+    repoFindNoteById.mockResolvedValueOnce({
+      id: 'n-3',
+      ctacteMovementId: MOVEMENT_ID,
+      body: 'foreign author',
+      authorOperatorId: OTHER_OPERATOR_ID,
+      createdAt: new Date('2026-07-09T12:00:00Z'),
+      deletedAt: null,
+    })
+
+    const promise = softDeleteNote(buildDb() as never, 'n-3', {
+      callerOperatorId: OPERATOR_ID,
+      callerRole: 'OPERADOR',
+    })
+    await expect(promise).rejects.toBeInstanceOf(ApiError)
+    await expect(promise).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+    expect(repoSoftDeleteNote).not.toHaveBeenCalled()
+  })
+
+  it('throws NOT_FOUND when the note id does not exist', async () => {
+    repoFindNoteById.mockResolvedValueOnce(null)
+
+    await expect(
+      softDeleteNote(buildDb() as never, 'n-missing', {
+        callerOperatorId: OPERATOR_ID,
+        callerRole: 'ADMIN',
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND })
+    expect(repoSoftDeleteNote).not.toHaveBeenCalled()
   })
 })
