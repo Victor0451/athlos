@@ -367,6 +367,27 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         return reply.code(401).send({ error: 'UNAUTHORIZED' })
       }
 
+      // R3 fix #2 — durable idempotency. The client MUST supply an
+      // opaque Idempotency-Key (1–128 chars) that the route forwards
+      // to the service. The same key + same canonical payload MUST
+      // replay across process restarts and cross-instance routing;
+      // the same key with a different payload MUST 409. Without a
+      // key the request is rejected as a validation error so the
+      // client cannot accidentally rely on the deprecated 10-second
+      // timestamp-bucket fallback.
+      const idempotencyKey = request.headers['idempotency-key']
+      if (
+        typeof idempotencyKey !== 'string' ||
+        idempotencyKey.trim().length === 0 ||
+        idempotencyKey.length > 128
+      ) {
+        return apiError(
+          reply,
+          'VALIDATION_ERROR',
+          'Idempotency-Key header must be 1–128 characters',
+        )
+      }
+
       const parsed = noteBodySchema.safeParse(request.body)
       if (!parsed.success) {
         return apiError(reply, 'VALIDATION_ERROR', parsed.error.errors[0]!.message)
@@ -387,6 +408,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           ctacteMovementId: params.movementId,
           operatorId,
           body: parsed.data.body,
+          idempotencyKey,
         })
         return reply.code(201).send({
           id: note.id,
@@ -396,8 +418,17 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           created_at: note.createdAt.toISOString(),
         })
       } catch (err) {
-        request.log.warn({ err }, 'addNote failed')
-        return apiError(reply, 'VALIDATION_ERROR', 'Failed to add note')
+        // R3 fix #3 — error mapping. The CONFLICT arm (same key,
+        // different payload) is a documented business outcome; emit
+        // it as 409 with a stable envelope. Any unexpected exception
+        // (DB outage, driver-level crash) MUST be rethrown so the
+        // global error handler emits a 5xx instead of squashing the
+        // failure into a misleading 400 VALIDATION_ERROR.
+        const e = err as { code?: string; message?: string }
+        if (e.code === ErrorCode.CONFLICT) {
+          return reply.code(409).send({ error: 'CONFLICT', message: e.message })
+        }
+        throw err
       }
     },
   )
@@ -436,9 +467,20 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         await softDeleteNote(container.db, params.noteId, {
           callerOperatorId: operatorId,
           callerRole: operatorRole,
+          // R3 fix #1 — nested resource binding. The service uses
+          // this to verify the note actually belongs to the URL
+          // `movementId` (not just any movement of the same socio).
+          expectedMovementId: params.movementId,
         })
         return reply.code(200).send({ id: params.noteId, deleted: true })
       } catch (err) {
+        // R3 fix #3 — error mapping. Business errors (NOT_FOUND,
+        // INSUFFICIENT_PERMISSIONS) keep their existing 404/403
+        // envelopes so client contracts stay stable. Unexpected
+        // exceptions (DB outage, repository-level failure, etc.)
+        // MUST be rethrown so the global error handler emits a
+        // redacted 5xx instead of swallowing them into a generic
+        // 400 VALIDATION_ERROR.
         const e = err as { code?: string; message?: string }
         if (e.code === ErrorCode.NOT_FOUND) {
           return reply.code(404).send({ error: 'NOT_FOUND' })
@@ -446,8 +488,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         if (e.code === ErrorCode.INSUFFICIENT_PERMISSIONS) {
           return reply.code(403).send({ error: 'INSUFFICIENT_PERMISSIONS', message: e.message })
         }
-        request.log.warn({ err }, 'softDeleteNote failed')
-        return apiError(reply, 'VALIDATION_ERROR', 'Failed to delete note')
+        throw err
       }
     },
   )

@@ -19,17 +19,33 @@ import {
  * `CTACTE_MOVEMENT_NOTE_ADDED` audit event remains queryable after
  * soft-delete (spec delta §"Audit event for soft-deleted note
  * remains queryable").
+ *
+ * R3 fix #2 — durable idempotency: `insertNote` accepts an
+ * `idempotencyKey` argument and uses the schema's
+ * `idempotencyKeyUnique` UNIQUE partial index as the conflict
+ * target. `findNoteByIdempotencyKey` returns the existing row on
+ * replay so service-level dedup survives process restarts.
  */
 export interface InsertNoteInput {
   id?: string
   ctacteMovementId: string
   authorOperatorId: string
   body: string
+  /** Caller-supplied opaque Idempotency-Key. Optional for
+   *  backward-compat with callers that pre-date R3; new callers
+   *  MUST provide one and the service layer enforces that contract. */
+  idempotencyKey?: string | null
 }
 
 /**
  * Insert a new note row. The DB server stamps `id` (gen_random_uuid)
  * and `created_at` (default now()).
+ *
+ * When `idempotencyKey` is provided the insert uses the schema's
+ * UNIQUE partial index as the conflict target — a duplicate key
+ * returns `[]` from the conflict-aware insert, and the helper then
+ * looks the existing row up and returns it (the "already-completed"
+ * idempotency arm).
  */
 export async function insertNote(db: Db, input: InsertNoteInput): Promise<CtacteMovementNote> {
   const row: NewCtacteMovementNote = {
@@ -37,14 +53,19 @@ export async function insertNote(db: Db, input: InsertNoteInput): Promise<Ctacte
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.authorOperatorId,
     body: input.body,
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   }
-  const [inserted] = input.id
+  const [inserted] = input.idempotencyKey
     ? await db
         .insert(ctacteMovementNotes)
         .values(row)
-        .onConflictDoNothing({ target: ctacteMovementNotes.id })
+        .onConflictDoNothing({ target: ctacteMovementNotes.idempotencyKey })
         .returning()
     : await db.insert(ctacteMovementNotes).values(row).returning()
+  if (!inserted && input.idempotencyKey) {
+    const existing = await findNoteByIdempotencyKey(db, input.idempotencyKey)
+    if (existing) return existing
+  }
   if (!inserted && input.id) {
     const [existing] = await db
       .select()
@@ -57,6 +78,27 @@ export async function insertNote(db: Db, input: InsertNoteInput): Promise<Ctacte
     throw new Error('insert returned no row')
   }
   return inserted
+}
+
+/**
+ * Find a note by its caller-supplied Idempotency-Key. Returns the
+ * note (active or soft-deleted) when a row exists for the key, or
+ * `null` when no row matches.
+ *
+ * The note's natural `id` is NOT used here — the durable contract
+ * is keyed by the caller-provided `idempotency_key` column so
+ * cross-process replays surface the same row.
+ */
+export async function findNoteByIdempotencyKey(
+  db: Db,
+  idempotencyKey: string,
+): Promise<CtacteMovementNote | null> {
+  const [row] = await db
+    .select()
+    .from(ctacteMovementNotes)
+    .where(eq(ctacteMovementNotes.idempotencyKey, idempotencyKey))
+    .limit(1)
+  return row ?? null
 }
 
 /**
