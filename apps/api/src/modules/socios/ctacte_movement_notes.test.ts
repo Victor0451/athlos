@@ -17,7 +17,6 @@ const repoListNotesByMovement = vi.fn()
 const repoInsertNote = vi.fn()
 const repoSoftDeleteNote = vi.fn()
 const repoFindNoteById = vi.fn()
-const repoFindNoteByIdempotencyKey = vi.fn().mockResolvedValue(null)
 const operatorsValues = vi.fn()
 const emitAuditMock = vi.fn().mockResolvedValue({ inserted: true, id: 'audit-1' })
 
@@ -26,7 +25,14 @@ vi.mock('./ctacte_movement_notes_repository.ts', () => ({
   insertNote: (...args: unknown[]) => repoInsertNote(...args),
   softDeleteNote: (...args: unknown[]) => repoSoftDeleteNote(...args),
   findNoteById: (...args: unknown[]) => repoFindNoteById(...args),
-  findNoteByIdempotencyKey: (...args: unknown[]) => repoFindNoteByIdempotencyKey(...args),
+  // The defect #2 service flow uses the repository's conflict-aware
+  // insert (which itself calls `findNoteByIdempotencyKey` on the
+  // conflict-loser branch). The service MUST NOT call this helper
+  // directly — it leaked the predecessor code path that bypassed the
+  // durable UNIQUE INDEX.
+  findNoteByIdempotencyKey: () => {
+    throw new Error('findNoteByIdempotencyKey should not be called by addNote directly')
+  },
 }))
 
 vi.mock('@athlos/audit', () => ({
@@ -72,6 +78,19 @@ const OTHER_OPERATOR_ID = '00000000-0000-4000-8000-000000000002'
 beforeEach(() => {
   vi.clearAllMocks()
 })
+
+function insertedNoteFor(key: string, body = 'payload', overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'n-replay',
+    ctacteMovementId: MOVEMENT_ID,
+    body,
+    authorOperatorId: OPERATOR_ID,
+    createdAt: new Date('2026-07-09T12:00:00Z'),
+    deletedAt: null,
+    idempotencyKey: key,
+    ...overrides,
+  }
+}
 
 describe('listNotes', () => {
   it('returns the notes enriched with operator username + role', async () => {
@@ -135,15 +154,10 @@ describe('listNotes', () => {
 
 describe('addNote', () => {
   it('inserts the note and emits CTACTE_MOVEMENT_NOTE_ADDED with 5-key metadata', async () => {
-    const inserted = {
-      id: 'n-1',
-      ctacteMovementId: MOVEMENT_ID,
-      body: 'Verificar comprobante físico',
-      authorOperatorId: OPERATOR_ID,
-      createdAt: new Date('2026-07-09T12:00:00Z'),
-      deletedAt: null,
-    }
-    repoInsertNote.mockResolvedValueOnce(inserted)
+    const row = insertedNoteFor('not-applied', 'Verificar comprobante físico', {
+      idempotencyKey: undefined,
+    })
+    repoInsertNote.mockResolvedValueOnce({ row, created: true })
 
     const result = await addNote(buildDb() as never, {
       ctacteMovementId: MOVEMENT_ID,
@@ -151,7 +165,7 @@ describe('addNote', () => {
       body: 'Verificar comprobante físico',
     })
 
-    expect(result.id).toBe('n-1')
+    expect(result.id).toBe('n-replay')
     expect(repoInsertNote).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -164,9 +178,8 @@ describe('addNote', () => {
     const auditRow = emitAuditMock.mock.calls[0]![1]
     expect(auditRow.action).toBe('CTACTE_MOVEMENT_NOTE_ADDED')
     expect(auditRow.entityType).toBe('ctacte_movement_note')
-    expect(auditRow.entityId).toBe('n-1')
+    expect(auditRow.entityId).toBe('n-replay')
     expect(auditRow.operatorId).toBe(OPERATOR_ID)
-    // 5-key metadata shape pinned by the audit-logger spec delta.
     expect(Object.keys(auditRow.metadata).sort()).toEqual([
       'author_operator_id',
       'body',
@@ -177,7 +190,7 @@ describe('addNote', () => {
     expect(auditRow.metadata.body).toBe('Verificar comprobante físico')
     expect(auditRow.metadata.movement_id).toBe(MOVEMENT_ID)
     expect(auditRow.metadata.ctacte_id).toBe(MOVEMENT_ID)
-    expect(auditRow.metadata.note_id).toBe('n-1')
+    expect(auditRow.metadata.note_id).toBe('n-replay')
     expect(auditRow.metadata.author_operator_id).toBe(OPERATOR_ID)
   })
 })
@@ -201,9 +214,6 @@ describe('softDeleteNote', () => {
 
     expect(repoFindNoteById).toHaveBeenCalledWith(expect.anything(), 'n-1')
     expect(repoSoftDeleteNote).toHaveBeenCalledWith(expect.anything(), 'n-1')
-    // Spec invariant: the original CTACTE_MOVEMENT_NOTE_ADDED audit
-    // row remains the historical record; soft-delete does not append
-    // a new audit_events row.
     expect(emitAuditMock).not.toHaveBeenCalled()
   })
 
@@ -299,67 +309,77 @@ describe('softDeleteNote', () => {
   })
 })
 
-// ─── R3 fix #2 — durable Idempotency-Key contract (service layer) ──────────────
+// ─── R3 fix #2 + R3 fix batch — defect #2: concurrent same-key semantics ───────────
 
-describe('addNote — durable Idempotency-Key contract', () => {
+describe('addNote — durable Idempotency-Key contract (defect #2)', () => {
   const idempotencyKey = 'note-intent-durable-test'
 
-  function insertedNoteFor(key: string, body = 'payload', overrides: Record<string, unknown> = {}) {
-    return {
-      id: 'n-replay',
-      ctacteMovementId: MOVEMENT_ID,
-      body,
-      authorOperatorId: OPERATOR_ID,
-      createdAt: new Date('2026-07-09T12:00:00Z'),
-      deletedAt: null,
-      idempotencyKey: key,
-      ...overrides,
-    }
-  }
-
-  it('replays an existing note for the same key + same payload (no audit re-emission)', async () => {
-    const existing = insertedNoteFor(idempotencyKey)
-    repoFindNoteByIdempotencyKey.mockResolvedValueOnce(existing)
+  it('emits exactly one audit when the durable key surfaces an existing row (created: false branch)', async () => {
+    // The repository's conflict-loser branch (`created: false`) signals
+    // that someone else already persisted the row. The service must
+    // NOT emit a second audit, regardless of payload match.
+    const existing = insertedNoteFor(idempotencyKey, 'persist across restart')
+    repoInsertNote.mockResolvedValueOnce({ row: existing, created: false })
 
     const result = await addNote(buildDb() as never, {
       ctacteMovementId: MOVEMENT_ID,
       operatorId: OPERATOR_ID,
-      body: 'payload',
+      body: 'persist across restart',
       idempotencyKey,
     })
 
     expect(result.id).toBe(existing.id)
-    expect(repoInsertNote).not.toHaveBeenCalled()
     expect(emitAuditMock).not.toHaveBeenCalled()
   })
 
-  it('returns 409 when the same key is reused with a different payload', async () => {
-    // Use a sticky mock (not .mockResolvedValueOnce) so both
-    // assertions exercise the same conflict path.
-    repoFindNoteByIdempotencyKey.mockResolvedValue(insertedNoteFor(idempotencyKey, 'original'))
+  it('returns 409 when the conflict-loser surfaces a row with a different payload', async () => {
+    // Sticky mock so both assertions hit the same conflict path.
+    repoInsertNote.mockImplementation(async () => ({
+      row: insertedNoteFor(idempotencyKey, 'original'),
+      created: false,
+    }))
+
+    const first = addNote(buildDb() as never, {
+      ctacteMovementId: MOVEMENT_ID,
+      operatorId: OPERATOR_ID,
+      body: 'changed',
+      idempotencyKey,
+    })
+    await expect(first).rejects.toBeInstanceOf(ApiError)
+    await expect(first).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+
+    const second = addNote(buildDb() as never, {
+      ctacteMovementId: MOVEMENT_ID,
+      operatorId: OPERATOR_ID,
+      body: 'changed',
+      idempotencyKey,
+    })
+    await expect(second).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+    expect(emitAuditMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 409 when the conflict-loser surfaces a row from a different operator (stolen/replayed key)', async () => {
+    repoInsertNote.mockResolvedValueOnce({
+      row: insertedNoteFor(idempotencyKey, 'mismo cuerpo', {
+        authorOperatorId: OTHER_OPERATOR_ID,
+      }),
+      created: false,
+    })
 
     await expect(
       addNote(buildDb() as never, {
         ctacteMovementId: MOVEMENT_ID,
         operatorId: OPERATOR_ID,
-        body: 'changed',
-        idempotencyKey,
-      }),
-    ).rejects.toBeInstanceOf(ApiError)
-    await expect(
-      addNote(buildDb() as never, {
-        ctacteMovementId: MOVEMENT_ID,
-        operatorId: OPERATOR_ID,
-        body: 'changed',
+        body: 'mismo cuerpo',
         idempotencyKey,
       }),
     ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
-    expect(repoInsertNote).not.toHaveBeenCalled()
+    expect(emitAuditMock).not.toHaveBeenCalled()
   })
 
-  it('inserts and emits one audit when the key is brand-new', async () => {
-    repoFindNoteByIdempotencyKey.mockResolvedValueOnce(null)
-    repoInsertNote.mockResolvedValueOnce(insertedNoteFor(idempotencyKey))
+  it('inserts and emits one audit when the key is brand-new (created: true branch)', async () => {
+    const row = insertedNoteFor(idempotencyKey, 'first attempt', { idempotencyKey })
+    repoInsertNote.mockResolvedValueOnce({ row, created: true })
 
     const result = await addNote(buildDb() as never, {
       ctacteMovementId: MOVEMENT_ID,
@@ -376,31 +396,65 @@ describe('addNote — durable Idempotency-Key contract', () => {
     expect(emitAuditMock).toHaveBeenCalledTimes(1)
   })
 
-  it('survives process-restart / cross-instance replays (durable key — no WeakMap, no time bucket)', async () => {
-    // First call: fresh insert
-    repoFindNoteByIdempotencyKey.mockResolvedValueOnce(null)
-    repoInsertNote.mockResolvedValueOnce(insertedNoteFor(idempotencyKey))
-    await addNote(buildDb() as never, {
-      ctacteMovementId: MOVEMENT_ID,
-      operatorId: OPERATOR_ID,
-      body: 'persist across restart',
+  it('two concurrent same-key + same-payload calls emit exactly one audit (creator + loser branch)', async () => {
+    // Simulate the race where one API replica wins the index race
+    // (created: true) and the other surfaces the same row as
+    // created: false. Audit MUST fire exactly once.
+    const winner = insertedNoteFor(idempotencyKey, 'persist across restart', {
       idempotencyKey,
     })
+    const loser = insertedNoteFor(idempotencyKey, 'persist across restart', {
+      idempotencyKey,
+    })
+    repoInsertNote.mockImplementationOnce(async () => ({ row: winner, created: true }))
+    repoInsertNote.mockImplementationOnce(async () => ({ row: loser, created: false }))
+
+    await Promise.all([
+      addNote(buildDb() as never, {
+        ctacteMovementId: MOVEMENT_ID,
+        operatorId: OPERATOR_ID,
+        body: 'persist across restart',
+        idempotencyKey,
+      }),
+      addNote(buildDb() as never, {
+        ctacteMovementId: MOVEMENT_ID,
+        operatorId: OPERATOR_ID,
+        body: 'persist across restart',
+        idempotencyKey,
+      }),
+    ])
+
     expect(emitAuditMock).toHaveBeenCalledTimes(1)
+  })
 
-    // Second call from a fresh process (no in-memory cache). The repo
-    // returns the previously-persisted note via the idempotency key.
-    repoFindNoteByIdempotencyKey.mockResolvedValueOnce(
-      insertedNoteFor(idempotencyKey, 'persist across restart'),
-    )
-    await addNote(buildDb() as never, {
-      ctacteMovementId: MOVEMENT_ID,
-      operatorId: OPERATOR_ID,
-      body: 'persist across restart',
-      idempotencyKey,
-    })
+  it('two concurrent same-key + different-body calls emit exactly one audit + surface a CONFLICT', async () => {
+    const existing = insertedNoteFor(idempotencyKey, 'original', { idempotencyKey })
+    repoInsertNote.mockImplementationOnce(async () => ({ row: existing, created: true }))
+    repoInsertNote.mockImplementationOnce(async () => ({ row: existing, created: false }))
 
-    expect(emitAuditMock).toHaveBeenCalledTimes(1) // unchanged — no second audit
-    expect(repoInsertNote).toHaveBeenCalledTimes(1)
+    const results = await Promise.allSettled([
+      addNote(buildDb() as never, {
+        ctacteMovementId: MOVEMENT_ID,
+        operatorId: OPERATOR_ID,
+        body: 'original',
+        idempotencyKey,
+      }),
+      addNote(buildDb() as never, {
+        ctacteMovementId: MOVEMENT_ID,
+        operatorId: OPERATOR_ID,
+        body: 'concurrent-different-body',
+        idempotencyKey,
+      }),
+    ])
+
+    // Creator wins; loser sees the created=false branch with a
+    // non-matching payload and is rejected with CONFLICT.
+    expect(results[0]!.status).toBe('fulfilled')
+    expect(results[1]!.status).toBe('rejected')
+    const err = (results[1] as PromiseRejectedResult).reason
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({ code: ErrorCode.CONFLICT })
+
+    expect(emitAuditMock).toHaveBeenCalledTimes(1)
   })
 })

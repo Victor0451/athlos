@@ -111,18 +111,43 @@ export interface AddNoteInput {
 }
 
 /**
+ * Canonical payload comparison. A note replay matches when the
+ * persisted row's `(movement_id, body, author_operator_id)` triple
+ * equals the caller's intent. Different operator identity is
+ * treated as a CONFLICT — the same opaque key should never be
+ * used by two different operators because the client-side form
+ * owns its own key per socio + movement + body triple.
+ *
+ * R3 fix batch — defect #2 added the `author_operator_id` axis
+ * because concurrent same-key requests can now race through
+ * `insertNote` from two API replicas; without the operator check
+ * a stolen/replayed key could be silently re-attributed.
+ */
+function isCanonicalMatch(
+  row: { ctacteMovementId: string; body: string; authorOperatorId: string },
+  intent: { ctacteMovementId: string; body: string; operatorId: string },
+): boolean {
+  return (
+    row.ctacteMovementId === intent.ctacteMovementId &&
+    row.body === intent.body &&
+    row.authorOperatorId === intent.operatorId
+  )
+}
+
+/**
  * Add a note to a movement.
  *
  *  1. Trims the body.
- *  2. When `idempotencyKey` is provided: looks up the existing row via
- *     the durable UNIQUE partial index.
- *     - Existing row + matching canonical payload → REPLAY (return the
- *       persisted row, do NOT emit a second audit event).
- *     - Existing row + different canonical payload → CONFLICT (the
- *       caller reused the key for a different intent).
- *  3. Otherwise (or no existing row): insert the note with the
- *     idempotency key, emit `CTACTE_MOVEMENT_NOTE_ADDED`, return the
- *     row.
+ *  2. Issues a single conflict-aware INSERT against the durable
+ *     UNIQUE INDEX (migration 0034). The repository reports
+ *     `created: true` for the creator of the row and
+ *     `created: false` for the conflict loser, which surfaces the
+ *     existing persisted row.
+ *  3. Same canonical payload as the persisted row (movement + body +
+ *     operator) → REPLAY, no audit re-emission.
+ *  4. Different canonical payload + same key → CONFLICT.
+ *  5. Fresh insert OR creator branch of a race → emit
+ *     `CTACTE_MOVEMENT_NOTE_ADDED` exactly once.
  *
  * The audit emission is best-effort — a failure here does NOT roll
  * back the insert. The audit metadata shape (sortable key order):
@@ -134,40 +159,33 @@ export interface AddNoteInput {
  *   - body (string, full body — NOT a preview; the preview-only
  *     trim was a draft idea, the spec delta locked full body)
  *   - author_operator_id (string)
- *
- * R3 fix #1: `expectedMovementId` is consulted AFTER finding the
- * existing note — if the row's `ctacteMovementId` does not match the
- * expectation, the replay is treated as a fresh insert with the same
- * idempotency key on a different movement (handled implicitly by the
- * non-existing-key lookup path).
  */
 export async function addNote(db: Db, input: AddNoteInput): Promise<CtacteMovementNote> {
   const body = input.body.trim()
   const idempotencyKey = input.idempotencyKey
 
-  if (idempotencyKey) {
-    const existing = await repo.findNoteByIdempotencyKey(db, idempotencyKey)
-    if (existing) {
-      // Same note shape (movement + body) → REPLAY, no audit re-emission.
-      if (existing.ctacteMovementId === input.ctacteMovementId && existing.body === body) {
-        return existing
-      }
-      // Different movement OR different body with the same key → CONFLICT.
-      throw BusinessError(
-        ErrorCode.CONFLICT,
-        'Idempotency-Key was already used for a different note',
-      )
-    }
-  }
-
-  const inserted = await repo.insertNote(db, {
+  const result = await repo.insertNote(db, {
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.operatorId,
     body,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   })
-  await emitNoteAddedAudit(db, inserted, input.operatorId)
-  return inserted
+
+  if (!result.created) {
+    // Conflict-loser path. The persisted row may match the caller's
+    // canonical payload (silent replay) OR have been produced from
+    // a different intent (CONFLICT). Either way, NO audit emission —
+    // the creator already emitted it.
+    if (isCanonicalMatch(result.row, { ...input, body })) {
+      return result.row
+    }
+    throw BusinessError(ErrorCode.CONFLICT, 'Idempotency-Key was already used for a different note')
+  }
+
+  // Creator branch. Emit exactly one audit regardless of how many
+  // concurrent calls raced through `insertNote`.
+  await emitNoteAddedAudit(db, result.row, input.operatorId)
+  return result.row
 }
 
 export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
