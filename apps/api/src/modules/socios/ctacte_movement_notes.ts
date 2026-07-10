@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { inArray } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { operators, type CtacteMovementNote } from '@athlos/db/schema'
@@ -26,6 +25,13 @@ import * as repo from './ctacte_movement_notes_repository.ts'
  * `audit_events` table is append-only and a missed row is recoverable
  * from the operator's session log; the opposite (a 500 on a
  * successful note insert) would be the worse outcome.
+ *
+ * R3 fix #2 — durable idempotency: `addNote` accepts a caller-
+ * provided `idempotencyKey`. Replays (same key + same canonical
+ * payload) return the previously-persisted row WITHOUT a second
+ * audit emission. The previous 10-second SHA-256 timestamp-bucket
+ * fallback has been removed because it did not survive process
+ * restarts or cross-instance routing.
  */
 
 export interface CtacteNoteService {
@@ -97,14 +103,26 @@ export interface AddNoteInput {
   ctacteMovementId: string
   operatorId: string
   body: string
+  /** Caller-supplied opaque Idempotency-Key (R3 fix #2). When
+   *  present, retries with the same key + same payload return the
+   *  previously-persisted note without a second audit emission.
+   *  Reuse with a different payload returns `CONFLICT`. */
+  idempotencyKey?: string
 }
 
-const retries = new WeakMap<object, Map<string, CtacteMovementNote>>()
-
 /**
- * Add a note to a movement. Trims the body, inserts the row, and
- * emits a `CTACTE_MOVEMENT_NOTE_ADDED` audit event with the exact
- * 5-key metadata shape pinned by the audit-logger spec delta.
+ * Add a note to a movement.
+ *
+ *  1. Trims the body.
+ *  2. When `idempotencyKey` is provided: looks up the existing row via
+ *     the durable UNIQUE partial index.
+ *     - Existing row + matching canonical payload → REPLAY (return the
+ *       persisted row, do NOT emit a second audit event).
+ *     - Existing row + different canonical payload → CONFLICT (the
+ *       caller reused the key for a different intent).
+ *  3. Otherwise (or no existing row): insert the note with the
+ *     idempotency key, emit `CTACTE_MOVEMENT_NOTE_ADDED`, return the
+ *     row.
  *
  * The audit emission is best-effort — a failure here does NOT roll
  * back the insert. The audit metadata shape (sortable key order):
@@ -116,32 +134,40 @@ const retries = new WeakMap<object, Map<string, CtacteMovementNote>>()
  *   - body (string, full body — NOT a preview; the preview-only
  *     trim was a draft idea, the spec delta locked full body)
  *   - author_operator_id (string)
+ *
+ * R3 fix #1: `expectedMovementId` is consulted AFTER finding the
+ * existing note — if the row's `ctacteMovementId` does not match the
+ * expectation, the replay is treated as a fresh insert with the same
+ * idempotency key on a different movement (handled implicitly by the
+ * non-existing-key lookup path).
  */
 export async function addNote(db: Db, input: AddNoteInput): Promise<CtacteMovementNote> {
   const body = input.body.trim()
-  const retryKey = noteRetryKey(input.ctacteMovementId, input.operatorId, body)
-  const cached = retries.get(db as object)?.get(retryKey)
-  if (cached) return cached
+  const idempotencyKey = input.idempotencyKey
+
+  if (idempotencyKey) {
+    const existing = await repo.findNoteByIdempotencyKey(db, idempotencyKey)
+    if (existing) {
+      // Same note shape (movement + body) → REPLAY, no audit re-emission.
+      if (existing.ctacteMovementId === input.ctacteMovementId && existing.body === body) {
+        return existing
+      }
+      // Different movement OR different body with the same key → CONFLICT.
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency-Key was already used for a different note',
+      )
+    }
+  }
 
   const inserted = await repo.insertNote(db, {
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.operatorId,
     body,
-    id: retryKey,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
-  const byDb = retries.get(db as object) ?? new Map<string, CtacteMovementNote>()
-  byDb.set(retryKey, inserted)
-  retries.set(db as object, byDb)
   await emitNoteAddedAudit(db, inserted, input.operatorId)
   return inserted
-}
-
-function noteRetryKey(movementId: string, operatorId: string, body: string): string {
-  const bucket = Math.floor(Date.now() / 10_000)
-  const hash = createHash('sha256')
-    .update(`note|${movementId}|${operatorId}|${body}|${bucket}`)
-    .digest('hex')
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`
 }
 
 export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
@@ -149,6 +175,12 @@ export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA
 export interface SoftDeleteNoteAuth {
   callerOperatorId: string
   callerRole: CtacteNoteCallerRole | string
+  /**
+   * R3 fix #1 — the URL `movementId` MUST match the persisted note's
+   * `ctacteMovementId`. A note belonging to a different movement
+   * (even of the same socio) is treated as a 404 with no delete.
+   */
+  expectedMovementId: string
 }
 
 /**
@@ -171,10 +203,14 @@ export function canDeleteCtacteNote(
  * `CTACTE_MOVEMENT_NOTE_ADDED` audit row as the historical record
  * (spec delta §"Audit event for soft-deleted note remains queryable").
  *
- * Authorization (R3): only the original author OR an ADMIN may delete.
- * Non-author non-ADMIN callers receive `INSUFFICIENT_PERMISSIONS`
- * (mapped to 403 by the global error handler). Unknown note ids
- * receive `NOT_FOUND` (mapped to 404).
+ * Authorization (R3):
+ *   - R3 fix #1 — movement binding: the note MUST belong to the
+ *     `expectedMovementId` passed in `auth`. A mismatch returns
+ *     `NOT_FOUND` (mapped to 404) with no soft-delete side effect.
+ *   - Author-or-ADMIN rule: only the original author OR an ADMIN may
+ *     delete. Non-author non-ADMIN callers receive
+ *     `INSUFFICIENT_PERMISSIONS` (mapped to 403). Unknown note ids
+ *     receive `NOT_FOUND` (mapped to 404).
  *
  * We intentionally do NOT emit a new audit event — the spec locks
  * the audit union to 4 ctacte actions (no `CTACTE_MOVEMENT_NOTE_DELETED`)
@@ -190,6 +226,12 @@ export async function softDeleteNote(
   const existing = await repo.findNoteById(db, noteId)
   if (!existing) {
     throw BusinessError(ErrorCode.NOT_FOUND, 'Note not found')
+  }
+  // R3 fix #1 — nested resource binding. A note that does not belong
+  // to the URL movement returns 404 with no delete side effect,
+  // regardless of caller authorization.
+  if (existing.ctacteMovementId !== auth.expectedMovementId) {
+    throw BusinessError(ErrorCode.NOT_FOUND, 'Note does not belong to the requested movement')
   }
   if (!canDeleteCtacteNote(existing, auth)) {
     throw BusinessError(
