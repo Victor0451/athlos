@@ -159,6 +159,7 @@ async function bootstrap(): Promise<void> {
 
 afterEach(async () => {
   if (app) await app.close()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -254,6 +255,32 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/payment', () => {
           (event: { action?: string }) => event.action === 'CTACTE_PAYMENT_REGISTERED',
         ),
       ).toHaveLength(0)
+    },
+  )
+
+  it.each(['2026-02-30', '2026-2-3', 'not-a-date'])(
+    'rejects invalid calendar date %s',
+    async (fecha) => {
+      seedSocio()
+      const body = buildMultipartText({ monto: '1500', fecha, concepto: 'Cuota Julio' })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/payment`,
+        headers: {
+          authorization: `Bearer ${bearer()}`,
+          'content-type': 'multipart/form-data; boundary=----TestBoundary',
+          'idempotency-key': IDEMPOTENCY_KEY,
+        },
+        payload: body,
+      })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toMatchObject({
+        error: 'VALIDATION_ERROR',
+        details: [{ field: 'fecha', message: 'must be a valid ISO calendar date' }],
+      })
+      expect(standin.state.ctacte).toHaveLength(0)
     },
   )
 
@@ -371,6 +398,26 @@ describe('POST /api/v1/socios/:socioId/ctacte/movements/debit', () => {
     })
     expect(res.statusCode).toBe(400)
   })
+
+  it.each(['2026-02-30', '2026-2-3', 'not-a-date'])(
+    'rejects invalid calendar date %s',
+    async (fecha) => {
+      seedSocio()
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/socios/${SOCIO_ID}/ctacte/movements/debit`,
+        headers: { authorization: `Bearer ${bearer()}` },
+        payload: { monto: 800, fecha, motivo: 'Cargo mora' },
+      })
+
+      expect(res.statusCode).toBe(400)
+      expect(res.json()).toMatchObject({
+        error: 'VALIDATION_ERROR',
+        details: [{ field: 'fecha', message: 'must be a valid ISO calendar date' }],
+      })
+      expect(standin.state.ctacte).toHaveLength(0)
+    },
+  )
 
   it('returns 404 when the socio does not exist', async () => {
     const res = await app.inject({
