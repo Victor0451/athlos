@@ -1,13 +1,19 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getCtacte, getMovimientos, type Movimiento } from '@/lib/api/ctacte'
 import { getSocio } from '@/lib/api/socios'
 import { getCtacteGastosLinks, type GastoLinkForCuenta } from '@/lib/api/gastos-ctacte'
+import { apiFetch } from '@/lib/api'
+import { type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
 import { MovementList } from '@/components/ledger/MovementList'
+import { CtactePaymentForm } from '@/components/ctacte/CtactePaymentForm'
+import { CtacteDebitForm } from '@/components/ctacte/CtacteDebitForm'
+import { CtacteComprobanteButton } from '@/components/ctacte/CtacteComprobanteButton'
+import { CtacteNotesSection } from '@/components/ctacte/CtacteNotesSection'
 
 /**
  * Ctacte detail page — `/ctacte/[cuenta]` (TASK-025 + TASK-013).
@@ -41,6 +47,10 @@ export default function CtacteDetailPage() {
   const params = useParams<{ cuenta: string }>()
   const cuenta = params.cuenta
   const [page, setPage] = useState(1)
+  const [selectedMovementId, setSelectedMovementId] = useState<string | null>(null)
+  const [showPayment, setShowPayment] = useState(false)
+  const [showDebit, setShowDebit] = useState(false)
+  const queryClient = useQueryClient()
 
   // Fetch the socio card + the canonical saldo + first-page movimientos
   // in parallel. The socio card is independent of pagination.
@@ -73,6 +83,20 @@ export default function CtacteDetailPage() {
     queryKey: ['ctacte-gastos-links', cuenta],
     queryFn: () => getCtacteGastosLinks(cuenta),
   })
+
+  // Notes for the selected movement
+  const notesQuery = useQuery({
+    queryKey: ['ctacte-notes', cuenta, selectedMovementId],
+    queryFn: () =>
+      apiFetch<CtacteNoteResponse[]>(
+        `/api/v1/socios/${cuenta}/ctacte/movements/${selectedMovementId}/notes`,
+      ),
+    enabled: selectedMovementId !== null,
+  })
+
+  const handleNoteAdded = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['ctacte-notes', cuenta, selectedMovementId] })
+  }, [queryClient, cuenta, selectedMovementId])
 
   // Loading state — wait on the first-page ctacte query + the socio
   // card so the header is ready in lock-step with the data.
@@ -142,12 +166,31 @@ export default function CtacteDetailPage() {
             </p>
           ) : null}
         </div>
-        <Link
-          href="/ctacte"
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-        >
-          Volver al selector
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowPayment(true)}
+            data-testid="ctacte-action-payment"
+            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          >
+            Registrar pago
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDebit(true)}
+            data-testid="ctacte-action-debit"
+            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+          >
+            Registrar débito
+          </button>
+          <CtacteComprobanteButton socioId={cuenta} cuenta={cuenta} />
+          <Link
+            href="/ctacte"
+            className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+          >
+            Volver al selector
+          </Link>
+        </div>
       </header>
 
       <section
@@ -195,7 +238,17 @@ export default function CtacteDetailPage() {
         saldo={ctacte.saldo}
         movimientos={movimientos}
         loading={page > 1 && movimientosQuery.isPending}
+        onNotaClick={setSelectedMovementId}
       />
+
+      {selectedMovementId && (
+        <CtacteNotesSection
+          socioId={cuenta}
+          movementId={selectedMovementId}
+          notes={notesQuery.data ?? []}
+          onNoteAdded={handleNoteAdded}
+        />
+      )}
 
       <nav
         aria-label="Paginación de movimientos"
@@ -276,6 +329,28 @@ export default function CtacteDetailPage() {
           </table>
         )}
       </section>
+
+      <CtactePaymentForm
+        open={showPayment}
+        socioId={cuenta}
+        onClose={() => setShowPayment(false)}
+        onSuccess={() => {
+          setShowPayment(false)
+          queryClient.invalidateQueries({ queryKey: ['ctacte', cuenta] })
+          queryClient.invalidateQueries({ queryKey: ['ctacte-movimientos', cuenta] })
+        }}
+      />
+
+      <CtacteDebitForm
+        open={showDebit}
+        socioId={cuenta}
+        onClose={() => setShowDebit(false)}
+        onSuccess={() => {
+          setShowDebit(false)
+          queryClient.invalidateQueries({ queryKey: ['ctacte', cuenta] })
+          queryClient.invalidateQueries({ queryKey: ['ctacte-movimientos', cuenta] })
+        }}
+      />
     </div>
   )
 }
