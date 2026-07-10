@@ -1468,7 +1468,13 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           return [{ idempotency_key: key }]
         }
         if (sqlText.includes("set status = 'rendering'")) {
-          const [owner, leaseExpiresAt, key, now] = values as [string, Date, string, Date]
+          const [owner, leaseExpiresAt, key, fingerprint, now] = values as [
+            string,
+            Date,
+            string,
+            string,
+            Date,
+          ]
           const row = retries.find((candidate) => candidate.idempotencyKey === key)
           if (
             !row ||
@@ -1477,7 +1483,8 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
               (row.status === 'rendering' &&
                 row.leaseExpiresAt !== null &&
                 row.leaseExpiresAt <= now)
-            )
+            ) ||
+            row.requestFingerprint !== fingerprint
           )
             return []
           row.status = 'rendering'
