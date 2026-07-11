@@ -1,10 +1,5 @@
 # Apply Progress — athlos-ctacte-mutations R3 (canonical evidence)
 
-**Branch**: `fix/ctacte-mutations-r3` (PR #34)
-**Base**: `ea3bd5f`
-**Head**: `d0937ff`
-**Scope (`git diff --stat ea3bd5f..d0937ff`, excluding openspec/)**: 21 files, 3331 insertions(+), 179 deletions(-).
-
 ## 1. Cited GitHub CI run/job IDs, commit SHA, conclusion
 
 | Commit | Run ID | Test job ID | Conclusion |
