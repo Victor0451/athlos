@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { addCtacteNote } from '@/lib/api/ctacte-mutations'
+import { applyFieldErrors } from './applyFieldErrors'
 
 /**
  * CtacteNoteForm — modal body for adding a note to a cuenta-corriente movement
@@ -175,6 +176,7 @@ export function CtacteNoteForm({
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
     reset,
   } = useForm<NoteFormValues>({
@@ -297,6 +299,7 @@ export function CtacteNoteForm({
           err && typeof err === 'object' && 'message' in err
             ? String((err as { message?: unknown }).message ?? '')
             : ''
+        const details = (err as { details?: unknown } | null | undefined)?.details
         if (message.includes('CONFLICT') || message.includes('409')) {
           notify(
             'error',
@@ -309,11 +312,17 @@ export function CtacteNoteForm({
           idempotencyKeyRef.current = null
           keyForBodyRef.current = null
         } else {
+          // R4 — surface server field errors inline via react-hook-form
+          // `setError` while still firing the top-level failure toast
+          // (toasts are NOT suppressed when inline errors render). When
+          // the server returns no `details` (e.g., 500 INTERNAL_ERROR)
+          // only the toast fires.
+          applyFieldErrors(setError, details)
           notify('error', 'No se pudo agregar la nota. Intentá de nuevo.')
         }
       }
     },
-    [socioId, movementId, getIdempotencyKeyFor, reset, onSuccess, onClose],
+    [socioId, movementId, getIdempotencyKeyFor, reset, onSuccess, onClose, setError],
   )
 
   const handleCancel = useCallback(() => {
