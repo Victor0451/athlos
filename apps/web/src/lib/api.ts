@@ -26,11 +26,25 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? ''
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
-  constructor(status: number, code: string, message: string) {
+  /**
+   * Optional machine-readable payload from the server's error envelope.
+   * For field-level validation errors this is
+   *   [{ field: 'monto', message: 'must be > 0' }, ...]
+   * For cap-exceeded errors (comprobante) this is
+   *   { cap: 50, requested: 51 }
+   * For other 4xx/5xx responses it is undefined.
+   *
+   * R4 — Payment / Débito / Nota / Comprobante forms use this to
+   * route per-field messages back to react-hook-form `setError` while
+   * still firing the top-level failure toast.
+   */
+  readonly details?: unknown
+  constructor(status: number, code: string, message: string, details?: unknown) {
     super(`${code}: ${message}`)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.details = details
   }
 }
 
@@ -71,13 +85,18 @@ function buildUrl(path: string, query?: Record<string, string | number | undefin
 async function rawFetch<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
-    let body: { code?: string; message?: string } = {}
+    let body: { code?: string; message?: string; details?: unknown } = {}
     try {
-      body = (await res.json()) as { code?: string; message?: string }
+      body = (await res.json()) as { code?: string; message?: string; details?: unknown }
     } catch {
       // body wasn't JSON; use empty
     }
-    throw new ApiError(res.status, body.code ?? 'HTTP_ERROR', body.message ?? `HTTP ${res.status}`)
+    throw new ApiError(
+      res.status,
+      body.code ?? 'HTTP_ERROR',
+      body.message ?? `HTTP ${res.status}`,
+      body.details,
+    )
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -162,13 +181,18 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
 
 async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let body: { code?: string; message?: string } = {}
+    let body: { code?: string; message?: string; details?: unknown } = {}
     try {
-      body = (await res.json()) as { code?: string; message?: string }
+      body = (await res.json()) as { code?: string; message?: string; details?: unknown }
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, body.code ?? 'HTTP_ERROR', body.message ?? `HTTP ${res.status}`)
+    throw new ApiError(
+      res.status,
+      body.code ?? 'HTTP_ERROR',
+      body.message ?? `HTTP ${res.status}`,
+      body.details,
+    )
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -215,9 +239,9 @@ export async function apiFetchBlob(
     const res = await fetch(url, { method: 'GET', credentials: 'include', headers })
     if (res.status !== 401) {
       if (!res.ok) {
-        let body: { code?: string; message?: string } = {}
+        let body: { code?: string; message?: string; details?: unknown } = {}
         try {
-          body = (await res.json()) as { code?: string; message?: string }
+          body = (await res.json()) as { code?: string; message?: string; details?: unknown }
         } catch {
           /* body wasn't JSON */
         }
@@ -225,6 +249,7 @@ export async function apiFetchBlob(
           res.status,
           body.code ?? 'HTTP_ERROR',
           body.message ?? `HTTP ${res.status}`,
+          body.details,
         )
       }
       return res.blob()
