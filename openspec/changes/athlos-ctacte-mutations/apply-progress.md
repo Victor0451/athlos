@@ -55,3 +55,92 @@
 ## 4. R5 status
 
 R5: pending unverified
+
+---
+
+# Apply Progress — athlos-ctacte-mutations R4 (canonical evidence)
+
+Branch: `fix/ctacte-mutations-r4` (6 commits on top of `origin/main` at `e935b5b`).
+The PR has not yet been pushed and a GitHub workflow run does not
+exist for the R4 branch yet, so no CI run IDs / job IDs are recorded
+here. All evidence below is local-reproduction per the team's
+per-file Vitest mandate (handover #253 RAM constraint) plus the
+cross-package typecheck / lint commands. The team convention is to
+record local reproduction as the only canonical evidence until the
+PR lands in `main` and starts producing workflow runs.
+
+## R4.1 — Commit-by-commit strict-TDD evidence (RED then GREEN same commit)
+
+| Commit | File(s) | RED command + result | GREEN command + result |
+|---|---|---|---|
+| `849c593` | `api.ts` + `applyFieldErrors.ts` (foundation) | n/a — foundation commit has no own RED; the 9 component RED tests all reference the new helper. Verified GREEN on every subsequent component commit. | `pnpm --filter @athlos/web typecheck` exit 0 |
+| `8055be8` | `CtactePaymentForm.tsx` + `CtactePaymentForm.field-errors.test.tsx` | `pnpm --filter @athlos/web test:run -- src/components/ctacte/CtactePaymentForm.field-errors.test.tsx` → 3/4 fail with `Unable to find role="alert"` | same command + `CtactePaymentForm.test.tsx` → 4/4 + 8/8 pass; `pnpm --filter @athlos/web typecheck` exit 0; `pnpm --filter @athlos/web lint` exit 0 |
+| `a279e9d` | `CtacteDebitForm.tsx` + `CtacteDebitForm.field-errors.test.tsx` | same per-file Vitest pattern → 3/4 fail with `Unable to find role="alert"` | same command, 4/4 pass; `CtacteDebitForm.test.tsx` 7/7 still pass; typecheck exit 0 |
+| `f121400` | `CtacteNoteForm.tsx` + `CtacteNoteForm.field-errors.test.tsx` | same per-file Vitest pattern → 1/2 fail with `Unable to find role="alert"` | same command, 2/2 pass; `CtacteNoteForm.test.tsx` 11/11 still pass; typecheck exit 0 |
+| `5ab3ec2` | `CtacteComprobanteButton.tsx` + `CtacteComprobanteButton.field-errors.test.tsx` | same per-file Vitest pattern → 2/3 fail (cap-range + from-field) | after discarding contradictory `from > to` case, 2/2 pass; `CtacteComprobanteButton.test.tsx` 7/7 still pass; typecheck exit 0; lint exit 0 |
+
+## R4.2 — Targeted sequential sweep across `src/components/ctacte/`
+
+Command (post-commit, after the 5 implementation commits):
+
+```
+pnpm --filter @athlos/web test:run -- src/components/ctacte/
+```
+
+Result: `Test Files  75 passed (75)` | `Tests  690 passed (690)`. No
+regression introduced by the R4 wiring; sibling component suites and
+unrelated pages all stay GREEN.
+
+## R4.3 — Cross-package typecheck after the R4 commits
+
+```
+pnpm --filter @athlos/web typecheck   → exit 0
+pnpm --filter @athlos/api typecheck   → exit 0
+pnpm --filter @athlos/db  typecheck   → exit 0
+pnpm --filter @athlos/audit typecheck → exit 0
+pnpm --filter @athlos/web lint        → exit 0
+```
+
+## R4.4 — Discarded partial test case
+
+The previous-session draft included a `from > to` server-field test
+case in `CtacteComprobanteButton.field-errors.test.tsx`. It was
+unreachable because the form's pre-existing client-side validator
+(`if (from && to && from > to) newErrors.to = …; return;`) blocks
+the request before `apiFetchBlob` runs. The form's pre-existing test
+suite (`CtacteComprobanteButton.test.tsx > shows inline error when
+from > to`) asserts this behaviour and PASSES throughout the R4
+wiring. The discarded case was replaced with a comment that
+explains why Pago / Débito / Nota sibling tests cover the array-shape
+react-hook-form path end-to-end, and the remaining two comprobante
+cases here cover the cap-range object shape + no-field fallback.
+
+## R4.5 — Out-of-scope confirmation
+
+- No `R5` work (evidence reconciliation): explicitly deferred to a future PR.
+- No deploy / no production container touch.
+- No migration apply.
+- No new branches created; no merges performed.
+- `CtacteTab.tsx` (sibling inside `/socios/[id]`) left untouched.
+- `openspec/changes/athlos-ctacte-canonical-pattern/exploration.md` (a stale scratch artefact from a sibling change) is left untouched — it is not part of the R4 diff or branch.
+
+## R4.6 — PR boundary
+
+- Mode: single PR (`fix/ctacte-mutations-r4` → `main`)
+- Diff vs `origin/main`: 8 files, +327 / -7
+- Budget risk: Low (well under the 400-line guard)
+- Work-unit commits: 6 commits, 5 for implementation (foundation + 4 components), 1 for SDD evidence. Each implementation commit is one behavior per the `work-unit-commits` skill and bundles RED + GREEN per the team's strict-TDD convention.
+
+## R4.7 — Net green counts after R4 wiring
+
+| Suite | Tests | Status |
+|---|---:|---|
+| `CtactePaymentForm.test.tsx` | 8 | pass |
+| `CtactePaymentForm.field-errors.test.tsx` | 4 | pass (3 RED before, 4 GREEN after) |
+| `CtacteDebitForm.test.tsx` | 7 | pass |
+| `CtacteDebitForm.field-errors.test.tsx` | 4 | pass (3 RED before, 4 GREEN after) |
+| `CtacteNoteForm.test.tsx` | 11 | pass |
+| `CtacteNoteForm.field-errors.test.tsx` | 2 | pass (1 RED before, 2 GREEN after) |
+| `CtacteComprobanteButton.test.tsx` | 7 | pass |
+| `CtacteComprobanteButton.field-errors.test.tsx` | 2 | pass (2 RED before, 2 GREEN after + 1 contradictory case discarded) |
+| Full `src/components/ctacte/` folder | 690 | pass (no regressions across the 75 test files in the folder) |

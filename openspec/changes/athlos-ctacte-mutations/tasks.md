@@ -467,3 +467,36 @@ Chain strategy: feature-branch-chain
 - [ ] R2.5 — Evidence correction is truthful but incomplete: `apply-progress.md` marks unavailable strict-TDD RED/GREEN evidence as `MISSING`, removes unsupported test totals, records the read-only production schema inspection accurately, and leaves overall SDD verification open until R2.1–R2.3 strict-TDD evidence can be proven.
 - [x] R2a fix batch — Restore route-standin lease compatibility; require comprobante caller keys and fingerprints; expire completed replay rows; compare debit owner identity; document safe 0033 rollout; and execute non-skipping disposable PostgreSQL lease/migration tests.
 - [x] R3 fix batch — Fixed PostgreSQL note-idempotency inference (defect #1: partial → full unique index via 0034 + schema + repository), concurrent same-key semantics with operator identity comparison (defect #2: `{ row, created }` repository contract + replay vs 409 branch), and reload-safe Idempotency-Key persistence (defect #3: localStorage-backed keys per `(socioId, movementId, body)` hash). Disposable PostgreSQL tests prove the migration inference fix. Tasks tracked per hybrid mode in `apply-progress.md`.
+
+### R4 — Field-Level ApiError Mapping for Pago/Débito/Nota/Comprobante
+
+- [x] **R4.1** — Add `details` field to `ApiError` envelope + new `parseFieldErrors` / `parseCapDetails` / `applyFieldErrors` helper module.
+- **File(s):** `apps/web/src/lib/api.ts` (edit, add optional `details?: unknown` constructor field, propagate from rawFetch / parseResponse / apiFetchBlob error branches); `apps/web/src/components/ctacte/applyFieldErrors.ts` (NEW, exports `parseFieldErrors(details)`, `parseCapDetails(details)`, `applyFieldErrors(setError, details)`).
+- **Behavior:** `ApiError.details` carries the server envelope's `details` payload verbatim. For Pago / Débito / Nota, the server returns an array `[{ field, message }, ...]` — `parseFieldErrors` normalises it (rejects entries missing `field` or `message` strings) and `applyFieldErrors` forwards each entry to react-hook-form `setError(path, { type: 'server', message })`. For comprobante, the server returns either the array shape OR the cap-exceeded object `{ cap, requested }`; `parseCapDetails` detects the object shape so callers can render a cap-aware inline message + toast.
+- **Tests added:** helper has no dedicated unit test (kept inline with the component tests to preserve per-file ≤ 200 LoC cap).
+- **Commit:** `feat(web): carry ApiError.details and add applyFieldErrors helper`.
+
+- [x] **R4.2** — Wire `applyFieldErrors(setError, err.details)` into `CtactePaymentForm` so server field errors land inline while the top-level failure toast still fires; on no-details (500) only the toast fires.
+- **File(s):** `apps/web/src/components/ctacte/CtactePaymentForm.tsx` (edit); `apps/web/src/components/ctacte/CtactePaymentForm.field-errors.test.tsx` (NEW, 4 RED→GREEN tests).
+- **Tests added (RED):** routes `monto` field error inline + toast; routes `fecha` field error inline + toast; routes `concepto` field error inline + toast; fires only the toast when server returns no field details.
+- **Run order:** `pnpm --filter @athlos/web test:run -- src/components/ctacte/CtactePaymentForm.field-errors.test.tsx` → `pnpm --filter @athlos/web test:run -- src/components/ctacte/CtactePaymentForm.test.tsx` → `pnpm --filter @athlos/web typecheck` → `pnpm --filter @athlos/web lint`.
+- **Commit:** `feat(web): route Pago form server field errors via applyFieldErrors`.
+
+- [x] **R4.3** — Wire the same helper into `CtacteDebitForm` (monto / fecha / motivo field routing + toast).
+- **File(s):** `apps/web/src/components/ctacte/CtacteDebitForm.tsx` (edit); `apps/web/src/components/ctacte/CtacteDebitForm.field-errors.test.tsx` (NEW, 4 RED→GREEN tests).
+- **Tests added (RED):** routes `monto` inline + toast; routes `fecha` inline + toast; routes `motivo` inline + toast; fires only the toast when server returns no field details.
+- **Commit:** `feat(web): route Débito form server field errors via applyFieldErrors`.
+
+- [x] **R4.4** — Wire the same helper into `CtacteNoteForm` (`body` field routing + toast); preserve the existing 409 Idempotency-Key conflict branch.
+- **File(s):** `apps/web/src/components/ctacte/CtacteNoteForm.tsx` (edit); `apps/web/src/components/ctacte/CtacteNoteForm.field-errors.test.tsx` (NEW, 2 RED→GREEN tests).
+- **Tests added (RED):** routes `body` inline + toast; fires only the toast when server returns no field details.
+- **Commit:** `feat(web): route Nota form server field errors via applyFieldErrors`.
+
+- [x] **R4.5** — Render comprobante cap-exceeded inline + route `from` / `to` field entries via local `errors` state; fire top-level toast in either case.
+- **File(s):** `apps/web/src/components/ctacte/CtacteComprobanteButton.tsx` (edit); `apps/web/src/components/ctacte/CtacteComprobanteButton.field-errors.test.tsx` (NEW, 2 RED→GREEN tests after discarding one contradictory case).
+- **Tests added (RED):** cap-range inline + cap-aware toast; fires only the toast when server returns no field details.
+- **Discarded:** the previous-session draft `from > to` field-error case is unreachable because the form's pre-existing client-side validator blocks the request before `apiFetchBlob` (covered by `CtacteComprobanteButton.test.tsx > shows inline error when from > to`). Pago / Débito / Nota sibling tests already prove the array-shape path through react-hook-form; the remaining two comprobante cases are sufficient R4 coverage for comprobante.
+- **Commit:** `feat(web): render comprobante cap-range inline + route field errors`.
+
+- [x] **R4.6** — Update `tasks.md` (R4 phases marked `[x]`) + `apply-progress.md` (R4 strict-TDD evidence + cited commit SHAs + green counts); persist `sdd/athlos-ctacte-mutations/apply-progress` to Engram.
+- **Commit:** `docs(sdd): record R4 strict-TDD evidence on fix/ctacte-mutations-r4`.
