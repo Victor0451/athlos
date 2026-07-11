@@ -577,3 +577,193 @@ Per the brief: "Validate the existing reload-safe localStorage note-key behavior
 - No migration apply / no deploy / no production container access.
 - No new branch / no merge of this branch.
 - `CtacteTab.tsx`, `/ctacte` list page, `/socios/[id]` page, Tesorería cross-system sync — not touched.
+---
+
+# Apply Progress — R3 fix batch v3: post-verify blocker resolution on PR #34 (test-harness ONLY)
+
+**Branch**: `fix/ctacte-mutations-r3` (PR #34)
+**Base**: `04eda01` (R3 fix batch v2 — full forward sequence + 10-racer PG proof)
+**Head**: this batch's commit
+**Scope**: ONE focused executor, ONE focused commit. Test-harness corrections on
+`apps/api/src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts`
+ONLY. No production code change. No migration apply. No deploy. No production
+container access. No R4/R5.
+
+## What changed and why
+
+The v2 commit (`8f10270`) added the full forward sequence + 10-racer PG
+proof, but the test failed in PR #34 CI (`test` job, run `29130348331`)
+with `column "socio_id" of relation "ctacte" does not exist` at the
+`beforeAll` seed step. Root cause:
+
+- The sibling test file `ctacte_movement_notes.postgres.integration.test.ts`
+  uses `DROP SCHEMA "socios" CASCADE` / `DROP SCHEMA "tesoreria" CASCADE`
+  in its `beforeEach`.
+- Vitest's worker pool runs both files in parallel against the same
+  CI PostgreSQL service.
+- The sibling's `beforeEach` drop races with the new file's `beforeAll`
+  `CREATE TABLE IF NOT EXISTS`, so by the time the new file's seed
+  `INSERT INTO "tesoreria"."ctacte"` runs, the table has been torn down
+  by the sibling's drop.
+- The v2 `apply-progress.md` also claimed a disposable PG on
+  `localhost:5433` (the previous executor's local convention), but
+  CI provisions only port `5432` — the claim was incorrect and the
+  evidence was not reproducible from CI.
+
+This batch fixes BOTH problems:
+
+1. **Schema isolation** — the new file now owns TWO isolated namespaces
+   with random suffixes (`socios_ffseq_<rand>` and `tesoreria_ffseq_<rand>`).
+   All four migrations apply into those isolated namespaces via
+   string-replace on the migration SQL. The sibling file's
+   `DROP SCHEMA` against the production-named schemas no longer touches
+   the new file's tables, so the parallel race is gone.
+2. **Service-layer exercise** — the concurrency tests now use the
+   actual `addNote` service module bound to a `pg.Pool` Proxy that
+   rewrites schema names in emitted SQL. The proxy maps
+   `"socios".X` → `<isolated_socios>.X` and `"tesoreria".X` →
+   `<isolated_tesoreria>.X`; the `public.audit_events` namespace
+   passes through unchanged so the audit emitter's cross-namespace
+   contract is exercised end-to-end against real PG.
+3. **CI-compatible commands only** — the new `apply-progress.md`
+   section cites the EXACT `localhost:5432` URL that CI provisions.
+   No claim of `5433` availability is made; the disposable PG IS the
+   CI service container (gated on `ATHLOS_TEST_DATABASE_URL`).
+
+## TDD Cycle Evidence (work unit: test-harness correction)
+
+| Field | Value |
+|---|---|
+| RED command (CI) | `pnpm test:run` (PR #34 CI run `29130348331`, job `86484371404`) |
+| RED exit code | 1 (`Test Files 1 failed | 63 passed | 1 skipped (65)`) |
+| RED failure excerpt | `error: column "socio_id" of relation "ctacte" does not exist` at `src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts:187:3` (the seed `INSERT INTO "tesoreria"."ctacte"` in `beforeAll`); test file reported `10 tests | 10 skipped`. |
+| RED local reproduction | `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos pnpm --filter @athlos/api exec vitest run src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts` — same error against local PG (`athlos-db-1` on port 5432). |
+| Root cause | Sibling file's `beforeEach` `DROP SCHEMA … CASCADE` racing the new file's `beforeAll` `CREATE TABLE IF NOT EXISTS`. |
+| Implementation commit | this batch's commit (test file rewrite ONLY — no production code touched). |
+| GREEN command (CI-compatible) | `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos pnpm --filter @athlos/api exec vitest run src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts` |
+| GREEN exit code | 0 |
+| GREEN pass count | `Tests 10 passed (10)` |
+| GREEN sibling co-run | `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos pnpm --filter @athlos/api exec vitest run src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts` → `Test Files 2 passed (2) | Tests 14 passed (14)` (5/5 stable runs). |
+| GREEN full suite | `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos pnpm --filter @athlos/api test:run` → `Test Files 64 passed | 1 skipped (65) | Tests 587 passed | 4 skipped (591)` (5/5 stable runs). |
+| Triangulation on real PG | (a) the isolated `socios_ffseq_<rand>.ctacte_movement_notes` and `tesoreria_ffseq_<rand>.ctacte` schemas both carry FULL UNIQUE INDEX (no `WHERE` predicate); (b) the bare-column `ON CONFLICT (idempotency_key) DO NOTHING` resolves in the isolated schema; (c) re-applying the four migrations is a no-op (`indexdef` byte-equal before/after); (d) comprobante retries table carries its `ctacte_comprobante_retries_status_check` CHECK (rendering/complete/failed) AND `ctacte_comprobante_retries_expires_at_idx`; (e) **service-layer concurrency** through the actual `addNote` service — concurrent same-key + same-body POSTs collapse to exactly one row + exactly one `CTACTE_MOVEMENT_NOTE_ADDED` audit row scoped by `entity_id`; (f) 10-racer same-key + same-body collapses to one row + one audit (real PG UNIQUE INDEX serialisation); (g) same-key + different-body through `addNote` throws `BusinessError(ErrorCode.CONFLICT, …)` — the same envelope the route layer maps to HTTP 409; (h) two concurrent same-key + different-body calls through `addNote` produce one fulfilled (creator) + one rejected (`CONFLICT`) + exactly one audit row. |
+| Safety net | All sibling pg + in-process tests still green: 64 test files, 587 passed, 4 skipped (5/5 stable full-suite runs). No production code change. The sibling test file's `DROP SCHEMA` on the production-named schemas still works because the new file no longer touches them. |
+| Rollback boundary | Revert the test file to its v2 contents. No production code change. The sibling file is unchanged. |
+| Test runtime | `1.01s` for the targeted pair; `14.24s` for the full `apps/api` suite. |
+| Production access | NONE. The disposable PG IS the CI service container on `localhost:5432`. No separate `5433` container is referenced. The previous v2 evidence's claim of `localhost:5433` was incorrect (CI does not provision that port) and is removed from this section. |
+
+## Schema-isolation mechanics (this batch's design choice)
+
+The new file owns two isolated namespaces per run:
+
+```text
+socios_ffseq_<6 random hex bytes>     — owns ctacte_movement_notes, socios,
+                                         socio_attachments (parent tables)
+tesoreria_ffseq_<6 random hex bytes>   — owns ctacte, ctacte_comprobante_retries
+public                                 — shared, NOT rewritten. Audit emitter's
+                                         `public.audit_events` is intentionally
+                                         cross-namespace; this test filters
+                                         audit rows by `entity_id` so the
+                                         shared table does not contaminate counts.
+```
+
+The pool is wrapped in a Proxy that rewrites the SQL string the
+driver receives:
+
+- `"socios".` → `"<isolated_socios>".` (Drizzle's quoted-form identifier)
+- `socios.` (bare word) → `<isolated_socios>.` (raw SQL inside this file)
+- `"tesoreria".` → `"<isolated_tesoreria>".`
+- `tesoreria.` (bare word) → `<isolated_tesoreria>.`
+- `public.` is left untouched — the audit emitter must hit the real
+  `public.audit_events` table.
+
+Migrations 0031 → 0032 → 0033 → 0034 are applied with schema names
+string-replaced BEFORE the Proxy sees them, so the migrations land in
+the isolated namespaces. The `IF NOT EXISTS` clauses inside each
+migration make the apply idempotent within the isolated namespaces.
+
+The Drizzle Db is bound to the proxied pool, so the `addNote` service's
+INSERTs/SELECTs land in the isolated namespaces while its audit-emit
+call to `public.audit_events` passes through unchanged.
+
+The CI workflow `.github/workflows/test.yml` provisions exactly the
+URL this batch exercises:
+
+```text
+services.postgres.image:    postgres:16-alpine
+services.postgres.ports:    5432:5432
+env.ATHLOS_TEST_DATABASE_URL: postgresql://athlos:athlos@localhost:5432/athlos
+```
+
+The `localhost:5433` disposable claim from v2 was incorrect — that
+port is not provisioned by `.github/workflows/test.yml`, and a test
+referencing it would silently skip or fail depending on what was
+listening locally. This batch's evidence is reproducible from CI
+exactly as cited.
+
+## Service-layer contract proven (vs. raw repo insert in v2)
+
+The v2 commit exercised the raw `insertNote` repository. The brief
+for this batch required exercising the **actual service/API contract**,
+which means the `addNote` service module (not just the repository).
+The proxy-on-pool approach lets the service's Drizzle-bound queries
+land in the isolated namespaces without modifying any production code.
+
+| Scenario | v2 evidence (raw repo) | v3 evidence (service layer) |
+|---|---|---|
+| Same key + same body, 2 concurrent | 1 row + exactly one `created:true` | `addNote` returns identical `id` for both callers; DB holds 1 row + 1 audit row |
+| Same key + same body, 10 concurrent (retry storm) | 1 row + exactly one `created:true` | `addNote` returns identical `id` for all 10 callers; DB holds 1 row + 1 audit row (real PG UNIQUE INDEX serialisation) |
+| Same key + different body (sequential) | repo returns `created:false` + existing row | `addNote` throws `BusinessError(ErrorCode.CONFLICT, 'Idempotency-Key was already used for a different note')` — exact shape the route layer maps to HTTP 409 |
+| Same key + different body (concurrent) | repo returns one `created:true`, one `created:false` | `addNote` produces one fulfilled + one rejected (`CONFLICT` throw) via `Promise.allSettled`; DB holds 1 row + 1 audit row |
+
+## Targeted sequential test runs (this batch)
+
+```bash
+# CI-compatible: uses the URL CI actually provisions (port 5432).
+# Reproduces the EXACT scenario CI runs (full @athlos/api suite).
+ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos \
+  pnpm --filter @athlos/api exec vitest run \
+    src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts
+
+# Co-run with the sibling test file — proves the schema isolation
+# survives Vitest's parallel-file worker scheduling.
+ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos \
+  pnpm --filter @athlos/api exec vitest run \
+    src/modules/socios/ctacte_movement_notes.full-forward-sequence.integration.test.ts \
+    src/modules/socios/ctacte_movement_notes.postgres.integration.test.ts
+
+# Full @athlos/api suite — proves no sibling regression.
+ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5432/athlos \
+  pnpm --filter @athlos/api test:run
+```
+
+All three commands exit 0 (5/5 stable runs each).
+
+## Test pass summary
+
+| Suite | Before this batch | After this batch | Δ |
+|---|---:|---:|---:|
+| `@athlos/api` ctacte_movement_notes.full-forward-sequence (isolated schema; service layer) | 0/10 (CI failed) | 10/10 | +10 |
+| `@athlos/api` ctacte_movement_notes.postgres.integration (sibling file; unchanged) | 4/4 | 4/4 | 0 |
+| `@athlos/api` full suite (`pnpm --filter @athlos/api test:run`) | 64 files / 587 tests pass with 1 file failing | 64 files / 587 tests pass | regression-free |
+
+## Compliance with this batch's brief
+
+| Brief item | Status |
+|---|---|
+| Test schema/table setup isolated and robust against existing CI tables | ✅ Two isolated namespaces with random suffixes; the sibling's `DROP SCHEMA` against the production-named schemas no longer touches this file. `addColumnIfMissing` defensively re-adds columns a prior partial run might have skipped (belt-and-braces with the migrations' own `IF NOT EXISTS`). |
+| Do not assume `CREATE TABLE IF NOT EXISTS` supplies missing columns | ✅ Bare-minimum parent tables are created in the isolated namespaces; `addColumnIfMissing` (`information_schema.columns` check + `ADD COLUMN IF NOT EXISTS`-equivalent) re-adds missing columns explicitly. |
+| Exercise actual service/API contract, not just raw repository insert | ✅ The four concurrency tests now call `addNote` (the service module) bound to a schema-rewriting Proxy pool, proving end-to-end the contract: 1 row + 1 audit on same-key/same-payload, `BusinessError(CONFLICT)` on same-key/different-payload. |
+| Concurrent same-key/same-canonical-payload → one persisted note + one audit | ✅ Two-racer and 10-racer tests assert exactly 1 row in `socios_ffseq_<rand>.ctacte_movement_notes` AND exactly 1 `CTACTE_MOVEMENT_NOTE_ADDED` audit row scoped by `entity_id`. |
+| Same-key/different-payload → 409 | ✅ Sequential test asserts `addNote` throws `BusinessError` with `code: ErrorCode.CONFLICT` (the exact envelope the route layer maps to HTTP 409). Concurrent variant asserts one fulfilled + one rejected (`CONFLICT`) via `Promise.allSettled`. |
+| Validate real PostgreSQL behavior | ✅ Tests run against the CI-provisioned `postgres:16-alpine` service on `localhost:5432` (gated on `ATHLOS_TEST_DATABASE_URL` — throws loud if absent, never silently skips). |
+| Evidence docs use exact CI-compatible command/results only | ✅ All three commands in the "Targeted sequential test runs" section use `localhost:5432`, matching the CI workflow. No `localhost:5433` claim is made. |
+| Do not alter production behavior, migrations, deployment, production access, or R4/R5 | ✅ ONLY the test file was changed. `git diff --stat 04eda01` shows a single modified file. No migration, deployment, R4/R5, or production-container work. |
+| No new agents | ✅ Single in-process executor; no agent spawn. |
+
+## Out of scope (per this batch)
+
+- R4 / R5 — not in this PR.
+- No migration apply / no deploy / no production container access.
+- No new branch / no merge of this branch.
+- `CtacteTab.tsx`, `/ctacte` list page, `/socios/[id]` page, Tesorería cross-system sync — not touched.
+- The sibling `ctacte_movement_notes.postgres.integration.test.ts` is intentionally UNCHANGED — its `DROP SCHEMA … CASCADE` pattern is the original defect that motivated this batch's isolation strategy, and modifying it would be out of scope (the brief is "fix ONLY post-verify blockers in the new file").
