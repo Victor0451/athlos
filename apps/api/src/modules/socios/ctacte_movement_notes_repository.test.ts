@@ -33,16 +33,17 @@ beforeEach(() => {
 
 describe('ctacte_movement_notes_repository — insert + list', () => {
   it('inserts a note and returns the persisted shape', async () => {
-    const inserted = await repo.insertNote(db, {
+    const { row, created } = await repo.insertNote(db, {
       ctacteMovementId: MOVEMENT_A,
       authorOperatorId: OPERATOR_ID,
       body: 'Verificar comprobante físico',
     })
-    expect(inserted.id).toEqual(expect.any(String))
-    expect(inserted.ctacteMovementId).toBe(MOVEMENT_A)
-    expect(inserted.authorOperatorId).toBe(OPERATOR_ID)
-    expect(inserted.body).toBe('Verificar comprobante físico')
-    expect(inserted.deletedAt).toBeNull()
+    expect(row.id).toEqual(expect.any(String))
+    expect(row.ctacteMovementId).toBe(MOVEMENT_A)
+    expect(row.authorOperatorId).toBe(OPERATOR_ID)
+    expect(row.body).toBe('Verificar comprobante físico')
+    expect(row.deletedAt).toBeNull()
+    expect(created).toBe(true)
   })
 
   it('listNotesByMovement returns active notes for the movement only', async () => {
@@ -83,12 +84,12 @@ describe('ctacte_movement_notes_repository — insert + list', () => {
       authorOperatorId: OPERATOR_ID,
       body: 'soft-delete-me',
     })
-    await repo.softDeleteNote(db, a.id)
+    await repo.softDeleteNote(db, a.row.id)
 
     const visible = await repo.listNotesByMovement(db, MOVEMENT_A)
     expect(visible).toHaveLength(1)
     expect(visible[0]!.body).toBe('soft-delete-me')
-    expect(visible.map((n) => n.id)).not.toContain(a.id)
+    expect(visible.map((n) => n.id)).not.toContain(a.row.id)
   })
 
   it('listNotesByMovement returns an empty array for a movement with no notes', async () => {
@@ -99,33 +100,29 @@ describe('ctacte_movement_notes_repository — insert + list', () => {
 
 describe('ctacte_movement_notes_repository — softDeleteNote', () => {
   it('sets deleted_at on the note row', async () => {
-    const inserted = await repo.insertNote(db, {
+    const { row } = await repo.insertNote(db, {
       ctacteMovementId: MOVEMENT_A,
       authorOperatorId: OPERATOR_ID,
       body: 'to-delete',
     })
-    await repo.softDeleteNote(db, inserted.id)
+    await repo.softDeleteNote(db, row.id)
 
-    const raw = standin.state.ctacteMovementNotes.find((r) => r.id === inserted.id)
+    const raw = standin.state.ctacteMovementNotes.find((r) => r.id === row.id)
     expect(raw).toBeDefined()
     expect(raw!.deletedAt).toBeInstanceOf(Date)
   })
 
   it('soft-delete is idempotent — calling twice leaves deleted_at set once', async () => {
-    const inserted = await repo.insertNote(db, {
+    const { row } = await repo.insertNote(db, {
       ctacteMovementId: MOVEMENT_A,
       authorOperatorId: OPERATOR_ID,
       body: 'x',
     })
-    await repo.softDeleteNote(db, inserted.id)
-    const firstDeleteAt = standin.state.ctacteMovementNotes.find(
-      (r) => r.id === inserted.id,
-    )!.deletedAt
+    await repo.softDeleteNote(db, row.id)
+    const firstDeleteAt = standin.state.ctacteMovementNotes.find((r) => r.id === row.id)!.deletedAt
 
-    await repo.softDeleteNote(db, inserted.id)
-    const secondDeleteAt = standin.state.ctacteMovementNotes.find(
-      (r) => r.id === inserted.id,
-    )!.deletedAt
+    await repo.softDeleteNote(db, row.id)
+    const secondDeleteAt = standin.state.ctacteMovementNotes.find((r) => r.id === row.id)!.deletedAt
 
     // The standin overwrites deleted_at; production preserves the
     // original (the WHERE clause scopes to deleted_at IS NULL). For

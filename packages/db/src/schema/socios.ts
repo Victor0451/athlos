@@ -107,10 +107,36 @@ export const ctacteMovementNotes = sociosSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     /** Soft-delete marker. NULL while active. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    /**
+     * Caller-supplied opaque Idempotency-Key (R3 corrective batch +
+     * R3 fix batch — defect #1).
+     *
+     * Mirrors the durable idempotency pattern already established for
+     * `tesoreria.ctacte` rows (migration 0032 + UNIQUE INDEX). Same
+     * key + same canonical payload MUST replay the note across
+     * process restarts, cross-instance routing, and arbitrary retry
+     * intervals. Different payload with the same key MUST 409.
+     *
+     * The matching index is a FULL (unconditional) UNIQUE INDEX
+     * defined by migration 0034 — the prior PARTIAL index
+     * (`WHERE idempotency_key IS NOT NULL`) could NOT be inferred
+     * by `ON CONFLICT (idempotency_key) DO NOTHING`, which would
+     * 5xx every note POST in production PostgreSQL. The full unique
+     * index preserves the same constraint (multiple NULLs allowed,
+     * non-NULL uniqueness enforced) and IS inferable.
+     *
+     * `idempotencyKey` stays NULLABLE because earlier code paths did
+     * not require one; the new contract enforces presence at the
+     * service/route boundary.
+     */
+    idempotencyKey: text('idempotency_key'),
   },
   (table) => ({
     movementIdx: index('idx_ctacte_movement_notes_movement').on(table.ctacteMovementId),
     createdIdx: index('idx_ctacte_movement_notes_created').on(table.createdAt),
+    idempotencyKeyUnique: uniqueIndex('ctacte_movement_notes_idempotency_key_unique').on(
+      table.idempotencyKey,
+    ),
   }),
 )
 

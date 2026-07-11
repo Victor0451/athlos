@@ -27,6 +27,7 @@ describe('ctacte_movement_notes schema', () => {
       authorOperatorId: string
       createdAt: Date
       deletedAt: Date | null
+      idempotencyKey: string | null
     }
     type _Check = CtacteMovementNote extends Expected ? true : false
     const _typeCheck: _Check = true
@@ -63,5 +64,62 @@ describe('0031_ctacte_movement_notes migration', () => {
     // Column addition (idempotent).
     expect(content).toContain('ADD COLUMN IF NOT EXISTS "comprobante_attachment_id" uuid')
     expect(content).toContain('REFERENCES "socios"."socio_attachments"("id")')
+  })
+
+  it('migration file declares the idempotency_key column + UNIQUE partial index (R3)', async () => {
+    const fs = await import('node:fs/promises')
+    const migrationPath = path.join(PACKAGE_ROOT, 'drizzle/0031_ctacte_movement_notes.sql')
+    const content = await fs.readFile(migrationPath, 'utf-8')
+    expect(content).toContain('ADD COLUMN IF NOT EXISTS "idempotency_key" text')
+    expect(content).toContain('ctacte_movement_notes_idempotency_key_unique')
+    expect(content).toMatch(/WHERE\s+"idempotency_key"\s+IS\s+NOT\s+NULL/)
+  })
+})
+
+describe('0034_ctacte_movement_notes_idempotency_key_full_unique migration', () => {
+  it('migration file replaces the partial unique index with a full unique index (R3 fix #1)', async () => {
+    const fs = await import('node:fs/promises')
+    const migrationPath = path.join(
+      PACKAGE_ROOT,
+      'drizzle/0034_ctacte_movement_notes_idempotency_key_full_unique.sql',
+    )
+    const content = await fs.readFile(migrationPath, 'utf-8')
+    // Forward-only conversion: drop the partial index, recreate as full.
+    expect(content).toContain(
+      'DROP INDEX IF EXISTS "socios"."ctacte_movement_notes_idempotency_key_unique"',
+    )
+    // The new CREATE must NOT carry a WHERE clause — partial would
+    // re-break ON CONFLICT inference.
+    expect(content).toMatch(
+      /CREATE UNIQUE INDEX IF NOT EXISTS "ctacte_movement_notes_idempotency_key_unique"[\s\S]+ON "socios"\."ctacte_movement_notes" \("idempotency_key"\);/,
+    )
+    // And the new CREATE statement itself MUST NOT carry a partial
+    // predicate — full index required for bare-column ON CONFLICT
+    // inference in PostgreSQL.
+    const newCreate = content.match(
+      /CREATE UNIQUE INDEX IF NOT EXISTS "ctacte_movement_notes_idempotency_key_unique"[\s\S]+?;/,
+    )
+    expect(newCreate).not.toBeNull()
+    expect(newCreate![0]).not.toMatch(/WHERE/)
+  })
+
+  it('schema declaration mirrors the migration (full unique index, no partial predicate)', async () => {
+    // The Drizzle schema MUST NOT keep a `.where(sql\`... IS NOT NULL\`)`
+    // predicate on the idempotency key unique index — doing so would
+    // tell Drizzle to generate a partial index that PostgreSQL cannot
+    // match against bare `ON CONFLICT (idempotency_key)`.
+    const fs = await import('node:fs/promises')
+    const schemaPath = path.join(PACKAGE_ROOT, 'src/schema/socios.ts')
+    const content = await fs.readFile(schemaPath, 'utf-8')
+    expect(content).toContain('idempotencyKeyUnique')
+    // The unique index declaration MUST NOT carry a `.where(` clause.
+    const idxDecl = content.match(/idempotencyKeyUnique[^)]+\)/)
+    expect(idxDecl).not.toBeNull()
+    expect(idxDecl![0]).not.toMatch(/\.where\(/)
+    // The full declaration's chain must still terminate in `.on(table.idempotencyKey)`
+    // and bind to the same index name as the migration 0031 + 0034.
+    expect(content).toMatch(
+      /uniqueIndex\(['"]ctacte_movement_notes_idempotency_key_unique['"]\)[\s\S]*?\.on\([\s\S]*?table\.idempotencyKey[\s\S]*?\),?\s*\)/,
+    )
   })
 })
