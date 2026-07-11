@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { apiFetchBlob } from '@/lib/api'
 import { getCtacteComprobanteUrl } from '@/lib/api/ctacte-mutations'
+import { parseCapDetails, parseFieldErrors } from './applyFieldErrors'
 
 /**
  * CtacteComprobanteButton — secondary variant button that opens a modal
@@ -71,8 +72,39 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
       window.open(blobUrl, '_blank', 'noopener,noreferrer')
       notify('success', 'Comprobante generado')
       setOpen(false)
-    } catch {
-      notify('error', 'No se pudo generar el comprobante. Intentá de nuevo.')
+    } catch (err) {
+      // R4 — comprobante surfaces TWO distinct server shapes:
+      //   1. Cap-exceeded (R1.3 fix):
+      //        { details: { cap: 50, requested: 51 } }
+      //      Renders inline ('El rango excede el límite de 50
+      //      movimientos.') plus a top-level error toast with the
+      //      same message.
+      //   2. Field-level (defense-in-depth):
+      //        { details: [{ field: 'from', message: 'must be <= to' }] }
+      //      Routes each entry to the matching aria-invalid + role=alert
+      //      slot ('desde' or 'hasta') and fires the standard error toast.
+      //
+      // When the server returns no `details` (500) only the toast fires.
+      const e = err as { details?: unknown } | null | undefined
+      const cap = parseCapDetails(e?.details)
+      const fieldEntries = parseFieldErrors(e?.details)
+      if (cap) {
+        const message = `El rango excede el límite de ${cap.cap} movimientos.`
+        setErrors({ submit: message })
+        notify('error', message)
+      } else if (fieldEntries.length > 0) {
+        const next: typeof errors = {}
+        for (const entry of fieldEntries) {
+          if (entry.field === 'from') next.from = entry.message
+          else if (entry.field === 'to') next.to = entry.message
+          else next.submit = entry.message
+        }
+        setErrors(next)
+        notify('error', 'No se pudo generar el comprobante. Intentá de nuevo.')
+      } else {
+        setErrors({})
+        notify('error', 'No se pudo generar el comprobante. Intentá de nuevo.')
+      }
     } finally {
       setIsGenerating(false)
     }
