@@ -56,6 +56,48 @@ export function __resetApiForTests(): void {
   refreshInFlight = null
 }
 
+/**
+ * Server envelope shape. The first-party API (`apps/api/src/plugins/
+ * error-handler.ts` + every route-level 4xx/5xx response) emits
+ * `{ error: <ErrorCode>, message, details?, request_id }`. Pre-existing
+ * tests in this package still use the older `code:` shape (e.g. the
+ * auth helpers), so `code` is accepted as a fallback — the order is
+ * important (prefer `error`).
+ *
+ * R4 corrective — defect #2. Before the fix, the constructor
+ * read only `body.code` and ApiError silently fell back to
+ * `HTTP_ERROR` for every server-sent envelope.
+ */
+interface ErrorEnvelope {
+  error?: string
+  code?: string
+  message?: string
+  details?: unknown
+}
+
+async function readEnvelope(res: Response): Promise<ErrorEnvelope> {
+  try {
+    return (await res.json()) as ErrorEnvelope
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Build an `ApiError` from a non-2xx Response. Single source of
+ * truth for the envelope → ApiError mapping. Used by every
+ * transport path (`rawFetch`, `parseResponse`, `apiFetchBlob`,
+ * and the `apiFetchBlob` retry-after-refresh branch).
+ */
+function buildApiError(res: Response, envelope: ErrorEnvelope): ApiError {
+  return new ApiError(
+    res.status,
+    envelope.error ?? envelope.code ?? 'HTTP_ERROR',
+    envelope.message ?? `HTTP ${res.status}`,
+    envelope.details,
+  )
+}
+
 interface ApiFetchOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   body?: unknown
@@ -85,18 +127,7 @@ function buildUrl(path: string, query?: Record<string, string | number | undefin
 async function rawFetch<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
-    let body: { code?: string; message?: string; details?: unknown } = {}
-    try {
-      body = (await res.json()) as { code?: string; message?: string; details?: unknown }
-    } catch {
-      // body wasn't JSON; use empty
-    }
-    throw new ApiError(
-      res.status,
-      body.code ?? 'HTTP_ERROR',
-      body.message ?? `HTTP ${res.status}`,
-      body.details,
-    )
+    throw buildApiError(res, await readEnvelope(res))
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -181,18 +212,7 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
 
 async function parseResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let body: { code?: string; message?: string; details?: unknown } = {}
-    try {
-      body = (await res.json()) as { code?: string; message?: string; details?: unknown }
-    } catch {
-      // ignore
-    }
-    throw new ApiError(
-      res.status,
-      body.code ?? 'HTTP_ERROR',
-      body.message ?? `HTTP ${res.status}`,
-      body.details,
-    )
+    throw buildApiError(res, await readEnvelope(res))
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -239,18 +259,7 @@ export async function apiFetchBlob(
     const res = await fetch(url, { method: 'GET', credentials: 'include', headers })
     if (res.status !== 401) {
       if (!res.ok) {
-        let body: { code?: string; message?: string; details?: unknown } = {}
-        try {
-          body = (await res.json()) as { code?: string; message?: string; details?: unknown }
-        } catch {
-          /* body wasn't JSON */
-        }
-        throw new ApiError(
-          res.status,
-          body.code ?? 'HTTP_ERROR',
-          body.message ?? `HTTP ${res.status}`,
-          body.details,
-        )
+        throw buildApiError(res, await readEnvelope(res))
       }
       return res.blob()
     }
@@ -267,9 +276,23 @@ export async function apiFetchBlob(
     const newToken = getAccessToken()
     if (newToken) headers['authorization'] = `Bearer ${newToken}`
     const retry = await fetch(url, { method: 'GET', credentials: 'include', headers })
-    if (!retry.ok) {
+    // R4 corrective — defect #3. Only an actual auth failure on
+    // the retry (retry.status === 401) is treated as a token
+    // revocation — i.e. clear the in-memory token + redirect to
+    // /login. Any other non-2xx retry (400 cap-exceeded, 409
+    // idempotency conflict, 415 unsupported media type, 5xx
+    // server failures, …) MUST surface as an `ApiError` so the
+    // caller (`CtacteComprobanteButton`) can render the right
+    // inline / top-level feedback. The previous implementation
+    // cleared the token + redirected on every `!retry.ok`,
+    // which silently nuked the operator's session on a benign
+    // comprobante cap-exceeded.
+    if (retry.status === 401) {
       clearAccessToken()
       redirect('/login?expired=1')
+    }
+    if (!retry.ok) {
+      throw buildApiError(retry, await readEnvelope(retry))
     }
     return retry.blob()
   }
