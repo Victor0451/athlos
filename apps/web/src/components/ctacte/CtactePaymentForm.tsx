@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { registerCtactePayment } from '@/lib/api/ctacte-mutations'
+import { applyFieldErrors } from './applyFieldErrors'
 
 /**
  * CtactePaymentForm — modal body for "Registrar Pago" on the cuenta-corriente
@@ -59,6 +60,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
     reset,
   } = useForm<PaymentFormValues, unknown, PaymentFormValues>({
@@ -85,11 +87,18 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
         idempotencyKey.current = null
         onSuccess?.()
         onClose()
-      } catch {
+      } catch (err) {
+        // R4 — surface server field errors inline via react-hook-form
+        // `setError` while still firing the top-level failure toast
+        // (toasts are NOT suppressed when inline errors render). When
+        // the server returns no `details` (e.g., 500 INTERNAL_ERROR)
+        // only the toast fires.
+        const details = (err as { details?: unknown } | null | undefined)?.details
+        applyFieldErrors(setError, details)
         notify('error', 'No se pudo registrar el pago. Intentá de nuevo.')
       }
     },
-    [socioId, file, reset, onSuccess, onClose],
+    [socioId, file, reset, onSuccess, onClose, setError],
   )
 
   const handleCancel = useCallback(() => {

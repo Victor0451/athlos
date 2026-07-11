@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { registerCtacteDebit } from '@/lib/api/ctacte-mutations'
+import { applyFieldErrors } from './applyFieldErrors'
 
 /**
  * CtacteDebitForm — modal body for "Registrar Débito" on the cuenta-corriente
@@ -49,6 +50,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
     reset,
   } = useForm<DebitFormValues, unknown, DebitFormValues>({
@@ -72,11 +74,18 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
         idempotencyKeyRef.current = null
         onSuccess?.()
         onClose()
-      } catch {
+      } catch (err) {
+        // R4 — surface server field errors inline via react-hook-form
+        // `setError` while still firing the top-level failure toast
+        // (toasts are NOT suppressed when inline errors render). When
+        // the server returns no `details` (e.g., 500 INTERNAL_ERROR)
+        // only the toast fires.
+        const details = (err as { details?: unknown } | null | undefined)?.details
+        applyFieldErrors(setError, details)
         notify('error', 'No se pudo registrar el débito. Intentá de nuevo.')
       }
     },
-    [socioId, reset, onSuccess, onClose],
+    [socioId, reset, onSuccess, onClose, setError],
   )
 
   const handleCancel = useCallback(() => {
