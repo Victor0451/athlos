@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
 import { inArray } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { operators, type CtacteMovementNote } from '@athlos/db/schema'
 import { emitAudit } from '@athlos/audit'
+import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as repo from './ctacte_movement_notes_repository.ts'
 
 /**
@@ -25,6 +25,13 @@ import * as repo from './ctacte_movement_notes_repository.ts'
  * `audit_events` table is append-only and a missed row is recoverable
  * from the operator's session log; the opposite (a 500 on a
  * successful note insert) would be the worse outcome.
+ *
+ * R3 fix #2 — durable idempotency: `addNote` accepts a caller-
+ * provided `idempotencyKey`. Replays (same key + same canonical
+ * payload) return the previously-persisted row WITHOUT a second
+ * audit emission. The previous 10-second SHA-256 timestamp-bucket
+ * fallback has been removed because it did not survive process
+ * restarts or cross-instance routing.
  */
 
 export interface CtacteNoteService {
@@ -96,14 +103,51 @@ export interface AddNoteInput {
   ctacteMovementId: string
   operatorId: string
   body: string
+  /** Caller-supplied opaque Idempotency-Key (R3 fix #2). When
+   *  present, retries with the same key + same payload return the
+   *  previously-persisted note without a second audit emission.
+   *  Reuse with a different payload returns `CONFLICT`. */
+  idempotencyKey?: string
 }
 
-const retries = new WeakMap<object, Map<string, CtacteMovementNote>>()
+/**
+ * Canonical payload comparison. A note replay matches when the
+ * persisted row's `(movement_id, body, author_operator_id)` triple
+ * equals the caller's intent. Different operator identity is
+ * treated as a CONFLICT — the same opaque key should never be
+ * used by two different operators because the client-side form
+ * owns its own key per socio + movement + body triple.
+ *
+ * R3 fix batch — defect #2 added the `author_operator_id` axis
+ * because concurrent same-key requests can now race through
+ * `insertNote` from two API replicas; without the operator check
+ * a stolen/replayed key could be silently re-attributed.
+ */
+function isCanonicalMatch(
+  row: { ctacteMovementId: string; body: string; authorOperatorId: string },
+  intent: { ctacteMovementId: string; body: string; operatorId: string },
+): boolean {
+  return (
+    row.ctacteMovementId === intent.ctacteMovementId &&
+    row.body === intent.body &&
+    row.authorOperatorId === intent.operatorId
+  )
+}
 
 /**
- * Add a note to a movement. Trims the body, inserts the row, and
- * emits a `CTACTE_MOVEMENT_NOTE_ADDED` audit event with the exact
- * 5-key metadata shape pinned by the audit-logger spec delta.
+ * Add a note to a movement.
+ *
+ *  1. Trims the body.
+ *  2. Issues a single conflict-aware INSERT against the durable
+ *     UNIQUE INDEX (migration 0034). The repository reports
+ *     `created: true` for the creator of the row and
+ *     `created: false` for the conflict loser, which surfaces the
+ *     existing persisted row.
+ *  3. Same canonical payload as the persisted row (movement + body +
+ *     operator) → REPLAY, no audit re-emission.
+ *  4. Different canonical payload + same key → CONFLICT.
+ *  5. Fresh insert OR creator branch of a race → emit
+ *     `CTACTE_MOVEMENT_NOTE_ADDED` exactly once.
  *
  * The audit emission is best-effort — a failure here does NOT roll
  * back the insert. The audit metadata shape (sortable key order):
@@ -118,29 +162,58 @@ const retries = new WeakMap<object, Map<string, CtacteMovementNote>>()
  */
 export async function addNote(db: Db, input: AddNoteInput): Promise<CtacteMovementNote> {
   const body = input.body.trim()
-  const retryKey = noteRetryKey(input.ctacteMovementId, input.operatorId, body)
-  const cached = retries.get(db as object)?.get(retryKey)
-  if (cached) return cached
+  const idempotencyKey = input.idempotencyKey
 
-  const inserted = await repo.insertNote(db, {
+  const result = await repo.insertNote(db, {
     ctacteMovementId: input.ctacteMovementId,
     authorOperatorId: input.operatorId,
     body,
-    id: retryKey,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
-  const byDb = retries.get(db as object) ?? new Map<string, CtacteMovementNote>()
-  byDb.set(retryKey, inserted)
-  retries.set(db as object, byDb)
-  await emitNoteAddedAudit(db, inserted, input.operatorId)
-  return inserted
+
+  if (!result.created) {
+    // Conflict-loser path. The persisted row may match the caller's
+    // canonical payload (silent replay) OR have been produced from
+    // a different intent (CONFLICT). Either way, NO audit emission —
+    // the creator already emitted it.
+    if (isCanonicalMatch(result.row, { ...input, body })) {
+      return result.row
+    }
+    throw BusinessError(ErrorCode.CONFLICT, 'Idempotency-Key was already used for a different note')
+  }
+
+  // Creator branch. Emit exactly one audit regardless of how many
+  // concurrent calls raced through `insertNote`.
+  await emitNoteAddedAudit(db, result.row, input.operatorId)
+  return result.row
 }
 
-function noteRetryKey(movementId: string, operatorId: string, body: string): string {
-  const bucket = Math.floor(Date.now() / 10_000)
-  const hash = createHash('sha256')
-    .update(`note|${movementId}|${operatorId}|${body}|${bucket}`)
-    .digest('hex')
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`
+export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
+
+export interface SoftDeleteNoteAuth {
+  callerOperatorId: string
+  callerRole: CtacteNoteCallerRole | string
+  /**
+   * R3 fix #1 — the URL `movementId` MUST match the persisted note's
+   * `ctacteMovementId`. A note belonging to a different movement
+   * (even of the same socio) is treated as a 404 with no delete.
+   */
+  expectedMovementId: string
+}
+
+/**
+ * Pure helper: soft-delete permission gate. Mirrors the rule used
+ * by `notes.ts` for the per-socio notes surface — only the original
+ * author OR an ADMIN may delete. Exported so the route layer can
+ * re-use the same rule for pre-checks (e.g. showing or hiding the
+ * delete button in the UI).
+ */
+export function canDeleteCtacteNote(
+  note: { authorOperatorId: string },
+  auth: SoftDeleteNoteAuth,
+): boolean {
+  if (auth.callerRole === 'ADMIN') return true
+  return note.authorOperatorId === auth.callerOperatorId
 }
 
 /**
@@ -148,13 +221,42 @@ function noteRetryKey(movementId: string, operatorId: string, body: string): str
  * `CTACTE_MOVEMENT_NOTE_ADDED` audit row as the historical record
  * (spec delta §"Audit event for soft-deleted note remains queryable").
  *
+ * Authorization (R3):
+ *   - R3 fix #1 — movement binding: the note MUST belong to the
+ *     `expectedMovementId` passed in `auth`. A mismatch returns
+ *     `NOT_FOUND` (mapped to 404) with no soft-delete side effect.
+ *   - Author-or-ADMIN rule: only the original author OR an ADMIN may
+ *     delete. Non-author non-ADMIN callers receive
+ *     `INSUFFICIENT_PERMISSIONS` (mapped to 403). Unknown note ids
+ *     receive `NOT_FOUND` (mapped to 404).
+ *
  * We intentionally do NOT emit a new audit event — the spec locks
  * the audit union to 4 ctacte actions (no `CTACTE_MOVEMENT_NOTE_DELETED`)
  * and the original ADD row is the authoritative history. A future
  * change can add a DELETED action and emit it here if product asks
  * for the explicit timeline event.
  */
-export async function softDeleteNote(db: Db, noteId: string, _operatorId: string): Promise<void> {
+export async function softDeleteNote(
+  db: Db,
+  noteId: string,
+  auth: SoftDeleteNoteAuth,
+): Promise<void> {
+  const existing = await repo.findNoteById(db, noteId)
+  if (!existing) {
+    throw BusinessError(ErrorCode.NOT_FOUND, 'Note not found')
+  }
+  // R3 fix #1 — nested resource binding. A note that does not belong
+  // to the URL movement returns 404 with no delete side effect,
+  // regardless of caller authorization.
+  if (existing.ctacteMovementId !== auth.expectedMovementId) {
+    throw BusinessError(ErrorCode.NOT_FOUND, 'Note does not belong to the requested movement')
+  }
+  if (!canDeleteCtacteNote(existing, auth)) {
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Only the author or an ADMIN can delete this note',
+    )
+  }
   await repo.softDeleteNote(db, noteId)
 }
 

@@ -91,6 +91,9 @@ vi.mock('@/components/ctacte/CtacteNotesSection', () => ({
   }) => (
     <div data-testid="ctacte-notes-section">
       movementId:{movementId} notes:{notes.length} loading:{String(isLoading)} error:{error}
+      <button type="button" data-testid="ctacte-note-new-trigger">
+        Agregar nota
+      </button>
     </div>
   ),
 }))
@@ -387,6 +390,46 @@ describe('Ctacte detail page', () => {
     await waitFor(() => {
       expect(screen.getByTestId('ctacte-notes-section')).toHaveTextContent('movementId:mv-1')
     })
+  })
+
+  it('calls getMovimientos when the user navigates to page 2', async () => {
+    getCtacteMock.mockResolvedValueOnce({
+      ...SAMPLE_CTACTE,
+      total: 60,
+      has_more: true,
+    })
+    getMovimientosMock.mockResolvedValueOnce({
+      items: [SAMPLE_CTACTE.movimientos[0]!],
+      page: 2,
+      limit: 20,
+      total: 60,
+      has_more: true,
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /siguiente/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /siguiente/i }))
+
+    await waitFor(() => {
+      expect(getMovimientosMock).toHaveBeenCalledWith(SAMPLE_SOCIO.id, { page: 2, limit: 20 })
+    })
+  })
+
+  it('exposes the CtacteNoteForm modal trigger inside the mounted notes section (R3)', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText('Cuota enero')).toBeInTheDocument()
+    })
+    await user.click(screen.getByTestId('movement-row-mv-1-nota'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ctacte-notes-section')).toBeInTheDocument()
+    })
+    // R3: the production section exposes a modal trigger that opens
+    // CtacteNoteForm so the row action has a real add-note path.
+    expect(screen.getByTestId('ctacte-note-new-trigger')).toBeInTheDocument()
   })
 
   it('calls getMovimientos when the user navigates to page 2', async () => {

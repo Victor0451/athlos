@@ -2,24 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, MessageSquare, UserRound } from 'lucide-react'
-import { addCtacteNote, type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
+import { ChevronDown, MessageSquare, Plus, Trash2, UserRound } from 'lucide-react'
+import { deleteCtacteNote, type CtacteNoteResponse } from '@/lib/api/ctacte-mutations'
 import { OPERATORS_QUERY_KEY, getOperatorNames, type OperatorSummary } from '@/lib/api/operators'
 import { Badge } from '@/components/ui/Badge'
 import { OperatorChip } from '@/components/socios/OperatorChip'
+import { CtacteNoteForm } from '@/components/ctacte/CtacteNoteForm'
 import { notify } from '@/lib/notifications'
+import { useAuth } from '@/lib/use-auth'
 
 /**
  * CtacteNotesSection — operator-authored notes attached to a cuenta-corriente
- * movement (PR A2 — athlos-ctacte-mutations).
+ * movement (PR A2 — athlos-ctacte-mutations; R3 hardening).
  *
  * Mirrors the SocioNotesCard pattern:
- *   - Collapsible via `useNotesCollapsed(cuentaId, null)` hook (localStorage key
- *     `ctacte-notes-collapsed-<cuenta>`; default collapsed).
+ *   - Collapsible via `useNotesCollapsed(cuentaId, null)` hook (localStorage
+ *     key `ctacte-notes-collapsed-<cuenta>`; default collapsed). R3 fix:
+ *     the key MUST be the cuenta (socioId), not the movementId, so the
+ *     collapse state persists across movements on the same cuenta and
+ *     stays isolated across cuentas.
  *   - Form to add a new note per movement.
  *   - List of existing notes (excludes soft-deleted).
  *   - Per-row `OperatorChip` renders `username · ROLE`.
- *   - Soft-delete gated to author OR ADMIN.
+ *   - Per-row soft-delete gated to author OR ADMIN (R3 authorization).
  */
 
 export const CTACTE_NOTES_QUERY_KEY = (socioId: string, movementId: string) =>
@@ -47,7 +52,19 @@ function formatTimestamp(iso: string): string {
   }).format(d)
 }
 
-function useNotesCollapsed(
+/**
+ * `useNotesCollapsed` — per-cuenta collapsible state for the notes card.
+ *
+ * R3 invariant: the localStorage key MUST be scoped to the cuenta
+ * (`ctacte-notes-collapsed-<cuenta>`), NOT to the movement id. The
+ * account-level collapse preference is a property of the cuenta, not
+ * of the individual movement; per-movement keys made the toggle
+ * appear "broken" because switching movements reset the state.
+ *
+ * Exported for unit tests so the persistence rules can be pinned
+ * independently of the section component.
+ */
+export function useNotesCollapsed(
   cuentaId: string,
   editingId: string | null,
 ): { collapsed: boolean; toggle: () => void; displayExpanded: boolean } {
@@ -90,8 +107,11 @@ export function CtacteNotesSection({
   error,
   onNoteAdded,
 }: CtacteNotesSectionProps) {
-  const [draft, setDraft] = useState('')
-  const { toggle, displayExpanded } = useNotesCollapsed(movementId, null)
+  const [showNoteForm, setShowNoteForm] = useState(false)
+  const { toggle, displayExpanded } = useNotesCollapsed(socioId, null)
+  const { user } = useAuth()
+  const currentOperatorId = user?.operator_id ?? null
+  const currentRole = user?.role ?? null
 
   const sortedOperatorIds = useMemo(() => {
     const ids = notes
@@ -112,18 +132,41 @@ export function CtacteNotesSection({
     [operatorsQuery.data],
   )
 
-  async function handleSubmitDraft(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const trimmed = draft.trim()
-    if (trimmed.length === 0) return
+  /**
+   * R3 authorization gate: only the original author OR an ADMIN may
+   * delete a note. Mirrors the server-side `canDeleteCtacteNote` rule
+   * in `apps/api/src/modules/socios/ctacte_movement_notes.ts`.
+   */
+  const canDeleteNote = useCallback(
+    (note: CtacteNoteResponse): boolean => {
+      if (!currentOperatorId) return false
+      if (currentRole === 'ADMIN') return true
+      return note.author_operator_id === currentOperatorId
+    },
+    [currentOperatorId, currentRole],
+  )
+
+  async function handleDeleteClick(note: CtacteNoteResponse) {
+    if (!canDeleteNote(note)) {
+      notify('error', 'No tenés permiso para borrar esta nota')
+      return
+    }
     try {
-      await addCtacteNote(socioId, movementId, trimmed)
-      notify('success', 'Nota creada')
-      setDraft('')
+      await deleteCtacteNote(socioId, movementId, note.id)
+      notify('success', 'Nota eliminada')
       onNoteAdded()
     } catch {
-      notify('error', 'No se pudo crear la nota')
+      notify('error', 'No se pudo eliminar la nota')
     }
+  }
+
+  function handleNoteFormSuccess() {
+    setShowNoteForm(false)
+    onNoteAdded()
+  }
+
+  function handleNoteFormClose() {
+    setShowNoteForm(false)
   }
 
   return (
@@ -193,34 +236,24 @@ export function CtacteNotesSection({
             </p>
           ) : (
             <>
-              {/* New note form */}
-              <form onSubmit={handleSubmitDraft} data-testid="ctacte-note-new-form">
-                <textarea
-                  id="ctacte-note-new-body"
-                  data-testid="ctacte-note-new-body"
-                  rows={3}
-                  maxLength={2000}
-                  placeholder="Escribí una nota sobre este movimiento…"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span
-                    className="font-body text-xs text-ink-500"
-                    data-testid="ctacte-note-charcount"
-                  >
-                    {draft.length} / 2000
-                  </span>
-                  <button
-                    type="submit"
-                    disabled={draft.trim().length === 0}
-                    className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Agregar nota
-                  </button>
-                </div>
-              </form>
+              {/* New note modal trigger (R3): the production add-note
+                  surface is the movement-scoped CtacteNoteForm modal,
+                  so it is reachable from the row action on
+                  /ctacte/[cuenta] (per verify-report R3 findings). */}
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-body text-sm text-ink-500">
+                  Registrá una nota sobre este movimiento. Cada nota queda asentada en la auditoría.
+                </p>
+                <button
+                  type="button"
+                  data-testid="ctacte-note-new-trigger"
+                  onClick={() => setShowNoteForm(true)}
+                  className="shrink-0 rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+                >
+                  <Plus className="-ml-0.5 mr-1 inline h-4 w-4" aria-hidden="true" />
+                  Agregar nota
+                </button>
+              </div>
 
               {/* Notes list */}
               {notes.length === 0 ? (
@@ -233,6 +266,7 @@ export function CtacteNotesSection({
               ) : (
                 <ul data-testid="ctacte-notes-list" className="space-y-3">
                   {notes.map((note) => {
+                    const deletable = canDeleteNote(note)
                     return (
                       <li
                         key={note.id}
@@ -261,6 +295,17 @@ export function CtacteNotesSection({
                               </div>
                             </div>
                           </div>
+                          {deletable ? (
+                            <button
+                              type="button"
+                              data-testid={`ctacte-note-delete-${note.id}`}
+                              aria-label="Eliminar nota"
+                              onClick={() => handleDeleteClick(note)}
+                              className="shrink-0 rounded-md p-1.5 text-ink-500 transition-colors duration-fast hover:bg-danger/10 hover:text-danger focus:outline-none focus:ring-2 focus:ring-danger"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          ) : null}
                         </div>
 
                         <p
@@ -278,6 +323,17 @@ export function CtacteNotesSection({
           )}
         </div>
       ) : null}
+
+      {/* Movement-scoped add-note modal (R3). Mounted here so the
+          production /ctacte/[cuenta] row action has a real
+          CtacteNoteForm path (the modal was previously dead code). */}
+      <CtacteNoteForm
+        open={showNoteForm}
+        socioId={socioId}
+        movementId={movementId}
+        onSuccess={handleNoteFormSuccess}
+        onClose={handleNoteFormClose}
+      />
     </section>
   )
 }
