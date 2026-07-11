@@ -500,3 +500,19 @@ Chain strategy: feature-branch-chain
 
 - [x] **R4.6** — Update `tasks.md` (R4 phases marked `[x]`) + `apply-progress.md` (R4 strict-TDD evidence + cited commit SHAs + green counts); persist `sdd/athlos-ctacte-mutations/apply-progress` to Engram.
 - **Commit:** `docs(sdd): record R4 strict-TDD evidence on fix/ctacte-mutations-r4`.
+
+### R4 corrective batch — defect-driven follow-up
+
+Scope: three corroborated defects found by a later round of review of the R4 branch. No R5, no new infra, no schema migrations, no production access.
+
+- [x] **R4.7 (defect #1)** — `apps/api/src/routes/ctacte-mutations.ts`: pago + débito `monto <= 0` must return `details: [{ field: 'monto', message }]` array shape consumed by `applyFieldErrors`. New RED→GREEN test `ctacte-mutations.monto-details.test.ts` (4 cases: pago 0, pago -100, débito 0, débito -100).
+- **Commit:** `fix(api): emit details array for pago/debit monto <= 0 validation`.
+
+- [x] **R4.8 (defect #2 + #3)** — `apps/web/src/lib/api.ts`: (a) `ApiError` envelope mapping reads `body.error ?? body.code ?? 'HTTP_ERROR'` so the server's `{ error: '...', ... }` shape is preserved end-to-end; (b) `apiFetchBlob` retry path after a successful 401 → refresh only clears + redirects when `retry.status === 401` — every other non-2xx retry (400 cap-exceeded, 409 idempotency conflict, 5xx) surfaces as an `ApiError`. New RED→GREEN test `src/lib/api.envelope.test.ts` (7 cases).
+- **Commit:** `fix(web): map server envelope error to ApiError.code and propagate apiFetchBlob retry errors`.
+
+- [x] **R4.9 (verifier)** — `apps/web/src/components/ctacte/real-transport.test.tsx`: focused end-to-end smoke through the real `apiFetch` → form → DOM stack, proving that defect #1 + #2 plumbing holds together for the Pago `monto` inline-error path AND the Nota 409 CONFLICT branch (uses `global.fetch` stub, NOT `vi.mock('@/lib/api/ctacte-mutations')`).
+- **Commit:** `test(web): real-transport smoke for monto inline + 409 note-conflict`.
+
+- [x] **R4.10 (evidence)** — `openspec/changes/athlos-ctacte-mutations/apply-progress.md`: appended the R4 corrective-batch evidence section (defects table, RED→GREEN commit table, targeted sweep, cross-package typecheck/lint, R5-explicit-out-of-scope confirmation, updated PR boundary).
+- **Commit:** `docs(sdd): record R4 corrective batch evidence on fix/ctacte-mutations-r4`.

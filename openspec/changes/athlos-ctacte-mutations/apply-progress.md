@@ -144,3 +144,87 @@ cases here cover the cap-range object shape + no-field fallback.
 | `CtacteComprobanteButton.test.tsx` | 7 | pass |
 | `CtacteComprobanteButton.field-errors.test.tsx` | 2 | pass (2 RED before, 2 GREEN after + 1 contradictory case discarded) |
 | Full `src/components/ctacte/` folder | 690 | pass (no regressions across the 75 test files in the folder) |
+
+---
+
+# Apply Progress — athlos-ctacte-mutations R4 corrective batch
+
+Branch: `fix/ctacte-mutations-r4` (3 commits on top of R4 at `9dbc1fd`).
+The R4 corrective batch targets three corroborated defects found by
+a later round of review of the R4 branch. Scope is strict
+defect-driven: no R5 (evidence reconciliation), no new infra, no
+schema migrations, no production access.
+
+## R4.7 — Fixed defects
+
+| # | Defect | File(s) | Commit |
+|---|---|---|---|
+| 1 | Payment / Débito `monto <= 0` returned `{ error, message }` without `details: [{ field, message }]`. The form helper `applyFieldErrors` therefore got `details = undefined` and could not route the inline message — only the top-level toast fired. | `apps/api/src/routes/ctacte-mutations.ts` | `c9c5f62` |
+| 2 | `apiFetch` / `apiFetchBlob` envelope-mapping read `body.code`, but the server sends `{ error: <code>, ... }` (per `apps/api/src/plugins/error-handler.ts`). `ApiError.code` silently fell back to `'HTTP_ERROR'` for every server-sent envelope. That broke the note idempotency 409 branch (`message.includes('CONFLICT')` never matched) and the cap-exceeded branch in `CtacteComprobanteButton`. | `apps/web/src/lib/api.ts` | `e6de5c1` |
+| 3 | `apiFetchBlob` after a successful 401 → refresh cycle cleared the in-memory access token + redirected to `/login?expired=1` for **every** `!retry.ok`. A benign comprobante cap-exceeded (400) or idempotency conflict (409) silently logged the operator out of their session. | `apps/web/src/lib/api.ts` | `e6de5c1` |
+
+## R4.8 — Commit-by-commit strict-TDD evidence (RED then GREEN same commit)
+
+| Commit | File(s) | RED command + result | GREEN command + result |
+|---|---|---|---|
+| `c9c5f62` | `apps/api/src/routes/ctacte-mutations.ts` + new `ctacte-mutations.monto-details.test.ts` | `pnpm --filter @athlos/api exec vitest run src/routes/ctacte-mutations.monto-details.test.ts` → 4/4 fail with "expected object to match `{ details: [{ field: 'monto', message }] }`" (route returned `{ error, message }` with no `details`) | same command + `src/routes/ctacte-mutations.test.ts` → **57/57 pass** (4 new monto cases + 53 pre-existing); `pnpm --filter @athlos/api typecheck` exit 0; lint clean |
+| `e6de5c1` | `apps/web/src/lib/api.ts` + new `api.envelope.test.ts` | `pnpm --filter @athlos/web exec vitest run src/lib/api.envelope.test.ts` → 6/7 fail (the cap-exceeded test passes because `details: { cap, requested }` was already populated on the ApiError — that's the non-2xx envelope path the previous `code` mapper happened to surface). All six contract tests fail with the wrong `code` (`HTTP_ERROR` instead of `VALIDATION_ERROR`/`CONFLICT`) or with the `NEXT_REDIRECT:/login?expired=1` thunk leaking out of the apiFetchBlob retry path. | `pnpm --filter @athlos/web exec vitest run src/lib/api.envelope.test.ts src/lib/api.test.ts src/lib/auth.test.ts` → **31/31 pass** (7 new transport + 10 pre-existing `api.test.ts` + 14 `auth.test.ts` regression; the legacy `{ code: '...' }` body shape is still accepted via the fallback chain); `pnpm --filter @athlos/web typecheck` exit 0; lint clean |
+| `b86b10a` | new `apps/web/src/components/ctacte/real-transport.test.tsx` | n/a — pure test addition. The single shell-test run confirms both the defect-#1+#2 path (Pago `monto` inline via real `apiFetch`) and defect-#2 path (Nota 409 CONFLICT branch via real `apiFetch`) hold together. | `pnpm --filter @athlos/web exec vitest run src/components/ctacte/real-transport.test.tsx` → **2/2 pass**. Full sweep across `src/components/ctacte/` + `src/lib/api.envelope.test.ts` + `src/lib/api.test.ts` + `src/lib/auth.test.ts` → **93/93 pass across 13 files**. typecheck + lint exit 0 |
+
+## R4.9 — Targeted sequential sweep
+
+```
+pnpm --filter @athlos/web exec vitest run src/components/ctacte/ src/lib/api.envelope.test.ts src/lib/api.test.ts src/lib/auth.test.ts
+→ 93/93 pass across 13 test files.
+```
+
+| Suite | Tests | Status |
+|---|---:|---|
+| `apps/web/src/lib/api.envelope.test.ts` (new) | 7 | pass |
+| `apps/web/src/lib/api.test.ts` | 10 | pass (no regression — the legacy `{ code: '...' }` shape still works via the `body.error ?? body.code ?? 'HTTP_ERROR'` fallback chain) |
+| `apps/web/src/lib/auth.test.ts` | 14 | pass (no regression — auth helpers accept `code:` bodies) |
+| `apps/web/src/components/ctacte/real-transport.test.tsx` (new) | 2 | pass |
+| `apps/web/src/components/ctacte/` (existing 11 files) | 60 | pass (no regression across 11 sibling test files) |
+| **Total web sweep** | **93** | **pass** |
+
+```
+pnpm --filter @athlos/api exec vitest run src/routes/ctacte-mutations.monto-details.test.ts src/routes/ctacte-mutations.test.ts
+→ 57/57 pass (4 new + 53 pre-existing).
+```
+
+## R4.10 — Cross-package typecheck + lint after the corrective commits
+
+```
+pnpm --filter @athlos/api  typecheck → exit 0
+pnpm --filter @athlos/web  typecheck → exit 0
+pnpm --filter @athlos/web  lint     → exit 0
+pnpm --filter @athlos/db   typecheck → exit 0
+pnpm --filter @athlos/audit typecheck → exit 0
+```
+
+## R4.11 — Out-of-scope confirmation (corrective batch)
+
+- **R5 evidence reconciliation** — explicitly deferred, out of scope per the user's "Keep R4 scope" instruction.
+- **No deploy / no production container touch.**
+- **No migration apply** — `packages/db/drizzle/0031_ctacte_movement_notes.sql` is applied post-merge via `docker exec psql` (orchestrator chore).
+- **No new branches created; no merges performed.**
+- **`CtacteTab.tsx` (sibling inside `/socios/[id]`)** left untouched (out of scope per R4 convention).
+- **Pre-existing CI failures** (PostgreSQL integration tests that require `ATHLOS_TEST_DATABASE_URL`, labeler, Docker build smoke) are pre-existing and not introduced by the corrective batch — same posture as PR 8c.1 / 8d.
+
+## R4.12 — PR boundary update
+
+- Mode: single PR (`fix/ctacte-mutations-r4` → `main`)
+- Commits on top of R4-doc at `9dbc1fd`: **3** (defect #1 + defects #2/#3 co-located in the same transport commit + the real-transport verifier). Each commit is one behavior per the `work-unit-commits` skill and bundles RED + GREEN per the team's strict-TDD convention.
+- R4 corrective-batch net diff vs `origin/main` for the new files:
+
+| File | Lines |
+|---|---:|
+| `apps/api/src/routes/ctacte-mutations.monto-details.test.ts` | +228 |
+| `apps/api/src/routes/ctacte-mutations.ts` | +16 / −2 |
+| `apps/web/src/lib/api.envelope.test.ts` | +326 |
+| `apps/web/src/lib/api.ts` | +60 / −37 |
+| `apps/web/src/components/ctacte/real-transport.test.tsx` | +206 |
+| `openspec/changes/athlos-ctacte-mutations/apply-progress.md` (this section) | +85 |
+
+- Budget risk: Low (the source-code changes are +76 / −39 net; the rest is test + evidence).
+- Branch stays within the R4 scope — no R5 artefact work, no `sdd/.../evidence-reconciliation` artifact, no new migration / no deploy chore.
