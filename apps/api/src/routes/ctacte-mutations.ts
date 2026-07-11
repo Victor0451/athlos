@@ -179,7 +179,16 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
 
       const { monto, fecha, concepto } = parsed.data
       if (monto <= 0) {
-        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0')
+        // R4 corrective — defect #1. Emit the standard
+        // `details: [{ field, message }]` array shape consumed by the
+        // front-end `applyFieldErrors` helper so the Pago form can
+        // route the message inline. The previous shape (string
+        // message only) caused `parseFieldErrors(undefined)` to
+        // return `[]` and the form to fall back to the top-level
+        // toast alone.
+        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0', [
+          { field: 'monto', message: 'monto must be > 0' },
+        ])
       }
 
       // The comprobante is the uploaded file itself (not a separate field)
@@ -283,7 +292,12 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         )
       }
       if (monto <= 0) {
-        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0')
+        // R4 corrective — defect #1 (mirror of the pago branch above).
+        // Emit `details: [{ field: 'monto', message }]` so the Débito
+        // form's `applyFieldErrors` can render the message inline.
+        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0', [
+          { field: 'monto', message: 'monto must be > 0' },
+        ])
       }
 
       try {
