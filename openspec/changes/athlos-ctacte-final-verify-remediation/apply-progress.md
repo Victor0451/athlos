@@ -46,6 +46,19 @@ Strict TDD mode is active. Slice 1 is **doc-only**; per `strict-tdd.md` "Skip tr
 - **Approval tests** (refactoring existing code): 0 — no refactoring occurred.
 - **Pure functions created**: 0 — no production code changed.
 
+### PR CI status (PR #41, run 29203324757)
+
+Recorded for reviewer transparency. The slice does not introduce any of these failures — they exist on `main` independently of this change.
+
+| Check | Conclusion | Notes |
+|---|---|---|
+| `labeler` | pass (3s) | type:docs label applied correctly |
+| `check` (destructive gate) | pass (3s) | No destructive migrations in the diff |
+| `drift-check` | pass (48s) | No contract drift introduced |
+| `Docker build smoke` | pass (1m20s) | Image builds cleanly |
+| `test` (full `pnpm test:run` + `pnpm typecheck`) | pass (2m46s) | Full Vitest suite + typecheck green |
+| `backup-bats` | **fail (55s) — PRE-EXISTING, NOT caused by this slice** | `SCRIPT_DIR: unbound variable` in `scripts/tests/common.test.bats` plus other bats test bootstrap errors. The same `backup-bats` failure (conclusion `failure`, same `SCRIPT_DIR: unbound variable` root cause) was present on `main` (run 29156777469) and on `fix/ctacte-mutations-r5` (run 29156345747) immediately before this PR was opened. No file under `scripts/` was touched by this slice. Tracked as a separate ops issue (existing GitHub issues #9, #10, #11, #12 cover deploy/CI gaps). |
+
 ## 3. Focused-test re-run after the doc edits
 
 Confirming that the reconciled spec still describes GREEN behaviour on `main`. Same commands as the §1 focused test command, re-run after both spec files were edited.
