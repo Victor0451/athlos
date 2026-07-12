@@ -1,6 +1,6 @@
 # s0-spec-deltas evidence
 # athlos-ctacte-security-reliability-remediation
-# captured_at: 2026-07-12T20:47:42.264Z
+# captured_at: 2026-07-12T20:54:33.488Z
 
 - api-design: OK req=2 scen=2
 - audit-logger: OK req=2 scen=5

@@ -8,16 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  *
  * 1.1/1.2 RED+GREEN — six delta specs conform to Given/When/Then + RFC 2119.
  * 1.3 RED    — without 0034 the PARTIAL UNIQUE INDEX cannot be inferred
- *              by bare ON CONFLICT (PostgreSQL raises SQLSTATE 42P10 —
- *              the defect 0034 corrects).
+ *              by bare ON CONFLICT (PostgreSQL raises SQLSTATE 42P10 — defect 0034 corrects).
  * 1.4 GREEN  — full chain applies on disposable PostgreSQL; both expected
- *              FULL UNIQUE INDEXes lack a WHERE predicate; ON CONFLICT
- *              now infers; pg_indexes snapshot written to artifacts/.
+ *              FULL UNIQUE INDEXes lack a WHERE predicate; ON CONFLICT now infers.
  * 1.5 REFACTOR — every scenario is Given/When/Then (enforced above).
  *
  * Required env: ATHLOS_TEST_DATABASE_URL (disposable PostgreSQL only).
- * Without it the DB-backed describe blocks SKIP and only the contract
- * validator runs (so static review of contract shape still passes).
+ * Without it the DB-backed describe blocks SKIP and only the contract validator runs.
  */
 
 const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
@@ -25,12 +22,9 @@ const SKIP_DB = !databaseUrl
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const specsRoot = join(
   repoRoot,
-  'openspec',
-  'changes',
-  'athlos-ctacte-security-reliability-remediation',
-  'specs',
+  'openspec/changes/athlos-ctacte-security-reliability-remediation/specs',
 )
-const drizzleDir = join(repoRoot, 'packages', 'db', 'drizzle')
+const drizzleDir = join(repoRoot, 'packages/db/drizzle')
 const artifactsDir = join(repoRoot, 'artifacts')
 const evidencePath = join(artifactsDir, '0034-lifecycle.txt')
 const specDeltaEvidencePath = join(artifactsDir, 's0-spec-deltas.txt')
