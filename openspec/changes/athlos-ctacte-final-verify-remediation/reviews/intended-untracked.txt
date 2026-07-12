@@ -1,0 +1,13 @@
+openspec/changes/athlos-ctacte-final-verify-remediation/apply-progress.md
+openspec/changes/athlos-ctacte-final-verify-remediation/design.md
+openspec/changes/athlos-ctacte-final-verify-remediation/exploration.md
+openspec/changes/athlos-ctacte-final-verify-remediation/proposal.md
+openspec/changes/athlos-ctacte-final-verify-remediation/specs/ctacte-mutations/spec.md
+openspec/changes/athlos-ctacte-final-verify-remediation/specs/ui-design/spec.md
+openspec/changes/athlos-ctacte-final-verify-remediation/tasks.md
+openspec/changes/athlos-ctacte-final-verify-remediation/verify-report.md
+openspec/changes/athlos-ctacte-mutations/specs/ctacte-mutations/spec.md
+openspec/changes/athlos-ctacte-mutations/specs/ui-design/spec.md
+openspec/changes/athlos-ctacte-final-verify-remediation/reviews/policy.md
+openspec/changes/athlos-ctacte-final-verify-remediation/reviews/intended-untracked.txt
+openspec/changes/athlos-ctacte-final-verify-remediation/reviews/ledger.json
