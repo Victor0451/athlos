@@ -16,13 +16,13 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 - **S3/PR 4** attachment comp+actor replay. Test `pnpm --filter @athlos/api test:run -- attachments.compensation ctacte_movement_notes.provenance ctacte-comprobante.actor-binding ctacte-comprobante.prior-attachment`. Receipts `artifacts/s3/`. Rollback: `attachments.ts`+`forms/ctacte-comprobante.ts`+`ctacte_movement_notes.ts`+4 tests.
 - **S4/PR 5** 30s/504. Test `pnpm --filter @athlos/api test:run -- ctacte-comprobante.timeout ctacte-comprobante.failed-replay`. Rollback: `forms/ctacte-comprobante.ts`+route envelope.
 
-## S0 — Contracts
+## S0 — Contracts (PR 1 — landed)
 
-- [ ] 1.1 RED `scripts/check-spec-deltas.mjs`: 6 deltas, RFC 2119, Given/When/Then
-- [ ] 1.2 GREEN: author 6 delta specs in `openspec/changes/.../specs/*`
-- [ ] 1.3 RED `0034.lifecycle.test.ts`: apply `0031→0032→0033→0034` on disposable PG
-- [ ] 1.4 GREEN: capture `pg_indexes` → `artifacts/0034-lifecycle.txt`; assert 0034 lacks `WHERE`
-- [ ] 1.5 REFACTOR: align every scenario to Given/When/Then
+- [x] 1.1 RED `scripts/check-spec-deltas.mjs` (inlined into `s0-contracts-0034-lifecycle.test.ts`): 6 deltas, RFC 2119, Given/When/Then
+- [x] 1.2 GREEN: author 6 delta specs in `openspec/changes/athlos-ctacte-security-reliability-remediation/specs/*`
+- [x] 1.3 RED `0034.lifecycle.test.ts` (lifecycle proof → `s0-contracts-0034-lifecycle.test.ts`): apply `0031→0032→0033→0034` on disposable PG
+- [x] 1.4 GREEN: capture `pg_indexes` → `artifacts/0034-lifecycle.txt`; assert 0034 lacks `WHERE`; ON CONFLICT inference: first=1, dup=0 → PASS
+- [x] 1.5 REFACTOR: align every scenario to Given/When/Then (validator enforces; 6/6 valid)
 
 ## S1 — Authorization and Validation
 
