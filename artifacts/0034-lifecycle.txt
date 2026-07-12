@@ -1,6 +1,6 @@
 # 0034-lifecycle evidence
 # athlos-ctacte-security-reliability-remediation / S0 / PR1
-# captured_at: 2026-07-12T20:54:33.634Z
+# captured_at: 2026-07-12T20:55:01.913Z
 # assertions:
 #   0031 → 0032 → 0033 → 0034 applied in order on a disposable PostgreSQL
 #   two FULL UNIQUE INDEXes (no WHERE predicate) expected
