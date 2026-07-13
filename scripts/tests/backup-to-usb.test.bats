@@ -26,7 +26,7 @@ load test_helper
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   BACKUP_DIR="/tmp/nonexistent-backup-dir"
   USB_RETENTION_DAYS="30"
-  LOCK_FILE="/var/lock/athlos-backup.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-mount-fail.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
@@ -58,14 +58,15 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "backup-to-usb exits 0 when flock is held" {
-  run sudo bash -c '
-    exec 9>/var/lock/athlos-backup.lock
+  LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-contention.lock"
+  run env LOCK_FILE="$LOCK_FILE" bash -c '
+    exec 9>"$LOCK_FILE"
     flock -n 9
     bash "$1"
   ' _ "$SCRIPT_DIR/../backup-to-usb.sh"
 
   [[ "$status" -eq 0 ]]
-  sudo rm -f /var/lock/athlos-backup.lock
+  rm -f "$LOCK_FILE"
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ load test_helper
   USB_MAPPER="athlos-backup-usb"
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   USB_RETENTION_DAYS="30"
-  LOCK_FILE="/var/lock/athlos-backup-test-nobackup.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-test-nobackup.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
@@ -104,7 +105,7 @@ load test_helper
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   BACKUP_DIR="/tmp/backup-test"
   unset USB_RETENTION_DAYS
-  LOCK_FILE="/var/lock/athlos-backup-test-noretention.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-test-noretention.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
