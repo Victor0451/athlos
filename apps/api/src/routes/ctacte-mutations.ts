@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { and, eq } from 'drizzle-orm'
 import { idSchema } from '@athlos/validation'
 import { throwIfInvalid, ErrorCode } from '@athlos/errors'
-import { requireAuth } from '@athlos/auth'
+import { requireAuth, requirePermission, requireRole } from '@athlos/auth'
 import {
   isValidIsoCalendarDate,
   registerPayment,
@@ -48,36 +48,80 @@ import type { AppContainer } from '../container.ts'
  */
 
 const AUTH = { preHandler: requireAuth() }
+const MUTATION_AUTH = { preHandler: requireRole('ADMIN', 'TESORERO', 'OPERADOR') }
+const REPRINT_AUTH = { preHandler: requirePermission('can_reprint') }
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const socioIdParamsSchema = z.object({ socioId: idSchema })
 
+const moneySchema = z.coerce
+  .number({ invalid_type_error: 'monto must be a number' })
+  .finite('monto must be finite')
+  .positive('monto must be > 0')
+const calendarDateSchema = z
+  .string()
+  .trim()
+  .refine(isValidIsoCalendarDate, 'must be a valid ISO calendar date')
+const idempotencyKeySchema = z.string().trim().min(1).max(128)
+
 const paymentSchema = z.object({
-  monto: z.coerce.number({ invalid_type_error: 'monto must be a number' }),
-  fecha: z.string().refine(isValidIsoCalendarDate, 'must be a valid ISO calendar date'),
-  concepto: z.string().min(1, 'concepto is required'),
+  monto: moneySchema,
+  fecha: calendarDateSchema,
+  concepto: z.string().trim().min(1, 'concepto is required'),
 })
 
 const debitSchema = z.object({
-  monto: z.coerce.number({ invalid_type_error: 'monto must be a number' }),
-  fecha: z.string().refine(isValidIsoCalendarDate, 'must be a valid ISO calendar date'),
-  motivo: z.string().min(1, 'motivo is required'),
+  monto: moneySchema,
+  fecha: calendarDateSchema,
+  motivo: z.string().trim().min(1, 'motivo is required'),
 })
 
 const noteBodySchema = z.object({
-  body: z.string().min(1, 'body is required').max(2000, 'body must be ≤ 2000 chars'),
+  body: z.string().trim().min(1, 'body is required').max(2000, 'body must be ≤ 2000 chars'),
 })
 
 const comprobanteQuerySchema = z
   .object({
-    from: z.string().min(1, 'from is required'),
-    to: z.string().min(1, 'to is required'),
-    cuenta: z.string().min(1, 'cuenta is required'),
+    from: calendarDateSchema,
+    to: calendarDateSchema,
+    cuenta: z.string().trim().min(1, 'cuenta is required'),
   })
-  .refine((q) => new Date(q.from) <= new Date(q.to), {
+  .refine((q) => q.from <= q.to, {
     message: 'from must be ≤ to',
   })
+
+const mutationInputSchemas = {
+  payment: paymentSchema,
+  debit: debitSchema,
+  note: noteBodySchema,
+  comprobante: comprobanteQuerySchema,
+  idempotencyKey: idempotencyKeySchema,
+}
+
+export function validateMutationInput(
+  input: unknown,
+  kind: 'payment',
+): ReturnType<typeof paymentSchema.safeParse>
+export function validateMutationInput(
+  input: unknown,
+  kind: 'debit',
+): ReturnType<typeof debitSchema.safeParse>
+export function validateMutationInput(
+  input: unknown,
+  kind: 'note',
+): ReturnType<typeof noteBodySchema.safeParse>
+export function validateMutationInput(
+  input: unknown,
+  kind: 'comprobante',
+): ReturnType<typeof comprobanteQuerySchema.safeParse>
+export function validateMutationInput(
+  input: unknown,
+  kind: 'idempotencyKey',
+): ReturnType<typeof idempotencyKeySchema.safeParse>
+export function validateMutationInput(input: unknown, kind: keyof typeof mutationInputSchemas) {
+  return mutationInputSchemas[kind].safeParse(input)
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -133,7 +177,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
   // Multipart/form-data: monto + fecha + concepto + optional comprobante
   fastify.post<{ Params: { socioId: string } }>(
     '/api/v1/socios/:socioId/ctacte/movements/payment',
-    AUTH,
+    MUTATION_AUTH,
     async (request, reply) => {
       const params = throwIfInvalid(socioIdParamsSchema, request.params, 'params')
       const operatorId = request.operator?.sub
@@ -142,7 +186,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       }
 
       const idempotencyKey = request.headers['idempotency-key']
-      if (typeof idempotencyKey !== 'string' || idempotencyKey.trim().length === 0) {
+      const parsedIdempotencyKey = validateMutationInput(idempotencyKey, 'idempotencyKey')
+      if (!parsedIdempotencyKey.success) {
         return apiError(reply, 'VALIDATION_ERROR', 'Idempotency-Key header is required')
       }
 
@@ -168,29 +213,19 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       const conceptoVal = fields['concepto']
 
       // Parse the other fields
-      const parsed = paymentSchema.safeParse({
-        monto: montoStr,
-        fecha: fechaVal,
-        concepto: conceptoVal,
-      })
+      const parsed = validateMutationInput(
+        {
+          monto: montoStr,
+          fecha: fechaVal,
+          concepto: conceptoVal,
+        },
+        'payment',
+      )
       if (!parsed.success) {
         return schemaError(reply, parsed.error)
       }
 
       const { monto, fecha, concepto } = parsed.data
-      if (monto <= 0) {
-        // R4 corrective — defect #1. Emit the standard
-        // `details: [{ field, message }]` array shape consumed by the
-        // front-end `applyFieldErrors` helper so the Pago form can
-        // route the message inline. The previous shape (string
-        // message only) caused `parseFieldErrors(undefined)` to
-        // return `[]` and the form to fall back to the top-level
-        // toast alone.
-        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0', [
-          { field: 'monto', message: 'monto must be > 0' },
-        ])
-      }
-
       // The comprobante is the uploaded file itself (not a separate field)
       let comprobante: { bytes: Buffer; mimeType: string; filename: string } | undefined
       if (uploadedFile) {
@@ -220,7 +255,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           monto,
           fecha,
           concepto,
-          idempotencyKey,
+          idempotencyKey: parsedIdempotencyKey.data,
           ...(comprobante ? { comprobante } : {}),
         })
         return reply.code(201).send({
@@ -265,7 +300,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
   // JSON body: monto + fecha + motivo
   fastify.post<{ Params: { socioId: string } }>(
     '/api/v1/socios/:socioId/ctacte/movements/debit',
-    AUTH,
+    MUTATION_AUTH,
     async (request, reply) => {
       const params = throwIfInvalid(socioIdParamsSchema, request.params, 'params')
       const operatorId = request.operator?.sub
@@ -273,33 +308,21 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         return reply.code(401).send({ error: 'UNAUTHORIZED' })
       }
 
-      const parsed = debitSchema.safeParse(request.body)
+      const parsed = validateMutationInput(request.body, 'debit')
       if (!parsed.success) {
         return schemaError(reply, parsed.error)
       }
 
       const { monto, fecha, motivo } = parsed.data
       const idempotencyKey = request.headers['idempotency-key']
-      if (
-        typeof idempotencyKey !== 'string' ||
-        idempotencyKey.trim().length === 0 ||
-        idempotencyKey.length > 128
-      ) {
+      const parsedIdempotencyKey = validateMutationInput(idempotencyKey, 'idempotencyKey')
+      if (!parsedIdempotencyKey.success) {
         return apiError(
           reply,
           'VALIDATION_ERROR',
           'Idempotency-Key header must be 1–128 characters',
         )
       }
-      if (monto <= 0) {
-        // R4 corrective — defect #1 (mirror of the pago branch above).
-        // Emit `details: [{ field: 'monto', message }]` so the Débito
-        // form's `applyFieldErrors` can render the message inline.
-        return apiError(reply, 'VALIDATION_ERROR', 'monto must be > 0', [
-          { field: 'monto', message: 'monto must be > 0' },
-        ])
-      }
-
       try {
         const movement = await registerDebit({
           db: container.db,
@@ -308,7 +331,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           monto,
           fecha,
           motivo,
-          idempotencyKey,
+          idempotencyKey: parsedIdempotencyKey.data,
         })
         return reply.code(201).send({
           id: movement.id,
@@ -341,7 +364,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
   // GET /api/v1/socios/:socioId/ctacte/movements/:movementId/notes
   fastify.get<{ Params: { socioId: string; movementId: string } }>(
     '/api/v1/socios/:socioId/ctacte/movements/:movementId/notes',
-    AUTH,
+    MUTATION_AUTH,
     async (request, reply) => {
       const paramsSchema = z.object({ socioId: idSchema, movementId: idSchema })
       const params = throwIfInvalid(paramsSchema, request.params, 'params')
@@ -390,11 +413,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       // client cannot accidentally rely on the deprecated 10-second
       // timestamp-bucket fallback.
       const idempotencyKey = request.headers['idempotency-key']
-      if (
-        typeof idempotencyKey !== 'string' ||
-        idempotencyKey.trim().length === 0 ||
-        idempotencyKey.length > 128
-      ) {
+      const parsedIdempotencyKey = validateMutationInput(idempotencyKey, 'idempotencyKey')
+      if (!parsedIdempotencyKey.success) {
         return apiError(
           reply,
           'VALIDATION_ERROR',
@@ -402,7 +422,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         )
       }
 
-      const parsed = noteBodySchema.safeParse(request.body)
+      const parsed = validateMutationInput(request.body, 'note')
       if (!parsed.success) {
         return apiError(reply, 'VALIDATION_ERROR', parsed.error.errors[0]!.message)
       }
@@ -422,7 +442,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
           ctacteMovementId: params.movementId,
           operatorId,
           body: parsed.data.body,
-          idempotencyKey,
+          idempotencyKey: parsedIdempotencyKey.data,
         })
         return reply.code(201).send({
           id: note.id,
@@ -452,7 +472,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
   // 401 missing JWT, 404 unknown note / cross-socio movement, 403 not allowed.
   fastify.delete<{ Params: { socioId: string; movementId: string; noteId: string } }>(
     '/api/v1/socios/:socioId/ctacte/movements/:movementId/notes/:noteId',
-    AUTH,
+    MUTATION_AUTH,
     async (request, reply) => {
       const paramsSchema = z.object({
         socioId: idSchema,
@@ -511,30 +531,37 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
   fastify.get<{
     Params: { socioId: string }
     Querystring: { from?: string; to?: string; cuenta?: string }
-  }>('/api/v1/socios/:socioId/ctacte/comprobante.pdf', AUTH, async (request, reply) => {
+  }>('/api/v1/socios/:socioId/ctacte/comprobante.pdf', REPRINT_AUTH, async (request, reply) => {
     const params = throwIfInvalid(socioIdParamsSchema, request.params, 'params')
-    const q = throwIfInvalid(comprobanteQuerySchema, request.query, 'query')
+    const q = throwIfInvalid(
+      z.object({
+        from: z.string().optional(),
+        to: z.string().optional(),
+        cuenta: z.string().optional(),
+      }),
+      request.query,
+      'query',
+    )
+    const parsedQuery = validateMutationInput(q, 'comprobante')
+    if (!parsedQuery.success) return schemaError(reply, parsedQuery.error)
     const operatorId = request.operator?.sub
     if (!operatorId) {
       return reply.code(401).send({ error: 'UNAUTHORIZED' })
     }
 
     const idempotencyKey = request.headers['idempotency-key']
-    if (
-      typeof idempotencyKey !== 'string' ||
-      idempotencyKey.trim().length === 0 ||
-      idempotencyKey.length > 128
-    ) {
+    const parsedIdempotencyKey = validateMutationInput(idempotencyKey, 'idempotencyKey')
+    if (!parsedIdempotencyKey.success) {
       return apiError(reply, 'VALIDATION_ERROR', 'Idempotency-Key header must be 1–128 characters')
     }
     try {
       const result = await renderComprobante({
         socioId: params.socioId,
-        cuenta: q.cuenta,
+        cuenta: parsedQuery.data.cuenta,
         operatorId,
-        from: q.from,
-        to: q.to,
-        idempotencyKey,
+        from: parsedQuery.data.from,
+        to: parsedQuery.data.to,
+        idempotencyKey: parsedIdempotencyKey.data,
         db: container.db,
         pdfGenerator,
       })
