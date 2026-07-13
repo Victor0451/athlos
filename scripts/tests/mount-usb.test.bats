@@ -15,12 +15,12 @@ load test_helper
   echo "test-key" > "$test_keyfile"
   chmod 0600 "$test_keyfile"
 
-  USB_DEVICE="/dev/sdb1"  # won't actually exist but keyfile check passes first
-  USB_KEYFILE="$test_keyfile"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../mount-usb.sh"
+  run sudo env \
+    USB_DEVICE="/dev/sdb1" \
+    USB_KEYFILE="$test_keyfile" \
+    USB_MAPPER="athlos-backup-usb" \
+    USB_MOUNT_POINT="/mnt/athlos-backup-usb" \
+    bash "$SCRIPT_DIR/../mount-usb.sh"
   # Possible exit codes in this environment:
   # 0 = success (cryptsetup available + device accessible)
   # 2 = USB device not present (expected in CI without real USB)
@@ -38,13 +38,19 @@ load test_helper
   echo "test-key" > "$test_keyfile"
   chmod 0644 "$test_keyfile"
 
-  USB_DEVICE="/dev/sdb1"
-  USB_KEYFILE="$test_keyfile"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
+  local test_dir test_device
+  test_dir="$(mktemp -d)"
+  test_device="$test_dir/device"
+  sudo mknod "$test_device" b 1 7
 
-  run bash "$SCRIPT_DIR/../mount-usb.sh"
+  run sudo env \
+    USB_DEVICE="$test_device" \
+    USB_KEYFILE="$test_keyfile" \
+    USB_MAPPER="athlos-backup-usb" \
+    USB_MOUNT_POINT="/mnt/athlos-backup-usb" \
+    bash "$SCRIPT_DIR/../mount-usb.sh"
   [[ "$status" -eq 1 ]]
+  sudo rm -rf "$test_dir"
   rm -f "$test_keyfile"
 }
 
@@ -57,12 +63,12 @@ load test_helper
   echo "test-key" > "$test_keyfile"
   chmod 0600 "$test_keyfile"
 
-  USB_DEVICE="/dev/nonexistent-usb-$(date +%s)"
-  USB_KEYFILE="$test_keyfile"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../mount-usb.sh"
+  run sudo env \
+    USB_DEVICE="/dev/nonexistent-usb-$(date +%s)" \
+    USB_KEYFILE="$test_keyfile" \
+    USB_MAPPER="athlos-backup-usb" \
+    USB_MOUNT_POINT="/mnt/athlos-backup-usb" \
+    bash "$SCRIPT_DIR/../mount-usb.sh"
   [[ "$status" -eq 2 ]]
   rm -f "$test_keyfile"
 }
@@ -76,22 +82,20 @@ load test_helper
   echo "test-key" > "$test_keyfile"
   chmod 0600 "$test_keyfile"
 
-  unset USB_DEVICE
-  USB_KEYFILE="$test_keyfile"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../mount-usb.sh"
+  run sudo env -u USB_DEVICE \
+    USB_KEYFILE="$test_keyfile" \
+    USB_MAPPER="athlos-backup-usb" \
+    USB_MOUNT_POINT="/mnt/athlos-backup-usb" \
+    bash "$SCRIPT_DIR/../mount-usb.sh"
   [[ "$status" -eq 1 ]]
   rm -f "$test_keyfile"
 }
 
 @test "mount-usb exits 1 when USB_KEYFILE is unset" {
-  USB_DEVICE="/dev/sdb1"
-  unset USB_KEYFILE
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../mount-usb.sh"
+  run sudo env -u USB_KEYFILE \
+    USB_DEVICE="/dev/sdb1" \
+    USB_MAPPER="athlos-backup-usb" \
+    USB_MOUNT_POINT="/mnt/athlos-backup-usb" \
+    bash "$SCRIPT_DIR/../mount-usb.sh"
   [[ "$status" -eq 1 ]]
 }
