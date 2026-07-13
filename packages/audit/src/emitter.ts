@@ -1,23 +1,30 @@
 /**
- * @athlos/audit/emitter — emitAudit with SHA-256 10s bucket idempotency.
+ * @athlos/audit/emitter — two idempotency modes (S2.a — PR A1b):
  *
- * TWO-WRITE-PATH (design §5):
- *   - Operator events: emitAudit() called by auditPlugin onResponse hook
- *   - System events: drift.emitDriftAlert() calls db.insert(auditEvents) directly
- *     with operator_id=NULL and idempotency_key=NULL (no dedup for system events)
+ *   1. `callerKey` (covered CTACTE callers):
+ *      SHA-256(operatorId + action + entityId + callerKey) — no time
+ *      bucket; durable across any delay. The caller supplies the key
+ *      (typically the request's `Idempotency-Key` header); two retries
+ *      of the same caller-key tuple collapse to a single row at the
+ *      DB UNIQUE constraint.
  *
- * Idempotency: SHA-256(operatorId + action + entityId + JSON(payload) + 10s_bucket)
- * The bucket is floor(Date.now() / 10000) — same action within 10s = deduped.
- * The partial unique index uq_audit_events_idempotency_key enforces this at the DB layer.
+ *   2. Legacy (non-CTACTE callers, no `callerKey`):
+ *      SHA-256(operatorId + action + entityId + JSON(payload) +
+ *      10s_bucket) — 10-second window dedup. Preserved for
+ *      backwards-compat.
  *
- * SELECT-then-INSERT: race window exists. If a concurrent request inserts the
- * same key between our SELECT and INSERT, the unique constraint violation (23505)
- * is caught and interpreted as "already deduped."
+ * The partial unique index `uq_audit_events_idempotency_key` enforces
+ * dedup at the DB layer; the SELECT-then-INSERT + 23505 catch cover
+ * concurrent writes that slip past the SELECT.
  */
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { auditEvents } from '@athlos/db/schema'
+
+/** Drizzle transaction handle. Shares `Db`'s query surface, so the
+ *  repository and `emitAudit` accept either indifferently. */
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 export interface AuditRecord {
   operatorId: string | null
@@ -41,10 +48,21 @@ export interface AuditRecord {
    *
    * `metadata` is intentionally NOT part of the idempotency key:
    * the SHA-256 bucket is computed from `operatorId + action +
-   * entityId + payload`, so identical uploads within 10s still
-   * collapse to a single row even if the metadata bag differs.
+   * entityId + callerKey|payload`, so identical calls within the
+   * dedup window still collapse to a single row even if the
+   * metadata bag differs.
    */
   metadata?: Record<string, unknown>
+  /**
+   * Durable caller-supplied idempotency key (S2.a). When present,
+   * the audit row's `idempotency_key` is
+   * `sha256(operatorId|action|entityId|callerKey)` with NO time
+   * bucket — the same tuple across any delay collapses to one
+   * row. Actor scope is enforced via `operatorId` in the hash
+   * input. Legacy callers MUST omit this field; their calls
+   * continue to use the 10-second bucket window.
+   */
+  callerKey?: string
 }
 
 /**
@@ -97,16 +115,39 @@ export type SocioAttachmentAuditAction = (typeof AuditAction)[keyof typeof Audit
 
 export type EmitAuditResult = { inserted: true; id: string } | { inserted: false; deduped: true }
 
-export async function emitAudit(db: Db, r: AuditRecord): Promise<EmitAuditResult> {
+/**
+ * Compute the idempotency key. Exported so the two modes
+ * (durable caller-key vs legacy 10s bucket) are unit-testable
+ * without a DB. Pure function — same input → same output.
+ *
+ * When `callerKey` is supplied, the bucket is dropped so retries
+ * at any delay collapse to the same key. Otherwise the legacy
+ * 10s bucket is preserved for backwards-compat with non-CTACTE
+ * callers.
+ */
+export function computeIdempotencyKey(r: AuditRecord): string {
+  const actor = r.operatorId ?? ''
+  if (r.callerKey) {
+    return createHash('sha256')
+      .update(`${actor}|${r.action}|${r.entityId}|${r.callerKey}`)
+      .digest('hex')
+  }
   const bucket = Math.floor(Date.now() / 10_000)
-  const key = createHash('sha256')
-    .update(
-      `${r.operatorId ?? ''}|${r.action}|${r.entityId}|${JSON.stringify(r.payload)}|${bucket}`,
-    )
+  return createHash('sha256')
+    .update(`${actor}|${r.action}|${r.entityId}|${JSON.stringify(r.payload)}|${bucket}`)
     .digest('hex')
+}
+
+/**
+ * Insert an audit event. Accepts a Drizzle client OR transaction
+ * handle (`Db | Tx`) so callers running inside `db.transaction(...)`
+ * can compose `insert + emitAudit` in one atomic outcome (S2.c/d/e).
+ */
+export async function emitAudit(dbOrTx: Db | Tx, r: AuditRecord): Promise<EmitAuditResult> {
+  const key = computeIdempotencyKey(r)
 
   // SELECT-1: check for existing idempotency key
-  const [existing] = await db
+  const [existing] = await dbOrTx
     .select({ id: auditEvents.id })
     .from(auditEvents)
     .where(eq(auditEvents.idempotencyKey, key))
@@ -118,7 +159,7 @@ export async function emitAudit(db: Db, r: AuditRecord): Promise<EmitAuditResult
 
   // INSERT with idempotency key
   try {
-    const [row] = await db
+    const [row] = await dbOrTx
       .insert(auditEvents)
       .values({
         operatorId: r.operatorId,
