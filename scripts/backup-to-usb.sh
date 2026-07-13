@@ -18,7 +18,7 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source "$(dirname "$0")/lib/common.sh"
 
-LOCK_FILE="/var/lock/athlos-backup.lock"
+LOCK_FILE="${LOCK_FILE:-/var/lock/athlos-backup.lock}"
 
 # ── Non-blocking flock for concurrency safety ────────────────────
 exec 200>"$LOCK_FILE"
