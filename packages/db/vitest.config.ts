@@ -11,4 +11,6 @@ import { createConfig } from '@athlos/vitest-config'
  */
 export default createConfig('node', {
   include: ['src/**/*.{test,spec}.ts'],
+  // DB test files recreate the shared tesoreria schema.
+  fileParallelism: false,
 })
