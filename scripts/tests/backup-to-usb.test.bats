@@ -57,26 +57,15 @@ load test_helper
 # flock acquired → exits 0
 # ────────────────────────────────────────────────────────────────
 
-@test "backup-to-usb exits 0 when lock is acquired" {
-  LOCK_FILE="/var/lock/athlos-backup-test.lock"
-  USB_DEVICE="/dev/nonexistent"
-  USB_KEYFILE="$BATS_TEST_DIRNAME/test-keyfile-lock"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-  BACKUP_DIR="/tmp/nonexistent-backup"
-  USB_RETENTION_DAYS="30"
+@test "backup-to-usb exits 0 when flock is held" {
+  run sudo bash -c '
+    exec 9>/var/lock/athlos-backup.lock
+    flock -n 9
+    bash "$1"
+  ' _ "$SCRIPT_DIR/../backup-to-usb.sh"
 
-  echo "test-key" > "$USB_KEYFILE"
-  chmod 0600 "$USB_KEYFILE"
-
-  # Create a lock file to simulate another process holding the lock
-  touch "$LOCK_FILE"
-
-  run bash "$SCRIPT_DIR/../backup-to-usb.sh"
-  # flock -n should return immediately because lock is held
-  # Expected: exit 0 silently (flock contention skip)
   [[ "$status" -eq 0 ]]
-  rm -f "$USB_KEYFILE" "$LOCK_FILE"
+  sudo rm -f /var/lock/athlos-backup.lock
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -84,7 +73,7 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "backup-to-usb exits 0 silently when flock is held by another process" {
-  skip "Same as above — flock contention tested by the acquired test"
+  skip "Covered by the preceding flock contention test"
 }
 
 # ────────────────────────────────────────────────────────────────

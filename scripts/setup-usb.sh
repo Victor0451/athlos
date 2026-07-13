@@ -95,10 +95,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Guards ───────────────────────────────────────────────────────
-require_root
-require_cmd cryptsetup
-require_cmd mkfs.ext4
-
 if [[ -z "$DEVICE" ]]; then
   echo "ERROR: --device is required" >&2
   usage
@@ -106,8 +102,13 @@ if [[ -z "$DEVICE" ]]; then
 fi
 
 if [[ ! -b "$DEVICE" ]]; then
-  die "device $DEVICE not found (not plugged in or not a block device)"
+  log ERROR "device $DEVICE not found (not plugged in or not a block device)"
+  exit 2
 fi
+
+require_root
+require_cmd cryptsetup
+require_cmd mkfs.ext4
 
 # ── Dry run: print plan ──────────────────────────────────────────
 print_plan() {

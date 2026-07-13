@@ -11,10 +11,10 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "unmount-usb succeeds when USB is mounted and LUKS is open" {
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../unmount-usb.sh"
+  run sudo env \
+    USB_MAPPER="athlos-test-usb" \
+    USB_MOUNT_POINT="$BATS_TEST_TMPDIR/athlos-test-usb" \
+    bash "$SCRIPT_DIR/../unmount-usb.sh"
   # In CI without real USB: exit 0 because is_mounted and is_luks_open both fail (false)
   # In real environment: unmounts and closes, exit 0
   [[ "$status" -eq 0 ]]
@@ -25,10 +25,10 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "unmount-usb exits 0 when not mounted (idempotent)" {
-  USB_MAPPER="athlos-backup-usb-nonexistent"
-  USB_MOUNT_POINT="/mnt/nonexistent-athlos-backup-usb-$(date +%s)"
-
-  run bash "$SCRIPT_DIR/../unmount-usb.sh"
+  run sudo env \
+    USB_MAPPER="athlos-test-usb-absent" \
+    USB_MOUNT_POINT="$BATS_TEST_TMPDIR/athlos-test-usb-absent" \
+    bash "$SCRIPT_DIR/../unmount-usb.sh"
   [[ "$status" -eq 0 ]]
 }
 
@@ -37,10 +37,10 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "unmount-usb exits 0 when LUKS is not open (skip close)" {
-  USB_MAPPER="athlos-backup-usb-nonexistent"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../unmount-usb.sh"
+  run sudo env \
+    USB_MAPPER="athlos-test-usb-absent" \
+    USB_MOUNT_POINT="$BATS_TEST_TMPDIR/athlos-test-usb" \
+    bash "$SCRIPT_DIR/../unmount-usb.sh"
   [[ "$status" -eq 0 ]]
 }
 
@@ -49,17 +49,15 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "unmount-usb exits 1 when USB_MAPPER is unset" {
-  unset USB_MAPPER
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-
-  run bash "$SCRIPT_DIR/../unmount-usb.sh"
+  run sudo env -u USB_MAPPER \
+    USB_MOUNT_POINT="$BATS_TEST_TMPDIR/athlos-test-usb" \
+    bash "$SCRIPT_DIR/../unmount-usb.sh"
   [[ "$status" -eq 1 ]]
 }
 
 @test "unmount-usb exits 1 when USB_MOUNT_POINT is unset" {
-  USB_MAPPER="athlos-backup-usb"
-  unset USB_MOUNT_POINT
-
-  run bash "$SCRIPT_DIR/../unmount-usb.sh"
+  run sudo env -u USB_MOUNT_POINT \
+    USB_MAPPER="athlos-test-usb" \
+    bash "$SCRIPT_DIR/../unmount-usb.sh"
   [[ "$status" -eq 1 ]]
 }
