@@ -26,7 +26,7 @@ load test_helper
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   BACKUP_DIR="/tmp/nonexistent-backup-dir"
   USB_RETENTION_DAYS="30"
-  LOCK_FILE="/var/lock/athlos-backup.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-mount-fail.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
@@ -57,26 +57,16 @@ load test_helper
 # flock acquired → exits 0
 # ────────────────────────────────────────────────────────────────
 
-@test "backup-to-usb exits 0 when lock is acquired" {
-  LOCK_FILE="/var/lock/athlos-backup-test.lock"
-  USB_DEVICE="/dev/nonexistent"
-  USB_KEYFILE="$BATS_TEST_DIRNAME/test-keyfile-lock"
-  USB_MAPPER="athlos-backup-usb"
-  USB_MOUNT_POINT="/mnt/athlos-backup-usb"
-  BACKUP_DIR="/tmp/nonexistent-backup"
-  USB_RETENTION_DAYS="30"
+@test "backup-to-usb exits 0 when flock is held" {
+  LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-contention.lock"
+  run env LOCK_FILE="$LOCK_FILE" bash -c '
+    exec 9>"$LOCK_FILE"
+    flock -n 9
+    bash "$1"
+  ' _ "$SCRIPT_DIR/../backup-to-usb.sh"
 
-  echo "test-key" > "$USB_KEYFILE"
-  chmod 0600 "$USB_KEYFILE"
-
-  # Create a lock file to simulate another process holding the lock
-  touch "$LOCK_FILE"
-
-  run bash "$SCRIPT_DIR/../backup-to-usb.sh"
-  # flock -n should return immediately because lock is held
-  # Expected: exit 0 silently (flock contention skip)
   [[ "$status" -eq 0 ]]
-  rm -f "$USB_KEYFILE" "$LOCK_FILE"
+  rm -f "$LOCK_FILE"
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -84,7 +74,7 @@ load test_helper
 # ────────────────────────────────────────────────────────────────
 
 @test "backup-to-usb exits 0 silently when flock is held by another process" {
-  skip "Same as above — flock contention tested by the acquired test"
+  skip "Covered by the preceding flock contention test"
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -98,7 +88,7 @@ load test_helper
   USB_MAPPER="athlos-backup-usb"
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   USB_RETENTION_DAYS="30"
-  LOCK_FILE="/var/lock/athlos-backup-test-nobackup.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-test-nobackup.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
@@ -115,7 +105,7 @@ load test_helper
   USB_MOUNT_POINT="/mnt/athlos-backup-usb"
   BACKUP_DIR="/tmp/backup-test"
   unset USB_RETENTION_DAYS
-  LOCK_FILE="/var/lock/athlos-backup-test-noretention.lock"
+  export LOCK_FILE="$BATS_TEST_TMPDIR/athlos-backup-test-noretention.lock"
 
   echo "test-key" > "$USB_KEYFILE"
   chmod 0600 "$USB_KEYFILE"
