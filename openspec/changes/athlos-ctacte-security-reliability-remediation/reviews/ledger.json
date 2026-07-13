@@ -1,0 +1,61 @@
+{
+  "schema": "gentle-ai.review-ledger/v1",
+  "lineage_id": "athlos-ctacte-security-reliability-remediation-s0-pr1-deterministic-v3",
+  "frozen_findings": [
+    {
+      "id": "RELIABILITY-001",
+      "lens": "reliability",
+      "severity": "CRITICAL",
+      "scope": "in-scope",
+      "category": "deterministic-blocker",
+      "location": "packages/db/src/s0-contracts-0034-lifecycle.test.ts:120,131,361-362",
+      "claim": "Lifecycle test overwrites committed evidence file (artifacts/0034-lifecycle.txt and artifacts/s0-spec-deltas.txt) before asserting it, making the assertion a no-op self-validation. Any runtime regeneration mutates tracked artifacts and prevents the committed evidence from being a frozen, deterministically-asserted receipt.",
+      "resolution": "fix",
+      "fix_strategy": "Add read-only structural validation of the committed artifacts. Redirect any runtime-generated evidence output to a temporary directory (os.tmpdir + mkdtemp) so committed artifacts stay frozen. Remove the self-validation line that reads back what the test just wrote."
+    },
+    {
+      "id": "WARNING-SCRIPT-001",
+      "lens": "clarity",
+      "severity": "WARNING",
+      "scope": "in-scope",
+      "category": "evidence-accuracy",
+      "location": "openspec/changes/athlos-ctacte-security-reliability-remediation/reviews/evidence.md:36, openspec/changes/athlos-ctacte-security-reliability-remediation/reviews/policy.md:33",
+      "claim": "Reviews reference `node scripts/check-spec-deltas.mjs` but the script does not exist in the worktree. The spec-delta validation logic is implemented INSIDE the vitest test `packages/db/src/s0-contracts-0034-lifecycle.test.ts` (function `validate()` driven by 6 per-capability `it()` blocks). Evidence transcript and policy both point to a non-existent artifact.",
+      "resolution": "fix",
+      "fix_strategy": "Update the focused_verification step in reviews/policy.md to name the actual command (`pnpm --filter @athlos/db exec vitest run src/s0-contracts-0034-lifecycle.test.ts`) and the actual evidence emitter (the vitest `validate()` per-capability describe block). Update reviews/evidence.md the same way. Remove the phantom `node scripts/check-spec-deltas.mjs` reference."
+    },
+    {
+      "id": "WARNING-TASKSCOPE-001",
+      "lens": "clarity",
+      "severity": "WARNING",
+      "scope": "in-scope",
+      "category": "proposal-test-scope-inconsistency",
+      "location": "openspec/changes/athlos-ctacte-security-reliability-remediation/tasks.md:13",
+      "claim": "S0/PR 1 row in the work-units table claims the test is `scripts/check-spec-deltas.mjs+0034.lifecycle.test.ts` but the actual test path is `packages/db/src/s0-contracts-0034-lifecycle.test.ts` and there is no separate `scripts/check-spec-deltas.mjs`. Tasks also claim a separate `0034.lifecycle.test.ts` name, but the unified file is `s0-contracts-0034-lifecycle.test.ts`.",
+      "resolution": "fix",
+      "fix_strategy": "Rewrite the S0/PR 1 row in the work-units table to cite the actual test path (`packages/db/src/s0-contracts-0034-lifecycle.test.ts`), the actual disposable-PG env var (`ATHLOS_TEST_DATABASE_URL`), and the actual rollback boundary (`openspec/changes/...` + the test file + `artifacts/`)."
+    },
+    {
+      "id": "RESILIENCE-001",
+      "lens": "resilience",
+      "severity": "out-of-scope",
+      "scope": "out-of-scope",
+      "category": "follow-up-only",
+      "location": "packages/db/src/s0-contracts-0034-lifecycle.test.ts:283-364 (already addressed by v2 GREEN loop)",
+      "claim": "Original severe review flagged lifecycle proof ran the 0031→0034 chain only once. The v2 corrected S0 candidate (materialized byte-exactly into the v3 lineage) wraps the full chain in a `for (let run = 1; run <= 2; run += 1)` loop with two ON CONFLICT inference assertions. Defect is already resolved at the frozen 21-path S0 candidate.",
+      "resolution": "no-action",
+      "follow_up": "Confirmed closed by v2 corrected content. No v3 action. Tracked only for traceability."
+    },
+    {
+      "id": "RESILIENCE-002",
+      "lens": "resilience",
+      "severity": "out-of-scope",
+      "scope": "out-of-scope",
+      "category": "follow-up-only",
+      "location": "openspec/changes/athlos-ctacte-security-reliability-remediation/specs/monitoring-observability/spec.md (already addressed by v2 corrected delta)",
+      "claim": "Original severe review flagged concrete operator visibility for RENDER_TIMEOUT. The v2 corrected monitoring-observability delta names `ctacte_comprobante_render_timeout_total` metric and `error_code: \"RENDER_TIMEOUT\"` structured log field, and the frozen-contract test in `s0-contracts-0034-lifecycle.test.ts` asserts both. Defect is already resolved at the frozen 21-path S0 candidate.",
+      "resolution": "no-action",
+      "follow_up": "Confirmed closed by v2 corrected content. No v3 action. Tracked only for traceability."
+    }
+  ]
+}
