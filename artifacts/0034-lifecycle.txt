@@ -1,0 +1,21 @@
+# 0034-lifecycle evidence
+# athlos-ctacte-security-reliability-remediation / S0 / PR1
+# source: deterministic disposable PostgreSQL validation
+# assertions:
+#   0031 → 0032 → 0033 → 0034 applied in order twice
+#   two FULL UNIQUE INDEXes (no WHERE predicate) expected per run
+
+schemaname | tablename | indexname | indexdef
+--- | --- | --- | ---
+socios | ctacte_movement_notes | ctacte_movement_notes_idempotency_key_unique | CREATE UNIQUE INDEX ctacte_movement_notes_idempotency_key_unique ON socios.ctacte_movement_notes USING btree (idempotency_key)
+socios | ctacte_movement_notes | ctacte_movement_notes_pkey | CREATE UNIQUE INDEX ctacte_movement_notes_pkey ON socios.ctacte_movement_notes USING btree (id)
+socios | ctacte_movement_notes | idx_ctacte_movement_notes_created | CREATE INDEX idx_ctacte_movement_notes_created ON socios.ctacte_movement_notes USING btree (created_at DESC)
+socios | ctacte_movement_notes | idx_ctacte_movement_notes_movement | CREATE INDEX idx_ctacte_movement_notes_movement ON socios.ctacte_movement_notes USING btree (ctacte_movement_id)
+tesoreria | ctacte | ctacte_idempotency_key_unique | CREATE UNIQUE INDEX ctacte_idempotency_key_unique ON tesoreria.ctacte USING btree (idempotency_key)
+tesoreria | ctacte | ctacte_pkey | CREATE UNIQUE INDEX ctacte_pkey ON tesoreria.ctacte USING btree (id)
+tesoreria | ctacte_comprobante_retries | ctacte_comprobante_retries_expires_at_idx | CREATE INDEX ctacte_comprobante_retries_expires_at_idx ON tesoreria.ctacte_comprobante_retries USING btree (expires_at)
+tesoreria | ctacte_comprobante_retries | ctacte_comprobante_retries_pkey | CREATE UNIQUE INDEX ctacte_comprobante_retries_pkey ON tesoreria.ctacte_comprobante_retries USING btree (idempotency_key)
+
+# run 1 ON CONFLICT inference: first=1 dup=0 -> PASS
+# run 2 ON CONFLICT inference: first=1 dup=0 -> PASS
+
