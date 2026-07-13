@@ -4,6 +4,14 @@ import { ctacte, type Ctacte, type NewCtacte } from '@athlos/db/schema'
 import { parseCents, centsToString } from '../../test-standins/db.ts'
 
 /**
+ * Drizzle transaction handle. `Db | Tx` lets the repository run
+ * inside `db.transaction(...)` for the S2 atomic-audit flow without
+ * a cast at the call site. The runtime shape is identical to `Db`
+ * — both share the query-builder surface.
+ */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+
+/**
  * Cuenta Corriente (ledger) repository.
  *
  * Read-only in PR 5. The schema is `tesoreria.ctacte` — see
@@ -181,7 +189,7 @@ export async function findCtacteByIdempotencyKey(
  * `notes-repository.ts:insert`).
  */
 export async function insertCtacteRow(
-  db: Db,
+  db: Db | Tx,
   input: InsertCtacteRowInput,
 ): Promise<InsertCtacteRowResult> {
   const row: NewCtacte = {

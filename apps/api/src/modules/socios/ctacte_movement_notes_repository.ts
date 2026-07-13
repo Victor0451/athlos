@@ -7,6 +7,13 @@ import {
 } from '@athlos/db/schema'
 
 /**
+ * Drizzle transaction handle. `Db | Tx` lets the repository run
+ * inside `db.transaction(...)` for the S2 atomic-audit flow. The
+ * runtime query surface is identical to `Db`.
+ */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+
+/**
  * `ctacte_movement_notes` repository — thin Drizzle wrapper.
  *
  * PR A1a (athlos-ctacte-mutations). The schema mirrors the migration
@@ -73,7 +80,7 @@ export interface InsertNoteResult {
  * (idempotency replay). On a fresh insert the row is returned with
  * `created: true`.
  */
-export async function insertNote(db: Db, input: InsertNoteInput): Promise<InsertNoteResult> {
+export async function insertNote(db: Db | Tx, input: InsertNoteInput): Promise<InsertNoteResult> {
   const row: NewCtacteMovementNote = {
     ...(input.id ? { id: input.id } : {}),
     ctacteMovementId: input.ctacteMovementId,
