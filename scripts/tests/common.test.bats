@@ -61,14 +61,16 @@ export ATHLOS_COMMON_LOADED
 # ────────────────────────────────────────────────────────────────
 
 @test "log writes to stderr not stdout" {
-  run bash -c 'log INFO "test message" 2>&1'
-  # stdout should be empty (output is empty or just whitespace)
-  [[ -z "$(echo "$output" | tr -d '[:space:]')" ]]
+  run --separate-stderr bash -c 'source "$SCRIPT_DIR/../lib/common.sh"; log INFO "test message"'
+  assert_success "$status"
+  [[ -z "$output" ]]
+  [[ "$stderr" == *"test message"* ]]
 }
 
 @test "log writes a line containing the level tag" {
-  run bash -c 'log ERROR "something broke" 2>&1'
-  echo "$output" | grep -q "ERROR"
+  run --separate-stderr bash -c 'source "$SCRIPT_DIR/../lib/common.sh"; log ERROR "something broke"'
+  assert_success "$status"
+  [[ "$stderr" == *"ERROR"* ]]
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -77,28 +79,27 @@ export ATHLOS_COMMON_LOADED
 # ────────────────────────────────────────────────────────────────
 
 @test "log_error writes a line containing the ERROR tag" {
-  run log_error "database not ready"
-  echo "$output" | grep -q "ERROR"
-  echo "$output" | grep -q "database not ready"
+  run --separate-stderr log_error "database not ready"
+  [[ "$stderr" == *"ERROR"* ]]
+  [[ "$stderr" == *"database not ready"* ]]
 }
 
 @test "log_info writes a line containing the INFO tag" {
-  run log_info "starting up"
-  echo "$output" | grep -q "INFO"
-  echo "$output" | grep -q "starting up"
+  run --separate-stderr log_info "starting up"
+  [[ "$stderr" == *"INFO"* ]]
+  [[ "$stderr" == *"starting up"* ]]
 }
 
 @test "log_warn writes a line containing the WARN tag" {
-  run log_warn "deprecated path"
-  echo "$output" | grep -q "WARN"
-  echo "$output" | grep -q "deprecated path"
+  run --separate-stderr log_warn "deprecated path"
+  [[ "$stderr" == *"WARN"* ]]
+  [[ "$stderr" == *"deprecated path"* ]]
 }
 
 @test "log_error writes to stderr not stdout" {
-  # stderr should contain the message; stdout should NOT (output is
-  # empty or whitespace because bats captures stderr separately)
-  run log_error "boom"
-  echo "$output" | grep -q "boom"
+  run --separate-stderr log_error "boom"
+  [[ -z "$output" ]]
+  [[ "$stderr" == *"boom"* ]]
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -159,22 +160,14 @@ export ATHLOS_COMMON_LOADED
 # ────────────────────────────────────────────────────────────────
 
 @test "require_root exits non-zero when EUID != 0" {
-  run bash -c '
-    id() { echo 9999; }
-    export -f id
-    source "$SCRIPT_DIR/../lib/common.sh"
-    require_root
-  '
+  [[ $EUID -ne 0 ]] || skip "running as root"
+  run bash -c 'source "$SCRIPT_DIR/../lib/common.sh"; require_root'
   [[ "$status" -ne 0 ]]
 }
 
 @test "require_root succeeds when EUID == 0" {
-  run bash -c '
-    id() { echo 0; }
-    export -f id
-    source "$SCRIPT_DIR/../lib/common.sh"
-    require_root
-  '
+  [[ $EUID -eq 0 ]] || skip "not running as root"
+  run bash -c 'source "$SCRIPT_DIR/../lib/common.sh"; require_root'
   [[ "$status" -eq 0 ]]
 }
 

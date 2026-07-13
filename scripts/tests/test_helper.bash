@@ -6,6 +6,8 @@
 # Resolve the lib/ directory relative to this helper's location
 HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$HELPER_DIR/../lib"
+# Child shells in tests need the same path to source common.sh.
+export SCRIPT_DIR="$HELPER_DIR"
 
 # Load common.sh if it exists
 if [[ -f "$LIB_DIR/common.sh" ]]; then
