@@ -72,20 +72,17 @@ teardown() {
 # ────────────────────────────────────────────────────────────────
 
 @test "active connections block restore by default — exits 2" {
-  # Mock pg_stat_activity that returns 1 active connection
-  # (In real CI with postgres service, this tests the real check)
-  run bash -c "
-    source '$SCRIPT_DIR/../lib/common.sh'
-    source '$SCRIPT_DIR/../restore.sh' \
-      --source \"$VALID_SQL_FILE\" \
-      --confirm
-  "
-  # Exit 2 = safety/refusal (active connections detected)
-  # In test env without postgres, this may exit 1 (argv error) — that's ok for RED
-  # The key is: without --force-allow-active, it must NOT proceed
-  # After GREEN, if postgres is up: exits 2
-  # After GREEN, if postgres is down: exits 1 (can't check conns)
-  assert_failure "$status"
+  local mock_bin
+  mock_bin="$(mktemp -d)"
+  printf '#!/usr/bin/env bash\nprintf "1\\n"\n' > "$mock_bin/psql"
+  chmod +x "$mock_bin/psql"
+
+  run env PATH="$mock_bin:$PATH" bash "$SCRIPT_DIR/../restore.sh" \
+    --source "$VALID_SQL_FILE" \
+    --confirm
+
+  rm -rf "$mock_bin"
+  [[ "$status" -eq 2 ]]
 }
 
 @test "--force-allow-active bypasses active-connection guard — exits 0" {
@@ -108,17 +105,14 @@ teardown() {
 
 @test "corrupt .sql.gz fails gunzip -t integrity check — exits 2" {
   local corrupt_file="$TEST_BACKUP_DIR/corrupt.sql.gz"
-  echo "this is not a valid gzip" | gzip > "$corrupt_file"
+  printf 'this is not a valid gzip\n' > "$corrupt_file"
 
-  run bash -c "
-    source '$SCRIPT_DIR/../lib/common.sh'
-    source '$SCRIPT_DIR/../restore.sh' \
-      --source \"$corrupt_file\" \
-      --confirm \
-      --dry-run
-  "
+  run bash "$SCRIPT_DIR/../restore.sh" \
+    --source "$corrupt_file" \
+    --confirm \
+    --dry-run
   # Integrity check failure → exit 2
-  assert_failure "$status"
+  [[ "$status" -eq 2 ]]
 }
 
 # ────────────────────────────────────────────────────────────────
@@ -145,14 +139,11 @@ teardown() {
 # ────────────────────────────────────────────────────────────────
 
 @test "restore banner printed to stderr BEFORE integrity check" {
-  run bash -c '
-    source '"'"'$SCRIPT_DIR/../lib/common.sh'"'"'
-    source '"'"'$SCRIPT_DIR/../restore.sh'"'"' \
-      --source '"'"'$VALID_SQL_FILE'"'"' \
-      --confirm \
-      --dry-run \
-      2>&1
-  '
-  # Banner (RESTORE WARNING) must appear in stderr output
-  echo "$output" | grep -q "RESTORE WARNING"
+  run bash "$SCRIPT_DIR/../restore.sh" \
+    --source "$VALID_SQL_FILE" \
+    --confirm \
+    --dry-run
+
+  assert_success "$status"
+  [[ "$output" == *"RESTORE WARNING"* ]]
 }
