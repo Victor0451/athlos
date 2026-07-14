@@ -248,6 +248,59 @@ export async function softDeleteAttachment(input: {
   await emitAttachmentDeletedAudit(input.db, existing, input.operatorId, null)
 }
 
+/**
+ * Safe compensation primitive — remove ONE newly-created attachment
+ * row + its file. Intended for callers that just inserted an
+ * attachment after a caller transaction rolls back (e.g. when a
+ * downstream audit emission fails).
+ *
+ * Contract (S3.foundation / PR 5):
+ *   1. Hard-delete the row in an independent transaction. The file is
+ *      not unlinked unless that transaction has committed successfully.
+ *   2. After the committed row removal, unlink the file via
+ *      `storage.unlink(storagePath)`. `LocalFileStorage.unlink` is
+ *      idempotent on ENOENT.
+ *   3. On row-removal failure: the function throws so the caller's
+ *      transaction rolls back. The file unlink is NOT attempted.
+ *   4. On file-unlink failure AFTER row removal: the function logs
+ *      and continues. The row is already gone; a stranded file is
+ *      recoverable by the future retention cron.
+ *   5. Idempotent on retry: when `remove` returns `false` (the row
+ *      is already absent), the function does NOT call `unlink`
+ *      again — the row-removal step is the gate.
+ *   6. NEVER touches any other row or file. The WHERE clause is
+ *      `id = $rowId`; only the named row is deleted.
+ */
+export async function compensateNewAttachment(
+  db: Db,
+  rowId: string,
+  storagePath: string,
+  storage: LocalFileStorage,
+): Promise<void> {
+  // The transaction resolves only after its DELETE has committed.
+  const removed = await db.transaction((tx) => repo.remove(tx as unknown as Db, rowId))
+
+  // 2. Idempotency: if the row was already absent (a prior compensation
+  //    succeeded, or the id never existed), skip the unlink. This
+  //    prevents spurious `unlink` calls on retry.
+  if (!removed) {
+    return
+  }
+
+  // 3. Unlink the file. LocalFileStorage.unlink is ENOENT-tolerant
+  //    (idempotent). On a hard I/O failure, log and continue — the
+  //    row is already gone and the stranded file is recoverable by
+  //    the future retention cron.
+  try {
+    await storage.unlink(storagePath)
+  } catch (err) {
+    console.error(
+      '[socio-attachments] compensateNewAttachment: row removed but file unlink failed; stranded file recoverable by retention cron',
+      { rowId, storagePath, err },
+    )
+  }
+}
+
 // ── helpers ────────────────────────────────────────────────────────
 
 /**
