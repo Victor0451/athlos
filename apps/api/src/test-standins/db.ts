@@ -1391,24 +1391,36 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
     },
     delete(table: unknown) {
       const tname = tableName(table)
-      const applyDelete = (cond: unknown): { rowCount: number } => {
+      // Drizzle 0.36 semantics:
+      //   - awaiting `db.delete(t).where(c)` directly returns the
+      //     pg-driver result (`{ rowCount, ... }`).
+      //   - calling `.returning()` (no projection) returns an array
+      //     of the deleted rows.
+      // Match both shapes so `remove`-style helpers (returning())
+      // and `clearForSocio`/`deleteGasto` (await directly) both work.
+      function applyDelete(cond: unknown): { matched: Row[]; rowCount: number } {
         const filters = normalizeFilters(cond)
         const rows = getRows(tname)
-        const before = rows.length
-        const surviving = rows.filter((r) => !filters.every((f) => clauseMatches(r, f, tname)))
+        const matched: Row[] = []
+        const surviving: Row[] = []
+        for (const r of rows) {
+          if (filters.every((f) => clauseMatches(r, f, tname))) matched.push(r)
+          else surviving.push(r)
+        }
         // Replace the array's contents so the standin's state arrays
         // stay the same reference (the container's state object holds
         // the array reference; we mutate it in place).
         rows.length = 0
         for (const r of surviving) rows.push(r)
-        return { rowCount: before - surviving.length }
+        return { matched, rowCount: matched.length }
       }
       return {
         where: (cond: unknown) => {
+          const result = applyDelete(cond)
           const built = {
-            returning: () => applyDelete(cond),
+            returning: () => result.matched,
             then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
-              Promise.resolve(applyDelete(cond)).then(onFulfilled, onRejected),
+              Promise.resolve({ rowCount: result.rowCount }).then(onFulfilled, onRejected),
           }
           return built
         },
