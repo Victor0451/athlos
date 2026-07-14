@@ -134,7 +134,7 @@ describe('compensateNewAttachment — integration proof against disposable Postg
     expect(await countRows(db.pool, seeded.id)).toBe(1)
     expect(existsSync(join(storageDir, seeded.storagePath))).toBe(true)
 
-    await compensateNewAttachment(db.db, seeded.id, seeded.storagePath, storage)
+    await compensateNewAttachment(db.db, seeded.id, storage)
 
     expect(await countRows(db.pool, seeded.id)).toBe(0)
     expect(existsSync(join(storageDir, seeded.storagePath))).toBe(false)
@@ -148,7 +148,7 @@ describe('compensateNewAttachment — integration proof against disposable Postg
 
     await expect(
       activeDb.db.transaction(async () => {
-        await compensateNewAttachment(activeDb.db, seeded.id, seeded.storagePath, storage)
+        await compensateNewAttachment(activeDb.db, seeded.id, storage)
         throw new Error('force outer rollback')
       }),
     ).rejects.toThrow('force outer rollback')

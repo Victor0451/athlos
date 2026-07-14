@@ -12,7 +12,7 @@ import * as service from './attachments.ts'
  * S3.foundation / PR 5 — safe attachment compensation primitive.
  * 4 RED cases per `reviews/s3-foundation-replan.md`:
  *   1. Row hard-deleted via `remove(tx, id)` (not softDelete).
- *   2. File unlinked via `storage.unlink(storagePath)`.
+ *   2. File unlinked via the hard-deleted row's `storagePath`.
  *   3. Idempotent retry — no extra `storage.unlink` call.
  *   4. Prior attachments for the same socio are NEVER touched.
  */
@@ -58,16 +58,16 @@ async function seed(
 }
 
 describe('repo.remove — hard-delete primitive', () => {
-  it('hard-deletes the row regardless of deleted_at and returns true', async () => {
+  it('hard-deletes the row regardless of deleted_at and returns its storage path', async () => {
     const db = standin.drizzle as unknown as Db
-    const { id } = await seed(db, { filename: 'a.jpg' })
-    expect(await repo.remove(db, id)).toBe(true)
+    const { id, storagePath } = await seed(db, { filename: 'a.jpg' })
+    expect(await repo.remove(db, id)).toMatchObject({ id, storagePath })
     expect(await repo.findById(db, id)).toBeNull()
   })
 
-  it('returns false when the id is absent (idempotent on retry)', async () => {
+  it('returns null when the id is absent (idempotent on retry)', async () => {
     const db = standin.drizzle as unknown as Db
-    expect(await repo.remove(db, '00000000-0000-4000-8000-000000000099')).toBe(false)
+    expect(await repo.remove(db, '00000000-0000-4000-8000-000000000099')).toBeNull()
   })
 })
 
@@ -77,7 +77,7 @@ describe('compensateNewAttachment — row + file compensation', () => {
     const { id, storagePath } = await seed(db, { filename: 'new.jpg' })
     expect(existsSync(join(baseDir, storagePath))).toBe(true)
 
-    await service.compensateNewAttachment(db as never, id, storagePath, storage)
+    await service.compensateNewAttachment(db as never, id, storage)
 
     // Row is GONE — not soft-deleted.
     expect(await repo.findById(db, id)).toBeNull()
@@ -86,7 +86,7 @@ describe('compensateNewAttachment — row + file compensation', () => {
   })
 
   it('commits the hard delete before unlinking the file', async () => {
-    const { id, storagePath } = await seed(standin.drizzle as unknown as Db, {
+    const { id } = await seed(standin.drizzle as unknown as Db, {
       filename: 'ordered.jpg',
     })
     let committed = false
@@ -105,7 +105,7 @@ describe('compensateNewAttachment — row + file compensation', () => {
       return unlink(path)
     })
 
-    await service.compensateNewAttachment(db as unknown as Db, id, storagePath, storage)
+    await service.compensateNewAttachment(db as unknown as Db, id, storage)
 
     expect(unlinkedAfterCommit).toBe(true)
   })
@@ -115,12 +115,12 @@ describe('compensateNewAttachment — row + file compensation', () => {
     const { id, storagePath } = await seed(db, { filename: 'new.jpg' })
     const unlinkSpy = vi.spyOn(storage, 'unlink')
 
-    await service.compensateNewAttachment(db as never, id, storagePath, storage)
+    await service.compensateNewAttachment(db as never, id, storage)
     expect(unlinkSpy).toHaveBeenCalledTimes(1)
     expect(unlinkSpy).toHaveBeenCalledWith(storagePath)
 
     // Second call: row absent, file absent → unlink MUST NOT fire again.
-    await service.compensateNewAttachment(db as never, id, storagePath, storage)
+    await service.compensateNewAttachment(db as never, id, storage)
     expect(unlinkSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -129,7 +129,7 @@ describe('compensateNewAttachment — row + file compensation', () => {
     const prior = await seed(db, { filename: 'prior.jpg', socioId: SOCIO_A })
     const current = await seed(db, { filename: 'new.jpg', socioId: SOCIO_A })
 
-    await service.compensateNewAttachment(db as never, current.id, current.storagePath, storage)
+    await service.compensateNewAttachment(db as never, current.id, storage)
 
     // Current row + file gone.
     expect(await repo.findById(db, current.id)).toBeNull()
@@ -137,5 +137,17 @@ describe('compensateNewAttachment — row + file compensation', () => {
     // Prior row + file untouched.
     expect((await repo.findById(db, prior.id))?.id).toBe(prior.id)
     expect(existsSync(join(baseDir, prior.storagePath))).toBe(true)
+  })
+
+  it('derives the unlink path from the deleted row, not a mismatched attachment', async () => {
+    const db = standin.drizzle as unknown as Db
+    const current = await seed(db, { filename: 'current.jpg' })
+    const mismatched = await seed(db, { filename: 'mismatched.jpg' })
+    const unlinkSpy = vi.spyOn(storage, 'unlink')
+
+    await service.compensateNewAttachment(db as never, current.id, storage)
+
+    expect(unlinkSpy).toHaveBeenCalledWith(current.storagePath)
+    expect(existsSync(join(baseDir, mismatched.storagePath))).toBe(true)
   })
 })

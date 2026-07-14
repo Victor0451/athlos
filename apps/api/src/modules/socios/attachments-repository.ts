@@ -100,9 +100,9 @@ export async function softDelete(db: Db, id: string, operatorId: string): Promis
 }
 
 /**
- * Hard-delete an attachment row. Returns `true` when a row was
- * removed (regardless of its `deleted_at` state); `false` when the
- * id was absent (idempotent on retry).
+ * Hard-delete an attachment row. Returns its id and storage path when
+ * removed (regardless of its `deleted_at` state); `null` when the id
+ * was absent (idempotent on retry).
  *
  * `S3.foundation / PR 5`: the safe compensation primitive that
  * S2.c / registerPayment calls inside its open `db.transaction(...)`
@@ -114,12 +114,15 @@ export async function softDelete(db: Db, id: string, operatorId: string): Promis
  * `softDelete` semantics are intentionally preserved unchanged —
  * see the dedicated test in `attachments.compensation.test.ts`.
  */
-export async function remove(db: Db, id: string): Promise<boolean> {
+export async function remove(
+  db: Db,
+  id: string,
+): Promise<{ id: string; storagePath: string } | null> {
   const result = await db
     .delete(socioAttachments)
     .where(eq(socioAttachments.id, id))
-    .returning({ id: socioAttachments.id })
-  return result.length > 0
+    .returning({ id: socioAttachments.id, storagePath: socioAttachments.storagePath })
+  return result[0] ?? null
 }
 
 /** Test helper: clear all attachments for a socio. Not exported from the module barrel. */
