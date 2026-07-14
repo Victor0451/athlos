@@ -257,15 +257,15 @@ export async function softDeleteAttachment(input: {
  * Contract (S3.foundation / PR 5):
  *   1. Hard-delete the row in an independent transaction. The file is
  *      not unlinked unless that transaction has committed successfully.
- *   2. After the committed row removal, unlink the file via
- *      `storage.unlink(storagePath)`. `LocalFileStorage.unlink` is
+ *   2. After the committed row removal, unlink the deleted row's
+ *      `storagePath`. `LocalFileStorage.unlink` is
  *      idempotent on ENOENT.
  *   3. On row-removal failure: the function throws so the caller's
  *      transaction rolls back. The file unlink is NOT attempted.
  *   4. On file-unlink failure AFTER row removal: the function logs
  *      and continues. The row is already gone; a stranded file is
  *      recoverable by the future retention cron.
- *   5. Idempotent on retry: when `remove` returns `false` (the row
+ *   5. Idempotent on retry: when `remove` returns `null` (the row
  *      is already absent), the function does NOT call `unlink`
  *      again — the row-removal step is the gate.
  *   6. NEVER touches any other row or file. The WHERE clause is
@@ -274,7 +274,6 @@ export async function softDeleteAttachment(input: {
 export async function compensateNewAttachment(
   db: Db,
   rowId: string,
-  storagePath: string,
   storage: LocalFileStorage,
 ): Promise<void> {
   // The transaction resolves only after its DELETE has committed.
@@ -292,11 +291,11 @@ export async function compensateNewAttachment(
   //    row is already gone and the stranded file is recoverable by
   //    the future retention cron.
   try {
-    await storage.unlink(storagePath)
+    await storage.unlink(removed.storagePath)
   } catch (err) {
     console.error(
       '[socio-attachments] compensateNewAttachment: row removed but file unlink failed; stranded file recoverable by retention cron',
-      { rowId, storagePath, err },
+      { rowId, storagePath: removed.storagePath, err },
     )
   }
 }
