@@ -36,8 +36,10 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 
 ## S2 — Atomic Audit and Caller-Key Idempotency
 
-- [ ] 3.1 RED `ctacte-mutations.atomic.test.ts`: audit throw rolls back payment (disposable PG)
-- [ ] 3.2 GREEN: wrap insert+`emitAudit(tx,…)` in `db.transaction` for registerPayment/Debit/addNote
+> v2 replan note (per Engram #581): S2 was split into S2.a (durable caller-key idempotency, merged PR #48), S2.b (concurrent same-key dedup, merged PR #50), S2.c (atomic registerPayment, this slice), S2.d (atomic addNote), S2.e (atomic registerDebit). S3 was split into S3.foundation (compensation primitive, merged PR #54) and S3.remainder (actor-binding + provenance). S2.c was blocked on S3.foundation; with #54 merged, S2.c can land.
+
+- [x] 3.1 RED `ctacte-mutations.atomic.test.ts` (S2.c): audit throw rolls back payment + compensates comprobante (disposable PG, 2 cases: happy commit + tx-rollback-compensate)
+- [x] 3.2 GREEN (S2.c subset, registerPayment only): wrap insert+`emitAudit(tx,…)` in `db.transaction`; compensate orphaned comprobante via imported `compensateNewAttachment` (S3.foundation). `registerDebit` + `addNote` deferred to S2.d/S2.e (not in this slice per user directive).
 - [ ] 3.3 RED `emitter.ctacte.durable.test.ts`: same key after 30s → no new row
 - [ ] 3.4 GREEN: covered-CTACTE hash `actorId|action|entityId|callerKey`; drop 10s bucket; 23505=dedup
 - [x] 3.5 RED `ctacte_movement_notes_repository.concurrent.test.ts`: 2 parallel same-key → 1 row
@@ -62,3 +64,10 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 - [ ] 5.3 RED `ctacte-comprobante.failed-replay.test.ts`: retry of failed job → 504
 - [ ] 5.4 GREEN: route returns `504 {error:'RENDER_TIMEOUT',request_id}`
 - [ ] 5.5 REFACTOR: centralize `LEASE_DURATION_MS = 30_000`
+
+## Phase 2: S2.c — Route Error Contract (additive; size:exception preserved)
+
+> S2.c review finding: parked candidate's `registerPayment`/`registerDebit` catches (L256-260, L333-336) squash non-`ErrorCode` audit/DB-rollback into 400. Correct: `addNote` L445 / `softDeleteNote` L505 `throw err` → redacted 5xx.
+
+- [x] 2.1 RED `apps/api/src/routes/ctacte-mutations.route-error-contract.test.ts` — mock both fns to throw non-`ErrorCode` (audit/DB-rollback); assert 5xx, NOT 400 `VALIDATION_ERROR`.
+- [x] 2.2 GREEN `apps/api/src/routes/ctacte-mutations.ts` — drop 400 fallback for non-`ErrorCode` throws in both catches; `throw err` → redacted 5xx. Preserve CONFLICT/VALIDATION_ERROR/NOT_FOUND/UNSUPPORTED_MEDIA_TYPE.
