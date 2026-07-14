@@ -40,8 +40,8 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 - [ ] 3.2 GREEN: wrap insert+`emitAudit(tx,…)` in `db.transaction` for registerPayment/Debit/addNote
 - [ ] 3.3 RED `emitter.ctacte.durable.test.ts`: same key after 30s → no new row
 - [ ] 3.4 GREEN: covered-CTACTE hash `actorId|action|entityId|callerKey`; drop 10s bucket; 23505=dedup
-- [ ] 3.5 RED `ctacte_movement_notes_repository.concurrent.test.ts`: 2 parallel same-key → 1 row
-- [ ] 3.6 GREEN: keep `ON CONFLICT (idempotency_key) DO NOTHING`; preserve non-CTACTE semantics
+- [x] 3.5 RED `ctacte_movement_notes_repository.concurrent.test.ts`: 2 parallel same-key → 1 row
+- [x] 3.6 GREEN: keep `ON CONFLICT (idempotency_key) DO NOTHING`; preserve non-CTACTE semantics
 - [ ] 3.7 REFACTOR: remove 10s-bucket helpers in `packages/audit/src/emitter.ts`
 
 ## S3 — Attachment Compensation and Actor-Bound Replay
