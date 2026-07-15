@@ -5,6 +5,9 @@ import { registerPayment } from './ctacte-mutations.ts'
 /**
  * `registerPayment` tests — split from the combined ctacte-mutations
  * test file (which exceeded the 200 LoC per-file cap).
+ *
+ * S2.c.atomic wraps insert + audit in `db.transaction(...)` and runs
+ * attachment compensation only after the transaction has rolled back.
  */
 
 const repoInsertCtacteRow = vi.fn()
@@ -14,6 +17,7 @@ const repoFindSocio = vi.fn()
 const emitAuditMock = vi.fn()
 const uploadAttachmentMock = vi.fn()
 const getAttachmentMock = vi.fn()
+const compensateNewAttachmentMock = vi.fn()
 
 vi.mock('../../ctacte/repository.ts', () => ({
   insertCtacteRow: (...args: unknown[]) => repoInsertCtacteRow(...args),
@@ -38,9 +42,13 @@ vi.mock('@athlos/audit', () => ({
 vi.mock('../../socios/attachments.ts', () => ({
   uploadAttachment: (...args: unknown[]) => uploadAttachmentMock(...args),
   getAttachment: (...args: unknown[]) => getAttachmentMock(...args),
+  compensateNewAttachment: (...args: unknown[]) => compensateNewAttachmentMock(...args),
 }))
 
-const dbMock = {} as never
+const transactionSpy = vi.fn(<T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(dbMock))
+const dbMock = {
+  transaction: transactionSpy,
+} as never
 
 const SOCIO_ID = '11111111-1111-4111-8111-111111111111'
 const OPERATOR_ID = '00000000-0000-4000-8000-000000000001'
@@ -302,6 +310,123 @@ describe('registerPayment — idempotency', () => {
         idempotencyKey: IDEMPOTENCY_KEY,
       }),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+})
+
+describe('registerPayment — S2.c atomic audit + compensation', () => {
+  it('does not compensate when audit succeeds', async () => {
+    uploadAttachmentMock.mockResolvedValueOnce({ id: ATTACHMENT_ID })
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      created: true,
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'CREDITO',
+        concepto: 'Cuota Julio',
+        debe: '0.00',
+        haber: '500.00',
+        comprobanteAttachmentId: ATTACHMENT_ID,
+        createdAt: new Date(),
+      },
+    })
+    emitAuditMock.mockResolvedValueOnce({ inserted: true, id: 'audit-1' })
+
+    await registerPayment({
+      db: dbMock,
+      storage: {} as never,
+      socioId: SOCIO_ID,
+      operatorId: OPERATOR_ID,
+      monto: 500,
+      fecha: '2026-07-09',
+      concepto: 'Cuota Julio',
+      comprobante: { bytes: Buffer.from('PDF'), mimeType: 'application/pdf', filename: 'c.pdf' },
+      idempotencyKey: IDEMPOTENCY_KEY,
+    })
+
+    expect(transactionSpy).toHaveBeenCalledTimes(1)
+    expect(compensateNewAttachmentMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the tx handle and compensates after an audit failure', async () => {
+    const txMock = {} as never
+    transactionSpy.mockImplementationOnce((callback) => callback(txMock))
+    uploadAttachmentMock.mockResolvedValueOnce({ id: ATTACHMENT_ID })
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      created: true,
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'CREDITO',
+        concepto: 'Cuota Julio',
+        debe: '0.00',
+        haber: '500.00',
+        comprobanteAttachmentId: ATTACHMENT_ID,
+        createdAt: new Date(),
+      },
+    })
+    emitAuditMock.mockRejectedValueOnce(new Error('audit insert failed'))
+
+    await expect(
+      registerPayment({
+        db: dbMock,
+        storage: {} as never,
+        socioId: SOCIO_ID,
+        operatorId: OPERATOR_ID,
+        monto: 500,
+        fecha: '2026-07-09',
+        concepto: 'Cuota Julio',
+        comprobante: { bytes: Buffer.from('PDF'), mimeType: 'application/pdf', filename: 'c.pdf' },
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('audit insert failed')
+
+    expect(transactionSpy).toHaveBeenCalledTimes(1)
+    expect(repoInsertCtacteRow).toHaveBeenCalledTimes(1)
+    expect(repoInsertCtacteRow.mock.calls[0]![0]).toBe(txMock)
+    expect(emitAuditMock).toHaveBeenCalledTimes(1)
+    expect(emitAuditMock.mock.calls[0]![0]).toBe(txMock)
+    expect(emitAuditMock.mock.calls[0]![1]).toMatchObject({ callerKey: IDEMPOTENCY_KEY })
+    expect(compensateNewAttachmentMock).toHaveBeenCalledTimes(1)
+    expect(compensateNewAttachmentMock).toHaveBeenCalledWith(
+      dbMock,
+      ATTACHMENT_ID,
+      expect.anything(),
+    )
+  })
+
+  it('does not compensate after an audit failure without a comprobante', async () => {
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      created: true,
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'CREDITO',
+        concepto: 'Cuota Julio',
+        debe: '0.00',
+        haber: '1500.00',
+        comprobanteAttachmentId: null,
+        createdAt: new Date(),
+      },
+    })
+    emitAuditMock.mockRejectedValueOnce(new Error('audit insert failed'))
+
+    await expect(
+      registerPayment({
+        db: dbMock,
+        storage: {} as never,
+        socioId: SOCIO_ID,
+        operatorId: OPERATOR_ID,
+        monto: 1500,
+        fecha: '2026-07-09',
+        concepto: 'Cuota Julio',
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+    ).rejects.toThrow('audit insert failed')
+
+    expect(compensateNewAttachmentMock).not.toHaveBeenCalled()
   })
 })
 
