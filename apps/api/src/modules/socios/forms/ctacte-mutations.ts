@@ -9,8 +9,14 @@ import {
   listMovementsByDateRange,
 } from '../../ctacte/repository.ts'
 import { findById as findSocioById } from '../../socios/repository.ts'
-import { getAttachment, uploadAttachment } from '../../socios/attachments.ts'
+import {
+  compensateNewAttachment,
+  getAttachment,
+  uploadAttachment,
+} from '../../socios/attachments.ts'
 import { emitAudit } from '@athlos/audit'
+
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 /**
  * `ctacte-mutations` service — operator-driven mutations on a socio's
@@ -75,18 +81,11 @@ export interface RegisterPaymentParams {
 /**
  * Register a payment (pago) on the socio's cuenta-corriente.
  *
- *  1. Verify the socio exists (throws NOT_FOUND → 404).
- *  2. Validate monto > 0 (throws VALIDATION_ERROR → 400).
- *  3. If comprobante present, upload it via the existing attachments
- *     route (`category='comprobante'`).
- *  4. INSERT the CREDITO row with `haber = monto.toFixed(2)` and the
- *     uploaded attachment id (or NULL).
- *  5. Emit `CTACTE_PAYMENT_REGISTERED` audit with the exact 6-key
- *     metadata shape (`comprobante_attachment_id` is JSON null when
- *     no comprobante was uploaded — key present, value null).
- *
- * The audit emission is best-effort: a failure here does NOT roll
- * back the pago. The caller already has the movement row in hand.
+ * The comprobante upload happens before the database transaction because
+ * the filesystem cannot participate in PostgreSQL atomicity. The payment
+ * row and audit row commit in one transaction; after any transaction
+ * failure, the newly uploaded attachment is compensated through the outer
+ * database handle.
  */
 export async function registerPayment(params: RegisterPaymentParams): Promise<CtacteMovementRow> {
   if (!Number.isFinite(params.monto) || params.monto <= 0) {
@@ -129,31 +128,50 @@ export async function registerPayment(params: RegisterPaymentParams): Promise<Ct
     comprobanteAttachmentId = attachment.id
   }
 
-  const result = await insertCtacteRow(params.db, {
-    socioId: params.socioId,
-    fecha: params.fecha,
-    tipo: 'CREDITO',
-    concepto: params.concepto,
-    monto: params.monto.toFixed(2),
-    comprobanteAttachmentId,
-    idempotencyKey: params.idempotencyKey,
-    idempotencyOperatorId: params.operatorId,
-  })
+  type TxRow = Awaited<ReturnType<typeof insertCtacteRow>>['row']
+  try {
+    const outcome = await params.db.transaction(async (tx) => {
+      const inserted = await insertCtacteRow(tx, {
+        socioId: params.socioId,
+        fecha: params.fecha,
+        tipo: 'CREDITO',
+        concepto: params.concepto,
+        monto: params.monto.toFixed(2),
+        comprobanteAttachmentId,
+        idempotencyKey: params.idempotencyKey,
+        idempotencyOperatorId: params.operatorId,
+      })
+      if (!inserted.created) return { created: false as const, row: inserted.row }
 
-  if (!result.created) {
-    await assertMatchingPaymentRetry(params, result.row)
-    return paymentMovement(result.row)
+      await emitPaymentAudit(
+        tx,
+        inserted.row,
+        params.operatorId,
+        comprobanteAttachmentId,
+        params.monto,
+        params.idempotencyKey,
+      )
+      return { created: true as const, row: inserted.row }
+    })
+
+    if (!outcome.created) {
+      await compensateOrphanedComprobante(params.db, comprobanteAttachmentId, params.storage)
+      await assertMatchingPaymentRetry(params, outcome.row)
+    }
+    return paymentMovement(outcome.row as TxRow)
+  } catch (error) {
+    await compensateOrphanedComprobante(params.db, comprobanteAttachmentId, params.storage)
+    throw error
   }
+}
 
-  await emitPaymentAudit(
-    params.db,
-    result.row,
-    params.operatorId,
-    comprobanteAttachmentId,
-    params.monto,
-  )
-
-  return paymentMovement(result.row)
+async function compensateOrphanedComprobante(
+  db: Db,
+  comprobanteAttachmentId: string | null,
+  storage: LocalFileStorage,
+): Promise<void> {
+  if (comprobanteAttachmentId === null) return
+  await compensateNewAttachment(db, comprobanteAttachmentId, storage)
 }
 
 async function assertMatchingPaymentRetry(
@@ -368,56 +386,44 @@ function invalidFechaError() {
 }
 
 /**
- * Best-effort emission of `CTACTE_PAYMENT_REGISTERED` with the exact
- * 6-key metadata shape pinned by the audit-logger spec delta:
- *   - ctacte_id              (the socio's cuenta ID — same value as
- *                             movement_id for this domain; kept
- *                             separate for future schema splits)
- *   - movement_id
- *   - monto
- *   - fecha
- *   - concepto
- *   - comprobante_attachment_id (nullable — JSON null when absent)
- *
- * A failed emit becomes a `console.error`; the primary write is
- * never rolled back.
+ * Emit `CTACTE_PAYMENT_REGISTERED` inside the caller's transaction.
+ * Errors propagate so PostgreSQL rolls back the payment row before the
+ * outer catch compensates a newly uploaded comprobante.
  */
 async function emitPaymentAudit(
-  db: Db,
+  tx: Db | Tx,
   row: { id: string; socioId: string; fecha: string; concepto: string },
   operatorId: string,
   comprobanteAttachmentId: string | null,
   monto: number,
+  callerKey: string,
 ): Promise<void> {
-  try {
-    await emitAudit(db, {
-      operatorId,
-      action: 'CTACTE_PAYMENT_REGISTERED',
-      entityType: 'ctacte_movement',
-      entityId: row.id,
-      oldValue: null,
-      newValue: {
-        id: row.id,
-        socio_id: row.socioId,
-        fecha: row.fecha,
-        concepto: row.concepto,
-        monto,
-        comprobante_attachment_id: comprobanteAttachmentId,
-      },
-      sourceIp: null,
-      payload: { id: row.id, monto, fecha: row.fecha },
-      metadata: {
-        ctacte_id: row.socioId,
-        movement_id: row.id,
-        monto,
-        fecha: row.fecha,
-        concepto: row.concepto,
-        comprobante_attachment_id: comprobanteAttachmentId,
-      },
-    })
-  } catch (err) {
-    console.error('[ctacte-mutations] failed to emit CTACTE_PAYMENT_REGISTERED', err)
-  }
+  await emitAudit(tx, {
+    operatorId,
+    action: 'CTACTE_PAYMENT_REGISTERED',
+    entityType: 'ctacte_movement',
+    entityId: row.id,
+    oldValue: null,
+    newValue: {
+      id: row.id,
+      socio_id: row.socioId,
+      fecha: row.fecha,
+      concepto: row.concepto,
+      monto,
+      comprobante_attachment_id: comprobanteAttachmentId,
+    },
+    sourceIp: null,
+    payload: { id: row.id, monto, fecha: row.fecha },
+    metadata: {
+      ctacte_id: row.socioId,
+      movement_id: row.id,
+      monto,
+      fecha: row.fecha,
+      concepto: row.concepto,
+      comprobante_attachment_id: comprobanteAttachmentId,
+    },
+    callerKey,
+  })
 }
 
 /**
