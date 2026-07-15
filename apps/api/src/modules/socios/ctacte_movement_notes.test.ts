@@ -49,8 +49,8 @@ vi.mock('@athlos/db/schema', async (importOriginal) => {
 
 // Minimal db mock: supports the operator enrichment query path
 // (`select({...}).from(operators).where(inArray(operators.id, ids)).limit(N)`).
-function buildDb() {
-  return {
+function buildDb(tx = {} as Record<string, unknown>) {
+  const db = {
     select: () => ({
       from: () => ({
         where: () => ({
@@ -68,7 +68,20 @@ function buildDb() {
         }),
       }),
     }),
+    transaction: vi.fn(<T>(callback: (txHandle: unknown) => Promise<T>) =>
+      callback(Object.keys(tx).length > 0 ? tx : db),
+    ),
+  } as {
+    select: () => {
+      from: () => {
+        where: () => {
+          limit: () => PromiseLike<unknown>
+        }
+      }
+    }
+    transaction: ReturnType<typeof vi.fn>
   }
+  return db
 }
 
 const MOVEMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -159,15 +172,17 @@ describe('addNote', () => {
     })
     repoInsertNote.mockResolvedValueOnce({ row, created: true })
 
-    const result = await addNote(buildDb() as never, {
+    const db = buildDb()
+    const result = await addNote(db as never, {
       ctacteMovementId: MOVEMENT_ID,
       operatorId: OPERATOR_ID,
       body: 'Verificar comprobante físico',
     })
 
     expect(result.id).toBe('n-replay')
+    expect(db.transaction).toHaveBeenCalledTimes(1)
     expect(repoInsertNote).toHaveBeenCalledWith(
-      expect.anything(),
+      db,
       expect.objectContaining({
         ctacteMovementId: MOVEMENT_ID,
         authorOperatorId: OPERATOR_ID,
@@ -175,6 +190,7 @@ describe('addNote', () => {
       }),
     )
     expect(emitAuditMock).toHaveBeenCalledTimes(1)
+    expect(emitAuditMock.mock.calls[0]![0]).toBe(db)
     const auditRow = emitAuditMock.mock.calls[0]![1]
     expect(auditRow.action).toBe('CTACTE_MOVEMENT_NOTE_ADDED')
     expect(auditRow.entityType).toBe('ctacte_movement_note')
@@ -192,6 +208,59 @@ describe('addNote', () => {
     expect(auditRow.metadata.ctacte_id).toBe(MOVEMENT_ID)
     expect(auditRow.metadata.note_id).toBe('n-replay')
     expect(auditRow.metadata.author_operator_id).toBe(OPERATOR_ID)
+  })
+
+  it('uses the transaction handle and caller key for note insert + audit emission', async () => {
+    const tx = { marker: 'tx-add-note' }
+    const db = buildDb(tx)
+    const row = insertedNoteFor('note-caller-key', 'transactional note', {
+      idempotencyKey: 'note-caller-key',
+    })
+    repoInsertNote.mockResolvedValueOnce({ row, created: true })
+
+    await addNote(db as never, {
+      ctacteMovementId: MOVEMENT_ID,
+      operatorId: OPERATOR_ID,
+      body: 'transactional note',
+      idempotencyKey: 'note-caller-key',
+    })
+
+    expect(db.transaction).toHaveBeenCalledTimes(1)
+    expect(repoInsertNote).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ idempotencyKey: 'note-caller-key' }),
+    )
+    expect(emitAuditMock).toHaveBeenCalledTimes(1)
+    expect(emitAuditMock.mock.calls[0]![0]).toBe(tx)
+    expect(emitAuditMock.mock.calls[0]![1]).toMatchObject({ callerKey: 'note-caller-key' })
+  })
+
+  it('propagates audit failure so the transaction can roll back the inserted note', async () => {
+    const tx = { marker: 'tx-add-note-rollback' }
+    const db = buildDb(tx)
+    const row = insertedNoteFor('note-rollback-key', 'rollback note', {
+      idempotencyKey: 'note-rollback-key',
+    })
+    repoInsertNote.mockResolvedValueOnce({ row, created: true })
+    emitAuditMock.mockRejectedValueOnce(new Error('audit insert failed'))
+
+    await expect(
+      addNote(db as never, {
+        ctacteMovementId: MOVEMENT_ID,
+        operatorId: OPERATOR_ID,
+        body: 'rollback note',
+        idempotencyKey: 'note-rollback-key',
+      }),
+    ).rejects.toThrow('audit insert failed')
+
+    expect(repoInsertNote).toHaveBeenCalledWith(tx, expect.anything())
+    expect(emitAuditMock).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        action: 'CTACTE_MOVEMENT_NOTE_ADDED',
+        callerKey: 'note-rollback-key',
+      }),
+    )
   })
 })
 
