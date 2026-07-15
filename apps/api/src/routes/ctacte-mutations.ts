@@ -288,10 +288,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
             message: e.message ?? 'Unsupported media type',
           })
         }
-        request.log.warn({ err }, 'registerPayment failed')
-        return reply
-          .code(400)
-          .send({ error: 'VALIDATION_ERROR', message: e.message ?? 'Bad request' })
+        // Non-business failures must reach the global handler as a redacted, retryable 5xx.
+        throw err
       }
     },
   )
@@ -353,10 +351,8 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
         if (e.code === ErrorCode.CONFLICT) {
           return reply.code(409).send({ error: 'CONFLICT', message: e.message })
         }
-        request.log.warn({ err }, 'registerDebit failed')
-        return reply
-          .code(400)
-          .send({ error: 'VALIDATION_ERROR', message: e.message ?? 'Bad request' })
+        // Non-business failures must reach the global handler as a redacted, retryable 5xx.
+        throw err
       }
     },
   )
