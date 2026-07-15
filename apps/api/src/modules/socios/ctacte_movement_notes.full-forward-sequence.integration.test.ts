@@ -146,42 +146,38 @@ function rewriteSql(text: string): string {
 }
 
 /**
- * Wrap a `pg.Pool` so every `query()` call rewrites production
- * schema names to this test's isolated namespaces before reaching
- * the driver. The Proxy passes every other property/method through
- * unchanged (connect, end, on, …) so the wrapped pool stays a
- * drop-in replacement for the original.
+ * Wrap a `pg.Pool` so every `query()` and transaction client
+ * `connect()` call rewrites production schema names to this test's
+ * isolated namespaces before reaching the driver. The Proxy passes
+ * every other property/method through unchanged (end, on, …) so the
+ * wrapped pool stays a drop-in replacement for the original.
  */
+interface RawPool {
+  query: (this: unknown, ...args: unknown[]) => unknown
+  connect: () => Promise<Pool>
+}
+
 function wrapPool(pool: Pool): Pool {
-  // The query rewriting is implemented inline to avoid the pg Pool
-  // overload gymnastics — the inner function uses a permissive
-  // signature, and the Proxy returns it cast as Pool['query'] so
-  // TypeScript is satisfied without leaking the generic types.
-  const queryFn = (target: Pool) =>
+  const queryFn = (target: RawPool) =>
     function (this: unknown, ...args: unknown[]): unknown {
       const [config, ...rest] = args
       if (typeof config === 'string') {
-        return (target.query as (...a: unknown[]) => unknown).call(
-          target,
-          rewriteSql(config),
-          ...rest,
-        )
+        return target.query.call(target, rewriteSql(config), ...rest)
       }
       if (config && typeof config === 'object' && 'text' in (config as Record<string, unknown>)) {
         const cfg = config as { text: string } & Record<string, unknown>
-        return (target.query as (...a: unknown[]) => unknown).call(
-          target,
-          { ...cfg, text: rewriteSql(cfg.text) },
-          ...rest,
-        )
+        return target.query.call(target, { ...cfg, text: rewriteSql(cfg.text) }, ...rest)
       }
-      return (target.query as (...a: unknown[]) => unknown).call(target, config, ...rest)
+      return target.query.call(target, config, ...rest)
     }
+  const connectFn = (target: RawPool) => async (): Promise<Pool> => {
+    const client = await target.connect()
+    return wrapPool(client)
+  }
   return new Proxy(pool, {
     get(target, prop, receiver) {
-      if (prop === 'query') {
-        return queryFn(target)
-      }
+      if (prop === 'query') return queryFn(target as unknown as RawPool)
+      if (prop === 'connect') return connectFn(target as unknown as RawPool)
       return Reflect.get(target, prop, receiver)
     },
   }) as Pool
