@@ -118,7 +118,7 @@ export async function insertNote(db: Db | Tx, input: InsertNoteInput): Promise<I
  * cross-process replays surface the same row.
  */
 export async function findNoteByIdempotencyKey(
-  db: Db,
+  db: Db | Tx,
   idempotencyKey: string,
 ): Promise<CtacteMovementNote | null> {
   const [row] = await db

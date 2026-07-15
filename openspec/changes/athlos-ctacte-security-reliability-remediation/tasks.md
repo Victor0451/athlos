@@ -38,6 +38,12 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 
 > v2 replan note (per Engram #581): S2 was split into S2.a (durable caller-key idempotency, merged PR #48), S2.b (concurrent same-key dedup, merged PR #50), S2.c (atomic registerPayment, this slice), S2.d (atomic addNote), S2.e (atomic registerDebit). S3 was split into S3.foundation (compensation primitive, merged PR #54) and S3.remainder (actor-binding + provenance). S2.c was blocked on S3.foundation; with #54 merged, S2.c can land.
 
+### Phase 3: S2.d -- Atomic addNote (PR 8, base = PR 7 merged)
+
+- [x] 3.1 RED-GREEN apps/api/src/modules/socios/ctacte_movement_notes.ts -- wrap insertNote + emitNoteAddedAudit in db.transaction(...); widen emitNoteAddedAudit to (dbOrTx, ..., { callerKey }); drop best-effort try/catch.
+- [x] 3.2 EXTEND two test files (mock db transaction wrapper + wrapPool proxies pool.connect(), ~53 line fixture).
+- [ ] 3.3 VERIFY + COMMIT + PR `S2.d: atomic addNote`; base = PR 7.
+
 - [x] 3.1 RED `ctacte-mutations.atomic.test.ts` (S2.c): audit throw rolls back payment + compensates comprobante (disposable PG, 2 cases: happy commit + tx-rollback-compensate)
 - [x] 3.2 GREEN (S2.c subset, registerPayment only): wrap insert+`emitAudit(tx,…)` in `db.transaction`; compensate orphaned comprobante via imported `compensateNewAttachment` (S3.foundation). `registerDebit` + `addNote` deferred to S2.d/S2.e (not in this slice per user directive).
 - [ ] 3.3 RED `emitter.ctacte.durable.test.ts`: same key after 30s → no new row
