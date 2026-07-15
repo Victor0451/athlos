@@ -62,14 +62,14 @@ Delivery strategy: auto-chain | Split: S0→S1→S2→S3→S4 | Est: 1800–2400
 
 ## S3 — Attachment Compensation and Actor-Bound Replay
 
-- [ ] 4.1 RED `attachments.compensation.test.ts`: audit fail → row deleted + file unlinked (tmpdir+disposable PG)
-- [ ] 4.2 GREEN: add `compensateNewAttachment(tx,rowId,path)` scoped to current tx
-- [ ] 4.3 RED `ctacte_movement_notes.provenance.test.ts`: row persists socioId/uploadedBy/category/sha256/movementId
-- [ ] 4.4 GREEN: extend attachment insert for provenance + movementId FK
-- [ ] 4.5 RED `ctacte-comprobante.actor-binding.test.ts`: actor B replay of A → 409
-- [ ] 4.6 GREEN: include `operatorId` in fingerprint + ownership check
-- [ ] 4.7 RED `ctacte-comprobante.prior-attachment.test.ts`: replay never deletes prior file
-- [ ] 4.8 GREEN: replay branch skips `compensateNewAttachment`
+> S3.foundation was merged in PR #54. S3.remainder uses the existing payment → attachment relationship; it adds no attachment-side `movementId`, foreign key, or migration.
+
+- [x] 4.1 S3.foundation RED: prove failed payment persistence removes the newly uploaded attachment row and file.
+- [x] 4.2 S3.foundation GREEN: add the retry-safe `compensateNewAttachment` primitive used by `registerPayment`.
+- [x] 4.3 RED actor-bound comprobante replay: actor B replaying actor A's completed key conflicts while actor A can replay it.
+- [x] 4.4 GREEN actor-bound comprobante replay: include `operatorId` in the request fingerprint/ownership decision without weakening lease semantics.
+- [x] 4.5 PROVE payment attachment provenance through `registerPayment`: payment `comprobanteAttachmentId` links to attachment `socioId`, `uploadedBy`, `category`, and SHA-256; add production code only if the proof exposes a gap.
+- [x] 4.6 PROVE prior-attachment preservation through `registerPayment`: replay never compensates or deletes the attachment persisted by a prior successful payment.
 
 ## S4 — Comprobante Timeout and Failure Observability
 

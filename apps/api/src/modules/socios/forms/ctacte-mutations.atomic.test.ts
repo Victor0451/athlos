@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { createDb, type Db } from '@athlos/db'
@@ -157,7 +157,7 @@ async function seedComprobante() {
       mimeType: 'application/pdf',
       sizeBytes: 13,
       storagePath,
-      storageSha256: 'a'.repeat(64),
+      storageSha256: createHash('sha256').update('%PDF-1.4\n').digest('hex'),
       uploadedBy: OPERATOR_ID,
     })
     .returning({ id: schema.socioAttachments.id })
@@ -174,7 +174,7 @@ const stubUpload = (id: string, storagePath: string, filename: string) =>
     mimeType: 'application/pdf',
     sizeBytes: 13,
     storagePath,
-    storageSha256: 'a'.repeat(64),
+    storageSha256: createHash('sha256').update('%PDF-1.4\n').digest('hex'),
     uploadedBy: OPERATOR_ID,
     uploadedAt: new Date(),
     deletedAt: null,
@@ -191,7 +191,7 @@ describe('registerPayment — atomic audit + compensation (disposable PG)', () =
     } as never)
     stubUpload(seed.id, seed.storagePath, seed.filename)
 
-    const result = await registerPayment({
+    const payment = {
       db,
       storage,
       socioId: SOCIO_ID,
@@ -205,11 +205,33 @@ describe('registerPayment — atomic audit + compensation (disposable PG)', () =
         filename: 'c.pdf',
       },
       idempotencyKey: `s2c-happy-${SUFFIX}`,
-    })
+    }
+    const result = await registerPayment(payment)
+    const replay = await registerPayment(payment)
+    const provenance = await realPool.query<{
+      comprobante_attachment_id: string
+      socio_id: string
+      uploaded_by: string
+      category: string
+      storage_sha256: string
+    }>(`SELECT c.comprobante_attachment_id, a.socio_id, a.uploaded_by,
+              a.category::text, a.storage_sha256
+         FROM "${TESORERIA}"."ctacte" c
+         JOIN "${SOCIOS}"."socio_attachments" a ON a.id = c.comprobante_attachment_id`)
 
     expect(result.tipo).toBe('CREDITO')
     expect(result.monto).toBe(1500)
     expect(result.comprobanteAttachmentId).toBe(seed.id)
+    expect(replay).toEqual(result)
+    expect(provenance.rows).toEqual([
+      {
+        comprobante_attachment_id: seed.id,
+        socio_id: SOCIO_ID,
+        uploaded_by: OPERATOR_ID,
+        category: 'comprobante',
+        storage_sha256: createHash('sha256').update(payment.comprobante.bytes).digest('hex'),
+      },
+    ])
     expect(await countRows(`"${TESORERIA}"."ctacte"`)).toBe(1)
     expect(await countRows('"audit_events"')).toBe(1)
     expect(await countRows(`"${SOCIOS}"."socio_attachments"`)).toBe(1)
