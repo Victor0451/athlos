@@ -11,6 +11,7 @@ const repoInsertCtacteRow = vi.fn()
 const repoListMovementsByDateRange = vi.fn()
 const repoFindSocio = vi.fn()
 const emitAuditMock = vi.fn()
+const compensateNewAttachmentMock = vi.fn()
 
 vi.mock('../../ctacte/repository.ts', () => ({
   insertCtacteRow: (...args: unknown[]) => repoInsertCtacteRow(...args),
@@ -31,7 +32,15 @@ vi.mock('@athlos/audit', () => ({
   },
 }))
 
-const dbMock = {} as never
+vi.mock('../../socios/attachments.ts', () => ({
+  uploadAttachment: vi.fn(),
+  getAttachment: vi.fn(),
+  compensateNewAttachment: (...args: unknown[]) => compensateNewAttachmentMock(...args),
+}))
+
+const txMock = { kind: 'transaction' }
+const transactionSpy = vi.fn(<T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(txMock))
+const dbMock = { transaction: transactionSpy } as never
 
 const SOCIO_ID = '11111111-1111-4111-8111-111111111111'
 const OPERATOR_ID = '00000000-0000-4000-8000-000000000001'
@@ -75,8 +84,9 @@ describe('registerDebit', () => {
     expect(result.monto).toBe(800)
     expect(result.motivo).toBe('Cuota social Julio')
     expect(result.concepto).toBeNull()
+    expect(transactionSpy).toHaveBeenCalledOnce()
     expect(repoInsertCtacteRow).toHaveBeenCalledWith(
-      dbMock,
+      txMock,
       expect.objectContaining({
         socioId: SOCIO_ID,
         fecha: '2026-07-09',
@@ -89,12 +99,13 @@ describe('registerDebit', () => {
     )
     expect(emitAuditMock).toHaveBeenCalledOnce()
     expect(emitAuditMock).toHaveBeenCalledWith(
-      dbMock,
+      txMock,
       expect.objectContaining({
         operatorId: OPERATOR_ID,
         action: 'CTACTE_DEBIT_REGISTERED',
         entityType: 'ctacte_movement',
         entityId: MOVEMENT_ID,
+        callerKey: 'debit-intent-1',
         metadata: {
           ctacte_id: SOCIO_ID,
           movement_id: MOVEMENT_ID,
@@ -104,6 +115,45 @@ describe('registerDebit', () => {
         },
       }),
     )
+  })
+
+  it('propagates an audit failure so the transaction can roll back without compensation', async () => {
+    repoInsertCtacteRow.mockResolvedValueOnce({
+      row: {
+        id: MOVEMENT_ID,
+        socioId: SOCIO_ID,
+        fecha: '2026-07-09',
+        tipo: 'DEBITO',
+        concepto: 'Mora Julio',
+        debe: '900.00',
+        haber: '0.00',
+        comprobanteAttachmentId: null,
+        idempotencyOperatorId: OPERATOR_ID,
+        createdAt: new Date(),
+      },
+      created: true,
+    })
+    emitAuditMock.mockRejectedValueOnce(new Error('forced debit audit failure'))
+
+    await expect(
+      registerDebit({
+        db: dbMock,
+        socioId: SOCIO_ID,
+        operatorId: OPERATOR_ID,
+        monto: 900,
+        fecha: '2026-07-09',
+        motivo: 'Mora Julio',
+        idempotencyKey: 'debit-audit-failure-1',
+      }),
+    ).rejects.toThrow('forced debit audit failure')
+
+    expect(transactionSpy).toHaveBeenCalledOnce()
+    expect(repoInsertCtacteRow).toHaveBeenCalledWith(txMock, expect.anything())
+    expect(emitAuditMock).toHaveBeenCalledWith(
+      txMock,
+      expect.objectContaining({ callerKey: 'debit-audit-failure-1' }),
+    )
+    expect(compensateNewAttachmentMock).not.toHaveBeenCalled()
   })
 
   it('conflicts when a different operator reuses the same debit key', async () => {
