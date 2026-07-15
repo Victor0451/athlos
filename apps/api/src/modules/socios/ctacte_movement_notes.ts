@@ -5,6 +5,9 @@ import { emitAudit } from '@athlos/audit'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as repo from './ctacte_movement_notes_repository.ts'
 
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+type DbOrTx = Db | Tx
+
 /**
  * `ctacte_movement_notes` service — business logic for the per-movement
  * notes attached to `tesoreria.ctacte` rows.
@@ -20,11 +23,8 @@ import * as repo from './ctacte_movement_notes_repository.ts'
  * The route layer is thin: parse + auth → call into here → shape
  * response. No new routes are added in PR A1a (those land in A1b).
  *
- * Audit emission is best-effort relative to the primary write — a
- * failure here MUST NOT mask the original operation. The
- * `audit_events` table is append-only and a missed row is recoverable
- * from the operator's session log; the opposite (a 500 on a
- * successful note insert) would be the worse outcome.
+ * Audit emission is atomic with the primary write for covered CTACTE
+ * mutations. A failed audit write rejects and rolls back the note insert.
  *
  * R3 fix #2 — durable idempotency: `addNote` accepts a caller-
  * provided `idempotencyKey`. Replays (same key + same canonical
@@ -149,8 +149,8 @@ function isCanonicalMatch(
  *  5. Fresh insert OR creator branch of a race → emit
  *     `CTACTE_MOVEMENT_NOTE_ADDED` exactly once.
  *
- * The audit emission is best-effort — a failure here does NOT roll
- * back the insert. The audit metadata shape (sortable key order):
+ * The audit emission is part of the same transaction as the insert; a
+ * failure here rolls back the note. The audit metadata shape (sortable key order):
  *   - ctacte_id (string, the parent cuenta ID — same as movement_id
  *     because each ctacte row IS the cuenta for this domain; kept
  *     separate for future cuando ctacte agregue parent_id)
@@ -164,28 +164,33 @@ export async function addNote(db: Db, input: AddNoteInput): Promise<CtacteMoveme
   const body = input.body.trim()
   const idempotencyKey = input.idempotencyKey
 
-  const result = await repo.insertNote(db, {
-    ctacteMovementId: input.ctacteMovementId,
-    authorOperatorId: input.operatorId,
-    body,
-    ...(idempotencyKey ? { idempotencyKey } : {}),
-  })
+  return db.transaction(async (tx) => {
+    const result = await repo.insertNote(tx, {
+      ctacteMovementId: input.ctacteMovementId,
+      authorOperatorId: input.operatorId,
+      body,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    })
 
-  if (!result.created) {
-    // Conflict-loser path. The persisted row may match the caller's
-    // canonical payload (silent replay) OR have been produced from
-    // a different intent (CONFLICT). Either way, NO audit emission —
-    // the creator already emitted it.
-    if (isCanonicalMatch(result.row, { ...input, body })) {
-      return result.row
+    if (!result.created) {
+      // Conflict-loser path. The persisted row may match the caller's
+      // canonical payload (silent replay) OR have been produced from
+      // a different intent (CONFLICT). Either way, NO audit emission —
+      // the creator already emitted it.
+      if (isCanonicalMatch(result.row, { ...input, body })) {
+        return result.row
+      }
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency-Key was already used for a different note',
+      )
     }
-    throw BusinessError(ErrorCode.CONFLICT, 'Idempotency-Key was already used for a different note')
-  }
 
-  // Creator branch. Emit exactly one audit regardless of how many
-  // concurrent calls raced through `insertNote`.
-  await emitNoteAddedAudit(db, result.row, input.operatorId)
-  return result.row
+    // Creator branch. Emit exactly one audit regardless of how many
+    // concurrent calls raced through `insertNote`.
+    await emitNoteAddedAudit(tx, result.row, input.operatorId, { callerKey: idempotencyKey })
+    return result.row
+  })
 }
 
 export type CtacteNoteCallerRole = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
@@ -261,7 +266,7 @@ export async function softDeleteNote(
 }
 
 /**
- * Best-effort audit emission for `CTACTE_MOVEMENT_NOTE_ADDED`.
+ * Transactional audit emission for `CTACTE_MOVEMENT_NOTE_ADDED`.
  *
  * `emitAudit` persists the deduplication decision in the shared audit
  * table. Including the deterministic note ID and body in its payload
@@ -269,40 +274,36 @@ export async function softDeleteNote(
  * exactly one matching audit row while keeping different bodies distinct.
  */
 async function emitNoteAddedAudit(
-  db: Db,
+  dbOrTx: DbOrTx,
   row: CtacteMovementNote,
   operatorId: string,
+  options: { callerKey?: string | undefined } = {},
 ): Promise<void> {
-  try {
-    await emitAudit(db, {
-      operatorId,
-      action: 'CTACTE_MOVEMENT_NOTE_ADDED',
-      entityType: 'ctacte_movement_note',
-      entityId: row.id,
-      oldValue: null,
-      newValue: {
-        id: row.id,
-        ctacte_movement_id: row.ctacteMovementId,
-        body: row.body,
-        author_operator_id: row.authorOperatorId,
-      },
-      sourceIp: null,
-      payload: {
-        note_id: row.id,
-        ctacte_movement_id: row.ctacteMovementId,
-        body: row.body,
-      },
-      metadata: {
-        ctacte_id: row.ctacteMovementId,
-        movement_id: row.ctacteMovementId,
-        note_id: row.id,
-        body: row.body,
-        author_operator_id: row.authorOperatorId,
-      },
-    })
-  } catch (err) {
-    // Surface for ops but do not propagate — the note is already in
-    // the caller's hands and we MUST NOT roll back a successful insert.
-    console.error('[ctacte-movement-notes] failed to emit CTACTE_MOVEMENT_NOTE_ADDED', err)
-  }
+  await emitAudit(dbOrTx, {
+    operatorId,
+    action: 'CTACTE_MOVEMENT_NOTE_ADDED',
+    entityType: 'ctacte_movement_note',
+    entityId: row.id,
+    oldValue: null,
+    newValue: {
+      id: row.id,
+      ctacte_movement_id: row.ctacteMovementId,
+      body: row.body,
+      author_operator_id: row.authorOperatorId,
+    },
+    sourceIp: null,
+    payload: {
+      note_id: row.id,
+      ctacte_movement_id: row.ctacteMovementId,
+      body: row.body,
+    },
+    metadata: {
+      ctacte_id: row.ctacteMovementId,
+      movement_id: row.ctacteMovementId,
+      note_id: row.id,
+      body: row.body,
+      author_operator_id: row.authorOperatorId,
+    },
+    ...(options.callerKey ? { callerKey: options.callerKey } : {}),
+  })
 }
