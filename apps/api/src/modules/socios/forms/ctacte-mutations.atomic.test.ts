@@ -11,13 +11,12 @@ import * as audit from '@athlos/audit'
 import * as socioAttachmentsModule from '../../socios/attachments.ts'
 import * as socioRepo from '../../socios/repository.ts'
 import { LocalFileStorage } from '../../file-storage/index.ts'
-import { registerPayment } from './ctacte-mutations.ts'
+import { registerDebit, registerPayment } from './ctacte-mutations.ts'
 
 /**
- * S2.c.atomic transactional registerPayment proof against disposable
- * PostgreSQL. The transaction around insert + audit must roll back on
- * audit failure, then attachment compensation must remove the newly
- * uploaded comprobante row and file.
+ * Transactional registerPayment and registerDebit proof against disposable
+ * PostgreSQL. Each ledger insert and audit event commit together or roll back
+ * together; payment additionally compensates its newly uploaded comprobante.
  */
 
 const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
@@ -251,6 +250,56 @@ describe('registerPayment — atomic audit + compensation (disposable PG)', () =
     expect(await countRows('"audit_events"')).toBe(0)
     expect(await countRows(`"${SOCIOS}"."socio_attachments"`)).toBe(0)
     expect(existsSync(join(storageDir, seed.storagePath))).toBe(false)
+    expect(audit.emitAudit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('registerDebit — atomic audit (disposable PG)', () => {
+  it('commits the debit ledger row and matching audit event together', async () => {
+    if (!db || !realPool) throw new Error('disposable PG not initialized')
+    vi.spyOn(socioRepo, 'findById').mockResolvedValue({
+      id: SOCIO_ID,
+      fechaAlta: '2020-01-01',
+    } as never)
+
+    const result = await registerDebit({
+      db,
+      socioId: SOCIO_ID,
+      operatorId: OPERATOR_ID,
+      monto: 900,
+      fecha: '2026-07-09',
+      motivo: 'Mora Julio',
+      idempotencyKey: `s2e-happy-${SUFFIX}`,
+    })
+
+    expect(result).toMatchObject({ tipo: 'DEBITO', monto: 900, motivo: 'Mora Julio' })
+    expect(await countRows(`"${TESORERIA}"."ctacte"`)).toBe(1)
+    expect(await countRows('"audit_events"')).toBe(1)
+  })
+
+  it('rolls back the debit ledger row when audit emission fails', async () => {
+    if (!db || !realPool) throw new Error('disposable PG not initialized')
+    vi.spyOn(socioRepo, 'findById').mockResolvedValue({
+      id: SOCIO_ID,
+      fechaAlta: '2020-01-01',
+    } as never)
+    vi.spyOn(audit, 'emitAudit').mockRejectedValue(new Error('forced debit audit failure'))
+
+    await expect(
+      registerDebit({
+        db,
+        socioId: SOCIO_ID,
+        operatorId: OPERATOR_ID,
+        monto: 950,
+        fecha: '2026-07-09',
+        motivo: 'Mora Agosto',
+        idempotencyKey: `s2e-rollback-${SUFFIX}`,
+      }),
+    ).rejects.toThrow('forced debit audit failure')
+
+    expect(await countRows(`"${TESORERIA}"."ctacte"`)).toBe(0)
+    expect(await countRows('"audit_events"')).toBe(0)
+    expect(await countRows(`"${SOCIOS}"."socio_attachments"`)).toBe(0)
     expect(audit.emitAudit).toHaveBeenCalledTimes(1)
   })
 })

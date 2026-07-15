@@ -31,11 +31,9 @@ type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
  *   - `registerDebit`    → INSERT DEBITO (debe populated, haber='0.00')
  *   - `getMovementsForComprobante` → date-range slice for the PDF flow
  *
- * Audit emission is best-effort via the shared `emitAudit` wrapper
- * from `@athlos/audit` (the SHA-256 10s-bucket dedup wrapper). Pago
- * and débito retries within 10s collapse to one row — that's the
- * DESIRED behaviour for those mutations. The wrapper swallows audit
- * failures so a missed row never masks the primary write.
+ * Payment and debit ledger inserts emit their matching audit event through
+ * the same database transaction. Audit failures propagate so neither side
+ * can commit without the other; durable caller keys identify retries.
  *
  * Comprobante upload delegates to the existing `uploadAttachment`
  * service from PR 8c.1 — MIME / size / quota validation, magic-byte
@@ -262,15 +260,28 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
     throw invalidFechaError()
   }
 
-  const result = await insertCtacteRow(params.db, {
-    socioId: params.socioId,
-    fecha: params.fecha,
-    tipo: 'DEBITO',
-    concepto: params.motivo,
-    monto: params.monto.toFixed(2),
-    comprobanteAttachmentId: null,
-    idempotencyKey: params.idempotencyKey,
-    idempotencyOperatorId: params.operatorId,
+  const result = await params.db.transaction(async (tx) => {
+    const inserted = await insertCtacteRow(tx, {
+      socioId: params.socioId,
+      fecha: params.fecha,
+      tipo: 'DEBITO',
+      concepto: params.motivo,
+      monto: params.monto.toFixed(2),
+      comprobanteAttachmentId: null,
+      idempotencyKey: params.idempotencyKey,
+      idempotencyOperatorId: params.operatorId,
+    })
+    if (inserted.created) {
+      await emitDebitAudit(
+        tx,
+        inserted.row,
+        params.operatorId,
+        params.motivo,
+        params.monto,
+        params.idempotencyKey,
+      )
+    }
+    return inserted
   })
 
   if (!result.created) {
@@ -288,10 +299,6 @@ export async function registerDebit(params: RegisterDebitParams): Promise<Ctacte
         'Idempotency-Key was already used for a different debit',
       )
     }
-  }
-
-  if (result.created) {
-    await emitDebitAudit(params.db, result.row, params.operatorId, params.motivo, params.monto)
   }
 
   return {
@@ -427,8 +434,8 @@ async function emitPaymentAudit(
 }
 
 /**
- * Best-effort emission of `CTACTE_DEBIT_REGISTERED` with the exact
- * 5-key metadata shape pinned by the audit-logger spec delta:
+ * Emit `CTACTE_DEBIT_REGISTERED` inside the caller's transaction with the
+ * exact 5-key metadata shape pinned by the audit-logger spec delta:
  *   - ctacte_id
  *   - movement_id
  *   - monto
@@ -436,37 +443,35 @@ async function emitPaymentAudit(
  *   - motivo
  */
 async function emitDebitAudit(
-  db: Db,
+  tx: Db | Tx,
   row: { id: string; socioId: string; fecha: string; concepto: string },
   operatorId: string,
   motivo: string,
   monto: number,
+  callerKey: string,
 ): Promise<void> {
-  try {
-    await emitAudit(db, {
-      operatorId,
-      action: 'CTACTE_DEBIT_REGISTERED',
-      entityType: 'ctacte_movement',
-      entityId: row.id,
-      oldValue: null,
-      newValue: {
-        id: row.id,
-        socio_id: row.socioId,
-        fecha: row.fecha,
-        motivo,
-        monto,
-      },
-      sourceIp: null,
-      payload: { id: row.id, monto, fecha: row.fecha },
-      metadata: {
-        ctacte_id: row.socioId,
-        movement_id: row.id,
-        monto,
-        fecha: row.fecha,
-        motivo,
-      },
-    })
-  } catch (err) {
-    console.error('[ctacte-mutations] failed to emit CTACTE_DEBIT_REGISTERED', err)
-  }
+  await emitAudit(tx, {
+    operatorId,
+    action: 'CTACTE_DEBIT_REGISTERED',
+    entityType: 'ctacte_movement',
+    entityId: row.id,
+    oldValue: null,
+    newValue: {
+      id: row.id,
+      socio_id: row.socioId,
+      fecha: row.fecha,
+      motivo,
+      monto,
+    },
+    sourceIp: null,
+    payload: { id: row.id, monto, fecha: row.fecha },
+    metadata: {
+      ctacte_id: row.socioId,
+      movement_id: row.id,
+      monto,
+      fecha: row.fecha,
+      motivo,
+    },
+    callerKey,
+  })
 }
