@@ -17,7 +17,7 @@ beforeEach(async () => {
   await first.pool.query(`DROP SCHEMA IF EXISTS tesoreria CASCADE; CREATE SCHEMA tesoreria;
     CREATE TABLE tesoreria.ctacte_comprobante_retries (
        idempotency_key text PRIMARY KEY, request_fingerprint text NOT NULL, status text NOT NULL, pdf_base64 text, sha256 text,
-      byte_size integer, filename text, movement_count integer, lease_owner text,
+      byte_size integer, filename text, movement_count integer, failure_reason text, lease_owner text,
       lease_expires_at timestamptz, attempt_count integer NOT NULL DEFAULT 0,
       updated_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`)
 })
@@ -140,7 +140,7 @@ describe('PostgreSQL comprobante lease', () => {
     ).toMatchObject({
       kind: 'owner',
     })
-    expect(await original.fail('failed-key', 'owner-a')).toBe(true)
+    expect(await original.failOrdinary('failed-key', 'owner-a')).toBe(true)
     await expect(
       retry.claim('failed-key', 'range-b', 'owner-b', now + 1, 1_000, 60_000),
     ).resolves.toEqual({ kind: 'conflict' })
@@ -151,5 +151,34 @@ describe('PostgreSQL comprobante lease', () => {
     await expect(
       retry.claim('stale-key', 'range-b', 'owner-b', now + 2, 1_000, 60_000),
     ).resolves.toEqual({ kind: 'conflict' })
+  })
+
+  it('persists timeout, reclaims ordinary failure, and fences both race orders', async () => {
+    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
+    const owner = createPostgresComprobanteLeaseStore(first.db)
+    const rival = createPostgresComprobanteLeaseStore(second.db)
+    const now = Date.now()
+    const result = {
+      pdf: Buffer.from('ok'),
+      filename: 'ok.pdf',
+      sha256: 'sha',
+      byteSize: 2,
+      movementCount: 1,
+    }
+    expect(await owner.claim('timeout', 'same', 'a', now, 100, 60_000)).toEqual({ kind: 'owner' })
+    expect(await rival.failTimeout('timeout', 'b')).toBe(false)
+    expect(await owner.failTimeout('timeout', 'a')).toBe(true)
+    expect(await rival.claim('timeout', 'same', 'b', now, 100, 60_000)).toEqual({
+      kind: 'terminal-timeout',
+    })
+    expect(await rival.claim('timeout', 'changed', 'b', now, 100, 60_000)).toEqual({
+      kind: 'conflict',
+    })
+    expect(await owner.complete('timeout', 'a', result)).toBe(false)
+    expect(await owner.claim('ordinary', 'same', 'a', now, 100, 60_000)).toEqual({ kind: 'owner' })
+    expect(await owner.failOrdinary('ordinary', 'a')).toBe(true)
+    expect(await rival.claim('ordinary', 'same', 'b', now, 100, 60_000)).toEqual({ kind: 'owner' })
+    expect(await rival.complete('ordinary', 'b', result)).toBe(true)
+    expect(await rival.failTimeout('ordinary', 'b')).toBe(false)
   })
 })

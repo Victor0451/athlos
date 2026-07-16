@@ -105,22 +105,32 @@ export type Ctacte = typeof ctacte.$inferSelect
 export type NewCtacte = typeof ctacte.$inferInsert
 
 /** Durable, short-lived replay result for comprobante generation. */
-export const ctacteComprobanteRetries = tesoreriaSchema.table('ctacte_comprobante_retries', {
-  idempotencyKey: text('idempotency_key').primaryKey(),
-  status: text('status').notNull(),
-  requestFingerprint: text('request_fingerprint').notNull(),
-  pdfBase64: text('pdf_base64'),
-  sha256: text('sha256'),
-  byteSize: integer('byte_size'),
-  filename: text('filename'),
-  movementCount: integer('movement_count'),
-  leaseOwner: text('lease_owner'),
-  leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
-  attemptCount: integer('attempt_count').notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const ctacteComprobanteRetries = tesoreriaSchema.table(
+  'ctacte_comprobante_retries',
+  {
+    idempotencyKey: text('idempotency_key').primaryKey(),
+    status: text('status').notNull(),
+    failureReason: text('failure_reason').$type<'RENDER_TIMEOUT'>(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    pdfBase64: text('pdf_base64'),
+    sha256: text('sha256'),
+    byteSize: integer('byte_size'),
+    filename: text('filename'),
+    movementCount: integer('movement_count'),
+    leaseOwner: text('lease_owner'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    failureReasonCheck: check(
+      'ctacte_comprobante_retries_failure_reason_check',
+      sql`${table.failureReason} IS NULL OR ${table.failureReason} = 'RENDER_TIMEOUT'`,
+    ),
+  }),
+)
 
 export type CtacteComprobanteRetry = typeof ctacteComprobanteRetries.$inferSelect
 

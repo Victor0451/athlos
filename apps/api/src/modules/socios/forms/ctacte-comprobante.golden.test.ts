@@ -70,6 +70,12 @@ function buildDurableReplayStore(): ComprobanteLeaseStore {
     string,
     { status: string; owner: string | null; result?: RenderComprobanteResult }
   >()
+  const fail = async (key: string, owner: string) => {
+    const row = rows.get(key)
+    if (!row || row.owner !== owner) return false
+    rows.set(key, { status: 'failed', owner: null })
+    return true
+  }
   return {
     async claim(key, _fingerprint, owner) {
       const row = rows.get(key)
@@ -89,11 +95,11 @@ function buildDurableReplayStore(): ComprobanteLeaseStore {
       rows.set(key, { status: 'complete', owner: null, result })
       return true
     },
-    async fail(key, owner) {
-      const row = rows.get(key)
-      if (!row || row.owner !== owner) return false
-      rows.set(key, { status: 'failed', owner: null })
-      return true
+    async failOrdinary(key, owner) {
+      return fail(key, owner)
+    },
+    async failTimeout(key, owner) {
+      return fail(key, owner)
     },
   }
 }
