@@ -296,7 +296,9 @@ function delay(ms: number): Promise<void> {
 
 function comprobanteRequestFingerprint(params: RenderComprobanteParams): string {
   return createHash('sha256')
-    .update(`comprobante|${params.socioId}|${params.cuenta}|${params.from}|${params.to}`)
+    .update(
+      `comprobante|${params.operatorId}|${params.socioId}|${params.cuenta}|${params.from}|${params.to}`,
+    )
     .digest('hex')
 }
 

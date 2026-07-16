@@ -142,6 +142,27 @@ describe('renderComprobante durable lease', () => {
     expect(recovered.movementCount).toBe(1)
   })
 
+  it('replays completed work for the same actor but rejects another actor using the key', async () => {
+    const store = createSharedReplicaStore()
+    const ownerGenerator = { generate: vi.fn(async () => Buffer.from('%PDF-actor-a')) }
+    const actorA = params(store, ownerGenerator)
+
+    const completed = await renderComprobante(actorA)
+    const replayGenerator = { generate: vi.fn(async () => Buffer.from('should-not-render')) }
+    const replay = await renderComprobante({ ...actorA, pdfGenerator: replayGenerator as never })
+
+    expect(replay).toEqual(completed)
+    expect(replayGenerator.generate).not.toHaveBeenCalled()
+    await expect(
+      renderComprobante({
+        ...actorA,
+        operatorId: 'o-2',
+        pdfGenerator: replayGenerator as never,
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(replayGenerator.generate).not.toHaveBeenCalled()
+  })
+
   it('rejects a changed request fingerprint before reclaiming failed or stale claims', async () => {
     const store = createSharedReplicaStore()
     const now = Date.now()

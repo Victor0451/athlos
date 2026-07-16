@@ -843,6 +843,30 @@ describe('GET /api/v1/socios/:socioId/ctacte/comprobante.pdf', () => {
     ).toHaveLength(1)
   })
 
+  it('returns 409 when another actor replays a completed comprobante key', async () => {
+    seedSocio()
+    const url = `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`
+    const request = (authorization: string) =>
+      app.inject({
+        method: 'GET',
+        url,
+        headers: { authorization, 'idempotency-key': 'actor-bound-comprobante-key' },
+      })
+
+    const first = await request(`Bearer ${bearer()}`)
+    const sameActorReplay = await request(`Bearer ${bearer()}`)
+    const otherActorReplay = await request(
+      `Bearer ${bearerAs('00000000-0000-4000-8000-000000000002', 'OPERADOR')}`,
+    )
+
+    expect(first.statusCode).toBe(200)
+    expect(sameActorReplay.statusCode).toBe(200)
+    expect(sameActorReplay.rawPayload).toEqual(first.rawPayload)
+    expect(otherActorReplay.statusCode).toBe(409)
+    expect(otherActorReplay.json()).toMatchObject({ error: 'CONFLICT' })
+    expect(pdfGenerator.generate).toHaveBeenCalledOnce()
+  })
+
   it('requires a caller key and rejects a changed canonical request for the same key', async () => {
     seedSocio()
     const baseUrl = `/api/v1/socios/${SOCIO_ID}/ctacte/comprobante.pdf?from=2026-07-01&to=2026-07-31&cuenta=PRINCIPAL`

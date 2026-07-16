@@ -139,3 +139,95 @@ These exact rows were added to and checked in the persisted `tasks.md` artifact.
 - Slice implemented: S2.e only.
 - Rollback boundary: revert the five S2.e files listed above; this removes atomic debit behavior, focused proofs, and S2.e progress without touching S2.d history.
 - Runtime harness: disposable PostgreSQL at `localhost:5563`, exercised by the focused atomic Vitest command above.
+
+---
+
+## S3.remainder Apply Update — Actor-Bound Replay and Attachment Proof
+
+### Status Consumed
+
+- Workspace root / sole allowed edit root: `/home/vlongo/work/athlos-worktrees/athlos-s3-remainder`
+- Branch: `fix/ctacte-actor-bound-replay`
+- Base: `origin/main@b368cb12359f6c4600e769511884243378dbe2f5`
+- Artifact store: OpenSpec; apply state: ready
+- Active slice: corrected S3.remainder only; S3.foundation was already merged in PR #54
+- Strict TDD: active; global strict-TDD guidance loaded
+- Delivery boundary: one `stacked-to-main` work unit, target 160–300 and hard stop before 400 changed lines
+- Action context honored: only the authorized worktree was edited. No schema, migration, S4, pending HTTP 500 follow-up, review lifecycle, staging, commit, push, issue, or PR action was performed.
+
+### Completed Tasks and Persisted Checkboxes
+
+- [x] 4.1 S3.foundation RED: prove failed payment persistence removes the newly uploaded attachment row and file.
+- [x] 4.2 S3.foundation GREEN: add the retry-safe `compensateNewAttachment` primitive used by `registerPayment`.
+- [x] 4.3 RED actor-bound comprobante replay: actor B replaying actor A's completed key conflicts while actor A can replay it.
+- [x] 4.4 GREEN actor-bound comprobante replay: include `operatorId` in the request fingerprint/ownership decision without weakening lease semantics.
+- [x] 4.5 PROVE payment attachment provenance through `registerPayment`: payment `comprobanteAttachmentId` links to attachment `socioId`, `uploadedBy`, `category`, and SHA-256; add production code only if the proof exposes a gap.
+- [x] 4.6 PROVE prior-attachment preservation through `registerPayment`: replay never compensates or deletes the attachment persisted by a prior successful payment.
+
+The S3 subsection was first reconciled to the approved scope, preserving completed S3.foundation history. All six rows are visibly checked in the persisted `tasks.md` artifact.
+
+### Files Changed
+
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.lease.test.ts`
+- `apps/api/src/routes/ctacte-mutations.test.ts`
+- `apps/api/src/modules/socios/forms/ctacte-mutations.atomic.test.ts`
+- `openspec/changes/athlos-ctacte-security-reliability-remediation/tasks.md`
+- `openspec/changes/athlos-ctacte-security-reliability-remediation/apply-progress.md`
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 4.3–4.4 | `ctacte-comprobante.lease.test.ts`, `routes/ctacte-mutations.test.ts` | Service + route integration | Lease 3/3 passed | Observed 1/4 failure: actor B received actor A's completed PDF instead of a conflict | Adding `operatorId` to the canonical fingerprint made 4/4 lease tests pass | Same actor replay remains 200 without rendering; actor B receives `CONFLICT`, mapped to HTTP 409; existing changed-payload and failed/stale lease cases remain covered | Minimal fingerprint-only production edit; no lease-store or route contract changes |
+| 4.5–4.6 | `ctacte-mutations.atomic.test.ts` | Disposable PostgreSQL integration | 4/4 passed | N/A: proof-only tasks; approved scope required production changes only if existing integration exposed a gap | 4/4 passed with joined payment/attachment provenance and replay-preservation assertions | One successful payment and one same-actor replay prove one ledger row, one audit, one attachment, preserved file, actor, socio, category, and exact SHA-256 | Reused the existing atomic fixture and happy-path test; no standalone fixture or production change |
+
+### Commands and Results
+
+1. `pnpm install --frozen-lockfile` — passed; 788 packages linked; lockfile unchanged.
+2. Safety net: `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.lease.test.ts` — passed, 3/3.
+3. Safety net: `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-mutations.registerPayment.test.ts` — passed, 13/13.
+4. Safety net: `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-mutations.atomic.test.ts` — passed, 4/4.
+5. RED: focused lease command — failed as expected, 1 failed / 3 passed; actor B replay resolved with actor A's completed result.
+6. GREEN: focused lease command — passed, 4/4.
+7. Route triangulation: `pnpm --filter @athlos/api exec vitest run src/routes/ctacte-mutations.test.ts` — passed, 54/54; cross-actor replay is HTTP 409 `CONFLICT` and same-actor replay is 200.
+8. PostgreSQL proof: focused atomic command — passed, 4/4; joined provenance and prior attachment preservation verified.
+9. Final focused unit/route command: `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.lease.test.ts src/modules/socios/forms/ctacte-mutations.registerPayment.test.ts src/routes/ctacte-mutations.test.ts` — passed, 71/71.
+10. Final PostgreSQL atomic command — passed, 4/4.
+11. `pnpm --filter @athlos/api typecheck` — passed (`tsc --noEmit`).
+12. `git diff --check` — passed after progress and task persistence.
+
+### Deviations from Design
+
+- The original design/spec text mentions attachment-side `movementId`. The user-approved corrected S3.remainder scope supersedes it: existing payment `comprobanteAttachmentId` → attachment linkage is authoritative, so no FK or migration was added.
+- No payment production change was needed. Existing `registerPayment` already short-circuits canonical replay before upload/compensation and already persists the attachment ID returned by provenance-aware upload.
+
+### Remaining Tasks
+
+Active S3.remainder implementation tasks: none. Historical/out-of-scope unchecked rows remain:
+
+- [ ] 2.1 RED `ctacte-mutations.role.test.ts`: CONSULTA→403; ADMIN/TESORERO/OPERADOR pass
+- [ ] 2.2 GREEN: `requireRole(['ADMIN','TESORERO','OPERADOR'])` on POST/DELETE mutations
+- [ ] 2.3 RED `ctacte-comprobante.can_reprint.test.ts`: `can_reprint=false`→403
+- [ ] 2.4 GREEN: `requirePermission('can_reprint')` on comprobante route
+- [ ] 2.5 RED `ctacte-mutations.validation.test.ts`: bad UUID, blank/129-char key, bad date, money≤0, range inverted
+- [ ] 2.6 GREEN: Zod normalize: trim, UUID regex, `isValidIsoCalendarDate`, `finite()>0`, key 1–128
+- [ ] 2.7 REFACTOR: extract `validateMutationInput(input, kind)`
+- [ ] 3.3 VERIFY + COMMIT + PR `S2.d: atomic addNote`; base = PR 7.
+- [ ] 3.3 RED `emitter.ctacte.durable.test.ts`: same key after 30s → no new row
+- [ ] 3.4 GREEN: covered-CTACTE hash `actorId|action|entityId|callerKey`; drop 10s bucket; 23505=dedup
+- [ ] 3.7 REFACTOR: remove 10s-bucket helpers in `packages/audit/src/emitter.ts`
+- [ ] 5.1 RED `ctacte-comprobante.timeout.test.ts`: fake clock +30s owner deadline → `failed`
+- [ ] 5.2 GREEN: bound owner/follower wait to 30s; mark `failed`; emit structured `RENDER_TIMEOUT` log and increment `ctacte_comprobante_render_timeout_total`
+- [ ] 5.3 RED `ctacte-comprobante.failed-replay.test.ts`: retry of failed job → 504
+- [ ] 5.4 GREEN: route returns `504 {error:'RENDER_TIMEOUT',request_id}`
+- [ ] 5.5 REFACTOR: centralize `LEASE_DURATION_MS = 30_000`
+
+Parent-owned lifecycle actions remain deferred: bounded review, receipt handling, staging, commit, push, and PR.
+
+### Workload / PR Boundary
+
+- Slice implemented: corrected S3.remainder only.
+- Runtime harness: disposable PostgreSQL at `localhost:5563` plus Fastify injection for the HTTP 409 boundary.
+- Rollback boundary: revert the six files listed above to remove actor-bound replay, focused proofs, and S3.remainder artifact updates without affecting S3.foundation or S2.e.
+- Measured final authored diff: 175 insertions + 14 deletions = 189 changed lines across six files, below the 400-line hard stop.
