@@ -32,6 +32,7 @@ vi.mock('@athlos/audit', () => ({ emitAudit: vi.fn().mockResolvedValue({ inserte
 type Row = {
   fingerprint: string
   status: 'rendering' | 'complete' | 'failed'
+  failureReason: 'RENDER_TIMEOUT' | null
   owner: string | null
   expiresAt: number
   result?: RenderComprobanteResult
@@ -39,16 +40,39 @@ type Row = {
 
 function createSharedReplicaStore(): ComprobanteLeaseStore {
   const rows = new Map<string, Row>()
+  const fail = async (key: string, owner: string, failureReason: Row['failureReason']) => {
+    const row = rows.get(key)
+    if (!row || row.owner !== owner || row.status !== 'rendering') return false
+    rows.set(key, { ...row, status: 'failed', failureReason, owner: null })
+    return true
+  }
   return {
     async claim(key, fingerprint, owner, now, leaseMs) {
       const row = rows.get(key)
       if (!row) {
-        rows.set(key, { fingerprint, status: 'rendering', owner, expiresAt: now + leaseMs })
+        rows.set(key, {
+          fingerprint,
+          status: 'rendering',
+          failureReason: null,
+          owner,
+          expiresAt: now + leaseMs,
+        })
         return { kind: 'owner' }
       }
       if (row.fingerprint !== fingerprint) return { kind: 'conflict' }
-      if (row.status === 'failed' || (row.status === 'rendering' && row.expiresAt <= now)) {
-        rows.set(key, { fingerprint, status: 'rendering', owner, expiresAt: now + leaseMs })
+      if (row.status === 'failed' && row.failureReason === 'RENDER_TIMEOUT')
+        return { kind: 'terminal-timeout' }
+      if (
+        (row.status === 'failed' && row.failureReason === null) ||
+        (row.status === 'rendering' && row.expiresAt <= now)
+      ) {
+        rows.set(key, {
+          fingerprint,
+          status: 'rendering',
+          failureReason: null,
+          owner,
+          expiresAt: now + leaseMs,
+        })
         return { kind: 'owner' }
       }
       if (row.status === 'complete') return { kind: 'complete', result: row.result! }
@@ -68,17 +92,18 @@ function createSharedReplicaStore(): ComprobanteLeaseStore {
       rows.set(key, {
         fingerprint: row.fingerprint,
         status: 'complete',
+        failureReason: null,
         owner: null,
         expiresAt: Number.MAX_SAFE_INTEGER,
         result,
       })
       return true
     },
-    async fail(key, owner) {
-      const row = rows.get(key)
-      if (!row || row.owner !== owner || row.status !== 'rendering') return false
-      rows.set(key, { ...row, status: 'failed', owner: null })
-      return true
+    async failOrdinary(key, owner) {
+      return fail(key, owner, null)
+    },
+    async failTimeout(key, owner) {
+      return fail(key, owner, 'RENDER_TIMEOUT')
     },
   }
 }
@@ -171,7 +196,7 @@ describe('renderComprobante durable lease', () => {
     ).resolves.toEqual({
       kind: 'owner',
     })
-    await store.fail('failed-key', 'owner-a')
+    await store.failOrdinary('failed-key', 'owner-a')
     await expect(
       store.claim('failed-key', 'range-b', 'owner-b', now + 1, 100, 60_000),
     ).resolves.toEqual({
@@ -186,5 +211,32 @@ describe('renderComprobante durable lease', () => {
     ).resolves.toEqual({
       kind: 'conflict',
     })
+  })
+
+  it('keeps timeout terminal and fences both completion-timeout orders', async () => {
+    const store = createSharedReplicaStore()
+    const now = Date.now()
+    const result = {
+      pdf: Buffer.from('ok'),
+      filename: 'ok.pdf',
+      sha256: 'sha',
+      byteSize: 2,
+      movementCount: 1,
+    }
+    expect(await store.claim('timeout', 'same', 'a', now, 100, 60_000)).toEqual({ kind: 'owner' })
+    expect(await store.failTimeout('timeout', 'wrong')).toBe(false)
+    expect(await store.failTimeout('timeout', 'a')).toBe(true)
+    expect(await store.claim('timeout', 'same', 'b', now, 100, 60_000)).toEqual({
+      kind: 'terminal-timeout',
+    })
+    expect(await store.claim('timeout', 'changed', 'b', now, 100, 60_000)).toEqual({
+      kind: 'conflict',
+    })
+    expect(await store.complete('timeout', 'a', result)).toBe(false)
+    expect(await store.claim('complete-first', 'same', 'a', now, 100, 60_000)).toEqual({
+      kind: 'owner',
+    })
+    expect(await store.complete('complete-first', 'a', result)).toBe(true)
+    expect(await store.failTimeout('complete-first', 'a')).toBe(false)
   })
 })

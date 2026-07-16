@@ -58,6 +58,7 @@ type CtacteComprobanteRetryRow = {
   idempotencyKey: string
   requestFingerprint: string
   status: string
+  failureReason: 'RENDER_TIMEOUT' | null
   pdfBase64: string | null
   sha256: string | null
   byteSize: number | null
@@ -245,6 +246,7 @@ const CTACTE_COMPROBANTE_RETRIES_SQL_TO_JS: Record<string, keyof CtacteComproban
   idempotency_key: 'idempotencyKey',
   request_fingerprint: 'requestFingerprint',
   status: 'status',
+  failure_reason: 'failureReason',
   pdf_base64: 'pdfBase64',
   sha256: 'sha256',
   byte_size: 'byteSize',
@@ -794,6 +796,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       return {
         idempotencyKey: v['idempotencyKey']!,
         status: v['status']!,
+        failureReason: (v['failureReason'] as 'RENDER_TIMEOUT' | null) ?? null,
         pdfBase64: (v['pdfBase64'] as string | null) ?? null,
         sha256: (v['sha256'] as string | null) ?? null,
         byteSize: (v['byteSize'] as number | null) ?? null,
@@ -1482,6 +1485,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
             idempotencyKey: key,
             requestFingerprint,
             status: 'rendering',
+            failureReason: null,
             pdfBase64: null,
             sha256: null,
             byteSize: null,
@@ -1508,7 +1512,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           if (
             !row ||
             !(
-              row.status === 'failed' ||
+              (row.status === 'failed' && row.failureReason === null) ||
               (row.status === 'rendering' &&
                 row.leaseExpiresAt !== null &&
                 row.leaseExpiresAt <= now)
@@ -1517,6 +1521,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           )
             return []
           row.status = 'rendering'
+          row.failureReason = null
           row.leaseOwner = owner
           row.leaseExpiresAt = leaseExpiresAt
           row.attemptCount += 1
@@ -1530,6 +1535,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
             ? [
                 {
                   status: row.status,
+                  failure_reason: row.failureReason,
                   request_fingerprint: row.requestFingerprint,
                   pdf_base64: row.pdfBase64,
                   sha256: row.sha256,
@@ -1576,6 +1582,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           if (!row) return []
           Object.assign(row, {
             status: 'complete',
+            failureReason: null,
             pdfBase64,
             sha256,
             byteSize,
@@ -1588,7 +1595,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           return [{ idempotency_key: key }]
         }
         if (sqlText.includes("set status = 'failed'")) {
-          const [key, owner] = values as [string, string]
+          const [failureReason, key, owner] = values as ['RENDER_TIMEOUT' | null, string, string]
           const row = retries.find(
             (candidate) =>
               candidate.idempotencyKey === key &&
@@ -1597,6 +1604,7 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
           )
           if (!row) return []
           row.status = 'failed'
+          row.failureReason = failureReason
           row.leaseOwner = null
           row.leaseExpiresAt = null
           return [{ idempotency_key: key }]
