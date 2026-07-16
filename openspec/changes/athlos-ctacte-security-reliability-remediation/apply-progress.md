@@ -231,3 +231,55 @@ Parent-owned lifecycle actions remain deferred: bounded review, receipt handling
 - Runtime harness: disposable PostgreSQL at `localhost:5563` plus Fastify injection for the HTTP 409 boundary.
 - Rollback boundary: revert the six files listed above to remove actor-bound replay, focused proofs, and S3.remainder artifact updates without affecting S3.foundation or S2.e.
 - Measured final authored diff: 175 insertions + 14 deletions = 189 changed lines across six files, below the 400-line hard stop.
+
+---
+
+## S4a Apply Update — Failure-Reason State Foundation
+
+### Status Consumed
+- Workspace / only edit root: `/home/vlongo/work/athlos-worktrees/athlos-s4a-failure-reason`; branch `fix/ctacte-failure-reason-state`; base `origin/main@ed1bd16e7a7698688aff297bc5ca61a21c8cdb1d`.
+- OpenSpec authoritative; strict TDD active; delivery `stacked-to-main` position 3/4. S4a only; S4b and lifecycle actions deferred.
+
+### Completed Tasks / Persisted Checkboxes
+- [x] 5a.1–5a.8: RED migration and lease contracts; GREEN migration/schema/state/stand-in; PostgreSQL triangulation; refactor; verify; budget/rollback.
+- All eight implementation rows are visibly checked in `tasks.md`; parent and S4b rows remain byte-preserved.
+
+### Files Changed
+- `packages/db/drizzle/0035_ctacte_comprobante_failure_reason.sql`
+- `packages/db/src/schema/tesoreria.ts`
+- `packages/db/src/ctacte-comprobante-failure-reason.integration.test.ts`
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.lease.test.ts`
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts`
+- `apps/api/src/modules/socios/forms/ctacte-comprobante.golden.test.ts`
+- `apps/api/src/test-standins/db.ts`
+- OpenSpec `tasks.md` and this cumulative `apply-progress.md`.
+
+### TDD Cycle Evidence
+| Tasks | Layer | Safety net / RED | GREEN | TRIANGULATE / REFACTOR |
+|---|---|---|---|---|
+| 5a.1–5a.2 | Real PostgreSQL migration | RED 2/2: missing 0035 order and column | 2/2 pass; 0035 twice, null/default/check | Existing/new rows and unsupported reason; local SQL/schema only |
+| 5a.3–5a.4 | Lease unit | Safety 4/4; RED 1/5: missing `failOrdinary` | 5/5 pass | Timeout/ordinary, stale, conflict, replay, both fence orders |
+| 5a.5–5a.6 | Two-client PostgreSQL | Existing suite covered owner/stale/conflict; new transition proof added | 5/5 pass | Owner-only failures, terminal replay, ordinary reclaim, both race orders |
+
+### Commands / Results
+- `pnpm install --frozen-lockfile` — passed; lockfile unchanged.
+- Focused DB command with `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test` — RED 2/2, then GREEN 2/2, final 2/2.
+- Focused lease command — safety 4/4, RED 1/5, GREEN/final 5/5.
+- Focused PostgreSQL lease command with the same URL — final 5/5.
+- `pnpm --filter @athlos/api typecheck` — passed after updating the golden stand-in API.
+- `git diff --check` — passed. S4b scope command against `ed1bd16...` printed nothing.
+
+### Deviations / Boundary / Rollback
+- No behavior deviation. The golden-test lease stand-in was an additional compile-time parity path beyond the seven forecast paths.
+- No 30-second deadline, abort, route, metrics, 504, timeout-log, or `PdfGenerator` behavior was added.
+- Rollback reverts the application/schema declarations and S4a tests/stand-ins together; an applied additive 0035 remains and may only be retired by a future forward migration.
+
+### Remaining Tasks
+- S4b implementation rows 5b.1–5b.11 remain unchecked in `tasks.md` and are blocked until S4a merges.
+- Parent-owned deferred rows remain unchanged: bounded review/receipt/lifecycle for S4a; merge S4a and record its SHA; later S4b review/lifecycle; final historical reconciliation.
+- Historical unchecked S1/S2 rows remain exact in `tasks.md` and are excluded from S4a.
+
+### Workload / PR Boundary
+- Code/test authored budget: 256 changed lines. Candidate before this progress append: 272 changed lines; final candidate remains below 400.
+- Runtime harness: disposable PostgreSQL on `localhost:5563`, with migration idempotence and two independent lease clients proven.

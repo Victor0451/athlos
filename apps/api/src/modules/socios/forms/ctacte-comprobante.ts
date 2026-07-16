@@ -65,6 +65,7 @@ type LeaseClaim =
   | { kind: 'owner' }
   | { kind: 'follower' }
   | { kind: 'complete'; result: RenderComprobanteResult }
+  | { kind: 'terminal-timeout' }
 
 /** The durable state-machine boundary. Production uses PostgreSQL; tests share an equivalent store. */
 export interface ComprobanteLeaseStore {
@@ -78,7 +79,8 @@ export interface ComprobanteLeaseStore {
   ): Promise<LeaseClaim | { kind: 'conflict' }>
   heartbeat(key: string, owner: string, now: number, leaseMs: number): Promise<boolean>
   complete(key: string, owner: string, result: RenderComprobanteResult): Promise<boolean>
-  fail(key: string, owner: string): Promise<boolean>
+  failOrdinary(key: string, owner: string): Promise<boolean>
+  failTimeout(key: string, owner: string): Promise<boolean>
 }
 
 export async function renderComprobante(
@@ -113,6 +115,7 @@ export async function renderComprobante(
         'Idempotency-Key was already used for a different comprobante request',
       )
     if (claim.kind === 'complete') return claim.result
+    if (claim.kind === 'terminal-timeout') throw new Error('Comprobante has a terminal timeout')
     if (claim.kind === 'follower') {
       await delay(Math.min(250, 15 + attempt * 10))
       continue
@@ -125,7 +128,7 @@ export async function renderComprobante(
       }, heartbeatMs)
       return await generateOwnedComprobante(params, retryKey, owner, store)
     } catch (error) {
-      await store.fail(retryKey, owner)
+      await store.failOrdinary(retryKey, owner)
       throw error
     } finally {
       if (heartbeat) clearInterval(heartbeat)
@@ -208,6 +211,14 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
     const result = await db.execute(query)
     return (Array.isArray(result) ? result : result.rows) as unknown as T[]
   }
+  const fail = async (key: string, owner: string, reason: 'RENDER_TIMEOUT' | null) => {
+    const updated = await rows<{ idempotency_key: string }>(sql`
+      UPDATE tesoreria.ctacte_comprobante_retries
+      SET status = 'failed', failure_reason = ${reason}, lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+      WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
+      RETURNING idempotency_key`)
+    return updated.length === 1
+  }
   return {
     async claim(key, fingerprint, owner, now, leaseMs, retentionMs) {
       const leaseExpiresAt = new Date(now + leaseMs)
@@ -222,11 +233,12 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
       if (inserted.length) return { kind: 'owner' }
       const reclaimed = await rows<{ idempotency_key: string }>(sql`
         UPDATE tesoreria.ctacte_comprobante_retries
-        SET status = 'rendering', lease_owner = ${owner}, lease_expires_at = ${leaseExpiresAt},
+        SET status = 'rendering', failure_reason = NULL, lease_owner = ${owner}, lease_expires_at = ${leaseExpiresAt},
             attempt_count = attempt_count + 1, updated_at = now()
         WHERE idempotency_key = ${key}
           AND request_fingerprint = ${fingerprint}
-          AND (status = 'failed' OR (status = 'rendering' AND lease_expires_at <= ${new Date(now)}))
+          AND ((status = 'failed' AND failure_reason IS NULL)
+            OR (status = 'rendering' AND lease_expires_at <= ${new Date(now)}))
         RETURNING idempotency_key`)
       if (reclaimed.length) return { kind: 'owner' }
       const [existing] = await rows<{
@@ -237,10 +249,13 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
         byte_size: number | null
         filename: string | null
         movement_count: number | null
+        failure_reason: string | null
       }>(sql`
-        SELECT status, request_fingerprint, pdf_base64, sha256, byte_size, filename, movement_count
+        SELECT status, request_fingerprint, pdf_base64, sha256, byte_size, filename, movement_count, failure_reason
         FROM tesoreria.ctacte_comprobante_retries WHERE idempotency_key = ${key}`)
       if (existing && existing.request_fingerprint !== fingerprint) return { kind: 'conflict' }
+      if (existing?.status === 'failed' && existing.failure_reason === 'RENDER_TIMEOUT')
+        return { kind: 'terminal-timeout' }
       if (
         existing?.status === 'complete' &&
         existing.pdf_base64 &&
@@ -274,18 +289,16 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
         UPDATE tesoreria.ctacte_comprobante_retries
         SET status = 'complete', pdf_base64 = ${result.pdf.toString('base64')}, sha256 = ${result.sha256},
             byte_size = ${result.byteSize}, filename = ${result.filename}, movement_count = ${result.movementCount},
-            lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+            failure_reason = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
         WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
         RETURNING idempotency_key`)
       return updated.length === 1
     },
-    async fail(key, owner) {
-      const updated = await rows<{ idempotency_key: string }>(sql`
-        UPDATE tesoreria.ctacte_comprobante_retries
-        SET status = 'failed', lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
-        WHERE idempotency_key = ${key} AND status = 'rendering' AND lease_owner = ${owner}
-        RETURNING idempotency_key`)
-      return updated.length === 1
+    failOrdinary(key, owner) {
+      return fail(key, owner, null)
+    },
+    failTimeout(key, owner) {
+      return fail(key, owner, 'RENDER_TIMEOUT')
     },
   }
 }
