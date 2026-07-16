@@ -283,3 +283,11 @@ Parent-owned lifecycle actions remain deferred: bounded review, receipt handling
 ### Workload / PR Boundary
 - Code/test authored budget: 256 changed lines. Candidate before this progress append: 272 changed lines; final candidate remains below 400.
 - Runtime harness: disposable PostgreSQL on `localhost:5563`, with migration idempotence and two independent lease clients proven.
+## S4b Fixture-Prerequisite Apply Update
+- **Status/scope:** strict-TDD fixture-only slice from S4a merge `739a8d4`; six support/self-test files plus OpenSpec, with no runtime/schema behavior.
+- **Tasks:** 5b.9a–5b.9d are `[x]`; S4b behavior and parent rows remain unchecked and blocked until this prerequisite merges.
+- **RED → GREEN:** three missing-module suites failed, then the three support suites passed 6/6.
+- **Triangulate:** timer/deferred reset, PDF settlement/cleanup, and bounded zero-label telemetry capture passed; combined baseline passed 71/71 and real-PG comprobante passed 5/5.
+- **Static/scope:** API typecheck and diff checks passed; no deadline, abort runtime, 504, log, counter, schema, migration, or S4a change.
+- **Boundary:** final candidate is 350 lines, within the ≤350 fixture gate; rollback removes only the six fixture files and this prerequisite artifact update.
+- **Deferred:** tasks 5b.1–5b.8 and 5b.10–5b.11 remain for S4b; Engram persistence was unavailable.
