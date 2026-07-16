@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Pool } from 'pg'
@@ -6,21 +7,32 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 const url = process.env['ATHLOS_TEST_DATABASE_URL']
 const drizzleDir = join(import.meta.dirname, '..', 'drizzle')
 const migration = '0035_ctacte_comprobante_failure_reason.sql'
+const schema = `ctacte_failure_reason_${randomUUID().replaceAll('-', '')}`
+const quoteIdentifier = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`
+const quotedSchema = quoteIdentifier(schema)
+const qualifiedTable = `${quotedSchema}.ctacte_comprobante_retries`
 let pool: Pool
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
   pool = new Pool({ connectionString: url, connectionTimeoutMillis: 5_000 })
-  await pool.query(`DROP SCHEMA IF EXISTS tesoreria CASCADE; CREATE SCHEMA tesoreria;
-    CREATE TABLE tesoreria.ctacte_comprobante_retries (
+  await pool.query(`CREATE SCHEMA ${quotedSchema};
+    CREATE TABLE ${qualifiedTable} (
       idempotency_key text PRIMARY KEY, status text NOT NULL,
       request_fingerprint text NOT NULL, expires_at timestamptz NOT NULL)`)
-  await pool.query(`INSERT INTO tesoreria.ctacte_comprobante_retries VALUES
+  await pool.query(`INSERT INTO ${qualifiedTable} VALUES
     ('rendering', 'rendering', 'same', now()),
     ('complete', 'complete', 'same', now()),
     ('failed', 'failed', 'same', now())`)
 })
-afterAll(async () => pool?.end())
+afterAll(async () => {
+  if (!pool) return
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${quotedSchema} CASCADE`)
+  } finally {
+    await pool.end()
+  }
+})
 
 describe('0035 comprobante failure reason', () => {
   it('is ordered after 0034 and applies twice without reclassifying existing rows', async () => {
@@ -30,7 +42,10 @@ describe('0035 comprobante failure reason', () => {
       .map((name) => name.slice(0, 4))
     expect(ordered).toEqual(['0031', '0032', '0033', '0034', '0035'])
 
-    const sql = readFileSync(join(drizzleDir, migration), 'utf8')
+    const sql = readFileSync(join(drizzleDir, migration), 'utf8').replaceAll(
+      'tesoreria.ctacte_comprobante_retries',
+      qualifiedTable,
+    )
     await pool.query(sql)
     await pool.query(sql)
     const column = await pool.query<{
@@ -39,27 +54,31 @@ describe('0035 comprobante failure reason', () => {
       column_default: string | null
     }>(
       `SELECT data_type, is_nullable, column_default FROM information_schema.columns
-       WHERE table_schema = 'tesoreria' AND table_name = 'ctacte_comprobante_retries'
+       WHERE table_schema = $1 AND table_name = 'ctacte_comprobante_retries'
          AND column_name = 'failure_reason'`,
+      [schema],
     )
     expect(column.rows).toEqual([{ data_type: 'text', is_nullable: 'YES', column_default: null }])
-    const rows = await pool.query(`SELECT idempotency_key FROM tesoreria.ctacte_comprobante_retries
+    const rows = await pool.query(`SELECT idempotency_key FROM ${qualifiedTable}
       WHERE failure_reason IS NOT NULL`)
     expect(rows.rowCount).toBe(0)
   })
 
   it('defaults new rows to null and rejects unsupported reasons through the named check', async () => {
-    await pool.query(`INSERT INTO tesoreria.ctacte_comprobante_retries
+    await pool.query(`INSERT INTO ${qualifiedTable}
       (idempotency_key, status, request_fingerprint, expires_at) VALUES ('new', 'failed', 'same', now())`)
-    const value = await pool.query(`SELECT failure_reason FROM tesoreria.ctacte_comprobante_retries
+    const value = await pool.query(`SELECT failure_reason FROM ${qualifiedTable}
       WHERE idempotency_key = 'new'`)
     expect(value.rows).toEqual([{ failure_reason: null }])
-    const check = await pool.query(`SELECT convalidated FROM pg_constraint
-      WHERE conname = 'ctacte_comprobante_retries_failure_reason_check'
-        AND conrelid = 'tesoreria.ctacte_comprobante_retries'::regclass`)
+    const check = await pool.query(
+      `SELECT convalidated FROM pg_constraint
+       WHERE conname = 'ctacte_comprobante_retries_failure_reason_check'
+         AND conrelid = $1::regclass`,
+      [qualifiedTable],
+    )
     expect(check.rows).toEqual([{ convalidated: true }])
     await expect(
-      pool.query(`UPDATE tesoreria.ctacte_comprobante_retries
+      pool.query(`UPDATE ${qualifiedTable}
       SET failure_reason = 'OTHER' WHERE idempotency_key = 'new'`),
     ).rejects.toMatchObject({
       code: '23514',
