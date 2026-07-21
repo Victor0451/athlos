@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Page } from 'puppeteer'
 import { createPdfGenerator } from './pdf-generator.ts'
+import { createTrackedAbortController } from './pdf-generator.abort.test-support.ts'
 
 /**
  * `createPdfGenerator` — puppeteer wrapper + semaphore.
@@ -165,6 +166,79 @@ describe('createPdfGenerator — generate', () => {
     const results = await Promise.all(tasks)
     expect(results).toHaveLength(4)
     expect(peak).toBe(3)
+    await gen.close()
+  })
+
+  it('rejects an aborted waiter before it opens a page and releases the slot for the next render', async () => {
+    const gen = createPdfGenerator({ maxConcurrent: 1 })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    browserInstance.newPage = vi.fn(async () => {
+      const page: MockPage = {
+        setContent: vi.fn(async () => undefined),
+        pdf: vi.fn(async () => {
+          if (pages.length === 1) await held
+          return Buffer.from('%PDF-1.7')
+        }),
+        close: vi.fn(async () => undefined),
+      }
+      pages.push(page)
+      return page as unknown as Page
+    })
+    const first = gen.generate('first')
+    await vi.waitFor(() => expect(pages).toHaveLength(1))
+    const controller = new AbortController()
+    const queued = gen.generate('queued', { signal: controller.signal })
+    controller.abort()
+    release()
+    await first
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' })
+    expect(pages).toHaveLength(1)
+    await expect(gen.generate('after')).resolves.toBeInstanceOf(Buffer)
+    await gen.close()
+  })
+
+  it('closes the page and removes its listener when aborted during setContent', async () => {
+    const gen = createPdfGenerator()
+    const controller = createTrackedAbortController()
+    let rejectContent!: (reason: unknown) => void
+    browserInstance.newPage = vi.fn(async () => {
+      const page: MockPage = {
+        setContent: vi.fn(() => new Promise((_resolve, reject) => (rejectContent = reject))),
+        pdf: vi.fn(),
+        close: vi.fn(async () => rejectContent(new Error('page closed'))),
+      }
+      pages.push(page)
+      return page as unknown as Page
+    })
+    const rendering = gen.generate('abort-content', { signal: controller.signal })
+    await vi.waitFor(() => expect(pages[0]?.setContent).toHaveBeenCalledOnce())
+    controller.abort()
+    await expect(rendering).rejects.toMatchObject({ name: 'AbortError' })
+    expect(pages[0]!.close).toHaveBeenCalledOnce()
+    expect(controller.listenerCount()).toBe(0)
+    await gen.close()
+  })
+
+  it('closes the page exactly once when aborted during pdf and observes the late rejection', async () => {
+    const gen = createPdfGenerator()
+    const controller = new AbortController()
+    let rejectPdf!: (reason: unknown) => void
+    browserInstance.newPage = vi.fn(async () => {
+      const page: MockPage = {
+        setContent: vi.fn(async () => undefined),
+        pdf: vi.fn(() => new Promise((_resolve, reject) => (rejectPdf = reject))),
+        close: vi.fn(async () => rejectPdf(new Error('page closed'))),
+      }
+      pages.push(page)
+      return page as unknown as Page
+    })
+    const rendering = gen.generate('abort-me', { signal: controller.signal })
+    await vi.waitFor(() => expect(pages[0]?.pdf).toHaveBeenCalledOnce())
+    controller.abort()
+    await expect(rendering).rejects.toMatchObject({ name: 'AbortError' })
+    expect(pages[0]!.close).toHaveBeenCalledTimes(1)
+    await Promise.resolve()
     await gen.close()
   })
 })

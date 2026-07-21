@@ -36,6 +36,28 @@ import {
  * a failure here does NOT roll back the 200 + PDF response.
  */
 
+export const REQUEST_DEADLINE_MS = 30_000
+export const LEASE_DURATION_MS = 5_000
+export const HEARTBEAT_MS = Math.floor(LEASE_DURATION_MS / 3)
+
+export class ComprobanteRenderTimeoutError extends Error {
+  readonly code = 'RENDER_TIMEOUT'
+  constructor(
+    readonly role: 'owner' | 'follower',
+    readonly live: boolean,
+  ) {
+    super('Comprobante rendering exceeded the 30-second deadline')
+    this.name = 'ComprobanteRenderTimeoutError'
+  }
+}
+
+interface DeadlineTimers {
+  sleep(ms: number): Promise<void>
+  setTimeout(run: () => void, ms: number): unknown
+  setInterval(run: () => void | Promise<void>, ms: number): unknown
+  clearTimer(handle: unknown): void
+}
+
 export interface RenderComprobanteParams {
   socioId: string
   cuenta: string
@@ -51,6 +73,7 @@ export interface RenderComprobanteParams {
   leaseStore?: ComprobanteLeaseStore
   leaseDurationMs?: number
   heartbeatMs?: number
+  timers?: DeadlineTimers
 }
 
 export interface RenderComprobanteResult {
@@ -95,12 +118,16 @@ export async function renderComprobante(
   const fingerprint = comprobanteRequestFingerprint(params)
   const store = params.leaseStore ?? createPostgresComprobanteLeaseStore(params.db)
   const owner = randomUUID()
-  const leaseDurationMs = params.leaseDurationMs ?? 5_000
-  const heartbeatMs = params.heartbeatMs ?? Math.max(100, Math.floor(leaseDurationMs / 3))
+  const leaseDurationMs = params.leaseDurationMs ?? LEASE_DURATION_MS
+  const heartbeatMs = params.heartbeatMs ?? HEARTBEAT_MS
   const retentionMs = 24 * 60 * 60 * 1000
   const now = params.now ?? defaultNow
+  const timers = params.timers ?? defaultTimers
+  const requestDeadline = now().valueOf() + REQUEST_DEADLINE_MS
 
   for (let attempt = 0; ; attempt += 1) {
+    if (attempt > 0 && now().valueOf() >= requestDeadline)
+      throw new ComprobanteRenderTimeoutError('follower', true)
     const claim = await store.claim(
       retryKey,
       fingerprint,
@@ -115,23 +142,52 @@ export async function renderComprobante(
         'Idempotency-Key was already used for a different comprobante request',
       )
     if (claim.kind === 'complete') return claim.result
-    if (claim.kind === 'terminal-timeout') throw new Error('Comprobante has a terminal timeout')
+    if (claim.kind === 'terminal-timeout') throw new ComprobanteRenderTimeoutError('owner', false)
     if (claim.kind === 'follower') {
-      await delay(Math.min(250, 15 + attempt * 10))
+      const remaining = requestDeadline - now().valueOf()
+      if (remaining <= 0) throw new ComprobanteRenderTimeoutError('follower', true)
+      await timers.sleep(Math.min(remaining, Math.min(250, 15 + attempt * 10)))
       continue
     }
 
-    let heartbeat: ReturnType<typeof setInterval> | undefined
+    const controller = new AbortController()
+    const renderTask = generateOwnedComprobante(params, retryKey, owner, store, controller.signal)
+    void renderTask.catch(() => undefined)
+    let heartbeat: unknown
+    let deadlineTimer: unknown
     try {
-      heartbeat = setInterval(() => {
+      heartbeat = timers.setInterval(() => {
         void store.heartbeat(retryKey, owner, now().valueOf(), leaseDurationMs)
       }, heartbeatMs)
-      return await generateOwnedComprobante(params, retryKey, owner, store)
+      const deadline = new Promise<never>((_resolve, reject) => {
+        deadlineTimer = timers.setTimeout(
+          () => {
+            controller.abort()
+            reject(new ComprobanteRenderTimeoutError('owner', true))
+          },
+          Math.max(0, requestDeadline - now().valueOf()),
+        )
+      })
+      return await Promise.race([renderTask, deadline])
     } catch (error) {
+      if (error instanceof ComprobanteRenderTimeoutError) {
+        if (await store.failTimeout(retryKey, owner)) throw error
+        const winner = await store.claim(
+          retryKey,
+          fingerprint,
+          owner,
+          now().valueOf(),
+          leaseDurationMs,
+          retentionMs,
+        )
+        if (winner.kind === 'complete') return winner.result
+        throw new ComprobanteRenderTimeoutError('owner', false)
+      }
       await store.failOrdinary(retryKey, owner)
       throw error
     } finally {
-      if (heartbeat) clearInterval(heartbeat)
+      if (heartbeat) timers.clearTimer(heartbeat)
+      if (deadlineTimer) timers.clearTimer(deadlineTimer)
     }
   }
 }
@@ -141,6 +197,7 @@ async function generateOwnedComprobante(
   retryKey: string,
   owner: string,
   store: ComprobanteLeaseStore,
+  signal: AbortSignal,
 ): Promise<RenderComprobanteResult> {
   const socio = await findById(params.db, params.socioId)
   if (!socio) throw BusinessError(ErrorCode.NOT_FOUND, 'Socio not found')
@@ -178,7 +235,7 @@ async function generateOwnedComprobante(
     },
   )
 
-  const pdf = await params.pdfGenerator.generate(html)
+  const pdf = await params.pdfGenerator.generate(html, { signal })
   const sha256 = createHash('sha256').update(pdf).digest('hex')
   const byteSize = pdf.byteLength
 
@@ -303,8 +360,14 @@ export function createPostgresComprobanteLeaseStore(db: Db): ComprobanteLeaseSto
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+const defaultTimers: DeadlineTimers = {
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  setTimeout: (run, ms) => setTimeout(run, ms),
+  setInterval: (run, ms) => setInterval(() => void run(), ms),
+  clearTimer: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>)
+    clearInterval(handle as ReturnType<typeof setInterval>)
+  },
 }
 
 function comprobanteRequestFingerprint(params: RenderComprobanteParams): string {
