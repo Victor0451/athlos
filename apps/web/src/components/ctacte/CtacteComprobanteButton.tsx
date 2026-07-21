@@ -115,7 +115,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
       <button
         type="button"
         onClick={handleOpen}
-        className="inline-flex items-center gap-2 rounded-md border border-ink-200 bg-white px-3 py-1.5 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+        className="inline-flex items-center gap-2 rounded-md border border-ink-200 bg-surface px-3 py-1.5 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         data-testid="ctacte-comprobante-btn"
       >
         <Printer className="h-4 w-4" aria-hidden="true" />
