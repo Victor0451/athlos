@@ -29,7 +29,7 @@ import { Semaphore } from './semaphore.ts'
 
 export interface PdfGenerator {
   init(): Promise<void>
-  generate(html: string): Promise<Buffer>
+  generate(html: string, options?: { signal?: AbortSignal }): Promise<Buffer>
   close(): Promise<void>
 }
 
@@ -70,22 +70,38 @@ export function createPdfGenerator(opts: CreatePdfGeneratorOptions = {}): PdfGen
     return initPromise
   }
 
-  async function generate(html: string): Promise<Buffer> {
+  async function generate(html: string, options: { signal?: AbortSignal } = {}): Promise<Buffer> {
+    const { signal } = options
+    signal?.throwIfAborted()
     await init()
-    if (!browser) {
-      throw new Error('puppeteer browser not initialized')
-    }
+    if (!browser) throw new Error('puppeteer browser not initialized')
     return semaphore.acquire(async () => {
+      signal?.throwIfAborted()
       const page = await browser!.newPage()
-      try {
+      let rejectAbort: (reason: unknown) => void = () => undefined
+      let closing: Promise<void> | undefined
+      const closePage = () => (closing ??= page.close().catch(() => undefined))
+      const onAbort = () => {
+        void closePage()
+        rejectAbort(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      const work = (async () => {
+        signal?.throwIfAborted()
         await page.setContent(html, { waitUntil: 'networkidle0' })
-        const pdf = await page.pdf({ format: 'A4', printBackground: true })
-        // puppeteer types `page.pdf()` as `Promise<Buffer>` but newer
-        // typings return `Uint8Array<ArrayBufferLike>`; coerce to a
-        // real Buffer so callers can rely on `.byteLength` / concat.
-        return Buffer.from(pdf)
+        signal?.throwIfAborted()
+        return Buffer.from(await page.pdf({ format: 'A4', printBackground: true }))
+      })()
+      void work.catch(() => undefined)
+      try {
+        const aborted = new Promise<never>((_resolve, reject) => {
+          rejectAbort = reject
+          if (signal?.aborted) onAbort()
+        })
+        return signal ? await Promise.race([work, aborted]) : await work
       } finally {
-        await page.close()
+        signal?.removeEventListener('abort', onAbort)
+        await closePage()
       }
     })
   }

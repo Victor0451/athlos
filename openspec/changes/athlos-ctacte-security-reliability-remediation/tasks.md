@@ -2,29 +2,31 @@
 
 ## Review Workload Forecast
 
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | 600–750 remaining across S4a and S4b |
-| 400-line budget risk | High |
-| Chained PRs recommended | Yes |
-| Suggested split | S4a failure-reason foundation → S4b deadline/HTTP/telemetry |
-| Delivery strategy | auto-chain |
-| Chain strategy | stacked-to-main |
+| Field                   | Value                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| Estimated changed lines | 600–750 remaining across S4a and S4b                        |
+| 400-line budget risk    | High                                                        |
+| Chained PRs recommended | Yes                                                         |
+| Suggested split         | S4a failure-reason foundation → S4b deadline/HTTP/telemetry |
+| Delivery strategy       | auto-chain                                                  |
+| Chain strategy          | feature-branch-chain                                       |
 
 Decision needed before apply: No
 Chained PRs recommended: Yes
-Chain strategy: stacked-to-main
+Chain strategy: feature-branch-chain
 400-line budget risk: High
 Delivery strategy: auto-chain
 
-### Work Units (stacked-to-main, ≤400 changed lines each)
+### Suggested Work Units (feature-branch-chain, ≤400 changed lines each)
 
 - **S0/PR 1** specs+0034 lifecycle. Test `pnpm --filter @athlos/db exec vitest run src/s0-contracts-0034-lifecycle.test.ts` (disposable PG via `ATHLOS_TEST_DATABASE_URL`; spec-delta validator and 0034 lifecycle proof live in the same vitest file per the v2 corrective batch — there is no separate `scripts/check-spec-deltas.mjs` or `0034.lifecycle.test.ts`). Rollback: `openspec/changes/athlos-ctacte-security-reliability-remediation/` + `packages/db/src/s0-contracts-0034-lifecycle.test.ts` + `artifacts/`.
 - **S1/PR 2** auth/validation. Test `pnpm --filter @athlos/api test:run -- ctacte-mutations.role ctacte-comprobante.can_reprint ctacte-mutations.validation`. Rollback: `routes/ctacte-mutations.ts`+3 tests.
 - **S2/PR 3** atomic audit+caller key. Test `pnpm --filter @athlos/api test:run -- ctacte-mutations.atomic emitter.ctacte.durable ctacte_movement_notes_repository.concurrent`. Receipts `artifacts/s2/`. Rollback: service+emitter+repo+4 tests.
 - **S3/PR 4** attachment comp+actor replay. Test `pnpm --filter @athlos/api test:run -- attachments.compensation ctacte_movement_notes.provenance ctacte-comprobante.actor-binding ctacte-comprobante.prior-attachment`. Receipts `artifacts/s3/`. Rollback: `attachments.ts`+`forms/ctacte-comprobante.ts`+`ctacte_movement_notes.ts`+4 tests.
 - **S4a/next PR** failure-reason schema/state foundation from `origin/main@1fb0ca0`; 280–360 lines, hard stop before 400. S4a must merge to `main` before S4b and must not enable timeout HTTP behavior.
-- **S4b/following PR** fixed 30s deadline, abort cleanup, `504`, logs, and zero-label metric from S4a's merged mainline base; 320–390 lines, hard stop before 400, with fixture-only prerequisite extraction if apply forecast exceeds 350.
+- **S4b tracker/draft PR** `feat/ctacte-s4b-timeout-complete` from `main@cf1d3c1`; base `main`, draft/no merge. Rollback: drop/revert children inside tracker; no deployment.
+- **S4b-runtime/child PR** `feat/ctacte-s4b-timeout-runtime`, base tracker at `cf1d3c1`; exact 351 app/test lines. Focused test: `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.timeout.test.ts src/modules/socios/forms/pdf-generator.test.ts`. Harness: disposable PostgreSQL `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test`. Rollback: revert six runtime paths in tracker, then integrate runtime into tracker only.
+- **S4b-proof/child PR** `test/ctacte-s4b-timeout-proof`, base updated tracker after runtime integration; 250–340 final app/test lines. Focused test: timeout, PDF, route-timeout, PostgreSQL integration, isolated-harness suites. Harness: bounded two-client PostgreSQL barriers; no wall-clock assertion. Rollback: remove proof route test and coordinator/PostgreSQL hunks in tracker; after combined verification merge tracker once to `main` for the only deploy.
 
 ## S0 — Contracts
 
@@ -83,7 +85,7 @@ Delivery strategy: auto-chain
 
 ## S4 — Comprobante Timeout and Failure Observability
 
-> The stale single-slice S4 plan is superseded by two independently reviewable stacked-to-main work units. S4a starts from `origin/main@1fb0ca0`; S4b starts only after S4a is merged to `main`. Historical unchecked S1/S2 lifecycle and emitter rows remain unchanged and are excluded from S4 apply; reconcile them only during final change closeout.
+> The stale single-slice S4 plan is superseded by a feature-branch tracker with two independently reviewable child work units. S4a starts from `origin/main@1fb0ca0`; S4b starts only after S4a is merged to `main`. Historical unchecked S1/S2 lifecycle and emitter rows remain unchanged and are excluded from S4 apply; reconcile them only during final change closeout.
 
 ### S4a — Failure-Reason Schema and State Foundation
 
@@ -91,15 +93,15 @@ Delivery strategy: auto-chain
 
 Expected files and approximate authored lines:
 
-| Path | Expected lines |
-|---|---:|
-| `packages/db/drizzle/0035_ctacte_comprobante_failure_reason.sql` | 20–35 |
-| `packages/db/src/schema/tesoreria.ts` | 5–15 |
-| `packages/db/src/ctacte-comprobante-failure-reason.integration.test.ts` | 55–80 |
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.ts` | 45–65 |
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.lease.test.ts` | 45–65 |
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` | 60–85 |
-| `apps/api/src/test-standins/db.ts` | 15–30 |
+| Path                                                                                | Expected lines |
+| ----------------------------------------------------------------------------------- | -------------: |
+| `packages/db/drizzle/0035_ctacte_comprobante_failure_reason.sql`                    |          20–35 |
+| `packages/db/src/schema/tesoreria.ts`                                               |           5–15 |
+| `packages/db/src/ctacte-comprobante-failure-reason.integration.test.ts`             |          55–80 |
+| `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`                           |          45–65 |
+| `apps/api/src/modules/socios/forms/ctacte-comprobante.lease.test.ts`                |          45–65 |
+| `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` |          60–85 |
+| `apps/api/src/test-standins/db.ts`                                                  |          15–30 |
 
 - [x] 5a.1 RED — In `packages/db/src/ctacte-comprobante-failure-reason.integration.test.ts`, create pre-0035 `rendering`, `complete`, and `failed` rows; first prove the focused test fails because `failure_reason`/its named check are absent, then specify ordered `0031 → 0032 → 0033 → 0034 → 0035`, apply-0035-twice idempotence, nullable `text DEFAULT NULL`, null backfill/default, and rejection of unsupported values. Run `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test pnpm --filter @athlos/db exec vitest run src/ctacte-comprobante-failure-reason.integration.test.ts`; record the expected RED assertions. <!-- sdd-owner: implementation -->
 - [x] 5a.2 GREEN — Add hand-written `packages/db/drizzle/0035_ctacte_comprobante_failure_reason.sql` with `ADD COLUMN IF NOT EXISTS failure_reason text DEFAULT NULL`, a catalog-guarded named check allowing only `NULL`/`RENDER_TIMEOUT`, and explicit validation; update nullable Drizzle metadata in `packages/db/src/schema/tesoreria.ts`. Rerun the focused DB command until all migration assertions pass without editing prior migrations or the incomplete production journal. <!-- sdd-owner: implementation -->
@@ -112,30 +114,32 @@ Expected files and approximate authored lines:
 
 ### S4b — Fixed Deadline, Abort Cleanup, HTTP, and Telemetry
 
-**Dependency/start:** S4a merged to `main`; discover and record its merge SHA from `git log --first-parent -- packages/db/drizzle/0035_ctacte_comprobante_failure_reason.sql`, then verify it is an ancestor of the S4b base. **Finish:** fixed request deadlines, abort/resource cleanup, fenced timeout outcomes, `504`, logs, metric, and redacted unexpected `5xx` are independently green. **Budget:** 320–390 authored changed lines, hard stop before 400. If the apply forecast exceeds 350, extract fixture-only setup into a prerequisite stacked-to-main work unit before continuing S4b. **Review risks:** Chromium/process cleanup, late promise settlement, fake-clock determinism, owner/follower mutation boundaries, telemetry double-count/cardinality, and accidental internal-error downgrade or disclosure.
+> **Amended chain:** no size exception. Delivery is `auto-chain`, `feature-branch-chain`: create draft/no-merge tracker `feat/ctacte-s4b-timeout-complete` from `main@cf1d3c1`; merge runtime into tracker, then base proof on updated tracker. Only the combined tracker may merge once to `main` and deploy after 5b.1, 5b.7, and 5b.10 close.
 
-Expected files and approximate authored lines:
+**S4b-runtime start/finish:** child `feat/ctacte-s4b-timeout-runtime`, base tracker `feat/ctacte-s4b-timeout-complete@cf1d3c1`; six exact paths and **351** authored app/test lines. Finish with runtime behavior plus four minimum coordinator cases and direct PDF cleanup tests green; hard stop before 400, then integrate into tracker. **S4b-proof start/finish:** child `test/ctacte-s4b-timeout-proof`, base updated tracker after runtime integration; retain 128 current lines and stop at 250–340 final. It alone closes direct 5b.1/5b.7/5b.10 evidence; no production files. Verify each child diff against the tracker base.
 
-| Path | Expected lines |
-|---|---:|
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.ts` | 65–90 |
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.timeout.test.ts` | 65–90 |
-| `apps/api/src/modules/socios/forms/pdf-generator.ts` | 25–40 |
-| `apps/api/src/modules/socios/forms/pdf-generator.test.ts` | 40–55 |
-| `apps/api/src/routes/ctacte-mutations.ts` | 15–25 |
-| `apps/api/src/routes/ctacte-comprobante.timeout.test.ts` | 40–55 |
-| `apps/api/src/plugins/metrics.ts` | 5–10 |
-| `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` | 30–45 |
+Runtime files (351 exact):
 
-- [ ] 5b.1 RED — In `apps/api/src/modules/socios/forms/ctacte-comprobante.timeout.test.ts`, introduce an injectable fake clock and first fail at 29,999/30,000 ms for one fixed `REQUEST_DEADLINE_MS = 30_000` across claim, follower polling, takeover, semaphore wait, and render; keep `LEASE_DURATION_MS = 5_000` with renewable heartbeats that never extend the request deadline. Cover timely owner success, owner timeout transition, follower timeout with zero durable writes, stale takeover using only remaining budget, stored terminal replay without rerender, ordinary failure/reclaim, both completion-timeout orders, cleared timers/heartbeats, and observed late resolve/reject. Run `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.timeout.test.ts` and retain RED evidence. <!-- sdd-owner: implementation -->
-- [ ] 5b.2 GREEN — In `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`, add the fixed-deadline coordinator, short renewable lease heartbeat, `AbortController`, and always-observed render task. Only an active owner may call owner-conditional `failTimeout`; a follower deadline performs no mutation; a lost owner reconciles the winning complete/terminal state; a late fenced completion cannot publish bytes or printed audit. Rerun the fake-clock suite to GREEN. <!-- sdd-owner: implementation -->
-- [ ] 5b.3 RED — Extend `apps/api/src/modules/socios/forms/pdf-generator.test.ts` to fail for abort before semaphore acquisition, abort during `setContent`, abort during `page.pdf`, idempotent page close, listener removal, slot release, observed late rejection, and a successful render after each cancellation path. Run `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/pdf-generator.test.ts`. <!-- sdd-owner: implementation -->
-- [ ] 5b.4 GREEN — Update `apps/api/src/modules/socios/forms/pdf-generator.ts` to accept an `AbortSignal`, check it around semaphore acquisition, close the concrete Puppeteer page on abort, remove listeners, close open pages, and release the slot in `finally`. A `Promise.race` may select an outcome but is insufficient without abort, cleanup, fencing, and late-settlement observation. Rerun the focused PDF suite to GREEN. <!-- sdd-owner: implementation -->
-- [ ] 5b.5 RED — In `apps/api/src/routes/ctacte-comprobante.timeout.test.ts`, use Fastify injection to fail on missing standard owner/follower `504` envelopes (`error`, human-readable `message`, current `request_id`), missing structured owner/follower warning fields, incorrect live-timeout increments, replay recounting, metric labels, and unexpected comprobante errors incorrectly converted to `400` instead of the global redacted `5xx`. Run `pnpm --filter @athlos/api exec vitest run src/routes/ctacte-comprobante.timeout.test.ts`. <!-- sdd-owner: implementation -->
-- [ ] 5b.6 GREEN — In `apps/api/src/routes/ctacte-mutations.ts`, map only typed `ComprobanteRenderTimeoutError` to the standard `504 RENDER_TIMEOUT` envelope and rethrow all unexpected comprobante errors; in `apps/api/src/plugins/metrics.ts`, register zero-label `ctacte_comprobante_render_timeout_total`. Emit/count once for a live owner transition win or live follower deadline, never for persisted timeout replay or ordinary failure, and use distinct owner-render-failed versus follower-wait-timeout events. Rerun the focused route suite to GREEN. <!-- sdd-owner: implementation -->
-- [ ] 5b.7 TRIANGULATE — Extend `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` with synchronization barriers and two stores/clients to prove an owner timeout fences late completion/printed audit and a healthy owner is unchanged by follower timeout; use no wall-clock duration assertions. Run `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts`. <!-- sdd-owner: implementation -->
-- [ ] 5b.8 REFACTOR — Centralize only the deadline/lease constants, typed timeout error, timer cleanup, and bounded test fixtures in the S4b files; keep request deadline distinct from lease duration and rerun the timeout, PDF, route, and PostgreSQL suites after refactoring. <!-- sdd-owner: implementation -->
-- [ ] 5b.9 FIXTURE GATE — Recount the forecast before behavior edits and after each RED fixture. If projected authored lines exceed 350, stop, move only reusable fake-clock/browser/Fastify fixture code into a separate prerequisite stacked-to-main work unit with its own baseline tests and rollback, merge it, then restart S4b from that mainline base; do not move behavior or request a size exception. <!-- sdd-owner: implementation -->
+| Path                                                                                | Expected lines |
+| ----------------------------------------------------------------------------------- | -------------: |
+| `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`                           |          65–90 |
+| `apps/api/src/modules/socios/forms/ctacte-comprobante.timeout.test.ts`              |          114 |
+| `apps/api/src/modules/socios/forms/pdf-generator.ts`                                |          25–40 |
+| `apps/api/src/modules/socios/forms/pdf-generator.test.ts`                           |          40–55 |
+| `apps/api/src/routes/ctacte-mutations.ts`                                           |          15–25 |
+| `apps/api/src/plugins/metrics.ts`                                                   |           5–10 |
+
+Proof files (128 current / 250–340 final): `apps/api/src/routes/ctacte-comprobante.timeout.test.ts` (create; retain 78 existing route lines), `apps/api/src/modules/socios/forms/ctacte-comprobante.timeout.test.ts` (direct ordering/late settlement), and `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` (retain/add 50-line barrier proof).
+
+- [x] 5b.1 S4b-proof RED — In `apps/api/src/modules/socios/forms/ctacte-comprobante.timeout.test.ts`, add direct fake-clock RED cases for 29,999/30,000 ordering, both completion-timeout orders, cleared timers/heartbeats, and observed late resolve/reject; prove follower non-mutation/takeover uses only the remaining fixed budget. <!-- sdd-owner: implementation -->
+- [x] 5b.2 S4b-runtime GREEN — In `apps/api/src/modules/socios/forms/ctacte-comprobante.ts`, add the fixed-deadline coordinator, short renewable lease heartbeat, `AbortController`, and always-observed render task. Only an active owner may call owner-conditional `failTimeout`; a follower deadline performs no mutation; a lost owner reconciles the winning complete/terminal state. <!-- sdd-owner: implementation -->
+- [x] 5b.3 S4b-runtime RED — Extend `apps/api/src/modules/socios/forms/pdf-generator.test.ts` to fail for abort before semaphore acquisition, abort during `setContent`, abort during `page.pdf`, idempotent page close, listener removal, slot release, observed late rejection, and a successful render after each cancellation path. Run `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/pdf-generator.test.ts`. <!-- sdd-owner: implementation -->
+- [x] 5b.4 S4b-runtime GREEN — Update `apps/api/src/modules/socios/forms/pdf-generator.ts` to accept an `AbortSignal`, check it around semaphore acquisition, close the concrete Puppeteer page on abort, remove listeners, close open pages, and release the slot in `finally`. A `Promise.race` may select an outcome but is insufficient without abort, cleanup, fencing, and late-settlement observation. Rerun the focused PDF suite to GREEN. <!-- sdd-owner: implementation -->
+- [x] 5b.5 S4b-proof RED — In `apps/api/src/routes/ctacte-comprobante.timeout.test.ts`, retain the Fastify-injection RED coverage for owner/follower `504`, bounded logs/counter, replay zero increment, unlabeled metric, and redacted unexpected `5xx`. <!-- sdd-owner: implementation -->
+- [x] 5b.6 S4b-runtime GREEN — In `apps/api/src/routes/ctacte-mutations.ts`, map only typed `ComprobanteRenderTimeoutError` to the standard `504 RENDER_TIMEOUT` envelope and rethrow all unexpected comprobante errors; in `apps/api/src/plugins/metrics.ts`, register zero-label `ctacte_comprobante_render_timeout_total`. Emit/count once for a live owner transition win or live follower deadline, never for persisted timeout replay or ordinary failure, and use distinct owner-render-failed versus follower-wait-timeout events. Rerun the focused route suite to GREEN. <!-- sdd-owner: implementation -->
+- [x] 5b.7 S4b-proof TRIANGULATE — Extend `apps/api/src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts` with bounded synchronization barriers and two stores/clients to directly prove an actual follower deadline does not mutate a healthy owner and a timed-out owner’s late completion cannot publish `CTACTE_COMPROBANTE_PRINTED`; never assert elapsed wall-clock time. <!-- sdd-owner: implementation -->
+- [x] 5b.8 S4b-runtime REFACTOR — Centralize only the deadline/lease constants, typed timeout error, timer cleanup, and bounded test fixtures in the S4b files; keep request deadline distinct from lease duration and rerun the timeout, PDF, route, and PostgreSQL suites after refactoring. <!-- sdd-owner: implementation -->
+- [x] 5b.9 FIXTURE GATE — Recount the forecast before behavior edits and after each RED fixture. If projected authored lines exceed 350, stop, move only reusable fake-clock/browser/Fastify fixture code into a separate prerequisite feature-chain work unit with its own baseline tests and rollback; do not move behavior or request a size exception. <!-- sdd-owner: implementation -->
 
 #### S4b Fixture Prerequisite (authorized extraction tied to 5b.9)
 
@@ -149,14 +153,15 @@ Expected files and approximate authored lines:
 - [x] 5b.9e RED/GREEN — Add and self-test a fail-closed, random-schema PostgreSQL harness with bounded barriers, full retry snapshots, fenced audit publication, and bounded unique audit observation. <!-- sdd-owner: implementation -->
 - [x] 5b.9f TRIANGULATE/CLEANUP — Prove fenced completion cannot mutate retry state or publish printed audit, cleanup drops only the generated schema, and the existing PostgreSQL comprobante baseline remains 5/5. <!-- sdd-owner: implementation -->
 
-- [ ] 5b.10 VERIFY — Run the four focused suites above, `pnpm --filter @athlos/api typecheck`, and `git diff --check`; inspect Prometheus exposition to prove `ctacte_comprobante_render_timeout_total` has no labels and record disposable-PostgreSQL runtime evidence. Count from the recorded S4a merge base with `git diff --numstat <S4A_MERGE_SHA> -- apps/api | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {n+=$1+$2} END {print n+0}'`; target 320–390 and hard-stop before 400. <!-- sdd-owner: implementation -->
-- [ ] 5b.11 ROLLBACK — Revert the eight S4b paths together; S4a and forward-only `0035` remain deployed and inert, ordinary failures retain null reasons/reclaim semantics, and no timeout HTTP/telemetry behavior remains. <!-- sdd-owner: implementation -->
+- [x] 5b.10 S4b-proof VERIFY — Run timeout, PDF, route-timeout, PostgreSQL integration, and isolated-harness suites with `ATHLOS_TEST_DATABASE_URL`, retain exact counts, assert unlabeled Prometheus exposition, then run typecheck and `git diff --check`. Count from the runtime-integration SHA on tracker; 250–340 target, hard stop before 400. <!-- sdd-owner: implementation -->
+- [x] 5b.11 S4b-runtime ROLLBACK — Revert only `ctacte-comprobante.ts`, `ctacte-comprobante.timeout.test.ts`, `pdf-generator.ts`, `pdf-generator.test.ts`, `ctacte-mutations.ts`, and `metrics.ts` inside tracker; retain S4a, `0035`, fixtures, and harness. <!-- sdd-owner: implementation -->
+- [x] 5b.12 S4b-proof ROLLBACK — Before tracker-to-main, remove proof hunks then runtime paths inside `feat/ctacte-s4b-timeout-complete` without deployment; after final integration revert the one complete tracker merge. <!-- sdd-owner: implementation -->
 
 ### Parent Actions After S4 Implementation
 
-- [ ] After S4a apply evidence is complete and under 400 lines, start or reuse the bounded review for the exact S4a target, then perform receipt validation and stacked-to-main lifecycle gates without changing the reviewed scope. <!-- sdd-owner: parent -->
-- [ ] Merge S4a to `main` before authorizing S4b; record the merge SHA/base evidence and reject a polluted S4b diff containing S4a or unrelated historical rows. <!-- sdd-owner: parent -->
-- [ ] After S4b apply evidence is complete and under 400 lines, start or reuse the high-risk bounded review for the exact S4b target, including process cleanup and race evidence, then perform receipt validation and stacked-to-main lifecycle gates without reopening review. <!-- sdd-owner: parent -->
+- [ ] After S4a evidence, complete its existing lifecycle; then create draft tracker `feat/ctacte-s4b-timeout-complete` from `main@cf1d3c1` without merging it to `main`. <!-- sdd-owner: parent -->
+- [ ] Review runtime child `feat/ctacte-s4b-timeout-runtime` against tracker, merge it only to tracker, then create proof child `test/ctacte-s4b-timeout-proof` from the updated tracker; reject polluted child diffs. <!-- sdd-owner: parent -->
+- [ ] After proof closes 5b.1/5b.7/5b.10 and combined verification passes, make the tracker PR ready and merge it once to `main`; that is the only S4b deployment-triggering event. <!-- sdd-owner: parent -->
 - [ ] During final change reconciliation only, resolve historical unchecked S1/S2 lifecycle and emitter rows against merged evidence; do not treat them as S4 implementation or mark them complete from S4 results. <!-- sdd-owner: parent -->
 
 ## Phase 2: S2.c — Route Error Contract (additive; size:exception preserved)
