@@ -144,6 +144,11 @@ Expected files and approximate authored lines:
 - [x] 5b.9c VERIFY — Run the three support self-tests, existing lease/PDF/route/real-PG baselines, API typecheck, and exact no-production-change scope proof. <!-- sdd-owner: implementation -->
 - [x] 5b.9d BUDGET/ROLLBACK — Keep the entire fixture candidate at or below 350 changed lines; rollback removes only the six support/self-test files and this prerequisite artifact update. <!-- sdd-owner: implementation -->
 
+#### S4b Isolated PostgreSQL Harness Prerequisite
+
+- [x] 5b.9e RED/GREEN — Add and self-test a fail-closed, random-schema PostgreSQL harness with bounded barriers, full retry snapshots, fenced audit publication, and bounded unique audit observation. <!-- sdd-owner: implementation -->
+- [x] 5b.9f TRIANGULATE/CLEANUP — Prove fenced completion cannot mutate retry state or publish printed audit, cleanup drops only the generated schema, and the existing PostgreSQL comprobante baseline remains 5/5. <!-- sdd-owner: implementation -->
+
 - [ ] 5b.10 VERIFY — Run the four focused suites above, `pnpm --filter @athlos/api typecheck`, and `git diff --check`; inspect Prometheus exposition to prove `ctacte_comprobante_render_timeout_total` has no labels and record disposable-PostgreSQL runtime evidence. Count from the recorded S4a merge base with `git diff --numstat <S4A_MERGE_SHA> -- apps/api | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {n+=$1+$2} END {print n+0}'`; target 320–390 and hard-stop before 400. <!-- sdd-owner: implementation -->
 - [ ] 5b.11 ROLLBACK — Revert the eight S4b paths together; S4a and forward-only `0035` remain deployed and inert, ordinary failures retain null reasons/reclaim semantics, and no timeout HTTP/telemetry behavior remains. <!-- sdd-owner: implementation -->
 
