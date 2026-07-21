@@ -233,12 +233,20 @@ describe('Ctacte detail page', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the page header + "Volver al selector" link', async () => {
+  it('renders the complete premium account header', async () => {
     renderPage()
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: /volver/i })).toBeInTheDocument()
+      expect(screen.getByTestId('ctacte-premium-header')).toBeInTheDocument()
     })
-    expect(screen.getByRole('link', { name: /volver/i })).toHaveAttribute('href', '/ctacte')
+    expect(screen.getByRole('link', { name: /volver al selector/i })).toHaveAttribute(
+      'href',
+      '/ctacte',
+    )
+    expect(screen.getByTestId('ctacte-header-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('ctacte-header-member-number')).toHaveTextContent('00001')
+    expect(screen.getByTestId('ctacte-header-dni')).toHaveTextContent('12345678')
+    expect(screen.getByTestId('ctacte-header-status')).toHaveTextContent(/activo/i)
+    expect(screen.getByTestId('ctacte-header-status')).toHaveAccessibleName('Estado: activo')
   })
 
   it('renders the socio name in the heading', async () => {

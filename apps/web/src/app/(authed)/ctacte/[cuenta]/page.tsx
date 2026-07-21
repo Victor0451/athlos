@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronLeft, WalletCards } from 'lucide-react'
 import { getCtacte, getMovimientos, type Movimiento } from '@/lib/api/ctacte'
 import { getSocio } from '@/lib/api/socios'
 import { getCtacteGastosLinks, type GastoLinkForCuenta } from '@/lib/api/gastos-ctacte'
@@ -13,6 +14,7 @@ import { CtactePaymentForm } from '@/components/ctacte/CtactePaymentForm'
 import { CtacteDebitForm } from '@/components/ctacte/CtacteDebitForm'
 import { CtacteComprobanteButton } from '@/components/ctacte/CtacteComprobanteButton'
 import { CtacteNotesSection } from '@/components/ctacte/CtacteNotesSection'
+import { Badge } from '@/components/ui/Badge'
 
 /**
  * Ctacte detail page — `/ctacte/[cuenta]` (TASK-025 + TASK-013).
@@ -153,39 +155,80 @@ export default function CtacteDetailPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-ink-900">{headerName}</h1>
-          {socio ? (
-            <p className="mt-1 font-mono text-xs text-ink-500">
-              DNI {socio.dni} · N° {socio.numero_socio}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowPayment(true)}
-            data-testid="ctacte-action-payment"
-            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
-          >
-            Registrar pago
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowDebit(true)}
-            data-testid="ctacte-action-debit"
-            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-          >
-            Registrar débito
-          </button>
-          <CtacteComprobanteButton socioId={cuenta} cuenta={cuenta} />
-          <Link
-            href="/ctacte"
-            className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
-          >
-            Volver al selector
-          </Link>
+      <header
+        data-testid="ctacte-premium-header"
+        className="rounded-xl border border-ink-150 bg-surface p-5 sm:p-6"
+      >
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+            <Link
+              href="/ctacte"
+              aria-label="Volver al selector"
+              className="inline-flex shrink-0 items-center justify-center rounded-xl border border-ink-150 bg-surface p-3 text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </Link>
+            <div
+              data-testid="ctacte-header-icon"
+              className="shrink-0 rounded-lg bg-accent-soft p-3 text-accent"
+            >
+              <WalletCards className="h-6 w-6" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                Cuenta corriente
+              </p>
+              <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-tight text-ink-900 sm:text-3xl">
+                {headerName}
+              </h1>
+              {socio ? (
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <span
+                    data-testid="ctacte-header-member-number"
+                    className="font-mono text-xs text-ink-500"
+                  >
+                    N° socio {socio.numero_socio}
+                  </span>
+                  <span data-testid="ctacte-header-dni" className="font-mono text-xs text-ink-500">
+                    DNI {socio.dni}
+                  </span>
+                  <Badge
+                    variant={
+                      socio.estado === 'activo'
+                        ? 'success'
+                        : socio.estado === 'baja'
+                          ? 'danger'
+                          : 'warning'
+                    }
+                    ariaLabel={`Estado: ${socio.estado}`}
+                    dataTestid="ctacte-header-status"
+                    className="uppercase tracking-wide"
+                  >
+                    {socio.estado}
+                  </Badge>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 lg:max-w-xl lg:justify-end">
+            <button
+              type="button"
+              onClick={() => setShowPayment(true)}
+              data-testid="ctacte-action-payment"
+              className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              Registrar pago
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDebit(true)}
+              data-testid="ctacte-action-debit"
+              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              Registrar débito
+            </button>
+            <CtacteComprobanteButton socioId={cuenta} cuenta={cuenta} />
+          </div>
         </div>
       </header>
 
