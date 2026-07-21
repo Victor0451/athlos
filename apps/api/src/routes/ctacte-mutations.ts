@@ -12,7 +12,11 @@ import {
   registerDebit,
 } from '../modules/socios/forms/ctacte-mutations.ts'
 import { addNote, listNotes, softDeleteNote } from '../modules/socios/ctacte_movement_notes.ts'
-import { renderComprobante } from '../modules/socios/forms/ctacte-comprobante.ts'
+import {
+  ComprobanteRenderTimeoutError,
+  renderComprobante,
+} from '../modules/socios/forms/ctacte-comprobante.ts'
+import { ctacteComprobanteRenderTimeoutTotal } from '../plugins/metrics.ts'
 import { ctacte } from '@athlos/db/schema'
 import { LocalFileStorage, readStorageEnv } from '../modules/file-storage/index.ts'
 import type { PdfGenerator } from '../modules/socios/forms/pdf-generator.ts'
@@ -566,6 +570,27 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       reply.header('Content-Disposition', `inline; filename="${escapeFilename(result.filename)}"`)
       return reply.send(result.pdf)
     } catch (err) {
+      if (err instanceof ComprobanteRenderTimeoutError) {
+        if (err.live) {
+          request.log.warn(
+            {
+              event:
+                err.role === 'owner'
+                  ? 'ctacte_comprobante_render_failed'
+                  : 'ctacte_comprobante_wait_timeout',
+              error_code: err.code,
+              request_id: request.id,
+              actor_id: operatorId,
+              timeout_role: err.role,
+            },
+            'comprobante request deadline exceeded',
+          )
+          ctacteComprobanteRenderTimeoutTotal.inc()
+        }
+        return reply
+          .code(504)
+          .send({ error: err.code, message: err.message, request_id: request.id })
+      }
       const e = err as {
         code?: string
         message?: string
@@ -587,10 +612,7 @@ export const ctacteMutationsRoutes: FastifyPluginCallback<CtacteMutationsRoutesO
       }
       if (e.code === ErrorCode.CONFLICT)
         return reply.code(409).send({ error: 'CONFLICT', message: e.message })
-      request.log.warn({ err }, 'renderComprobante failed')
-      return reply
-        .code(400)
-        .send({ error: 'VALIDATION_ERROR', message: 'Failed to render comprobante' })
+      throw err
     }
   })
 
