@@ -50,6 +50,12 @@ export const httpRequestDuration = new Histogram({
  * when an import run finishes. The `domain` label is bounded to
  * the known import domains (socios, ctacte, contable, ...).
  */
+export const ctacteComprobanteRenderTimeoutTotal = new Counter({
+  name: 'ctacte_comprobante_render_timeout_total',
+  help: 'Live comprobante owner and follower request deadlines.',
+  registers: [registry],
+})
+
 export const importRunsTotal = new Counter({
   name: 'import_runs_total',
   help: 'Total import runs by domain and terminal status.',
