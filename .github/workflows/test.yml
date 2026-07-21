@@ -46,6 +46,7 @@ jobs:
           done
       - run: pnpm test:run
       - run: pnpm typecheck
+      - run: pnpm --filter @athlos/api build
 
   drift-check:
     runs-on: ubuntu-latest
