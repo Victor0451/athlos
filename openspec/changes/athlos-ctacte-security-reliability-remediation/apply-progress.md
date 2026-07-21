@@ -291,3 +291,17 @@ Parent-owned lifecycle actions remain deferred: bounded review, receipt handling
 - **Static/scope:** API typecheck and diff checks passed; no deadline, abort runtime, 504, log, counter, schema, migration, or S4a change.
 - **Boundary:** final candidate is 350 lines, within the ≤350 fixture gate; rollback removes only the six fixture files and this prerequisite artifact update.
 - **Deferred:** tasks 5b.1–5b.8 and 5b.10–5b.11 remain for S4b; Engram persistence was unavailable.
+
+## S4b Isolated PostgreSQL Harness Prerequisite Update
+- **Scope:** branch `test/ctacte-s4b-isolated-schema-harness`, base `9696634`; four paths only and no production/runtime/migration edits.
+- **Tasks checked:** new prerequisite rows 5b.9e–5b.9f only; 5b.1–5b.8 and 5b.10–5b.11 remain unchecked.
+- **RED:** focused suite failed on the absent `ctacte-comprobante.postgres-harness.test-support.ts` module.
+- **GREEN:** focused real-PostgreSQL harness suite passed 1/1.
+- **Primitive proof:** random 96-bit owned schema; `_test` database guard before writes; bounded barrier entry/release; full durable retry snapshot; parameterized fenced audit publication; bounded unique key/entity audit polling.
+- **State proof:** post-timeout full snapshot stayed equal after released late completion; result fields remained null, attempt/update metadata was retained, and printed audit remained zero.
+- **Cleanup proof:** generated schema existed before cleanup and not after; pre-existing `tesoreria` existence was unchanged; initialization cleanup closes all created pools and drops only the validated owned schema.
+- **TRIANGULATE:** existing `ctacte-comprobante.postgres.integration.test.ts` passed 5/5.
+- **Static validation:** API typecheck and tracked/untracked diff checks passed; exact scope was four expected paths; final authored count including untracked files was 341 lines.
+- **Rollback:** remove the two new harness files and revert only this subsection plus rows 5b.9e–5b.9f; no deployed behavior changes.
+- **Claim boundary:** prerequisite primitives only; actual S4b follower-timeout behavior and row 5b.7 are not proven.
+- **Apply-gate correction:** RED 1/1 rejected with `barrier release timed out`; harness-owned barrier tracking now releases pending work before pool/schema cleanup, GREEN passed 1/1, PostgreSQL baseline 5/5, API typecheck and `git diff --check` passed; final tracked+untracked authored count is 349.
