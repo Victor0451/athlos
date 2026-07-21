@@ -304,4 +304,4 @@ Parent-owned lifecycle actions remain deferred: bounded review, receipt handling
 - **Static validation:** API typecheck and tracked/untracked diff checks passed; exact scope was four expected paths; final authored count including untracked files was 341 lines.
 - **Rollback:** remove the two new harness files and revert only this subsection plus rows 5b.9e–5b.9f; no deployed behavior changes.
 - **Claim boundary:** prerequisite primitives only; actual S4b follower-timeout behavior and row 5b.7 are not proven.
-- **Apply-gate correction:** RED 1/1 rejected with `barrier release timed out`; harness-owned barrier tracking now releases pending work before pool/schema cleanup, GREEN passed 1/1, PostgreSQL baseline 5/5, API typecheck and `git diff --check` passed; final tracked+untracked authored count is 349.
+- **Apply-gate correction:** RED 1/1 rejected with `barrier release timed out`; harness-owned barrier tracking now releases pending work before pool/schema cleanup, GREEN passed 1/1, PostgreSQL baseline 5/5, API typecheck and `git diff --check` passed; final committed authored count is 355 after mandatory formatting hooks.
