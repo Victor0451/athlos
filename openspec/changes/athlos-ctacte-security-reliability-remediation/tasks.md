@@ -155,7 +155,7 @@ Proof files (128 current / 250–340 final): `apps/api/src/routes/ctacte-comprob
 
 - [x] 5b.10 S4b-proof VERIFY — Run timeout, PDF, route-timeout, PostgreSQL integration, and isolated-harness suites with `ATHLOS_TEST_DATABASE_URL`, retain exact counts, assert unlabeled Prometheus exposition, then run typecheck and `git diff --check`. Count from the runtime-integration SHA on tracker; 250–340 target, hard stop before 400. <!-- sdd-owner: implementation -->
 - [x] 5b.11 S4b-runtime ROLLBACK — Revert only `ctacte-comprobante.ts`, `ctacte-comprobante.timeout.test.ts`, `pdf-generator.ts`, `pdf-generator.test.ts`, `ctacte-mutations.ts`, and `metrics.ts` inside tracker; retain S4a, `0035`, fixtures, and harness. <!-- sdd-owner: implementation -->
-- [ ] 5b.12 S4b-proof ROLLBACK — Before tracker-to-main, remove proof hunks then runtime paths inside `feat/ctacte-s4b-timeout-complete` without deployment; after final integration revert the one complete tracker merge. <!-- sdd-owner: implementation -->
+- [x] 5b.12 S4b-proof ROLLBACK — Before tracker-to-main, remove proof hunks then runtime paths inside `feat/ctacte-s4b-timeout-complete` without deployment; after final integration revert the one complete tracker merge. <!-- sdd-owner: implementation -->
 
 ### Parent Actions After S4 Implementation
 
