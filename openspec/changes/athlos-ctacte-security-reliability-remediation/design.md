@@ -229,3 +229,53 @@ request → auth/validate → fixed request deadline → claim
 | Existing failed rows become terminal | Additive column defaults/backfills to null; only explicit owner timeout writes `RENDER_TIMEOUT`. |
 | Telemetry cardinality or double count | Zero-label counter; increment only on live deadline outcomes, never persisted replay. |
 | Slice exceeds review budget | Separate S4a/S4b boundaries with explicit 280–360 and 320–390 line forecasts; extract fixture-only prerequisite if needed. |
+
+## Amendment — S4b runtime/proof split (2026-07-21)
+
+This amendment supersedes only the single-work-unit S4b review plan above. Base `cf1d3c15fcddf0e8c6164d82147e267a4075d7ca` already contains S4a, the timeout fixtures, CI #75, and isolated PostgreSQL harness #76. The current candidate is **479 authored app/test lines**: 287 tracked, 114 coordinator-test lines, and 78 route-test lines. There is no size exception; delivery is `auto-chain`, `feature-branch-chain`, as explicitly authorized because `.github/workflows/deploy.yml` deploys every push to `main`.
+
+### Decision and merge order
+
+| Slice | Base and finish | Exact files/behavior | Budget |
+|---|---|---|---|
+| **S4b-runtime** | Head `feat/ctacte-s4b-timeout-runtime`; PR base `feat/ctacte-s4b-timeout-complete`, both initially at `cf1d3c15fcddf0e8c6164d82147e267a4075d7ca`; finish with runtime behavior and its minimum safety coverage green. | Modify `ctacte-comprobante.ts`, `pdf-generator.ts`, `pdf-generator.test.ts`, `ctacte-mutations.ts`, and `metrics.ts`; create `ctacte-comprobante.timeout.test.ts`. This delivers the fixed owner/follower deadline, lease heartbeat/fencing, abort and observed cleanup, typed timeout, `504`, bounded logs/counter, and redacted unexpected 5xx. The 4 coordinator cases cover timely owner, exact owner deadline/late rejection, follower non-mutation/takeover, and terminal replay; the PDF suite directly covers semaphore/page cleanup. | **351 exact** = 237 tracked after excluding the 50-line PostgreSQL proof hunk + 114 coordinator test. Hard stop at 400. |
+| **S4b-proof** | Head `test/ctacte-s4b-timeout-proof`, created from the tracker after the runtime child merge; PR base `feat/ctacte-s4b-timeout-complete`; finish when direct 5b.1/5b.7 evidence passes. | Create `routes/ctacte-comprobante.timeout.test.ts`; modify `ctacte-comprobante.timeout.test.ts` and `ctacte-comprobante.postgres.integration.test.ts`. Retain the existing 78 route lines and 50 PostgreSQL lines, then add direct fake-clock ordering/late-settlement cases and harness-backed actual follower-deadline plus late-owner printed-audit fencing. No production files. | **128 exact present**; **250–340 estimated final**. Stop before 400; missing evidence blocks closure rather than moving behavior or accepting an exception. |
+
+Create tracker head `feat/ctacte-s4b-timeout-complete` from exact base `main@cf1d3c15fcddf0e8c6164d82147e267a4075d7ca`; its draft/no-merge tracker PR targets `main`. Review and merge the 351-line runtime child into the tracker, never `main`. Create proof from that tracker runtime-merge SHA, review its 250–340-line child diff against the tracker, then merge it into the tracker. If `main` advances, update the tracker with current `main` and rerun all evidence. Only after both child receipts, 5b.1/5b.7/5b.10 closure, and combined verification may the tracker PR become ready and merge once to `main`; that single complete merge is the only deployment-triggering event.
+
+```text
+main@cf1d3c15 ← tracker PR — head feat/ctacte-s4b-timeout-complete (draft/no-merge)
+                       ↑ runtime child PR — head feat/ctacte-s4b-timeout-runtime (351)
+                       ↑ proof child PR   — head test/ctacte-s4b-timeout-proof (250–340)
+```
+
+### Verification and rollback
+
+**Runtime commands**
+
+- `pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.timeout.test.ts src/modules/socios/forms/pdf-generator.test.ts`
+- `pnpm --filter @athlos/api exec vitest run src/routes/ctacte-mutations.test.ts`
+- `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test pnpm --filter @athlos/api exec vitest run src/modules/socios/forms/ctacte-comprobante.postgres.integration.test.ts src/modules/socios/forms/ctacte-comprobante.postgres-harness.test.ts`
+- `pnpm --filter @athlos/api typecheck` and `git diff --check`
+
+**Proof commands**
+
+- Run the timeout, PDF, route-timeout, PostgreSQL integration, and isolated-harness files together with `ATHLOS_TEST_DATABASE_URL`; retain exact test counts.
+- Rerun typecheck and diff checks; route proof MUST assert unlabeled Prometheus exposition. Direct PostgreSQL proof MUST use bounded barriers, not elapsed-wall-clock assertions.
+
+Before tracker integration, runtime rollback reverts its six paths and proof rollback removes only its route test and added coordinator/PostgreSQL hunks. Before the tracker reaches `main`, drop/revert proof then runtime inside the tracker with no deployment. After final integration, revert the single complete tracker merge; S4a, `0035`, fixtures, and harness remain intact.
+
+### Threat matrix
+
+| Boundary | Applicability | Safe/failure behavior and RED proof |
+|---|---|---|
+| Documentation-like paths | N/A — no executable-file classification. | None. |
+| Git repository selection | N/A — no runtime Git integration. | None. |
+| Commit state | N/A — no commit automation. | None. |
+| Push state | N/A — no push automation. | None. |
+| PR commands | N/A — no PR command composition. | None. |
+| Puppeteer process/resource integration | Applicable. | Abort before/inside page work closes at most once, removes listeners, releases the semaphore, and observes late rejection; failure is bounded and never publishes fenced bytes/audit. Runtime PDF RED tests cover cleanup; proof adds both late-settlement orders and PostgreSQL printed-audit fencing. |
+
+### Blocker
+
+The split is design-complete, but S4b-proof content is not yet implemented. Current 4/4 timeout and 7/7 PostgreSQL integration+harness results are necessary but insufficient for direct 5b.1/5b.7 evidence; 5b.10 remains blocked.
