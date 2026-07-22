@@ -39,9 +39,9 @@ Approved. Tracker `feat/padrones-inscription-lifecycle`: draft → `main`. PRs: 
 - [x] 2.3 **REFACTOR** Deduplicate serializer.
 
 ## PR3
-- [ ] 3.1 **RED** Claim/rollback; `FOR UPDATE` visibility/replay/conflict/races.
-- [ ] 3.2 **GREEN** Receipt engine: `apps/api/src/modules/padrones/inscription-repository.ts`.
-- [ ] 3.3 **REFACTOR** Extract retry policy.
+- [x] 3.1 **RED** Claim/rollback; `FOR UPDATE` visibility/replay/conflict/races.
+- [x] 3.2 **GREEN** Receipt engine: `apps/api/src/modules/padrones/inscription-repository.ts`.
+- [x] 3.3 **REFACTOR** Extract retry policy.
 
 ## PR4
 - [ ] 4.1 **RED** Exactly-one audit on change; zero on failure/denial/replay/no-op; stale expected ignored at target, else CAS `409`/zero effects.
