@@ -75,6 +75,37 @@ Completed tasks: 2.1, 2.2, 2.3.
 - Authored changed lines: 166 additions, 6 deletions; 172 total, within the 350-line PR2 cap.
 - Rollback: delete `apps/api/src/lib/idempotency.ts` and `apps/api/src/lib/idempotency.test.ts`; revert only the CTACTE delegation in `apps/api/src/modules/socios/forms/ctacte-comprobante.ts` and delete `apps/api/src/modules/socios/forms/ctacte-comprobante.test.ts`.
 
+## PR3 — `feat/padrones-receipts` → `feat/padrones-idempotency`
+
+Completed tasks: 3.1, 3.2, 3.3.
+
+### TDD Cycle Evidence
+
+| Task | Test file | Layer | RED | GREEN | REFACTOR |
+|---|---|---|---|---|---|
+| 3.1 | `apps/api/src/modules/padrones/inscription-lifecycle.postgres.integration.test.ts` | PostgreSQL integration | `Failed to load url ./inscription-repository.ts` (0 tests) | 3/3 passed | Same race contract passed after extraction |
+| 3.2 | Same | PostgreSQL integration | Test written before repository module | 3/3 passed | Typed DTO replay mapping preserved |
+| 3.3 | Same | PostgreSQL integration | Safety net: 3/3 passed | N/A — behavior-preserving only | 3/3 passed after `receiptRetry` and canonical `mapReceipt` extraction |
+
+### Work Unit Evidence
+
+- Initial environment recovery: the focused command first reported `Command "vitest" not found` in the new worktree; `pnpm install --frozen-lockfile` restored locked workspace dependencies without source changes. The exact RED after recovery is the missing repository-module failure above.
+- Runtime command, GREEN, and post-REFACTOR result: `ATHLOS_TEST_DATABASE_URL=postgresql://athlos:athlos@localhost:5563/athlos_test pnpm --filter @athlos/api exec vitest run src/modules/padrones/inscription-lifecycle.postgres.integration.test.ts` → 1 file, 3/3 passed.
+- Two real PostgreSQL pool connections prove: the winner holds transaction A while a follower waits, then transaction B replays the committed typed DTO; same key with changed payload, command, and endpoint each returns `{ outcome: 'conflict' }`; a throwing winner rolls back its claim and a second connection subsequently claims and stores exactly one receipt. Follower lookup uses `FOR UPDATE`; no-row/incomplete retry is bounded to 3 × 10ms and returns `{ outcome: 'unavailable' }`, never polling indefinitely.
+- Final checks: `pnpm --filter @athlos/api typecheck` passed; `pnpm exec prettier --check apps/api/src/modules/padrones/inscription-repository.ts apps/api/src/modules/padrones/inscription-lifecycle.postgres.integration.test.ts` passed; `git diff --check` passed. `pnpm --filter @athlos/api lint` passed with the unrelated existing `apps/api/src/routes/admin/gastos.test.ts:367` no-console warning.
+- Authored changed lines: 174 additions, 0 deletions (90 repository + 84 integration test), within the 350-line PR3 cap.
+- Rollback: delete only `apps/api/src/modules/padrones/inscription-repository.ts` and `apps/api/src/modules/padrones/inscription-lifecycle.postgres.integration.test.ts`; no lifecycle service, audit, route/RBAC, stand-in, UI, or production action is included.
+
+### Bounded Review Correction — Claim Lock Timeout (`review-e59f787d594c705c`)
+
+- Scope: only the initial receipt claim wait and its PostgreSQL timing test. No task checkbox or later-slice changes.
+- RED: the focused command ran 4 tests with 1 failure: `bounds a follower claim while the winner receipt is uncommitted` rejected with `Error: follower claim timed out` after 200ms because `INSERT ... ON CONFLICT` waited on the uncommitted winner.
+- GREEN: the same command passed 4/4 after transaction A sets a 100ms PostgreSQL `lock_timeout`; `55P03` is handled only after that transaction exits, then fresh transaction-B `FOR UPDATE` visibility retries remain bounded at 3 × 10ms.
+- Post-cleanup: same command passed 4/4. A deterministic barrier signals only once the winner has claimed and entered its callback; cleanup releases it and awaits both connections.
+- Checks: API typecheck passed; API lint passed with the unrelated existing `apps/api/src/routes/admin/gastos.test.ts:367` no-console warning; Prettier and `git diff --check` passed.
+- Authored changed lines: 224 additions, 0 deletions total (100 repository + 124 integration test); correction delta is 50 additions, within the 350-line cap.
+- Rollback: delete only the two existing PR3 files named above; no schema, service, audit, route/RBAC, stand-in, UI, or production action changed.
+
 ## Remaining
 
-PR3–PR7 remain unchecked and out of scope for this child branch.
+PR4–PR7 remain unchecked and out of scope for this child branch.
