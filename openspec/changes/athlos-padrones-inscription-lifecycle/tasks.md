@@ -34,9 +34,9 @@ Approved. Tracker `feat/padrones-inscription-lifecycle`: draft → `main`. PRs: 
 - [x] 1.3 **REFACTOR** Deduplicate fixtures.
 
 ## PR2
-- [ ] 2.1 **RED** Key bounds; SHA-256 `command|endpoint|payload` isolation.
-- [ ] 2.2 **GREEN** `apps/api/src/lib/idempotency.ts`; CTACTE delegates unchanged.
-- [ ] 2.3 **REFACTOR** Deduplicate serializer.
+- [x] 2.1 **RED** Key bounds; SHA-256 `command|endpoint|payload` isolation.
+- [x] 2.2 **GREEN** `apps/api/src/lib/idempotency.ts`; CTACTE delegates unchanged.
+- [x] 2.3 **REFACTOR** Deduplicate serializer.
 
 ## PR3
 - [ ] 3.1 **RED** Claim/rollback; `FOR UPDATE` visibility/replay/conflict/races.

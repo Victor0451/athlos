@@ -53,6 +53,28 @@ Completed tasks: 1.1, 1.2, 1.3.
 - Focused checks: `pnpm --filter @athlos/db typecheck`, `pnpm --filter @athlos/db lint`, `pnpm exec prettier --check packages/db/src/schema/deportes.test.ts packages/db/drizzle/0036_padrones_inscription_lifecycle.sql`, and `git diff --check` passed.
 - Cap compaction: removed two non-semantic migration lines without changing assertions or SQL behavior; reran focused PostgreSQL 6/6, typecheck, lint, Prettier, and diff check successfully. The child is now at its 350-addition cap.
 
+## PR2 — `feat/padrones-idempotency` → `feat/padrones-schema`
+
+Completed tasks: 2.1, 2.2, 2.3.
+
+### TDD Cycle Evidence
+
+| Task | Test file | Layer | RED | GREEN | REFACTOR |
+|---|---|---|---|---|---|
+| 2.1 | `apps/api/src/lib/idempotency.test.ts` | Unit | Focused command failed: missing `./idempotency.ts` module; CTACTE oversized-key assertion also resolved instead of rejecting | 3 helper tests passed | Stable payload serialization remains covered |
+| 2.2 | `apps/api/src/lib/idempotency.test.ts`, `apps/api/src/modules/socios/forms/ctacte-comprobante.test.ts` | Unit | Tests written before helper/delegation code | 4/4 focused tests passed | CTACTE retains its exact legacy fingerprint and validation envelope |
+| 2.3 | Same focused tests | Unit | N/A — behavior-preserving refactor | N/A — already green | 4/4 passed after extracting shared canonical parts serialization |
+
+### Work Unit Evidence
+
+- RED command: `pnpm --filter @athlos/api exec vitest run src/lib/idempotency.test.ts src/modules/socios/forms/ctacte-comprobante.test.ts` → failed: `src/lib/idempotency.test.ts` could not load `./idempotency.ts`; the compatibility test also showed an oversized key resolved instead of rejecting.
+- GREEN command: same command → 2 test files passed, 4 tests passed.
+- Post-REFACTOR command: same command → 2 test files passed, 4 tests passed.
+- Runtime harness: N/A — this slice is a deterministic pure helper and a CTACTE delegation/wire-compatibility unit; it introduces no route, database, process, or external-service boundary.
+- Focused checks: `pnpm --filter @athlos/api typecheck` passed; `pnpm --filter @athlos/api lint` passed with one pre-existing warning in `apps/api/src/routes/admin/gastos.test.ts`; `pnpm exec prettier --check apps/api/src/lib/idempotency.ts apps/api/src/lib/idempotency.test.ts apps/api/src/modules/socios/forms/ctacte-comprobante.ts apps/api/src/modules/socios/forms/ctacte-comprobante.test.ts` and `git diff --check` passed.
+- Authored changed lines: 166 additions, 6 deletions; 172 total, within the 350-line PR2 cap.
+- Rollback: delete `apps/api/src/lib/idempotency.ts` and `apps/api/src/lib/idempotency.test.ts`; revert only the CTACTE delegation in `apps/api/src/modules/socios/forms/ctacte-comprobante.ts` and delete `apps/api/src/modules/socios/forms/ctacte-comprobante.test.ts`.
+
 ## Remaining
 
-PR2–PR7 remain unchecked and out of scope for this child branch.
+PR3–PR7 remain unchecked and out of scope for this child branch.
