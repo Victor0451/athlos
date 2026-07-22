@@ -1,4 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
+import {
+  canonicalizeIdempotencyParts,
+  createSha256Fingerprint,
+  validateIdempotencyKey,
+} from '../../../lib/idempotency.ts'
 import { sql } from 'drizzle-orm'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import type { Db } from '@athlos/db'
@@ -109,7 +114,7 @@ export interface ComprobanteLeaseStore {
 export async function renderComprobante(
   params: RenderComprobanteParams,
 ): Promise<RenderComprobanteResult> {
-  if (!params.idempotencyKey)
+  if (!validateIdempotencyKey(params.idempotencyKey))
     throw BusinessError(
       ErrorCode.VALIDATION_ERROR,
       'Idempotency-Key header must be 1–128 characters',
@@ -371,11 +376,16 @@ const defaultTimers: DeadlineTimers = {
 }
 
 function comprobanteRequestFingerprint(params: RenderComprobanteParams): string {
-  return createHash('sha256')
-    .update(
-      `comprobante|${params.operatorId}|${params.socioId}|${params.cuenta}|${params.from}|${params.to}`,
-    )
-    .digest('hex')
+  return createSha256Fingerprint(
+    canonicalizeIdempotencyParts([
+      'comprobante',
+      params.operatorId,
+      params.socioId,
+      params.cuenta,
+      params.from,
+      params.to,
+    ]),
+  )
 }
 
 function formatFechaEmision(d: Date): string {
