@@ -2,6 +2,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgSchema,
   text,
   timestamp,
@@ -9,6 +10,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { socios } from './socios.ts'
+import { operators } from './operators.ts'
 
 /**
  * `deportes` schema — disciplinas, inscripciones, cuotas de actividad.
@@ -82,7 +84,10 @@ export const inscripciones = deportesSchema.table(
       .references(() => ejercicios.id, { onDelete: 'restrict' }),
     estado: text('estado').notNull().default('activa'),
     fechaAlta: date('fecha_alta').notNull(),
+    bajaMotivo: text('baja_motivo'),
+    fechaBaja: date('fecha_baja'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     socioDisciplinaEjercicioUnique: uniqueIndex('inscripciones_unique').on(
@@ -97,9 +102,36 @@ export const inscripciones = deportesSchema.table(
   }),
 )
 
+/** Durable idempotency outcomes for enrollment lifecycle commands. */
+export const inscripcionCommandReceipts = deportesSchema.table(
+  'inscripcion_command_receipts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'restrict' }),
+    callerKey: text('caller_key').notNull(),
+    command: text('command').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    inscripcionId: uuid('inscripcion_id').references(() => inscripciones.id, {
+      onDelete: 'restrict',
+    }),
+    result: jsonb('result'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    operatorCallerKeyUnique: uniqueIndex(
+      'inscripcion_command_receipts_operator_caller_key_unique',
+    ).on(table.operatorId, table.callerKey),
+  }),
+)
+
 export type Disciplina = typeof disciplinas.$inferSelect
 export type NewDisciplina = typeof disciplinas.$inferInsert
 export type Ejercicio = typeof ejercicios.$inferSelect
 export type NewEjercicio = typeof ejercicios.$inferInsert
 export type Inscripcion = typeof inscripciones.$inferSelect
 export type NewInscripcion = typeof inscripciones.$inferInsert
+export type InscripcionCommandReceipt = typeof inscripcionCommandReceipts.$inferSelect
+export type NewInscripcionCommandReceipt = typeof inscripcionCommandReceipts.$inferInsert
