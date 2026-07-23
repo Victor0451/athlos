@@ -15,6 +15,7 @@ describe('inscription service import boundary', () => {
       .filter((file) => readFileSync(join(directory, file), 'utf8').includes(specifier))
       .sort()
     expect(consumers).toEqual([
+      'inscription-command-service.ts',
       'inscription-lifecycle.postgres.integration.test.ts',
       'inscription-service.import-boundary.test.ts',
     ])
