@@ -10,11 +10,14 @@ import { executeInscriptionReceipt } from './inscription-repository.ts'
 import { applyCreate, applyTransition } from './inscription-service.ts'
 
 const url = process.env['ATHLOS_TEST_DATABASE_URL']
+const schema = `lifecycle_audit_${randomUUID().replaceAll('-', '')}`
 const table = `receipt_test_${randomUUID().replaceAll('-', '')}`
 const lifecycle = `lifecycle_test_${randomUUID().replaceAll('-', '')}`
 const references = `reference_test_${randomUUID().replaceAll('-', '')}`
 let winner: ReturnType<typeof createDb>
 let follower: ReturnType<typeof createDb>
+
+const quoteIdentifier = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`
 
 function createBarrier() {
   let enter!: () => void
@@ -52,6 +55,21 @@ beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
   winner = createDb({ connectionString: url, poolMax: 1 })
   follower = createDb({ connectionString: url, poolMax: 1 })
+  await winner.pool.query(`CREATE SCHEMA ${quoteIdentifier(schema)}`)
+  await Promise.all(
+    [winner, follower].map(({ pool }) =>
+      pool.query(`SET search_path TO ${quoteIdentifier(schema)}, public`),
+    ),
+  )
+  await winner.pool.query(`CREATE TABLE audit_events (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+    operator_id uuid, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL,
+    old_value jsonb, new_value jsonb, source_ip text, metadata jsonb, idempotency_key text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+  )`)
+  await winner.pool.query(
+    'CREATE UNIQUE INDEX uq_audit_events_idempotency_key ON audit_events(idempotency_key) WHERE idempotency_key IS NOT NULL',
+  )
   await winner.pool.query(
     `CREATE TABLE ${table} (operator_id text NOT NULL, caller_key text NOT NULL, command text NOT NULL, request_fingerprint text NOT NULL, inscripcion_id text, result jsonb, PRIMARY KEY (operator_id, caller_key))`,
   )
@@ -65,9 +83,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await winner.pool.query(`DELETE FROM public.audit_events WHERE entity_id LIKE 'audit-%'`)
-  await winner.pool.query(`DROP TABLE IF EXISTS ${table}`)
-  await winner.pool.query(`DROP TABLE IF EXISTS ${lifecycle}, ${references}`)
+  await winner.pool.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE`)
   await Promise.all([winner.pool.end(), follower.pool.end()])
 })
 
@@ -249,10 +265,7 @@ describe('inscription receipt transactions', () => {
 describe('inscription command audit facade', () => {
   const context = { operatorId: '00000000-0000-4000-8000-000000000001', sourceIp: '127.0.0.1' }
   const auditCount = (id: string) =>
-    winner.pool.query(
-      `SELECT count(*)::int AS count FROM public.audit_events WHERE entity_id = $1`,
-      [id],
-    )
+    winner.pool.query(`SELECT count(*)::int AS count FROM audit_events WHERE entity_id = $1`, [id])
 
   it('commits one create event with owned context and replays without another event', async () => {
     const input = {
@@ -275,7 +288,7 @@ describe('inscription command audit facade', () => {
     await expect(auditCount(input.id)).resolves.toMatchObject({ rows: [{ count: 1 }] })
     await expect(
       winner.pool.query(
-        `SELECT action, source_ip, metadata FROM public.audit_events WHERE entity_id = $1`,
+        `SELECT action, source_ip, metadata FROM audit_events WHERE entity_id = $1`,
         [input.id],
       ),
     ).resolves.toMatchObject({
