@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/victor0451/athlos-api:latest
+    image: ${ATHLOS_API_IMAGE:?ATHLOS_API_IMAGE must be set to an immutable GHCR digest}
     restart: unless-stopped
     env_file:
       - .env.production
