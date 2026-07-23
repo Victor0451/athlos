@@ -47,6 +47,7 @@ export async function executeInscriptionReceipt<T>(
         ON CONFLICT (operator_id, caller_key) DO NOTHING RETURNING operator_id`)
       if (!rows(inserted)[0]) return false
 
+      await tx.execute(sql`SET LOCAL lock_timeout = '0'`)
       const receipt = await execute(tx)
       await tx.execute(sql`UPDATE ${sql.raw(table)} SET inscripcion_id = ${receipt.inscripcionId ?? null},
         result = ${JSON.stringify(receipt.result)}::jsonb
@@ -59,12 +60,20 @@ export async function executeInscriptionReceipt<T>(
   if (claimed) return { outcome: 'executed', result: claimed.result }
 
   for (let attempt = 0; attempt < receiptRetry.attempts; attempt++) {
-    const receipt = await db.transaction(async (tx) => {
-      const selected = await tx.execute(sql`SELECT command, request_fingerprint, result
-        FROM ${sql.raw(table)} WHERE operator_id = ${command.operatorId}
-        AND caller_key = ${command.callerKey} FOR UPDATE`)
-      return rows(selected)[0] as ReceiptRow | undefined
-    })
+    let receipt: ReceiptRow | undefined
+    try {
+      receipt = await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SET LOCAL lock_timeout = '${sql.raw(String(receiptRetry.claimLockTimeoutMs))}ms'`,
+        )
+        const selected = await tx.execute(sql`SELECT command, request_fingerprint, result
+          FROM ${sql.raw(table)} WHERE operator_id = ${command.operatorId}
+          AND caller_key = ${command.callerKey} FOR UPDATE`)
+        return rows(selected)[0] as ReceiptRow | undefined
+      })
+    } catch (error) {
+      if (!isClaimLockTimeout(error)) throw error
+    }
     if (!receipt) {
       await delay(receiptRetry.delayMs)
       continue

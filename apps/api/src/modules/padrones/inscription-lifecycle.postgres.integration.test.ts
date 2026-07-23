@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { emitAudit } from '@athlos/audit'
 import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  executeCreateInscription,
+  executeTransitionInscription,
+} from './inscription-command-service.ts'
 import { executeInscriptionReceipt } from './inscription-repository.ts'
 import { applyCreate, applyTransition } from './inscription-service.ts'
 
@@ -51,13 +56,16 @@ beforeAll(async () => {
     `CREATE TABLE ${table} (operator_id text NOT NULL, caller_key text NOT NULL, command text NOT NULL, request_fingerprint text NOT NULL, inscripcion_id text, result jsonb, PRIMARY KEY (operator_id, caller_key))`,
   )
   await winner.pool.query(`CREATE TABLE ${references} (id text PRIMARY KEY)`)
-  await winner.pool.query(`INSERT INTO ${references} VALUES ('s-1'), ('s-2'), ('d-1'), ('e-1')`)
+  await winner.pool.query(
+    `INSERT INTO ${references} VALUES ('s-1'), ('s-2'), ('s-3'), ('s-4'), ('d-1'), ('e-1')`,
+  )
   await winner.pool.query(
     `CREATE TABLE ${lifecycle} (id text PRIMARY KEY, socio_id text NOT NULL REFERENCES ${references}, disciplina_id text NOT NULL REFERENCES ${references}, ejercicio_id text NOT NULL REFERENCES ${references}, fecha_alta date NOT NULL, estado text NOT NULL, baja_motivo text, fecha_baja date, UNIQUE (socio_id, disciplina_id, ejercicio_id))`,
   )
 })
 
 afterAll(async () => {
+  await winner.pool.query(`DELETE FROM public.audit_events WHERE entity_id LIKE 'audit-%'`)
   await winner.pool.query(`DROP TABLE IF EXISTS ${table}`)
   await winner.pool.query(`DROP TABLE IF EXISTS ${lifecycle}, ${references}`)
   await Promise.all([winner.pool.end(), follower.pool.end()])
@@ -235,5 +243,106 @@ describe('inscription receipt transactions', () => {
       [rollback.callerKey],
     )
     expect(count.rows[0]?.count).toBe(1)
+  })
+})
+
+describe('inscription command audit facade', () => {
+  const context = { operatorId: '00000000-0000-4000-8000-000000000001', sourceIp: '127.0.0.1' }
+  const auditCount = (id: string) =>
+    winner.pool.query(
+      `SELECT count(*)::int AS count FROM public.audit_events WHERE entity_id = $1`,
+      [id],
+    )
+
+  it('commits one create event with owned context and replays without another event', async () => {
+    const input = {
+      ...context,
+      callerKey: 'audit-create',
+      table: lifecycle,
+      receiptTable: table,
+      id: 'audit-create-id',
+      socioId: 's-3',
+      disciplinaId: 'd-1',
+      ejercicioId: 'e-1',
+      fechaAlta: '2026-03-01',
+      estado: 'activa' as const,
+    }
+    const first = await executeCreateInscription(winner.db, input)
+    const replay = await executeCreateInscription(follower.db, input)
+
+    expect(first).toMatchObject({ outcome: 'executed', result: { changed: true } })
+    expect(replay).toMatchObject({ outcome: 'replayed', result: { changed: true } })
+    await expect(auditCount(input.id)).resolves.toMatchObject({ rows: [{ count: 1 }] })
+    await expect(
+      winner.pool.query(
+        `SELECT action, source_ip, metadata FROM public.audit_events WHERE entity_id = $1`,
+        [input.id],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          action: 'INSCRIPCION_CREATED',
+          source_ip: '127.0.0.1',
+          metadata: { socioId: 's-3', disciplinaId: 'd-1', ejercicioId: 'e-1' },
+        },
+      ],
+    })
+  })
+
+  it('emits no status event for a locked same-state command', async () => {
+    const input = {
+      ...context,
+      callerKey: 'audit-noop',
+      table: lifecycle,
+      receiptTable: table,
+      id: 'i-1',
+      target: 'activa' as const,
+      expectedEstado: 'baja' as const,
+    }
+    const result = await executeTransitionInscription(winner.db, input)
+
+    expect(result).toMatchObject({ outcome: 'executed', result: { changed: false } })
+    await expect(auditCount(input.id)).resolves.toMatchObject({ rows: [{ count: 0 }] })
+  })
+
+  it('rolls back the receipt and write when its audit event is deduplicated', async () => {
+    const input = {
+      ...context,
+      callerKey: 'audit-failure',
+      table: lifecycle,
+      receiptTable: table,
+      id: 'audit-failure-id',
+      socioId: 's-4',
+      disciplinaId: 'd-1',
+      ejercicioId: 'e-1',
+      fechaAlta: '2026-03-01',
+      estado: 'activa' as const,
+    }
+    await emitAudit(winner.db, {
+      operatorId: input.operatorId,
+      action: 'INSCRIPCION_CREATED',
+      entityType: 'inscripcion',
+      entityId: input.id,
+      oldValue: null,
+      newValue: null,
+      sourceIp: input.sourceIp,
+      payload: null,
+      metadata: {},
+      callerKey: input.callerKey,
+    })
+
+    await expect(executeCreateInscription(winner.db, input)).rejects.toThrow(
+      'inscription audit event was not inserted',
+    )
+    await expect(
+      winner.pool.query(`SELECT count(*)::int AS count FROM ${lifecycle} WHERE id = $1`, [
+        input.id,
+      ]),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] })
+    await expect(
+      winner.pool.query(`SELECT count(*)::int AS count FROM ${table} WHERE caller_key = $1`, [
+        input.callerKey,
+      ]),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] })
   })
 })
