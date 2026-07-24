@@ -26,12 +26,26 @@ const baseEnv: NodeJS.ProcessEnv = {
  * by the /health/ready and /api/versions tests so the route doesn't
  * hang on a real Postgres connection.
  */
-function makeStubPool(): Pool {
+function makeStubPool(missingRelation?: string, queryError?: Error, neverResolves = false): Pool {
   return {
     query: async (sql: string) => {
+      if (neverResolves) return new Promise(() => undefined)
+      if (queryError) throw queryError
       const trimmed = String(sql).trim().toLowerCase()
       if (trimmed.startsWith('select 1')) {
         return { rows: [{ '?column?': 1 }], rowCount: 1 }
+      }
+      if (trimmed.startsWith('select to_regclass')) {
+        return {
+          rows: [
+            {
+              operators: missingRelation === 'operators' ? null : 'operators',
+              refresh_tokens: missingRelation === 'refresh_tokens' ? null : 'refresh_tokens',
+              job_runs: missingRelation === 'job_runs' ? null : 'job_runs',
+            },
+          ],
+          rowCount: 1,
+        }
       }
       // Migration count / last — return an empty result. The
       // versions route catches the empty case and uses a fallback.
@@ -44,7 +58,7 @@ function makeStubPool(): Pool {
   } as unknown as Pool
 }
 
-async function buildWithStubPool(): Promise<ReturnType<typeof buildServer>> {
+async function buildWithStubPool(pool = makeStubPool()): Promise<ReturnType<typeof buildServer>> {
   const standin = createStandinDb()
   return buildServer({
     env: baseEnv,
@@ -53,7 +67,7 @@ async function buildWithStubPool(): Promise<ReturnType<typeof buildServer>> {
     // test from re-declaring the full container type.
     containerOverrides: {
       db: standin.drizzle as never,
-      pool: makeStubPool(),
+      pool,
     },
     quietLogger: true,
   })
@@ -84,6 +98,17 @@ describe('GET /health', () => {
       await app.close()
     }
   })
+
+  it('remains live when the database is unavailable', async () => {
+    const app = await buildWithStubPool(makeStubPool(undefined, new Error('database unavailable')))
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health' })
+      expect(res.statusCode).toBe(200)
+      expect(res.json().status).toBe('ok')
+    } finally {
+      await app.close()
+    }
+  })
 })
 
 describe('GET /health/ready', () => {
@@ -95,11 +120,57 @@ describe('GET /health/ready', () => {
       const body = res.json()
       expect(body.status).toBe('ok')
       expect(body.db).toBe('ok')
+      expect(body.schema).toBe('ok')
       expect(typeof body.latency_ms).toBe('number')
     } finally {
       await app.close()
     }
   })
+
+  it.each(['operators', 'refresh_tokens', 'job_runs'])(
+    'returns redacted 503 when %s is absent',
+    async (relation) => {
+      const app = await buildWithStubPool(makeStubPool(relation))
+      try {
+        const res = await app.inject({ method: 'GET', url: '/health/ready' })
+        expect(res.statusCode).toBe(503)
+        expect(res.json()).toMatchObject({ status: 'down', db: 'ok', schema: 'down' })
+        expect(res.body).not.toContain(relation)
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
+  it('returns a redacted 503 when the database fails', async () => {
+    const app = await buildWithStubPool(
+      makeStubPool(undefined, new Error('postgresql://user:secret@db/internal')),
+    )
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health/ready' })
+      expect(res.statusCode).toBe(503)
+      expect(res.json()).toMatchObject({ status: 'down', db: 'down', schema: 'down' })
+      expect(res.body).not.toContain('secret')
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('times out readiness after two seconds', async () => {
+    const app = await buildWithStubPool(makeStubPool(undefined, undefined, true))
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health/ready' })
+      expect(res.statusCode).toBe(503)
+      expect(res.json()).toMatchObject({
+        status: 'down',
+        db: 'down',
+        schema: 'down',
+        latency_ms: expect.any(Number),
+      })
+    } finally {
+      await app.close()
+    }
+  }, 3_000)
 })
 
 describe('GET /health/startup', () => {

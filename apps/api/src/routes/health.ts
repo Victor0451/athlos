@@ -30,11 +30,13 @@ export interface HealthDeps {
 interface ReadinessBody {
   status: 'ok' | 'down'
   db: 'ok' | 'down'
+  schema: 'ok' | 'down'
   latency_ms: number
-  error?: string
 }
 
 const READINESS_TIMEOUT_MS = 2000
+const REQUIRED_RELATIONS_QUERY =
+  "SELECT to_regclass('operators') AS operators, to_regclass('refresh_tokens') AS refresh_tokens, to_regclass('job_runs') AS job_runs"
 
 export const healthRoutes: FastifyPluginAsync<HealthDeps> = async (fastify, { pool, version }) => {
   // Liveness — no DB call, no auth.
@@ -48,25 +50,30 @@ export const healthRoutes: FastifyPluginAsync<HealthDeps> = async (fastify, { po
   // Readiness — pings the DB with a 2s ceiling.
   fastify.get('/health/ready', async (_request, reply) => {
     const start = Date.now()
-    const probe = (async (): Promise<{ ok: boolean; error?: string }> => {
+    const probe = (async (): Promise<{ db: 'ok' | 'down'; schema: 'ok' | 'down' }> => {
       try {
         await pool.query('SELECT 1')
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : 'unknown' }
+        const result = await pool.query(REQUIRED_RELATIONS_QUERY)
+        const relations = result.rows[0]
+        const schema =
+          relations?.operators && relations?.refresh_tokens && relations?.job_runs ? 'ok' : 'down'
+        return { db: 'ok', schema }
+      } catch {
+        return { db: 'down', schema: 'down' }
       }
     })()
-    const timeout = new Promise<{ ok: boolean; error: string }>((resolve) => {
-      setTimeout(() => resolve({ ok: false, error: 'timeout' }), READINESS_TIMEOUT_MS)
+    const timeout = new Promise<{ db: 'down'; schema: 'down' }>((resolve) => {
+      setTimeout(() => resolve({ db: 'down', schema: 'down' }), READINESS_TIMEOUT_MS)
     })
     const result = await Promise.race([probe, timeout])
+    const ok = result.db === 'ok' && result.schema === 'ok'
     const body: ReadinessBody = {
-      status: result.ok ? 'ok' : 'down',
-      db: result.ok ? 'ok' : 'down',
+      status: ok ? 'ok' : 'down',
+      db: result.db,
+      schema: result.schema,
       latency_ms: Date.now() - start,
-      ...(result.ok ? {} : { error: result.error }),
     }
-    return reply.code(result.ok ? 200 : 503).send(body)
+    return reply.code(ok ? 200 : 503).send(body)
   })
 
   // Startup probe — returns 200 once the server is ready to serve.
