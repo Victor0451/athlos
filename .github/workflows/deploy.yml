@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -43,7 +43,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Wait for Postgres
         run: |
-          for i in {1..30}; do
+          for _ in {1..30}; do
             pg_isready -h localhost -p 5432 -U athlos && break
             sleep 1
           done
@@ -70,6 +70,7 @@ jobs:
           images: ghcr.io/victor0451/athlos-api
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short,prefix=main-,enable={{is_default_branch}}
             type=raw,value={{version}},enable={{is_default_branch}}
             type=ref,event=branch
             type=sha,format=long
@@ -79,6 +80,7 @@ jobs:
             suffix=
 
       - uses: docker/build-push-action@v5
+        id: push
         with:
           context: .
           push: true
@@ -87,31 +89,56 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - uses: appleboy/ssh-action@v1
+    outputs:
+      image-reference: ${{ format('ghcr.io/victor0451/athlos-api@{0}', steps.push.outputs.digest) }}
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ATHLOS_API_IMAGE: ${{ needs.publish.outputs.image-reference }}
+      DEPLOY_HOST: 100.78.95.34
+      DEPLOY_PORT: 2244
+      DEPLOY_USER: vlongo
+      DEPLOY_PATH: /srv/apps/athlos
+
+    steps:
+      - uses: actions/checkout@v4
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: athlos
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /run/media/vlongo/Archivos/Projectos/Athlos
+          fetch-depth: 0
 
-            PREVIOUS_TAG="ghcr.io/victor0451/athlos-api:$(git rev-parse --short HEAD~1 2>/dev/null || echo "")"
-            echo "Previous tag (rollback anchor): $PREVIOUS_TAG"
+      # This action creates an ephemeral runner node before any connectivity check.
+      - name: Join Tailnet
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8
+        with:
+          oauth-client-id: ${{ secrets.DEPLOY_TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.DEPLOY_TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+          hostname: deploy-ci-runner
 
-            docker compose pull
-            docker compose up -d
+      - name: Materialize restricted SSH material
+        run: |
+          umask 077
+          DEPLOY_SSH_KEY_FILE="$RUNNER_TEMP/deploy_ssh_key"
+          DEPLOY_KNOWN_HOSTS_FILE="$RUNNER_TEMP/deploy_known_hosts"
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > "$DEPLOY_SSH_KEY_FILE"
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > "$DEPLOY_KNOWN_HOSTS_FILE"
+          chmod 600 "$DEPLOY_SSH_KEY_FILE" "$DEPLOY_KNOWN_HOSTS_FILE"
+          printf 'DEPLOY_SSH_KEY_FILE=%s\n' "$DEPLOY_SSH_KEY_FILE" >> "$GITHUB_ENV"
+          printf 'DEPLOY_KNOWN_HOSTS_FILE=%s\n' "$DEPLOY_KNOWN_HOSTS_FILE" >> "$GITHUB_ENV"
 
-            for i in $(seq 1 12); do
-              if curl -sf http://localhost:3001/health/ready > /dev/null; then
-                echo "Deploy successful after ${i} attempts"
-                exit 0
-              fi
-              sleep 5
-            done
+      - name: Run restricted read-only preflight
+        run: ./scripts/deploy/request.sh preflight
 
-            echo "Healthcheck failed, rolling back to $PREVIOUS_TAG"
-            docker compose logs --tail 200 api > /tmp/deploy-fail-$(date +%s).log 2>&1 || true
-            docker compose pull $PREVIOUS_TAG || true
-            docker compose up -d
-            exit 1
+      - name: Request production deploy
+        run: ./scripts/deploy/request.sh deploy
+
+      - name: Remove restricted SSH material
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/deploy_ssh_key" "$RUNNER_TEMP/deploy_known_hosts"
