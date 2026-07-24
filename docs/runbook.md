@@ -471,9 +471,32 @@ Push to `main` → GitHub Actions `deploy.yml` runs:
 1. Install + lint + typecheck + test (fail fast on regression)
 2. Build image with buildx + GHA cache (~30s warm)
 3. Push to GHCR with tags `:latest`, `:vX.Y.Z` (release commits), `:main-<sha>`
-4. SSH to server → `docker compose pull && docker compose up -d`
-5. Poll `/health/ready` every 5s for 60s
-6. On pass: done. On fail: dump logs to `/tmp/deploy-fail-<ts>.log`, redeploy previous tag, exit red.
+4. Deploy job (production environment approval required) runs after publish + immutable image handoff
+5. An ephemeral `tag:ci` Tailnet runner joins before connectivity checks
+6. The runner materializes a restricted SSH key and pinned known-host file in `$RUNNER_TEMP` with mode `0600`, without logging either value
+7. `scripts/deploy/request.sh preflight` performs the restricted, read-only SSH preflight using the canonical immutable image and fixed target contract
+8. `scripts/deploy/request.sh deploy` makes the only remote deployment request after preflight succeeds
+9. The runner removes the temporary SSH files regardless of the request outcome
+
+### PR2 recovery guardrails (repository-only)
+
+- This repository change validates the deploy contract only (workflow split, production environment gate, immutable digest handoff).
+- No live deploy, SSH, Tailnet request, or server-side action is executed in this PR2 recovery slice.
+- The only deploy-target metadata enforced by CI contracts is:
+  - `DEPLOY_HOST=100.78.95.34`
+  - `DEPLOY_PORT=2244`
+  - `DEPLOY_USER=vlongo`
+  - `DEPLOY_PATH=/srv/apps/athlos`
+
+### PR2 connectivity boundary
+
+- `publish` emits the canonical `ghcr.io/victor0451/athlos-api@sha256:<digest>` reference through `image-reference` for both restricted requests.
+- PR2 proves connectivity and restricted request ordering only. It does not verify application readiness or provide automatic image rollback.
+- If the workflow must be withdrawn, revert the repository workflow, configuration, and documentation. Application recovery remains an operator-owned, separate change.
+- If `deploy.yml` or its contracts change, rerun:
+  - `actionlint .github/workflows/{deploy,test}.yml`
+  - `shellcheck scripts/deploy/request.sh scripts/tests/deploy-workflow.test.bats`
+  - `bats scripts/tests/deploy-workflow.test.bats`
 
 ### GitHub Secrets
 
@@ -481,29 +504,23 @@ Push to `main` → GitHub Actions `deploy.yml` runs:
 | ---------------- | ----------------------------------------------------------------------------------------------- | ------------------- |
 | `DEPLOY_HOST`    | Server IP (current: `100.78.95.34`; switch when prod host is provisioned)                       | When server changes |
 | `DEPLOY_SSH_KEY` | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs | Quarterly           |
+| `DEPLOY_KNOWN_HOSTS` | Pinned `[100.78.95.34]:2244` host-key line; written only to the runner temporary known-hosts file | When host key rotates |
+| `DEPLOY_TAILSCALE_OAUTH_CLIENT_ID` | OAuth client ID for ephemeral `tag:ci` GitHub runner nodes | When client rotates |
+| `DEPLOY_TAILSCALE_OAUTH_SECRET` | OAuth client secret for ephemeral `tag:ci` GitHub runner nodes | When client rotates |
 | `GITHUB_TOKEN`   | Automatic (used for GHCR push)                                                                  | Automatic           |
 
 ### db-destructive label
 
 Auto-applied by `actions/labeler@v5` when a PR touches `packages/db/migrations/**`, `packages/db/src/schema/**`, or `drizzle/**`. `check-destructive.yml` then requires either a backup URL (matching `https://.*\.sql\.gz` in a PR comment) OR `/backup-skipped` directive in PR body. Both paths log to the workflow summary for audit.
 
-### Manual rollback
+### Application recovery
 
-When auto-rollback fails or operator needs to roll back further:
-
-```bash
-ssh athlos@$DEPLOY_HOST
-cd /opt/athlos
-docker images ghcr.io/victor0451/athlos-api    # pick previous tag
-docker compose pull ghcr.io/victor0451/athlos-api:previous-sha
-docker compose up -d
-curl -sf http://localhost:3001/health/ready   # verify
-```
+PR2 does not define automatic image rollback or application readiness verification. Handle application recovery under a separately approved operator procedure; this workflow must not be treated as evidence that either behavior is implemented.
 
 ### Server hardening (one-time setup, NOT automated by CI)
 
 - `authorized_keys` entry for deploy key uses `command="/opt/athlos/scripts/deploy-wrapper.sh"` + `from="140.82.112.0/20,185.199.108.0/22,192.30.252.0/22"` (GitHub Actions IPs) + `no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`
-- Wrapper script only accepts `docker compose pull && docker compose up -d`; rejects other commands
+- Wrapper script accepts only the server-owned `preflight <immutable-image>` and `deploy <immutable-image>` operations; it rejects other commands
 - Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
 
 ### Quarterly key rotation
