@@ -41,8 +41,8 @@ Delivery metadata: base `25ee4713900b2dd1f842eef8b8633ce5fe91ae41`; worktree `At
 
 ## Phase 3: A2 Controlled Bootstrap
 
-- [ ] 3.1 RED: `bootstrap-admin.test.ts` covers recoverable operator, missing approval/audit, retry, one ADMIN/audit, and no argv/env/evidence secret.
-- [ ] 3.2 GREEN/REFACTOR: implement `bootstrap-admin.ts`/package command: FD-only secret, in-memory hash, advisory lock, redacted result; run focused DB test.
+- [x] 3.1 RED: `bootstrap-admin.test.ts` covers recoverable operator, missing approval/audit, retry, one ADMIN/audit, and no argv/env/evidence secret.
+- [x] 3.2 GREEN/REFACTOR: implement `bootstrap-admin.ts`/package command: FD-only secret, in-memory hash, advisory lock, redacted result; run focused DB test.
 
 ## Phase 4: B1 Readiness
 
