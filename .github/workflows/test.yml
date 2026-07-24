@@ -40,7 +40,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Wait for Postgres
         run: |
-          for i in {1..30}; do
+          for _ in {1..30}; do
             pg_isready -h localhost -p 5432 -U athlos && break
             sleep 1
           done
@@ -78,7 +78,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Wait for Postgres
         run: |
-          for i in {1..30}; do
+          for _ in {1..30}; do
             pg_isready -h localhost -p 5432 -U athlos && break
             sleep 1
           done
@@ -122,16 +122,47 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Wait for Postgres
         run: |
-          for i in {1..30}; do
+          for _ in {1..30}; do
             pg_isready -h localhost -p 5432 -U athlos && break
             sleep 1
           done
       - name: Install bats and shellcheck
         run: sudo apt-get update && sudo apt-get install -y bats shellcheck postgresql-client cryptsetup rsync
       - name: shellcheck (must be clean)
-        run: shellcheck scripts/backup.sh scripts/restore.sh scripts/lib/common.sh scripts/mount-usb.sh scripts/unmount-usb.sh scripts/backup-to-usb.sh scripts/setup-usb.sh
+        run: |
+          shellcheck \
+            scripts/backup.sh scripts/restore.sh scripts/lib/common.sh \
+            scripts/mount-usb.sh scripts/unmount-usb.sh scripts/backup-to-usb.sh scripts/setup-usb.sh
+
+      - name: shellcheck deploy workflow contract checks
+        run: |
+          shellcheck \
+            scripts/deploy/request.sh scripts/tests/deploy-workflow.test.bats
       - name: bats tests (must all pass)
-        run: bats scripts/tests/common.test.bats scripts/tests/backup.test.bats scripts/tests/restore.test.bats scripts/tests/mount-usb.test.bats scripts/tests/unmount-usb.test.bats scripts/tests/backup-to-usb.test.bats scripts/tests/setup-usb.test.bats
+        run: |
+          bats \
+            scripts/tests/common.test.bats \
+            scripts/tests/backup.test.bats \
+            scripts/tests/restore.test.bats \
+            scripts/tests/mount-usb.test.bats \
+            scripts/tests/unmount-usb.test.bats \
+            scripts/tests/backup-to-usb.test.bats \
+            scripts/tests/setup-usb.test.bats
+
+      - name: bats deploy workflow contract
+        run: bats scripts/tests/deploy-workflow.test.bats
+
+      - name: Install actionlint (${{ github.sha }})
+        run: |
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v1.7.5/actionlint_1.7.5_linux_amd64.tar.gz" \
+            -o /tmp/actionlint.tar.gz
+          sudo mkdir -p /tmp/actionlint
+          sudo tar -xzf /tmp/actionlint.tar.gz -C /tmp/actionlint actionlint
+          sudo mv /tmp/actionlint/actionlint /usr/local/bin/actionlint
+          sudo chmod +x /usr/local/bin/actionlint
+
+      - name: actionlint workflow files
+        run: actionlint .github/workflows/deploy.yml .github/workflows/test.yml
 
   docker-build-smoke:
     name: Docker build smoke
