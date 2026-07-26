@@ -137,7 +137,12 @@ jobs:
       - name: shellcheck deploy workflow contract checks
         run: |
           shellcheck \
-            scripts/deploy/request.sh scripts/tests/deploy-workflow.test.bats
+            scripts/deploy/request.sh scripts/deploy/server-gate.sh \
+            scripts/release/create-tag.sh \
+            scripts/tests/deploy-request.test.bats \
+            scripts/tests/deploy-server-gate.test.bats \
+            scripts/tests/deploy-workflow.test.bats \
+            scripts/tests/release-tag.test.bats
       - name: bats tests (must all pass)
         run: |
           bats \
@@ -150,7 +155,12 @@ jobs:
             scripts/tests/setup-usb.test.bats
 
       - name: bats deploy workflow contract
-        run: bats scripts/tests/deploy-workflow.test.bats
+        run: |
+          bats \
+            scripts/tests/deploy-request.test.bats \
+            scripts/tests/deploy-server-gate.test.bats \
+            scripts/tests/deploy-workflow.test.bats \
+            scripts/tests/release-tag.test.bats
 
       - name: Install actionlint (${{ github.sha }})
         run: |

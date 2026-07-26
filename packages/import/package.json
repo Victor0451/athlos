@@ -1,6 +1,6 @@
 {
   "name": "@athlos/import",
-  "version": "0.5.21",
+  "version": "0.6.0",
   "private": true,
   "description": "Athlos legacy import pipeline — DBF reader, hash, ordered import, bridge validation. PR 7a foundation.",
   "type": "module",

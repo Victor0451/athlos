@@ -1,11 +1,23 @@
 name: deploy
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      release-tag:
+        required: true
+        type: string
+      preflight-operation:
+        required: true
+        type: string
+      deploy-operation:
+        required: true
+        type: string
 
 concurrency:
-  group: deploy
+  group: deploy-${{ inputs.environment }}
   cancel-in-progress: false
 
 permissions:
@@ -69,10 +81,8 @@ jobs:
         with:
           images: ghcr.io/victor0451/athlos-api
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short,prefix=main-,enable={{is_default_branch}}
-            type=raw,value={{version}},enable={{is_default_branch}}
-            type=ref,event=branch
+            type=raw,value=${{ inputs.release-tag }}
+            type=raw,value=latest,enable=${{ inputs.environment == 'production' }}
             type=sha,format=long
           flavor: |
             latest=auto
@@ -94,8 +104,8 @@ jobs:
         with:
           images: ghcr.io/victor0451/athlos-web
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short,prefix=main-,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.release-tag }}
+            type=raw,value=latest,enable=${{ inputs.environment == 'production' }}
             type=sha,format=long
 
       - uses: docker/build-push-action@v5
@@ -118,7 +128,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
-      name: production
+      name: ${{ inputs.environment }}
     permissions:
       contents: read
       packages: write
@@ -156,10 +166,10 @@ jobs:
           printf 'DEPLOY_KNOWN_HOSTS_FILE=%s\n' "$DEPLOY_KNOWN_HOSTS_FILE" >> "$GITHUB_ENV"
 
       - name: Run restricted read-only preflight
-        run: ./scripts/deploy/request.sh preflight
+        run: ./scripts/deploy/request.sh ${{ inputs.preflight-operation }}
 
       - name: Request production deploy
-        run: ./scripts/deploy/request.sh deploy
+        run: ./scripts/deploy/request.sh ${{ inputs.deploy-operation }}
 
       - name: Remove restricted SSH material
         if: ${{ always() }}
