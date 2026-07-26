@@ -149,6 +149,12 @@ EOF
   [ ! -e "$CAPTURE" ]
 }
 
+@test "beta deployment uses the restricted beta operation" {
+  run_request deploy-beta
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$CAPTURE")" == *"<deploy-beta $DIGEST $WEB_DIGEST>"* ]]
+}
+
 @test "Compose substitutes both images with immutable digests" {
   run env ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" docker compose -f "$ROOT/docker-compose.yml" config --images
   [ "$status" -eq 0 ]
@@ -161,4 +167,15 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"ATHLOS_API_IMAGE must be set to an immutable GHCR digest"* ]]
   [[ "$output" != *":latest"* ]]
+}
+
+@test "beta Compose uses isolated ports and requires both immutable images" {
+  cp "$ROOT/docker-compose.beta.yml" "$TMPDIR/docker-compose.beta.yml"
+  touch "$TMPDIR/.env.beta"
+  run env ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" docker compose \
+    -p athlos-beta -f "$TMPDIR/docker-compose.beta.yml" config
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"published: \"3100\""* ]]
+  [[ "$output" == *"published: \"4100\""* ]]
+  [[ "$output" == *"name: athlos_default"* ]]
 }

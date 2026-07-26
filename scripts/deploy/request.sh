@@ -58,7 +58,7 @@ if [[ "${1:-}" == '--dry-run' ]]; then
 fi
 
 operation="${1:-}"
-[[ $# -eq 1 && ( "$operation" == preflight || "$operation" == deploy ) ]] || die 'usage: request.sh [--dry-run] <preflight|deploy>'
+[[ $# -eq 1 && ( "$operation" == preflight || "$operation" == deploy || "$operation" == preflight-beta || "$operation" == deploy-beta ) ]] || die 'usage: request.sh [--dry-run] <preflight|deploy|preflight-beta|deploy-beta>'
 validate_image
 validate_coordinates
 
@@ -69,9 +69,11 @@ if "$dry_run"; then
 fi
 
 validate_ssh_prerequisites
-if ! request preflight; then
+preflight_operation=preflight
+[[ "$operation" == *-beta ]] && preflight_operation=preflight-beta
+if ! request "$preflight_operation"; then
   die 'preflight rejected the restricted SSH credential or connectivity'
 fi
-if [[ "$operation" == deploy ]]; then
-  request deploy
+if [[ "$operation" == deploy || "$operation" == deploy-beta ]]; then
+  request "$operation"
 fi
