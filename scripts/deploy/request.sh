@@ -2,7 +2,8 @@
 # Request the server-owned restricted deployment gate. This client never opens a shell.
 set -euo pipefail
 
-readonly IMAGE_PATTERN='^ghcr\.io/victor0451/athlos-api@sha256:[0-9a-f]{64}$'
+readonly API_IMAGE_PATTERN='^ghcr\.io/victor0451/athlos-api@sha256:[0-9a-f]{64}$'
+readonly WEB_IMAGE_PATTERN='^ghcr\.io/victor0451/athlos-web@sha256:[0-9a-f]{64}$'
 readonly DEPLOY_HOST_PIN='100.78.95.34'
 readonly DEPLOY_PORT_PIN='2244'
 readonly DEPLOY_USER_PIN='vlongo'
@@ -19,7 +20,8 @@ require_fixed() {
 }
 
 validate_image() {
-  [[ "${ATHLOS_API_IMAGE:-}" =~ $IMAGE_PATTERN ]] || die 'ATHLOS_API_IMAGE must be an immutable Athlos GHCR digest'
+  [[ "${ATHLOS_API_IMAGE:-}" =~ $API_IMAGE_PATTERN ]] || die 'ATHLOS_API_IMAGE must be an immutable Athlos API GHCR digest'
+  [[ "${ATHLOS_WEB_IMAGE:-}" =~ $WEB_IMAGE_PATTERN ]] || die 'ATHLOS_WEB_IMAGE must be an immutable Athlos web GHCR digest'
 }
 
 validate_coordinates() {
@@ -46,7 +48,7 @@ request() {
     -i "$DEPLOY_SSH_KEY_FILE" \
     -p "$DEPLOY_PORT_PIN" \
     -T "$DEPLOY_USER_PIN@$DEPLOY_HOST_PIN" \
-    "$operation $ATHLOS_API_IMAGE"
+    "$operation $ATHLOS_API_IMAGE $ATHLOS_WEB_IMAGE"
 }
 
 dry_run=false
@@ -61,8 +63,8 @@ validate_image
 validate_coordinates
 
 if "$dry_run"; then
-  printf 'dry-run operation=%s host=%s port=%s user=%s image=%s ssh_key=<redacted> tailscale=<redacted>\n' \
-    "$operation" "$DEPLOY_HOST_PIN" "$DEPLOY_PORT_PIN" "$DEPLOY_USER_PIN" "$ATHLOS_API_IMAGE"
+  printf 'dry-run operation=%s host=%s port=%s user=%s api_image=%s web_image=%s ssh_key=<redacted> tailscale=<redacted>\n' \
+    "$operation" "$DEPLOY_HOST_PIN" "$DEPLOY_PORT_PIN" "$DEPLOY_USER_PIN" "$ATHLOS_API_IMAGE" "$ATHLOS_WEB_IMAGE"
   exit 0
 fi
 

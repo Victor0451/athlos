@@ -64,7 +64,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: meta
+      - id: api-meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/victor0451/athlos-api
@@ -80,17 +80,38 @@ jobs:
             suffix=
 
       - uses: docker/build-push-action@v5
-        id: push
+        id: api-push
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.api-meta.outputs.tags }}
+          labels: ${{ steps.api-meta.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - id: web-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/victor0451/athlos-web
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short,prefix=main-,enable={{is_default_branch}}
+            type=sha,format=long
+
+      - uses: docker/build-push-action@v5
+        id: web-push
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          tags: ${{ steps.web-meta.outputs.tags }}
+          labels: ${{ steps.web-meta.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
 
     outputs:
-      image-reference: ${{ format('ghcr.io/victor0451/athlos-api@{0}', steps.push.outputs.digest) }}
+      api-image-reference: ${{ format('ghcr.io/victor0451/athlos-api@{0}', steps.api-push.outputs.digest) }}
+      web-image-reference: ${{ format('ghcr.io/victor0451/athlos-web@{0}', steps.web-push.outputs.digest) }}
 
   deploy:
     needs: publish
@@ -102,7 +123,8 @@ jobs:
       contents: read
       packages: write
     env:
-      ATHLOS_API_IMAGE: ${{ needs.publish.outputs.image-reference }}
+      ATHLOS_API_IMAGE: ${{ needs.publish.outputs.api-image-reference }}
+      ATHLOS_WEB_IMAGE: ${{ needs.publish.outputs.web-image-reference }}
       DEPLOY_HOST: 100.78.95.34
       DEPLOY_PORT: 2244
       DEPLOY_USER: vlongo

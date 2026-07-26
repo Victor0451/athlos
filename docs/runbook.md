@@ -469,30 +469,30 @@ Three layers of protection:
 Push to `main` → GitHub Actions `deploy.yml` runs:
 
 1. Install + lint + typecheck + test (fail fast on regression)
-2. Build image with buildx + GHA cache (~30s warm)
-3. Push to GHCR with tags `:latest`, `:vX.Y.Z` (release commits), `:main-<sha>`
-4. Deploy job (production environment approval required) runs after publish + immutable image handoff
+2. Build the API and web images with buildx + independent GHA caches
+3. Push both images to GHCR with `:latest` and `:main-<sha>` tags
+4. Deploy job (production environment approval required) runs after both immutable digest handoffs
 5. An ephemeral `tag:ci` Tailnet runner joins before connectivity checks
 6. The runner materializes a restricted SSH key and pinned known-host file in `$RUNNER_TEMP` with mode `0600`, without logging either value
-7. `scripts/deploy/request.sh preflight` performs the restricted, read-only SSH preflight using the canonical immutable image and fixed target contract
+7. `scripts/deploy/request.sh preflight` performs the restricted, read-only SSH preflight using both canonical immutable images and the fixed target contract
 8. `scripts/deploy/request.sh deploy` makes the only remote deployment request after preflight succeeds
 9. The runner removes the temporary SSH files regardless of the request outcome
 
-### PR2 recovery guardrails (repository-only)
+### Deployment boundaries
 
-- This repository change validates the deploy contract only (workflow split, production environment gate, immutable digest handoff).
-- No live deploy, SSH, Tailnet request, or server-side action is executed in this PR2 recovery slice.
+- The workflow deploys only immutable API and web digests produced by its `publish` job.
+- The server gate verifies API readiness, the web login route, and both running image identities.
+- During the first web container deployment, the gate stops the legacy PM2 process. It restores PM2 if the container deployment fails and removes the PM2 process after success.
 - The only deploy-target metadata enforced by CI contracts is:
   - `DEPLOY_HOST=100.78.95.34`
   - `DEPLOY_PORT=2244`
   - `DEPLOY_USER=vlongo`
   - `DEPLOY_PATH=/srv/apps/athlos`
 
-### PR2 connectivity boundary
+### Connectivity boundary
 
-- `publish` emits the canonical `ghcr.io/victor0451/athlos-api@sha256:<digest>` reference through `image-reference` for both restricted requests.
-- PR2 proves connectivity and restricted request ordering only. It does not verify application readiness or provide automatic image rollback.
-- If the workflow must be withdrawn, revert the repository workflow, configuration, and documentation. Application recovery remains an operator-owned, separate change.
+- `publish` emits canonical `ghcr.io/victor0451/athlos-{api,web}@sha256:<digest>` references for both restricted requests.
+- If the workflow must be withdrawn, revert the workflow and Compose configuration, then restore the PM2 web process from `/srv/config/athlos/ecosystem.config.js`.
 - If `deploy.yml` or its contracts change, rerun:
   - `actionlint .github/workflows/{deploy,test}.yml`
   - `shellcheck scripts/deploy/request.sh scripts/tests/deploy-workflow.test.bats`
@@ -500,14 +500,14 @@ Push to `main` → GitHub Actions `deploy.yml` runs:
 
 ### GitHub Secrets
 
-| Secret           | Purpose                                                                                         | Rotation            |
-| ---------------- | ----------------------------------------------------------------------------------------------- | ------------------- |
-| `DEPLOY_HOST`    | Server IP (current: `100.78.95.34`; switch when prod host is provisioned)                       | When server changes |
-| `DEPLOY_SSH_KEY` | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs | Quarterly           |
-| `DEPLOY_KNOWN_HOSTS` | Pinned `[100.78.95.34]:2244` host-key line; written only to the runner temporary known-hosts file | When host key rotates |
-| `DEPLOY_TAILSCALE_OAUTH_CLIENT_ID` | OAuth client ID for ephemeral `tag:ci` GitHub runner nodes | When client rotates |
-| `DEPLOY_TAILSCALE_OAUTH_SECRET` | OAuth client secret for ephemeral `tag:ci` GitHub runner nodes | When client rotates |
-| `GITHUB_TOKEN`   | Automatic (used for GHCR push)                                                                  | Automatic           |
+| Secret                             | Purpose                                                                                           | Rotation              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------- |
+| `DEPLOY_HOST`                      | Server IP (current: `100.78.95.34`; switch when prod host is provisioned)                         | When server changes   |
+| `DEPLOY_SSH_KEY`                   | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs   | Quarterly             |
+| `DEPLOY_KNOWN_HOSTS`               | Pinned `[100.78.95.34]:2244` host-key line; written only to the runner temporary known-hosts file | When host key rotates |
+| `DEPLOY_TAILSCALE_OAUTH_CLIENT_ID` | OAuth client ID for ephemeral `tag:ci` GitHub runner nodes                                        | When client rotates   |
+| `DEPLOY_TAILSCALE_OAUTH_SECRET`    | OAuth client secret for ephemeral `tag:ci` GitHub runner nodes                                    | When client rotates   |
+| `GITHUB_TOKEN`                     | Automatic (used for GHCR push)                                                                    | Automatic             |
 
 ### db-destructive label
 
@@ -521,7 +521,7 @@ PR2 does not define automatic image rollback or application readiness verificati
 
 - Install `scripts/deploy/server-gate.sh` as root-owned mode `0755` at `/usr/local/sbin/athlos-deploy-gate`.
 - `authorized_keys` entry for the dedicated deploy key uses `command="/usr/local/sbin/athlos-deploy-gate"` + `from="100.64.0.0/10"` (Tailnet addresses only) + `restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`.
-- Wrapper script accepts only the server-owned `preflight <immutable-image>` and `deploy <immutable-image>` operations; it rejects other commands
+- Wrapper script accepts only the server-owned `preflight <api-image> <web-image>` and `deploy <api-image> <web-image>` operations; it rejects other commands.
 - Tailnet ACLs must separately allow only `tag:ci` to reach `100.78.95.34:2244`; the SSH source restriction is defense in depth, not an ACL replacement.
 - Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
 
