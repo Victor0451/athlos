@@ -466,7 +466,15 @@ Three layers of protection:
 
 ### Deploy flow
 
-Push to `main` → GitHub Actions `deploy.yml` runs:
+Athlos uses one-way promotion lanes. Direct commits to `beta` and `production` are forbidden:
+
+1. Feature branches merge into a green `main`; this never deploys an environment.
+2. A promotion PR from `main` to `beta` creates the next `vX.Y.Z-beta.N` tag and deploys the isolated beta stack.
+3. A promotion PR from `beta` to `production` creates `vX.Y.Z` and deploys production.
+4. The stable version in every workspace `package.json` must be bumped on `main` before starting a new release train. Stable tags are immutable and cannot be reused.
+5. Hotfixes branch from `production`, then synchronize back through `beta` and `main`.
+
+The reusable GitHub Actions `deploy.yml` runs for each release lane:
 
 1. Install + lint + typecheck + test (fail fast on regression)
 2. Build the API and web images with buildx + independent GHA caches
