@@ -1,0 +1,36 @@
+name: release-beta
+
+on:
+  push:
+    branches: [beta]
+
+concurrency:
+  group: release-beta
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.tag.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Create immutable prerelease tag
+        run: ./scripts/release/create-tag.sh beta
+
+  deploy:
+    needs: tag
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: beta
+      release-tag: ${{ needs.tag.outputs.release-tag }}
+      preflight-operation: preflight-beta
+      deploy-operation: deploy-beta
+    secrets: inherit
