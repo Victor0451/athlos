@@ -478,6 +478,16 @@ Push to `main` → GitHub Actions `deploy.yml` runs:
 8. `scripts/deploy/request.sh deploy` makes the only remote deployment request after preflight succeeds
 9. The runner removes the temporary SSH files regardless of the request outcome
 
+### Beta runtime foundation
+
+The beta stack shares the host but not runtime state. It remains dormant until the release-promotion workflow is enabled:
+
+- Web: `http://100.78.95.34:3100`
+- API: `http://100.78.95.34:4100`
+- Database: `athlos_beta`
+- Compose project: `athlos-beta`
+- Environment: `beta`
+
 ### Deployment boundaries
 
 - The workflow deploys only immutable API and web digests produced by its `publish` job.

@@ -5,7 +5,7 @@ setup() {
   gate="$root/scripts/deploy/server-gate.sh"
   temp="$(mktemp -d)"
   mkdir -p "$temp/bin" "$temp/deploy"
-  touch "$temp/deploy/docker-compose.yml" "$temp/deploy/docker-compose.qa.yml"
+  touch "$temp/deploy/docker-compose.yml" "$temp/deploy/docker-compose.qa.yml" "$temp/deploy/docker-compose.beta.yml"
   export ATHLOS_GATE_TEST_MODE=1
   export ATHLOS_GATE_DEPLOY_PATH="$temp/deploy"
   export ATHLOS_GATE_PM2_BIN="$temp/bin/pm2"
@@ -18,7 +18,7 @@ setup() {
 #!/usr/bin/env bash
 printf 'docker %s\n' "$*" >> "$CALLS"
 if [[ "$1" == inspect ]]; then
-  if [[ "${*: -1}" == athlos-web-1 ]]; then printf '%s\n' "$WEB_DIGEST"; else printf '%s\n' "$DIGEST"; fi
+  if [[ "${*: -1}" == *web-1 ]]; then printf '%s\n' "$WEB_DIGEST"; else printf '%s\n' "$DIGEST"; fi
 fi
 EOF
   cat > "$temp/bin/curl" <<'EOF'
@@ -86,6 +86,17 @@ teardown() {
   [[ "$calls" == *"pm2 stop athlos-web"* ]]
   [[ "$calls" == *"pm2 start /srv/config/athlos/ecosystem.config.js"* ]]
   [[ "$calls" != *"pm2 delete athlos-web"* ]]
+}
+
+@test "beta deploy uses isolated project ports and containers without touching PM2" {
+  run "$gate" deploy-beta "$DIGEST" "$WEB_DIGEST"
+  [ "$status" -eq 0 ]
+  calls="$(<"$CALLS")"
+  [[ "$calls" == *"docker compose -p athlos-beta -f docker-compose.beta.yml pull api web"* ]]
+  [[ "$calls" == *"http://localhost:4100/health/ready"* ]]
+  [[ "$calls" == *"http://localhost:3100/login"* ]]
+  [[ "$calls" == *"athlos-beta-api-1"* && "$calls" == *"athlos-beta-web-1"* ]]
+  [[ "$calls" != *"pm2 "* ]]
 }
 
 @test "requires forced-command context outside test mode" {
