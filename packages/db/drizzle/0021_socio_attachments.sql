@@ -15,13 +15,19 @@
 -- Idempotent: every CREATE / CREATE INDEX uses IF NOT EXISTS so a
 -- re-run after a partial apply is a no-op.
 
-CREATE TYPE IF NOT EXISTS "socios"."attachment_category" AS ENUM (
-  'dni',
-  'comprobante',
-  'foto',
-  'contrato',
-  'otro'
-);
+DO $$
+BEGIN
+  CREATE TYPE "socios"."attachment_category" AS ENUM (
+    'dni',
+    'comprobante',
+    'foto',
+    'contrato',
+    'otro'
+  );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END
+$$;
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS "socios"."socio_attachments" (
