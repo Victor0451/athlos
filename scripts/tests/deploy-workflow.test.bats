@@ -39,15 +39,16 @@ assert_after() {
 }
 
 @test "deploy job requires a canonical immutable publish output via needs" {
-  run grep -n "^  deploy:$\|^    needs: publish$\|^      image-reference:" "$WORKFLOW"
+  run grep -n "^  deploy:$\|^    needs: publish$\|image-reference:" "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   assert_after "^  publish:$" "^    outputs:$"
   grep -q "^    outputs:$" "$WORKFLOW"
-  grep -Fq "      image-reference: \${{ format('ghcr.io/victor0451/athlos-api@{0}', steps.push.outputs.digest) }}" "$WORKFLOW"
+  grep -Fq "      api-image-reference: \${{ format('ghcr.io/victor0451/athlos-api@{0}', steps.api-push.outputs.digest) }}" "$WORKFLOW"
+  grep -Fq "      web-image-reference: \${{ format('ghcr.io/victor0451/athlos-web@{0}', steps.web-push.outputs.digest) }}" "$WORKFLOW"
   grep -q "^    needs: publish$" "$WORKFLOW"
-  grep -q "^      ATHLOS_API_IMAGE: \${{ needs.publish.outputs.image-reference }}$" "$WORKFLOW"
-  run ! grep -q "^      ATHLOS_API_IMAGE: \${{ needs.publish.outputs.image-digest }}$" "$WORKFLOW"
+  grep -q "^      ATHLOS_API_IMAGE: \${{ needs.publish.outputs.api-image-reference }}$" "$WORKFLOW"
+  grep -q "^      ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}$" "$WORKFLOW"
 }
 
 @test "deploy job is protected by production environment" {
@@ -68,7 +69,8 @@ assert_after() {
   grep -q "2244" "$WORKFLOW"
   grep -q "/srv/apps/athlos" "$WORKFLOW"
   grep -q "vlongo" "$WORKFLOW"
-  grep -q "needs.publish.outputs.image-reference" "$WORKFLOW"
+  grep -q "needs.publish.outputs.api-image-reference" "$WORKFLOW"
+  grep -q "needs.publish.outputs.web-image-reference" "$WORKFLOW"
   grep -q "./scripts/deploy/request.sh preflight" "$WORKFLOW"
   grep -q "./scripts/deploy/request.sh deploy" "$WORKFLOW"
 }
@@ -82,8 +84,8 @@ assert_after() {
 }
 
 @test "both restricted requests inherit the canonical immutable fixed target contract" {
-  assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.image-reference }}" "request.sh preflight"
-  assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.image-reference }}" "request.sh deploy"
+  assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.api-image-reference }}" "request.sh preflight"
+  assert_after "ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}" "request.sh deploy"
   assert_after "DEPLOY_HOST: 100.78.95.34" "request.sh preflight"
   assert_after "DEPLOY_PORT: 2244" "request.sh deploy"
   assert_after "DEPLOY_USER: vlongo" "request.sh preflight"
@@ -97,7 +99,8 @@ assert_after() {
   # Digest must be passed through outputs from publish; mutable refs are never used.
   [[ "$output" != *"ATHLOS_API_IMAGE=ghcr.io/victor0451/athlos-api:latest"* ]]
   [[ "$output" != *"ATHLOS_API_IMAGE=ghcr.io/victor0451/athlos-api:v"* ]]
-  [[ "$output" == *"needs.publish.outputs.image-reference"* ]]
+  [[ "$output" == *"needs.publish.outputs.api-image-reference"* ]]
+  [[ "$output" == *"needs.publish.outputs.web-image-reference"* ]]
 }
 
 @test "image publication includes latest and main-short-sha tags" {
