@@ -519,8 +519,10 @@ PR2 does not define automatic image rollback or application readiness verificati
 
 ### Server hardening (one-time setup, NOT automated by CI)
 
-- `authorized_keys` entry for deploy key uses `command="/opt/athlos/scripts/deploy-wrapper.sh"` + `from="140.82.112.0/20,185.199.108.0/22,192.30.252.0/22"` (GitHub Actions IPs) + `no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`
+- Install `scripts/deploy/server-gate.sh` as root-owned mode `0755` at `/usr/local/sbin/athlos-deploy-gate`.
+- `authorized_keys` entry for the dedicated deploy key uses `command="/usr/local/sbin/athlos-deploy-gate"` + `from="100.64.0.0/10"` (Tailnet addresses only) + `restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`.
 - Wrapper script accepts only the server-owned `preflight <immutable-image>` and `deploy <immutable-image>` operations; it rejects other commands
+- Tailnet ACLs must separately allow only `tag:ci` to reach `100.78.95.34:2244`; the SSH source restriction is defense in depth, not an ACL replacement.
 - Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
 
 ### Quarterly key rotation
