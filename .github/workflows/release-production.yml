@@ -1,0 +1,36 @@
+name: release-production
+
+on:
+  push:
+    branches: [production]
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.tag.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Create immutable stable tag
+        run: ./scripts/release/create-tag.sh production
+
+  deploy:
+    needs: tag
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      release-tag: ${{ needs.tag.outputs.release-tag }}
+      preflight-operation: preflight
+      deploy-operation: deploy
+    secrets: inherit

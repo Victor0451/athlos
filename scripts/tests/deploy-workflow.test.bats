@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2016 # Assertions intentionally match literal workflow expressions.
 
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
@@ -19,13 +20,13 @@ assert_after() {
   [ "$before_line" -lt "$after_line" ]
 }
 
-@test "deploy workflow is main-push only" {
+@test "deploy workflow is reusable and does not deploy main directly" {
   run cat "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   [[ "$output" == *"on:"* ]]
-  [[ "$output" == *"push:"* ]]
-  [[ "$output" == *"branches: [main]"* ]]
+  [[ "$output" == *"workflow_call:"* ]]
+  [[ "$output" != *"branches: [main]"* ]]
 
   # No PR workflow trigger is allowed in PR2 recovery flow.
   [[ "$output" != *"pull_request:"* ]]
@@ -51,18 +52,18 @@ assert_after() {
   grep -q "^      ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}$" "$WORKFLOW"
 }
 
-@test "deploy job is protected by production environment" {
-  run grep -n "^  deploy:$\|^    environment:$\|^      name: production$" "$WORKFLOW"
+@test "deploy job uses the requested protected environment" {
+  run grep -n "^  deploy:$\|^    environment:$\|^      name:.*inputs.environment" "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   assert_after "^  deploy:$" "^    environment:$"
-  assert_after "^    environment:$" "^      name: production$"
+  assert_after "^    environment:$" "^      name:.*inputs.environment"
   grep -q "^    environment:$" "$WORKFLOW"
-  grep -q "^      name: production$" "$WORKFLOW"
+  grep -Fq 'name: ${{ inputs.environment }}' "$WORKFLOW"
 }
 
 @test "deploy path uses immutable digest handoff and fixed target metadata" {
-  run grep -n "100.78.95.34\|2244\|/srv/apps/athlos\|vlongo\|@sha256:\|needs.publish.outputs.image-reference\|request.sh preflight\|request.sh deploy" "$WORKFLOW"
+  run grep -n "100.78.95.34\|2244\|/srv/apps/athlos\|vlongo\|needs.publish.outputs.api-image-reference\|request.sh.*operation" "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   grep -q "100.78.95.34" "$WORKFLOW"
@@ -71,25 +72,25 @@ assert_after() {
   grep -q "vlongo" "$WORKFLOW"
   grep -q "needs.publish.outputs.api-image-reference" "$WORKFLOW"
   grep -q "needs.publish.outputs.web-image-reference" "$WORKFLOW"
-  grep -q "./scripts/deploy/request.sh preflight" "$WORKFLOW"
-  grep -q "./scripts/deploy/request.sh deploy" "$WORKFLOW"
+  grep -Fq './scripts/deploy/request.sh ${{ inputs.preflight-operation }}' "$WORKFLOW"
+  grep -Fq './scripts/deploy/request.sh ${{ inputs.deploy-operation }}' "$WORKFLOW"
 }
 
 @test "deploy uses the restricted request client for real preflight before deploy" {
-  run grep -n "request.sh --dry-run\|request.sh preflight\|request.sh deploy" "$WORKFLOW"
+  run grep -n "request.sh --dry-run\|request.sh.*operation" "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   [[ "$output" != *"request.sh --dry-run"* ]]
-  assert_after "request.sh preflight" "request.sh deploy"
+  assert_after "request.sh.*preflight-operation" "request.sh.*deploy-operation"
 }
 
 @test "both restricted requests inherit the canonical immutable fixed target contract" {
-  assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.api-image-reference }}" "request.sh preflight"
-  assert_after "ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}" "request.sh deploy"
-  assert_after "DEPLOY_HOST: 100.78.95.34" "request.sh preflight"
-  assert_after "DEPLOY_PORT: 2244" "request.sh deploy"
-  assert_after "DEPLOY_USER: vlongo" "request.sh preflight"
-  assert_after "DEPLOY_PATH: /srv/apps/athlos" "request.sh deploy"
+  assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.api-image-reference }}" "request.sh.*preflight-operation"
+  assert_after "ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}" "request.sh.*deploy-operation"
+  assert_after "DEPLOY_HOST: 100.78.95.34" "request.sh.*preflight-operation"
+  assert_after "DEPLOY_PORT: 2244" "request.sh.*deploy-operation"
+  assert_after "DEPLOY_USER: vlongo" "request.sh.*preflight-operation"
+  assert_after "DEPLOY_PATH: /srv/apps/athlos" "request.sh.*deploy-operation"
 }
 
 @test "deploy script avoids mutable image references" {
@@ -103,23 +104,22 @@ assert_after() {
   [[ "$output" == *"needs.publish.outputs.web-image-reference"* ]]
 }
 
-@test "image publication includes latest and main-short-sha tags" {
-  run grep -nE "^[[:space:]]*type=raw,value=latest,enable=\{\{is_default_branch\}\}$" "$WORKFLOW"
+@test "image publication includes release and production latest tags" {
+  run grep -nF 'type=raw,value=${{ inputs.release-tag }}' "$WORKFLOW"
   [ "$status" -eq 0 ]
 
-  # Ensure main-short-sha tag is explicitly emitted.
-  run grep -nE "type=sha,.*format=short.*prefix=main-" "$WORKFLOW"
+  run grep -nF "type=raw,value=latest" "$WORKFLOW"
   [ "$status" -eq 0 ]
 }
 
 @test "deploy runner joins Tailnet as ephemeral tag:ci before both request operations" {
-  run grep -n "tailscale/github-action@\|tag:ci\|request.sh preflight\|request.sh deploy" "$WORKFLOW"
+  run grep -n "tailscale/github-action@\|tag:ci\|request.sh.*operation" "$WORKFLOW"
   [ "$status" -eq 0 ]
 
   grep -q "uses: tailscale/github-action@" "$WORKFLOW"
   grep -q "tags: tag:ci" "$WORKFLOW"
-  assert_after "uses: tailscale/github-action@" "request.sh preflight"
-  assert_after "uses: tailscale/github-action@" "request.sh deploy"
+  assert_after "uses: tailscale/github-action@" "request.sh.*preflight-operation"
+  assert_after "uses: tailscale/github-action@" "request.sh.*deploy-operation"
 }
 
 @test "remote SSH script never joins Tailnet" {
@@ -150,8 +150,8 @@ assert_after() {
   local known_hosts_export="printf 'DEPLOY_KNOWN_HOSTS_FILE=%s\\n' \"\$DEPLOY_KNOWN_HOSTS_FILE\" >> \"\$GITHUB_ENV\""
   local always="if: \${{ always() }}"
   local cleanup="rm -f \"\$RUNNER_TEMP/deploy_ssh_key\" \"\$RUNNER_TEMP/deploy_known_hosts\""
-  local preflight='^[[:space:]]*run: \./scripts/deploy/request\.sh preflight$'
-  local deploy='^[[:space:]]*run: \./scripts/deploy/request\.sh deploy$'
+  local preflight='request\.sh.*preflight-operation'
+  local deploy='request\.sh.*deploy-operation'
 
   run grep -n "umask 077\|$ssh_key_path\|$known_hosts_path\|chmod 600\|GITHUB_ENV\|$cleanup" "$WORKFLOW"
   [ "$status" -eq 0 ]
