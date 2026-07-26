@@ -68,7 +68,7 @@ preflight
 export ATHLOS_API_IMAGE="$api_image" ATHLOS_WEB_IMAGE="$web_image"
 "${compose[@]}" pull api web
 legacy_web_stopped=0
-# shellcheck disable=SC2329 # Invoked by the EXIT trap.
+# shellcheck disable=SC2317,SC2329 # Function and body are invoked by the EXIT trap.
 restore_legacy_web() {
   if [[ "$legacy_web_stopped" == 1 ]]; then
     "$pm2_bin" start /srv/config/athlos/ecosystem.config.js >/dev/null 2>&1 || true
