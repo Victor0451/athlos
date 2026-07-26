@@ -1,9 +1,11 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031 # Bats runs each test in a subshell by design.
 
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
   REQUEST="$ROOT/scripts/deploy/request.sh"
   DIGEST="ghcr.io/victor0451/athlos-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  WEB_DIGEST="ghcr.io/victor0451/athlos-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   TMPDIR="$(mktemp -d)"
   KEY="$TMPDIR/deploy-key"
   KNOWN_HOSTS="$TMPDIR/known_hosts"
@@ -31,6 +33,7 @@ teardown() {
 
 run_request() {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
+    ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     DEPLOY_SSH_KEY_FILE="$KEY" DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" "$@"
 }
 
@@ -54,7 +57,7 @@ run_request() {
 <2244>
 <-T>
 <vlongo@100.78.95.34>
-<preflight $DIGEST>
+<preflight $DIGEST $WEB_DIGEST>
 EOF
 )"
   [ "$(cat "$CAPTURE")" = "$expected" ]
@@ -64,7 +67,7 @@ EOF
   DIGEST="ghcr.io/victor0451/athlos-api:latest"
   run_request preflight
   [ "$status" -ne 0 ]
-  [[ "$output" == *"immutable Athlos GHCR digest"* ]]
+  [[ "$output" == *"immutable Athlos API GHCR digest"* ]]
   [ ! -e "$CAPTURE" ]
 }
 
@@ -72,18 +75,20 @@ EOF
   DIGEST="${DIGEST};touch${IFS}/tmp/pwned"
   run_request preflight
   [ "$status" -ne 0 ]
-  [[ "$output" == *"immutable Athlos GHCR digest"* ]]
+  [[ "$output" == *"immutable Athlos API GHCR digest"* ]]
   [ ! -e "$CAPTURE" ]
 }
 
 @test "alternate host and deployment path fail before SSH" {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
+    ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     DEPLOY_SSH_KEY_FILE="$KEY" DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" \
     DEPLOY_HOST="100.78.95.35" "$REQUEST" preflight
   [ "$status" -ne 0 ]
   [[ "$output" == *"DEPLOY_HOST must be 100.78.95.34"* ]]
   [ ! -e "$CAPTURE" ]
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
+    ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     DEPLOY_SSH_KEY_FILE="$KEY" DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" \
     DEPLOY_PATH="/tmp/athlos" "$REQUEST" preflight
   [ "$status" -ne 0 ]
@@ -93,6 +98,7 @@ EOF
 
 @test "missing or mismatched key and known-host prerequisites fail before SSH" {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
+    ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" preflight
   [ "$status" -ne 0 ]
   [[ "$output" == *"DEPLOY_SSH_KEY_FILE must name a readable restricted key"* ]]
@@ -108,33 +114,34 @@ EOF
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" DEPLOY_SSH_KEY_FILE="$KEY" \
     DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" preflight
   [ "$status" -ne 0 ]
-  [[ "$output" == *"ATHLOS_API_IMAGE must be an immutable Athlos GHCR digest"* ]]
+  [[ "$output" == *"ATHLOS_API_IMAGE must be an immutable Athlos API GHCR digest"* ]]
   [ ! -e "$CAPTURE" ]
 }
 
 @test "a failed preflight prevents the deploy request" {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" SSH_FAIL_PREFLIGHT=1 \
-    ATHLOS_API_IMAGE="$DIGEST" DEPLOY_SSH_KEY_FILE="$KEY" \
+    ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" DEPLOY_SSH_KEY_FILE="$KEY" \
     DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" deploy
   [ "$status" -ne 0 ]
   captured="$(cat "$CAPTURE")"
-  [[ "$captured" == *"<preflight $DIGEST>"* ]]
+  [[ "$captured" == *"<preflight $DIGEST $WEB_DIGEST>"* ]]
   [[ "$captured" != *"<deploy $DIGEST>"* ]]
 }
 
 @test "a stale private key is rejected during preflight without deploy" {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" SSH_STALE_KEY=1 \
-    ATHLOS_API_IMAGE="$DIGEST" DEPLOY_SSH_KEY_FILE="$KEY" \
+    ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" DEPLOY_SSH_KEY_FILE="$KEY" \
     DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" deploy
   [ "$status" -ne 0 ]
   [[ "$output" == *"preflight rejected the restricted SSH credential or connectivity"* ]]
   captured="$(cat "$CAPTURE")"
-  [[ "$captured" == *"<preflight $DIGEST>"* && "$captured" != *"<deploy $DIGEST>"* ]]
+  [[ "$captured" == *"<preflight $DIGEST $WEB_DIGEST>"* && "$captured" != *"<deploy $DIGEST $WEB_DIGEST>"* ]]
 }
 
 @test "dry-run diagnostics redact secret values and do not invoke SSH" {
   secret="do-not-log-this-secret"
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
+    ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     DEPLOY_SSH_KEY="$secret" TS_OAUTH_SECRET="$secret" "$REQUEST" --dry-run preflight
   [ "$status" -eq 0 ]
   [[ "$output" == *"operation=preflight"* ]]
@@ -142,14 +149,15 @@ EOF
   [ ! -e "$CAPTURE" ]
 }
 
-@test "Compose substitutes only the API image with an immutable digest" {
-  run env ATHLOS_API_IMAGE="$DIGEST" docker compose -f "$ROOT/docker-compose.yml" config --images
+@test "Compose substitutes both images with immutable digests" {
+  run env ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" docker compose -f "$ROOT/docker-compose.yml" config --images
   [ "$status" -eq 0 ]
-  [ "$output" = "$DIGEST" ]
+  [[ "$output" == *"$DIGEST"* ]]
+  [[ "$output" == *"$WEB_DIGEST"* ]]
 }
 
 @test "Compose fails closed without an API image" {
-  run env -u ATHLOS_API_IMAGE docker compose -f "$ROOT/docker-compose.yml" config --images
+  run env -u ATHLOS_API_IMAGE ATHLOS_WEB_IMAGE="$WEB_DIGEST" docker compose -f "$ROOT/docker-compose.yml" config --images
   [ "$status" -ne 0 ]
   [[ "$output" == *"ATHLOS_API_IMAGE must be set to an immutable GHCR digest"* ]]
   [[ "$output" != *":latest"* ]]
