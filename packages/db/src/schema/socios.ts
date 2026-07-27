@@ -1,5 +1,6 @@
 import {
   bigint,
+  check,
   date,
   index,
   integer,
@@ -335,6 +336,9 @@ export const legacyMembershipTypeSnapshots = sociosSchema.table(
     appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
+  (table) => ({
+    sequenceUnique: unique('legacy_membership_type_snapshots_sequence_key').on(table.sequence),
+  }),
 )
 
 export const legacyMembershipTypeSourceRows = sociosSchema.table(
@@ -366,6 +370,10 @@ export const legacyMembershipTypeSourceRows = sociosSchema.table(
       table.code,
       table.batchId,
     ),
+    recordOrdinalPositive: check(
+      'legacy_membership_type_source_rows_record_ordinal_positive',
+      sql`${table.recordOrdinal} > 0`,
+    ),
   }),
 )
 
@@ -392,6 +400,57 @@ export const legacyMembershipTypeCandidates = sociosSchema.table(
   }),
 )
 
+export const legacyMemberFeeState = sociosSchema.enum('legacy_member_fee_state', [
+  'blank',
+  'zero',
+  'non_zero',
+])
+
+export const legacyMemberReviewState = sociosSchema.enum('legacy_member_review_state', [
+  'validated',
+  'unknown_type',
+  'ambiguous_identity',
+])
+
+export const legacyMemberEvidence = sociosSchema.table(
+  'legacy_member_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    importBatch: uuid('import_batch').notNull(),
+    identityEvidenceId: uuid('identity_evidence_id')
+      .notNull()
+      .references(() => legacyIdentityEvidence.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id').references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    membershipTypeCandidateSourceRowId: uuid('membership_type_candidate_source_row_id').references(
+      () => legacyMembershipTypeCandidates.sourceRowId,
+      { onDelete: 'restrict' },
+    ),
+    legacyTypeCode: text('legacy_type_code').notNull(),
+    legacyCategory: text('legacy_category'),
+    feeState: legacyMemberFeeState('fee_state').notNull(),
+    feeValue: numeric('fee_value', { precision: 11, scale: 2 }),
+    reviewState: legacyMemberReviewState('review_state').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_member_evidence_raw_event_id_key').on(table.rawEventId),
+    feeStateValue: check(
+      'legacy_member_evidence_fee_state_value_check',
+      sql`(${table.feeState} = 'blank' AND ${table.feeValue} IS NULL)
+        OR (${table.feeState} = 'zero' AND ${table.feeValue} = 0)
+        OR (${table.feeState} = 'non_zero' AND ${table.feeValue} IS NOT NULL AND ${table.feeValue} <> 0)`,
+    ),
+    reviewAttachment: check(
+      'legacy_member_evidence_review_attachment_check',
+      sql`(${table.reviewState} = 'validated' AND ${table.memberId} IS NOT NULL AND ${table.membershipTypeCandidateSourceRowId} IS NOT NULL)
+        OR (${table.reviewState} IN ('unknown_type', 'ambiguous_identity') AND ${table.memberId} IS NULL AND ${table.membershipTypeCandidateSourceRowId} IS NULL)`,
+    ),
+  }),
+)
+
 export type MembershipAccount = typeof membershipAccounts.$inferSelect
 export type NewMembershipAccount = typeof membershipAccounts.$inferInsert
 export type MemberIdentity = typeof memberIdentities.$inferSelect
@@ -408,6 +467,8 @@ export type LegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRow
 export type NewLegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferInsert
 export type LegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferSelect
 export type NewLegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferInsert
+export type LegacyMemberEvidence = typeof legacyMemberEvidence.$inferSelect
+export type NewLegacyMemberEvidence = typeof legacyMemberEvidence.$inferInsert
 
 /**
  * Attachment category — `dni | comprobante | foto | contrato | otro`.

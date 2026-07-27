@@ -148,6 +148,13 @@
       "when": 1784000000000,
       "tag": "0020_socio_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785189922165,
+      "tag": "0039_socios_legacy_member_evidence",
+      "breakpoints": true
     }
   ]
 }
