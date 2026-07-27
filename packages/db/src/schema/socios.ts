@@ -321,6 +321,77 @@ export const legacyIdentityEvidence = sociosSchema.table(
   }),
 )
 
+export const legacyMembershipSnapshotState = sociosSchema.enum('legacy_membership_snapshot_state', [
+  'applied',
+  'rolled_back',
+])
+
+export const legacyMembershipTypeSnapshots = sociosSchema.table(
+  'legacy_membership_type_snapshots',
+  {
+    batchId: uuid('batch_id').primaryKey(),
+    sequence: bigint('sequence', { mode: 'number' }).notNull().generatedAlwaysAsIdentity(),
+    state: legacyMembershipSnapshotState('state').notNull().default('applied'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+)
+
+export const legacyMembershipTypeSourceRows = sociosSchema.table(
+  'legacy_membership_type_source_rows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    recordOrdinal: integer('record_ordinal').notNull(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    letter: text('letter').notNull(),
+    contentHash: text('content_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_membership_type_source_rows_raw_event_id_key').on(
+      table.rawEventId,
+    ),
+    batchOrdinalUnique: unique('legacy_membership_type_source_rows_batch_id_record_ordinal_key').on(
+      table.batchId,
+      table.recordOrdinal,
+    ),
+    codeBatchIdx: index('legacy_membership_type_source_rows_code_batch_idx').on(
+      table.code,
+      table.batchId,
+    ),
+  }),
+)
+
+export const legacyMembershipTypeCandidates = sociosSchema.table(
+  'legacy_membership_type_candidates',
+  {
+    snapshotBatchId: uuid('snapshot_batch_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    code: text('code').notNull(),
+    sourceRowId: uuid('source_row_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSourceRows.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotCodePrimary: unique('legacy_membership_type_candidates_pkey').on(
+      table.snapshotBatchId,
+      table.code,
+    ),
+    sourceRowUnique: uniqueIndex('legacy_membership_type_candidates_source_row_id_key').on(
+      table.sourceRowId,
+    ),
+  }),
+)
+
 export type MembershipAccount = typeof membershipAccounts.$inferSelect
 export type NewMembershipAccount = typeof membershipAccounts.$inferInsert
 export type MemberIdentity = typeof memberIdentities.$inferSelect
@@ -331,6 +402,12 @@ export type AccountHolderHistory = typeof accountHolderHistory.$inferSelect
 export type NewAccountHolderHistory = typeof accountHolderHistory.$inferInsert
 export type LegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferSelect
 export type NewLegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferInsert
+export type LegacyMembershipTypeSnapshot = typeof legacyMembershipTypeSnapshots.$inferSelect
+export type NewLegacyMembershipTypeSnapshot = typeof legacyMembershipTypeSnapshots.$inferInsert
+export type LegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferSelect
+export type NewLegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferInsert
+export type LegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferSelect
+export type NewLegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferInsert
 
 /**
  * Attachment category — `dni | comprobante | foto | contrato | otro`.
