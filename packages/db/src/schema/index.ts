@@ -81,6 +81,9 @@ export {
   legacyMembershipTypeSnapshots,
   legacyMembershipTypeSourceRows,
   legacyMembershipTypeCandidates,
+  legacyMemberFeeState,
+  legacyMemberReviewState,
+  legacyMemberEvidence,
 } from './socios'
 export type {
   Socio,
@@ -112,6 +115,8 @@ export type {
   NewLegacyMembershipTypeSourceRow,
   LegacyMembershipTypeCandidate,
   NewLegacyMembershipTypeCandidate,
+  LegacyMemberEvidence,
+  NewLegacyMemberEvidence,
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────

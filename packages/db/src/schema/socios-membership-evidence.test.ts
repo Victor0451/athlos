@@ -7,22 +7,39 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 const schema = `membership_${randomUUID().replaceAll('-', '')}`
 const q = `"${schema}"`
-const migration = join(
+const catalogMigration = join(
   import.meta.dirname,
   '..',
   '..',
   'drizzle',
   '0038_socios_legacy_membership_evidence.sql',
 )
+const memberEvidenceMigration = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'drizzle',
+  '0039_socios_legacy_member_evidence.sql',
+)
 let pool: Pool
 
-async function migrate() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.raw_events (id uuid PRIMARY KEY)`)
+async function applyMigration(migration: string) {
   await pool.query(
     `SET search_path TO ${q}, public; ${readFileSync(migration, 'utf8')
       .replaceAll('socios.', `${q}.`)
       .replaceAll('public.raw_events', `${q}.raw_events`)}`,
   )
+}
+
+async function migrateCatalog() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.raw_events (id uuid PRIMARY KEY)`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.member_identities (id uuid PRIMARY KEY)`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.legacy_identity_evidence (id uuid PRIMARY KEY)`)
+  await applyMigration(catalogMigration)
+}
+
+async function migrateMemberEvidence() {
+  await applyMigration(memberEvidenceMigration)
 }
 
 async function seed(batch: string, rows: Array<[number, string, string]>) {
@@ -80,8 +97,8 @@ afterEach(() => pool.query(`DROP SCHEMA ${q} CASCADE; CREATE SCHEMA ${q}`))
 
 describe('legacy membership catalog evidence', () => {
   it('retains duplicate occurrences and selects the greatest ordinal per code idempotently', async () => {
-    await migrate()
-    await migrate()
+    await migrateCatalog()
+    await migrateCatalog()
     const batch = randomUUID()
     await seed(batch, [
       [1, '4', 'First'],
@@ -112,7 +129,7 @@ describe('legacy membership catalog evidence', () => {
   })
 
   it('keeps obsolete candidates historical while only the latest applied snapshot is selectable', async () => {
-    await migrate()
+    await migrateCatalog()
     const first = randomUUID()
     const latest = randomUUID()
     await seed(first, [
@@ -137,7 +154,7 @@ describe('legacy membership catalog evidence', () => {
   })
 
   it('rolls back a failed projection and re-applies retained source facts', async () => {
-    await migrate()
+    await migrateCatalog()
     const batch = randomUUID()
     await seed(batch, [[1, '4', 'Retained']])
     await project(batch)
@@ -169,5 +186,97 @@ describe('legacy membership catalog evidence', () => {
     expect(
       (await pool.query(`SELECT code FROM ${q}.legacy_membership_type_selectable`)).rows,
     ).toEqual([{ code: '4' }])
+  })
+
+  it('stores reviewed member evidence with independent type, category, and fee facts', async () => {
+    await migrateCatalog()
+    await expect(pool.query(`SELECT * FROM ${q}.legacy_member_evidence`)).rejects.toThrow(
+      'does not exist',
+    )
+    await migrateMemberEvidence()
+    await migrateMemberEvidence()
+    const batch = randomUUID()
+    const rawEvent = randomUUID()
+    const identityEvidence = randomUUID()
+    const member = randomUUID()
+    await seed(batch, [[1, '4', 'Type four']])
+    await project(batch)
+    const candidate = await pool.query<{ source_row_id: string }>(
+      `SELECT source_row_id FROM ${q}.legacy_membership_type_candidates`,
+    )
+    await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1)`, [rawEvent])
+    await pool.query(`INSERT INTO ${q}.legacy_identity_evidence VALUES ($1)`, [identityEvidence])
+    await pool.query(`INSERT INTO ${q}.member_identities VALUES ($1)`, [member])
+    await pool.query(
+      `INSERT INTO ${q}.legacy_member_evidence
+       (raw_event_id, import_batch, identity_evidence_id, member_id, membership_type_candidate_source_row_id,
+        legacy_type_code, legacy_category, fee_state, fee_value, review_state)
+       VALUES ($1, $2, $3, $4, $5, '4', 'legacy-category', 'non_zero', 125.50, 'validated')`,
+      [rawEvent, batch, identityEvidence, member, candidate.rows[0]?.source_row_id],
+    )
+
+    expect(
+      (
+        await pool.query(
+          `SELECT legacy_type_code, legacy_category, fee_state, fee_value FROM ${q}.legacy_member_evidence`,
+        )
+      ).rows,
+    ).toEqual([
+      {
+        legacy_type_code: '4',
+        legacy_category: 'legacy-category',
+        fee_state: 'non_zero',
+        fee_value: '125.50',
+      },
+    ])
+  })
+
+  it('requires reviewed identity provenance and preserves blank, zero, and non-zero fee states', async () => {
+    await migrateCatalog()
+    await migrateMemberEvidence()
+    const batch = randomUUID()
+    await seed(batch, [[1, '4', 'Type four']])
+    await project(batch)
+    const identityEvidence = randomUUID()
+    await pool.query(`INSERT INTO ${q}.legacy_identity_evidence VALUES ($1)`, [identityEvidence])
+
+    await expect(
+      (async () => {
+        const rawEvent = randomUUID()
+        await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1)`, [rawEvent])
+        return pool.query(
+          `INSERT INTO ${q}.legacy_member_evidence
+         (raw_event_id, import_batch, identity_evidence_id, legacy_type_code, fee_state, fee_value, review_state)
+         VALUES ($1, $2, $3, '99', 'blank', 0, 'unknown_type')`,
+          [rawEvent, batch, randomUUID()],
+        )
+      })(),
+    ).rejects.toThrow()
+    for (const [feeState, feeValue] of [
+      ['blank', null],
+      ['zero', 0],
+      ['non_zero', 9.5],
+    ]) {
+      const rawEvent = randomUUID()
+      await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1)`, [rawEvent])
+      await pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence
+         (raw_event_id, import_batch, identity_evidence_id, legacy_type_code, fee_state, fee_value, review_state)
+         VALUES ($1, $2, $3, '99', $4, $5, 'unknown_type')`,
+        [rawEvent, batch, identityEvidence, feeState, feeValue],
+      )
+    }
+
+    expect(
+      (
+        await pool.query(
+          `SELECT fee_state, fee_value FROM ${q}.legacy_member_evidence ORDER BY fee_state`,
+        )
+      ).rows,
+    ).toEqual([
+      { fee_state: 'blank', fee_value: null },
+      { fee_state: 'zero', fee_value: '0.00' },
+      { fee_state: 'non_zero', fee_value: '9.50' },
+    ])
   })
 })

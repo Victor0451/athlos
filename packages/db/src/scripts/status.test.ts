@@ -75,6 +75,10 @@ afterAll(async () => {
 })
 
 describe('migrate:status', () => {
+  it('discovers the forward member-evidence migration through the production journal', async () => {
+    await expect(localMigrationNames()).resolves.toContain('0039_socios_legacy_member_evidence')
+  })
+
   it('reads the hash and created_at columns used by the Drizzle migration ledger', async () => {
     await pool.query(`INSERT INTO ${ledger} (hash, created_at) VALUES ($1, $2)`, [
       'ledger-hash',
