@@ -45,4 +45,4 @@ Chain strategy: pending
 ## Phase 4: REFACTOR and Verification
 
 - [x] 4.1 Refactor `socios-identity.test.ts` fixtures/helpers without weakening concurrency, deferred-constraint, idempotency, privacy, or rollback assertions.
-- [ ] 4.2 Run focused test, `pnpm --filter @athlos/db typecheck`, and migration status; record PR 1/PR 2 work-unit commits with their tests in the same commit.
+- [x] 4.2 Run focused test, `pnpm --filter @athlos/db typecheck`, and migration status; record PR 1/PR 2 work-unit commits with their tests in the same commit.
