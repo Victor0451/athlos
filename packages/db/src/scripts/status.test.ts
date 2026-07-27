@@ -11,9 +11,121 @@
  * - --json Zod shape validation
  * - connection error → exit 2
  */
-import { describe, expect, it } from 'vitest'
-import { diffMigrations } from './status'
-import { statusSchema } from './status'
+import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { Pool } from 'pg'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { diffMigrations, getAppliedMigrationsWithDates, statusSchema } from './status.ts'
+
+const connectionString = process.env.ATHLOS_TEST_DATABASE_URL
+const drizzleDir = fileURLToPath(new URL('../../drizzle/', import.meta.url))
+const ledger = 'drizzle.__drizzle_migrations'
+let pool: Pool
+
+function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+  return new Promise<{ exitCode: number; stdout: string }>((resolve, reject) => {
+    const child = spawn(command, args, { cwd, env })
+    let stdout = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.once('error', reject)
+    child.once('close', (exitCode) => resolve({ exitCode: exitCode ?? 1, stdout }))
+  })
+}
+
+async function localMigrationHashes(): Promise<string[]> {
+  const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
+    entries: Array<{ tag: string }>
+  }
+  return Promise.all(
+    journal.entries.map(async (entry) =>
+      createHash('sha256')
+        .update(await readFile(`${drizzleDir}/${entry.tag}.sql`, 'utf8'))
+        .digest('hex'),
+    ),
+  )
+}
+
+async function localMigrationNames(): Promise<string[]> {
+  const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
+    entries: Array<{ tag: string }>
+  }
+  return journal.entries.map((entry) => entry.tag).sort()
+}
+
+beforeAll(async () => {
+  if (!connectionString) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
+  pool = new Pool({ connectionString })
+  await pool.query(`
+    CREATE SCHEMA drizzle;
+    CREATE TABLE ${ledger} (
+      id serial PRIMARY KEY,
+      hash text NOT NULL,
+      created_at bigint NOT NULL
+    )
+  `)
+})
+
+afterAll(async () => {
+  await pool.query('DROP SCHEMA IF EXISTS drizzle CASCADE')
+  await pool.end()
+})
+
+describe('migrate:status', () => {
+  it('reads the hash and created_at columns used by the Drizzle migration ledger', async () => {
+    await pool.query(`INSERT INTO ${ledger} (hash, created_at) VALUES ($1, $2)`, [
+      'ledger-hash',
+      1_700_000_000_000,
+    ])
+
+    await expect(getAppliedMigrationsWithDates(connectionString!)).resolves.toEqual([
+      { hash: 'ledger-hash', createdAt: new Date(1_700_000_000_000) },
+    ])
+  })
+
+  it('emits clean JSON with exit code 0 when every local migration hash is applied', async () => {
+    const hashes = await localMigrationHashes()
+    await pool.query(`TRUNCATE ${ledger}`)
+    for (const [index, hash] of hashes.entries()) {
+      await pool.query(`INSERT INTO ${ledger} (hash, created_at) VALUES ($1, $2)`, [
+        hash,
+        1_700_000_000_000 + index,
+      ])
+    }
+
+    const result = await run(
+      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
+      ['src/scripts/status.ts', '--json'],
+      fileURLToPath(new URL('../../', import.meta.url)),
+      { ...process.env, DATABASE_URL: connectionString },
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ pending: [], divergence: [], exitCode: 0 })
+  })
+
+  it('emits only JSON with exit code 1 when local migrations are pending', async () => {
+    await pool.query(`TRUNCATE ${ledger}`)
+
+    const result = await run(
+      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
+      ['src/scripts/status.ts', '--json'],
+      fileURLToPath(new URL('../../', import.meta.url)),
+      { ...process.env, DATABASE_URL: connectionString },
+    )
+
+    expect(result.exitCode).toBe(1)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      applied: [],
+      pending: await localMigrationNames(),
+      divergence: [],
+      exitCode: 1,
+    })
+  })
+})
 
 describe('diffMigrations', () => {
   describe('empty applied list', () => {
