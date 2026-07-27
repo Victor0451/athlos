@@ -7,13 +7,14 @@
 export type DbfRow = Record<string, unknown>
 
 /**
- * The 14 legacy tables imported by the import pipeline (PR 7). Order
+ * The 15 legacy tables imported by the import pipeline (PR 7). Order
  * matters — the import runs tables in dependency order (paramet → socios
  * → ctacte → …) so FKs resolve. The list comes from the legacy-import
  * spec and matches the Visual FoxPro schema map.
  */
 export type LegacyTableName =
   | 'paramet'
+  | 'tiposoci'
   | 'usuario'
   | 'ctacte1'
   | 'socios'

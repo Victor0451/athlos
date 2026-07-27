@@ -18,7 +18,7 @@ function makeDb(): ReturnType<typeof createImportStandinDb> & { drizzle: Db } {
 async function seedRawEvent(
   db: ReturnType<typeof makeDb>,
   args: {
-    sourceTable: 'cobros' | 'socios' | 'asiento' | 'asientod'
+    sourceTable: 'cobros' | 'socios' | 'tiposoci' | 'asiento' | 'asientod'
     sourceKey: string
     payload: Record<string, unknown>
     importedAt: Date
@@ -57,6 +57,12 @@ describe('validateBridges', () => {
   it('returns [] when CONNROASIE links are clean (socio + roasie present)', async () => {
     const db = makeDb()
     const importedAt = new Date('2024-06-12T10:00:00Z')
+    await seedRawEvent(db, {
+      sourceTable: 'tiposoci',
+      sourceKey: '1',
+      payload: { TSOCODIGO: 1 },
+      importedAt,
+    })
     await seedRawEvent(db, {
       sourceTable: 'socios',
       sourceKey: 'SOC-001',
@@ -128,6 +134,12 @@ describe('validateBridges', () => {
   it('emits a connroasie-missing-roasie alert when the roasie side is missing', async () => {
     const db = makeDb()
     const importedAt = new Date('2024-06-12T10:00:00Z')
+    await seedRawEvent(db, {
+      sourceTable: 'tiposoci',
+      sourceKey: '1',
+      payload: { TSOCODIGO: 1 },
+      importedAt,
+    })
     await seedRawEvent(db, {
       sourceTable: 'socios',
       sourceKey: 'SOC-001',
