@@ -71,6 +71,12 @@ export {
   socioAttachments,
   attachmentCategory,
   ctacteMovementNotes,
+  identityLifecycleState,
+  membershipAccounts,
+  memberIdentities,
+  accountMemberships,
+  accountHolderHistory,
+  legacyIdentityEvidence,
 } from './socios'
 export type {
   Socio,
@@ -86,6 +92,16 @@ export type {
   AttachmentCategory,
   CtacteMovementNote,
   NewCtacteMovementNote,
+  MembershipAccount,
+  NewMembershipAccount,
+  MemberIdentity,
+  NewMemberIdentity,
+  AccountMembership,
+  NewAccountMembership,
+  AccountHolderHistory,
+  NewAccountHolderHistory,
+  LegacyIdentityEvidence,
+  NewLegacyIdentityEvidence,
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
