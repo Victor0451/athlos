@@ -3,14 +3,19 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgSchema,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import { rawEvents } from './public'
 
 /**
  * `socios` schema — members (socios) of Club Atlético Gorriti.
@@ -193,6 +198,139 @@ export const socios = sociosSchema.table(
 
 export type Socio = typeof socios.$inferSelect
 export type NewSocio = typeof socios.$inferInsert
+
+export const identityLifecycleState = sociosSchema.enum('identity_lifecycle_state', [
+  'imported',
+  'validated',
+  'review_required',
+])
+
+export const membershipAccounts = sociosSchema.table(
+  'membership_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountNumber: bigint('account_number', { mode: 'number' })
+      .notNull()
+      .generatedAlwaysAsIdentity(),
+    lifecycleState: identityLifecycleState('lifecycle_state').notNull().default('imported'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    accountNumberUnique: uniqueIndex('membership_accounts_account_number_key').on(
+      table.accountNumber,
+    ),
+  }),
+)
+
+export const memberIdentities = sociosSchema.table(
+  'member_identities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memberNumber: bigint('member_number', { mode: 'number' }).notNull().generatedAlwaysAsIdentity(),
+    lifecycleState: identityLifecycleState('lifecycle_state').notNull().default('imported'),
+    credentialRef: text('credential_ref'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    memberNumberUnique: uniqueIndex('member_identities_member_number_key').on(table.memberNumber),
+    credentialRefUnique: uniqueIndex('member_identities_credential_ref_key').on(
+      table.credentialRef,
+    ),
+  }),
+)
+
+export const accountMemberships = sociosSchema.table(
+  'account_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id')
+      .notNull()
+      .references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  },
+  (table) => ({
+    accountMemberEffectiveFromUnique: unique(
+      'account_memberships_account_id_member_id_effective_from_key',
+    ).on(table.accountId, table.memberId, table.effectiveFrom),
+  }),
+)
+
+export const accountHolderHistory = sociosSchema.table(
+  'account_holder_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    membershipId: uuid('membership_id').notNull(),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    predecessorId: uuid('predecessor_id').references((): AnyPgColumn => accountHolderHistory.id, {
+      onDelete: 'restrict',
+    }),
+    actorOperatorId: uuid('actor_operator_id'),
+    source: text('source').notNull(),
+    evidence: jsonb('evidence')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    idempotencyKey: text('idempotency_key'),
+  },
+  (table) => ({
+    currentAccountUnique: uniqueIndex('account_holder_history_current_account_unique')
+      .on(table.accountId)
+      .where(sql`${table.effectiveTo} IS NULL`),
+    idempotencyKeyUnique: uniqueIndex('account_holder_history_idempotency_key_key').on(
+      table.idempotencyKey,
+    ),
+  }),
+)
+
+export const legacyIdentityEvidence = sociosSchema.table(
+  'legacy_identity_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    accountId: uuid('account_id').references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id').references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    sourceKey: text('source_key').notNull(),
+    importBatch: uuid('import_batch').notNull(),
+    soccarnet: text('soccarnet'),
+    socfamilia: text('socfamilia'),
+    anomalyCodes: text('anomaly_codes')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    reviewState: text('review_state', {
+      enum: ['imported', 'validated', 'review_required'],
+    })
+      .notNull()
+      .default('imported'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_identity_evidence_raw_event_id_key').on(table.rawEventId),
+    legacyPairIdx: index('legacy_identity_evidence_pair_idx').on(table.soccarnet, table.socfamilia),
+  }),
+)
+
+export type MembershipAccount = typeof membershipAccounts.$inferSelect
+export type NewMembershipAccount = typeof membershipAccounts.$inferInsert
+export type MemberIdentity = typeof memberIdentities.$inferSelect
+export type NewMemberIdentity = typeof memberIdentities.$inferInsert
+export type AccountMembership = typeof accountMemberships.$inferSelect
+export type NewAccountMembership = typeof accountMemberships.$inferInsert
+export type AccountHolderHistory = typeof accountHolderHistory.$inferSelect
+export type NewAccountHolderHistory = typeof accountHolderHistory.$inferInsert
+export type LegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferSelect
+export type NewLegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferInsert
 
 /**
  * Attachment category — `dni | comprobante | foto | contrato | otro`.
