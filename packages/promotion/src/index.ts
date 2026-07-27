@@ -26,4 +26,9 @@ export { transformEscuela } from './transforms/escuela.ts'
 export { transformDeportes } from './transforms/deportes.ts'
 export { transformLocacion } from './transforms/locacion.ts'
 export { transformCaja } from './transforms/caja.ts'
-export { projectLegacyMembershipCandidates, type SqlClient } from './legacy-membership-evidence.ts'
+export {
+  projectLegacyMemberEvidence,
+  projectLegacyMembershipCandidates,
+  type SqlTransactionSession,
+  type SqlTransactionSource,
+} from './legacy-membership-evidence.ts'
