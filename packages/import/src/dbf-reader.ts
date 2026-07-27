@@ -5,7 +5,7 @@ import type { DataTable } from 'dbf-reader/models/dbf-file'
 import type { LegacyTableName } from '@athlos/integrations-legacy-db'
 
 /**
- * A single legacy record, generic across the 14 tables.
+ * A single legacy record, generic across the 15 tables.
  *
  * The legacy schema has ~50 different column shapes across the 14
  * tables — we keep the row as `Record<string, unknown>` so the
@@ -37,8 +37,8 @@ export async function* readTable(
 ): AsyncIterable<LegacyRecord> {
   const filePath = join(basePath, `${name.toUpperCase()}.DBF`)
   const data = await readDbfFile(filePath)
-  for (const row of data.rows) {
-    yield normalizeRow(row, name)
+  for (const [index, row] of data.rows.entries()) {
+    yield normalizeRow(row, name, index + 1)
   }
 }
 
@@ -52,8 +52,8 @@ export async function* readTableFromTable(
   name: LegacyTableName,
   table: DataTable,
 ): AsyncIterable<LegacyRecord> {
-  for (const row of table.rows) {
-    yield normalizeRow(row, name)
+  for (const [index, row] of table.rows.entries()) {
+    yield normalizeRow(row, name, index + 1)
   }
 }
 
@@ -89,7 +89,11 @@ async function readDbfFile(filePath: string): Promise<DataTable> {
  * The PK column name comes from {@link primaryKeyFor}. Adding a new
  * table is a one-line change there.
  */
-function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): LegacyRecord {
+function normalizeRow(
+  raw: Record<string, unknown>,
+  table: LegacyTableName,
+  recordOrdinal: number,
+): LegacyRecord {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(raw)) {
     const trimmedK = k.trim().toUpperCase()
@@ -111,16 +115,6 @@ function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): Leg
   // resolve the conventional VFP primary-key column.
   if (out['LEGACY_KEY'] === undefined || out['LEGACY_KEY'] === null || out['LEGACY_KEY'] === '') {
     const pk = primaryKeyFor(out, table)
-    console.log(
-      '[DEBUG] table:',
-      table,
-      'col:',
-      TABLE_PK_COLUMN[table],
-      'value:',
-      out[TABLE_PK_COLUMN[table]!],
-      'pk:',
-      pk,
-    )
     if (pk) {
       out['LEGACY_KEY'] = pk
     } else {
@@ -130,6 +124,7 @@ function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): Leg
       out['LEGACY_KEY'] = ''
     }
   }
+  if (table === 'tiposoci') out['RECORD_ORDINAL'] = recordOrdinal
   return out as LegacyRecord
 }
 
@@ -143,6 +138,7 @@ function normalizeRow(raw: Record<string, unknown>, table: LegacyTableName): Leg
  */
 const TABLE_PK_COLUMN: Readonly<Record<LegacyTableName, string>> = {
   paramet: 'PARCODIGO',
+  tiposoci: 'TSOCODIGO',
   usuario: 'USUCLAVE',
   ctacte1: 'SECNUMERO',
   socios: 'SOCCARNET',

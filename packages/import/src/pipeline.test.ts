@@ -22,13 +22,18 @@ function makeDb(): ReturnType<typeof createImportStandinDb> & { drizzle: Db } {
   return { ...standin, drizzle: standin.drizzle as unknown as Db }
 }
 
+function tiposociFixture(): DataTable {
+  return table([{ TSOCODIGO: 4, TSONOMBRE: 'Active member', TSOLETRA: 'A' }])
+}
+
 describe('runImport', () => {
   it('imports a single-table fixture in dependency order', async () => {
     const db = makeDb()
     const result = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       fixtures: {
+        tiposoci: tiposociFixture(),
         socios: table([
           { NUMERO: 'SOC-001', NOMBRE: 'Ana', APELLIDO: 'García', legacyKey: 'SOC-001' },
           { NUMERO: 'SOC-002', NOMBRE: 'Juan', APELLIDO: 'Pérez', legacyKey: 'SOC-002' },
@@ -36,21 +41,22 @@ describe('runImport', () => {
       },
     })
     expect(result.status).toBe('succeeded')
-    expect(result.totals.read).toBe(2)
-    expect(result.totals.inserted).toBe(2)
+    expect(result.totals.read).toBe(3)
+    expect(result.totals.inserted).toBe(3)
     expect(result.totals.skipped).toBe(0)
     expect(result.totals.failed).toBe(0)
-    expect(db.state.rows).toHaveLength(2)
-    expect(db.state.rows[0]?.sourceTable).toBe('socios')
-    expect(db.state.rows[0]?.sourceKey).toBe('SOC-001')
+    expect(db.state.rows).toHaveLength(3)
+    expect(db.state.rows[1]?.sourceTable).toBe('socios')
+    expect(db.state.rows[1]?.sourceKey).toBe('SOC-001')
   })
 
   it('is idempotent: re-importing identical content inserts 0 new rows', async () => {
     const db = makeDb()
     const opts = {
       trigger: 'scheduled' as const,
-      tables: ['socios'] as const,
+      tables: ['tiposoci', 'socios'] as const,
       fixtures: {
+        tiposoci: tiposociFixture(),
         socios: table([
           { NUMERO: 'SOC-001', NOMBRE: 'Ana', APELLIDO: 'García', legacyKey: 'SOC-001' },
         ]),
@@ -58,18 +64,19 @@ describe('runImport', () => {
     }
     const first = await runImport(db.drizzle, opts)
     const second = await runImport(db.drizzle, opts)
-    expect(first.totals.inserted).toBe(1)
+    expect(first.totals.inserted).toBe(2)
     expect(second.totals.inserted).toBe(0)
-    expect(second.totals.skipped).toBe(1)
-    expect(db.state.rows).toHaveLength(1)
+    expect(second.totals.skipped).toBe(2)
+    expect(db.state.rows).toHaveLength(2)
   })
 
   it('appends a new row when content changes (append-only semantics)', async () => {
     const db = makeDb()
     await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       fixtures: {
+        tiposoci: tiposociFixture(),
         socios: table([
           { NUMERO: 'SOC-001', NOMBRE: 'Ana', APELLIDO: 'García', legacyKey: 'SOC-001' },
         ]),
@@ -77,21 +84,22 @@ describe('runImport', () => {
     })
     const second = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       fixtures: {
+        tiposoci: tiposociFixture(),
         socios: table([
           { NUMERO: 'SOC-001', NOMBRE: 'Ana María', APELLIDO: 'García', legacyKey: 'SOC-001' },
         ]),
       },
     })
     expect(second.totals.inserted).toBe(1)
-    expect(second.totals.skipped).toBe(0)
-    expect(db.state.rows).toHaveLength(2)
+    expect(second.totals.skipped).toBe(1)
+    expect(db.state.rows).toHaveLength(3)
     // The two rows have different hashes (history preserved).
-    expect(db.state.rows[0]?.contentHash).not.toBe(db.state.rows[1]?.contentHash)
+    expect(db.state.rows[1]?.contentHash).not.toBe(db.state.rows[2]?.contentHash)
   })
 
-  it('imports all 14 tables in canonical dependency order', async () => {
+  it('imports all 15 tables in canonical dependency order', async () => {
     const db = makeDb()
     const fixtures: Record<string, DataTable> = {}
     for (const t of LEGACY_IMPORT_ORDER) {
@@ -104,8 +112,8 @@ describe('runImport', () => {
       fixtures,
     })
     expect(result.status).toBe('succeeded')
-    expect(result.tables).toHaveLength(14)
-    expect(result.totals.inserted).toBe(14)
+    expect(result.tables).toHaveLength(15)
+    expect(result.totals.inserted).toBe(15)
     // The summary order matches the import order.
     const order = result.tables.map((s) => s.table)
     expect(order).toEqual([...LEGACY_IMPORT_ORDER])
@@ -169,15 +177,16 @@ describe('runImport', () => {
     const db = makeDb()
     const result = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       fixtures: {
+        tiposoci: tiposociFixture(),
         // The row has no recognizable PK column → legacyKey resolves to ''.
         socios: table([{ NOMBRE: 'Anonymous' }]),
       },
     })
-    expect(result.totals.read).toBe(1)
+    expect(result.totals.read).toBe(2)
     expect(result.totals.failed).toBe(1)
-    expect(result.totals.inserted).toBe(0)
+    expect(result.totals.inserted).toBe(1)
     expect(result.status).toBe('failed')
   })
 
@@ -185,13 +194,13 @@ describe('runImport', () => {
     const db = makeDb()
     const a = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
-      fixtures: { socios: table([{ legacyKey: 'X' }]) },
+      tables: ['tiposoci', 'socios'],
+      fixtures: { tiposoci: tiposociFixture(), socios: table([{ legacyKey: 'X' }]) },
     })
     const b = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
-      fixtures: { socios: table([{ legacyKey: 'X' }]) },
+      tables: ['tiposoci', 'socios'],
+      fixtures: { tiposoci: tiposociFixture(), socios: table([{ legacyKey: 'X' }]) },
     })
     expect(a.id).not.toBe(b.id)
   })
@@ -200,24 +209,25 @@ describe('runImport', () => {
     const db = makeDb()
     const result = await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       batchId: 'BATCH-2024-06-11-001',
-      fixtures: { socios: table([{ legacyKey: 'X' }]) },
+      fixtures: { tiposoci: tiposociFixture(), socios: table([{ legacyKey: 'X' }]) },
     })
     expect(result.id).toBe('BATCH-2024-06-11-001')
-    expect(db.state.rows[0]?.importBatch).toBe('BATCH-2024-06-11-001')
+    expect(db.state.rows[1]?.importBatch).toBe('BATCH-2024-06-11-001')
   })
 
   it('strips the derived legacyKey from the stored payload', async () => {
     const db = makeDb()
     await runImport(db.drizzle, {
       trigger: 'manual',
-      tables: ['socios'],
+      tables: ['tiposoci', 'socios'],
       fixtures: {
+        tiposoci: tiposociFixture(),
         socios: table([{ NUMERO: 'SOC-001', NOMBRE: 'Ana', legacyKey: 'SOC-001' }]),
       },
     })
-    const row = db.state.rows[0]!
+    const row = db.state.rows[1]!
     expect(row.payload).not.toHaveProperty('legacyKey')
     // Sanity: the canonical content hash does NOT include legacyKey
     // (the hash.test.ts case already pins this — here we just
@@ -232,13 +242,79 @@ describe('runImport', () => {
     expect(TABLE_DEPENDENCIES.paramet).toEqual([])
   })
 
-  it('LEGACY_IMPORT_ORDER has 14 tables', () => {
-    expect(LEGACY_IMPORT_ORDER).toHaveLength(14)
+  it('LEGACY_IMPORT_ORDER has 15 tables', () => {
+    expect(LEGACY_IMPORT_ORDER).toHaveLength(15)
   })
 
   it('LEGACY_IMPORT_ORDER places paramet first and gastos last', () => {
     expect(LEGACY_IMPORT_ORDER[0]).toBe('paramet')
     expect(LEGACY_IMPORT_ORDER[LEGACY_IMPORT_ORDER.length - 1]).toBe('gastos')
+  })
+
+  it('requires tiposoci before socios evidence', async () => {
+    const db = makeDb()
+    await expect(
+      runImport(db.drizzle, {
+        trigger: 'manual',
+        tables: ['socios'],
+        fixtures: { socios: table([{ SOCCARNET: 'SOC-001' }]) },
+      }),
+    ).rejects.toThrow(/socios requires tiposoci to be imported first/)
+    expect(db.state.rows).toEqual([])
+  })
+
+  it('uses TSOCODIGO as the tiposoci key and retains ordinal-hashed occurrences', async () => {
+    const db = makeDb()
+    const fixture = table([
+      { TSOCODIGO: 4, TSONOMBRE: 'Active member', TSOLETRA: 'A' },
+      { TSOCODIGO: 4, TSONOMBRE: 'Active member revised', TSOLETRA: 'A' },
+    ])
+    const first = await runImport(db.drizzle, {
+      trigger: 'manual',
+      tables: ['tiposoci' as never],
+      fixtures: { tiposoci: fixture } as never,
+    })
+    const rerun = await runImport(db.drizzle, {
+      trigger: 'manual',
+      tables: ['tiposoci' as never],
+      fixtures: { tiposoci: fixture } as never,
+    })
+    const changed = await runImport(db.drizzle, {
+      trigger: 'manual',
+      tables: ['tiposoci' as never],
+      fixtures: {
+        tiposoci: table([
+          { TSOCODIGO: 4, TSONOMBRE: 'Active member', TSOLETRA: 'A' },
+          { TSOCODIGO: 4, TSONOMBRE: 'Active member final', TSOLETRA: 'A' },
+        ]),
+      } as never,
+    })
+
+    expect(first.totals.inserted).toBe(2)
+    expect(rerun.totals.skipped).toBe(2)
+    expect(changed.totals.inserted).toBe(1)
+    expect(db.state.rows).toHaveLength(3)
+    expect(db.state.rows.map((row) => row.sourceKey)).toEqual(['4', '4', '4'])
+    expect(
+      db.state.rows.map((row) => (row.payload as Record<string, unknown>).RECORD_ORDINAL),
+    ).toEqual([1, 2, 2])
+  })
+
+  it('declares tiposoci immediately before socios', () => {
+    expect(TABLE_DEPENDENCIES.socios).toEqual(['tiposoci'])
+    expect(LEGACY_IMPORT_ORDER.indexOf('tiposoci')).toBe(LEGACY_IMPORT_ORDER.indexOf('socios') - 1)
+  })
+
+  it('reports malformed tiposoci rows with a sanitized table and ordinal', async () => {
+    const db = makeDb()
+    const result = await runImport(db.drizzle, {
+      trigger: 'manual',
+      tables: ['tiposoci'],
+      fixtures: { tiposoci: table([{ TSONOMBRE: 'Private legacy name' }]) },
+    })
+    expect(result.status).toBe('failed')
+    expect(result.errorMessage).toBe('tiposoci record 1: missing legacy key')
+    expect(result.tables[0]?.errorMessage).toBe('tiposoci record 1: missing legacy key')
   })
 
   it('uses rawEvents as the only write target (sanity)', () => {
