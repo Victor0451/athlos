@@ -39,8 +39,8 @@ Chain strategy: pending
 
 ## Phase 3: GREEN Drizzle Contracts
 
-- [ ] 3.1 Modify `packages/db/src/schema/socios.ts` with matching identity enums, five table declarations, indexes, opaque nullable `credentialRef`, and inferred types; do not alter `socios`.
-- [ ] 3.2 Modify `packages/db/src/schema/index.ts` to export only the new additive contracts; typecheck consumers to confirm Socio/CTACTE compatibility.
+- [x] 3.1 Modify `packages/db/src/schema/socios.ts` with matching identity enums, five table declarations, indexes, opaque nullable `credentialRef`, and inferred types; do not alter `socios`.
+- [x] 3.2 Modify `packages/db/src/schema/index.ts` to export only the new additive contracts; typecheck consumers to confirm Socio/CTACTE compatibility.
 
 ## Phase 4: REFACTOR and Verification
 
