@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { ensurePgcrypto } from '../pgcrypto.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 const schema = `identity_${randomUUID().replaceAll('-', '')}`
@@ -25,7 +26,8 @@ const count = (table: string) => pool.query(`SELECT count(*)::int AS count FROM 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
   pool = new Pool({ connectionString: url })
-  await pool.query(`CREATE SCHEMA ${q}; CREATE EXTENSION IF NOT EXISTS pgcrypto`)
+  await ensurePgcrypto(pool)
+  await pool.query(`CREATE SCHEMA ${q}`)
 })
 afterAll(async () => {
   await pool.query(`DROP SCHEMA IF EXISTS ${q} CASCADE`)
