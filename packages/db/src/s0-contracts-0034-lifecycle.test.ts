@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { ensurePgcrypto } from './pgcrypto.ts'
 
 /**
  * `s0-contracts-0034-lifecycle.test.ts` — tasks 1.1 → 1.5.
@@ -251,7 +252,7 @@ async function reset() {
   // the function also lives in pg_catalog, but we keep the extension as the
   // authoritative source so the prerequisite is explicit and portable to
   // PostgreSQL < 13 disposable containers.
-  await pool.query('CREATE EXTENSION IF NOT EXISTS pgcrypto')
+  await ensurePgcrypto(pool)
   await pool.query('DROP SCHEMA IF EXISTS tesoreria CASCADE')
   await pool.query('DROP SCHEMA IF EXISTS socios CASCADE')
   await pool.query('CREATE SCHEMA IF NOT EXISTS tesoreria')
