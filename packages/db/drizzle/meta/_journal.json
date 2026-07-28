@@ -155,6 +155,13 @@
       "when": 1785189922165,
       "tag": "0039_socios_legacy_member_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785300000000,
+      "tag": "0040_socios_closure_receipts",
+      "breakpoints": true
     }
   ]
 }
