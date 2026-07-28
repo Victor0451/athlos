@@ -362,10 +362,6 @@ export const legacyMembershipTypeSourceRows = sociosSchema.table(
     rawEventUnique: uniqueIndex('legacy_membership_type_source_rows_raw_event_id_key').on(
       table.rawEventId,
     ),
-    batchOrdinalUnique: unique('legacy_membership_type_source_rows_batch_id_record_ordinal_key').on(
-      table.batchId,
-      table.recordOrdinal,
-    ),
     codeBatchIdx: index('legacy_membership_type_source_rows_code_batch_idx').on(
       table.code,
       table.batchId,
@@ -398,6 +394,22 @@ export const legacyMembershipTypeCandidates = sociosSchema.table(
       table.sourceRowId,
     ),
   }),
+)
+
+export const legacyCatalogMaterializationReceipts = sociosSchema.table(
+  'legacy_catalog_materialization_receipts',
+  {
+    batchId: uuid('batch_id')
+      .primaryKey()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    phase: text('phase').notNull().default('catalog_materialization'),
+    inputHash: text('input_hash').notNull(),
+    eligibleSourceRowCount: integer('eligible_source_row_count').notNull(),
+    materializedSourceRowCount: integer('materialized_source_row_count').notNull(),
+    failedSourceRowCount: integer('failed_source_row_count').notNull().default(0),
+    outcome: text('outcome').notNull().default('materialized'),
+    committedAt: timestamp('committed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
 )
 
 export const legacyMemberFeeState = sociosSchema.enum('legacy_member_fee_state', [
@@ -467,6 +479,10 @@ export type LegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRow
 export type NewLegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferInsert
 export type LegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferSelect
 export type NewLegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferInsert
+export type LegacyCatalogMaterializationReceipt =
+  typeof legacyCatalogMaterializationReceipts.$inferSelect
+export type NewLegacyCatalogMaterializationReceipt =
+  typeof legacyCatalogMaterializationReceipts.$inferInsert
 export type LegacyMemberEvidence = typeof legacyMemberEvidence.$inferSelect
 export type NewLegacyMemberEvidence = typeof legacyMemberEvidence.$inferInsert
 
