@@ -7,5 +7,12 @@
  * layer wires them through the DI container (PR 10a).
  */
 export { createDb, type Db, type DbConfig } from './pool'
+export {
+  acquireClosureLease,
+  createClosurePreview,
+  previewFingerprint,
+  releaseClosureLease,
+  renewClosureLease,
+} from './evidence-closure'
 
 export * from './schema/index'
