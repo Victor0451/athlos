@@ -42,6 +42,7 @@ import { notificationRoutes } from './routes/notifications.ts'
 // 9. N16 (athlos-n16-gastos-ctacte-fk): admin gastos CRUD + mapping routes
 import { gastosAdminRoutes } from './routes/admin/gastos.ts'
 import { gastosCtacteAdminRoutes } from './routes/admin/gastos-ctacte.ts'
+import { evidenceClosureRoutes } from './routes/admin/evidence-closure.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -283,6 +284,7 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      6 gastos↔ctacte mapping (link create/delete/anular, candidates).
   await app.register(gastosAdminRoutes)
   await app.register(gastosCtacteAdminRoutes)
+  await app.register(evidenceClosureRoutes)
 
   // 21. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without
