@@ -162,6 +162,13 @@
       "when": 1785300000000,
       "tag": "0040_socios_closure_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785301000000,
+      "tag": "0041_socios_evidence_closure_preview",
+      "breakpoints": true
     }
   ]
 }
