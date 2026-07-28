@@ -32,3 +32,8 @@ export {
   type SqlTransactionSession,
   type SqlTransactionSource,
 } from './legacy-membership-evidence.ts'
+export {
+  materializeLegacyMembershipCatalog,
+  type SqlTransactionSession as CatalogSqlTransactionSession,
+  type SqlTransactionSource as CatalogSqlTransactionSource,
+} from './legacy-catalog-materializer.ts'
