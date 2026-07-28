@@ -156,6 +156,27 @@ describe('POST /api/v1/scheduler/jobs/:name/run-now', () => {
   })
 })
 
+describe('POST /api/v1/admin/socios-evidence-closures/preview', () => {
+  it('denies non-admin callers without preview evidence disclosure', async () => {
+    const { app } = await bootstrap()
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/socios-evidence-closures/preview',
+        headers: { authorization: `Bearer ${operatorToken()}`, 'content-type': 'application/json' },
+        payload: {
+          catalogBatchId: '00000000-0000-4000-8000-000000000001',
+          sociosBatchId: '00000000-0000-4000-8000-000000000002',
+        },
+      })
+      expect(res.statusCode).toBe(403)
+      expect(res.body).not.toMatch(/fingerprint|counts/)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('GET /api/v1/scheduler/jobs', () => {
   it('returns 200 with last 20 job runs ordered by startedAt DESC', async () => {
     const { app } = await bootstrap()
