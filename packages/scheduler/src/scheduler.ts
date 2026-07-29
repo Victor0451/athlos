@@ -88,17 +88,18 @@ export class InProcessScheduler implements JobScheduler {
    * scheduler's own `runNow`/`list`/`stop` work from the latest
    * definition.
    */
-  schedule(name: string, cronExpr: string, handler: JobHandler, opts: ScheduleOptions = {}): void {
+  schedule(
+    name: string,
+    cronExpr: string | null,
+    handler: JobHandler,
+    opts: ScheduleOptions = {},
+  ): void {
     if (this.shuttingDown) {
       this.log.warn({ name }, 'schedule: rejected — scheduler is shutting down')
       return
     }
-    // Validate the cron expression up front (delegated to the adapter
-    // in real builds; node-cron's own validate is wired in the adapter
-    // factory). The interface only takes a string, so we accept and
-    // trust — but a missing colon-style 6-field expression will throw
-    // at task creation time inside the adapter, which surfaces as a
-    // startup failure.
+    // Cron validation remains delegated to the adapter. A null expression
+    // deliberately registers a manual-only job with no cron task.
     const existing = this.jobs.get(name)
     if (existing?.task) {
       existing.task.stop()
@@ -108,7 +109,7 @@ export class InProcessScheduler implements JobScheduler {
       cronExpr,
       handler,
       ...(opts.timezone !== undefined ? { timezone: opts.timezone } : {}),
-      cadenceMinutes: opts.cadenceMinutes ?? estimateCadenceMinutes(cronExpr),
+      cadenceMinutes: opts.cadenceMinutes ?? (cronExpr ? estimateCadenceMinutes(cronExpr) : null),
       enabled: true,
     }
     this.jobs.set(name, { def, task: null })
@@ -353,7 +354,7 @@ export class InProcessScheduler implements JobScheduler {
         const merged = result.metadata ?? {}
         await recordFinish(this.db, {
           jobRunId,
-          status: 'succeeded',
+          status: result.status,
           ...(Object.keys(merged).length > 0 ? { metadata: merged } : {}),
         })
         childLog.info({ event: 'JOB_SUCCEEDED' }, 'job succeeded')
