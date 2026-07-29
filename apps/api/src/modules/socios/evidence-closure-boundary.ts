@@ -1,4 +1,4 @@
-import { previewFingerprint } from '@athlos/db'
+import { acquireClosureLease, previewFingerprint } from '@athlos/db'
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[] }> }
 type Input = { source_table: string; import_batch: string; id: string; content_hash: string }
@@ -165,4 +165,34 @@ export async function reserveClosureConfirmation(
   if (!row.created) return { outcome: 'replay' as const }
 
   return { outcome: 'reserved' as const }
+}
+
+/**
+ * Converts a durable reservation into the fenced handoff consumed by PR3.
+ * Cancellation is checked on both sides of the reservation COMMIT; once it
+ * exists it is intentionally never deleted by the caller.
+ */
+export async function confirmClosureReservation(
+  db: Queryable,
+  schema: string,
+  input: ReservationInput,
+  owner: string,
+  isCancelled: () => boolean,
+  closureSchema = schema,
+) {
+  if (isCancelled()) return { outcome: 'cancelled' as const }
+  const reservation = await reserveClosureConfirmation(db, schema, input, closureSchema)
+  if (isCancelled()) return { outcome: 'cancelled' as const }
+  if (reservation.outcome !== 'reserved') return reservation
+  const lease = await acquireClosureLease(
+    db,
+    closureSchema,
+    input.fingerprint,
+    owner,
+    new Date(),
+    60_000,
+  )
+  return lease.acquired
+    ? { outcome: 'accepted' as const, fence: lease.fence }
+    : { outcome: 'held' as const }
 }
