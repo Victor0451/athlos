@@ -4,6 +4,8 @@ import {
   getEvidenceException,
   listEvidenceExceptions,
   resolveEvidenceException,
+  searchMemberOptions,
+  searchMembershipTypeOptions,
   type EvidenceExceptionDetail,
   type EvidenceExceptionRepository,
   type EvidenceResolution,
@@ -16,8 +18,6 @@ const detail: EvidenceExceptionDetail = {
   fingerprint: 'a'.repeat(64),
   legacyTypeCode: 'A',
   createdAt: new Date(),
-  memberChoices: [{ id: 'member-1', memberNumber: 1 }],
-  typeChoices: [{ sourceRowId: 'type-1', code: 'A', name: 'Active' }],
   deterministicTypeCandidateSourceRowId: null,
 }
 const command = {
@@ -38,6 +38,8 @@ function fake(overrides: Partial<EvidenceExceptionRepository> = {}) {
     transaction: (work) => work(repo),
     listExceptions: async () => ({ items: [detail], total: 1 }),
     findExceptionDetail: async () => detail,
+    searchMemberOptions: async () => [],
+    searchMembershipTypeOptions: async () => [],
     findResolutionByIdempotencyKey: async (operatorId, key) =>
       resolutions.find(
         (row) => row.stewardOperatorId === operatorId && row.idempotencyKey === key,
@@ -68,6 +70,28 @@ describe('Socios evidence exceptions', () => {
       listEvidenceExceptions(repo, { page: 1, limit: 20, status: 'unresolved' }),
     ).resolves.toMatchObject({ total: 1 })
     await expect(getEvidenceException(repo, detail.id)).resolves.toEqual(detail)
+  })
+
+  it('caps selectable option searches even if a repository returns more rows', async () => {
+    const members = Array.from({ length: 21 }, (_, memberNumber) => ({
+      id: `member-${memberNumber}`,
+      memberNumber,
+      credentialRef: null,
+      lifecycleState: 'imported' as const,
+    }))
+    const types = Array.from({ length: 21 }, (_, index) => ({
+      sourceRowId: `type-${index}`,
+      snapshotBatchId: 'batch-1',
+      code: `A${index}`,
+      name: 'Active',
+      letter: 'A',
+    }))
+    const { repo } = fake({
+      searchMemberOptions: async () => members,
+      searchMembershipTypeOptions: async () => types,
+    })
+    await expect(searchMemberOptions(repo, '12')).resolves.toHaveLength(20)
+    await expect(searchMembershipTypeOptions(repo, 'ac')).resolves.toHaveLength(20)
   })
 
   it('replays an identical command and conflicts for a changed command with the same key', async () => {
