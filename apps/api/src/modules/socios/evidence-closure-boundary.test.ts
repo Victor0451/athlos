@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  confirmClosureReservation,
   createClosurePreview,
   reserveClosureConfirmation,
   validateClosurePreview,
@@ -216,5 +217,70 @@ describe('closure preview boundary', () => {
         [key],
       ),
     ).resolves.toMatchObject({ rows: [{ catalog_batch_id: catalog }] })
+  })
+
+  it('keeps no key before cancellation, preserves only the key after reservation cancellation, and fences live handoffs', async () => {
+    const catalog = randomUUID(),
+      socios = randomUUID()
+    await Promise.all([seed('tiposoci', catalog), seed('socios', socios)])
+    const preview = await createClosurePreview(pool, schema, catalog, socios)
+    const input = {
+      catalogBatchId: catalog,
+      sociosBatchId: socios,
+      previewId: preview.previewId,
+      fingerprint: preview.fingerprint,
+      idempotencyKey: randomUUID(),
+    }
+    await expect(
+      confirmClosureReservation(pool, schema, input, randomUUID(), () => true),
+    ).resolves.toEqual({ outcome: 'cancelled' })
+    await expect(
+      pool.query(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_confirmations WHERE idempotency_key = $1`,
+        [input.idempotencyKey],
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] })
+
+    let cancelled = false
+    const abortAfterReservation = {
+      query: async (text: string, values?: unknown[]) => {
+        const result = await pool.query(text, values as never)
+        if (text.includes('INSERT INTO') && text.includes('evidence_closure_confirmations'))
+          cancelled = true
+        return result
+      },
+    }
+    await expect(
+      confirmClosureReservation(
+        abortAfterReservation,
+        schema,
+        input,
+        randomUUID(),
+        () => cancelled,
+      ),
+    ).resolves.toEqual({ outcome: 'cancelled' })
+    await expect(
+      pool.query(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_leases WHERE pair_fingerprint = $1`,
+        [input.fingerprint],
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] })
+
+    const acceptedInput = { ...input, idempotencyKey: randomUUID() }
+    await expect(
+      confirmClosureReservation(pool, schema, acceptedInput, randomUUID(), () => false),
+    ).resolves.toMatchObject({ outcome: 'accepted', fence: expect.any(Number) })
+    await expect(
+      confirmClosureReservation(pool, schema, acceptedInput, randomUUID(), () => false),
+    ).resolves.toEqual({ outcome: 'replay' })
+    await expect(
+      confirmClosureReservation(
+        pool,
+        schema,
+        { ...acceptedInput, idempotencyKey: randomUUID() },
+        randomUUID(),
+        () => false,
+      ),
+    ).resolves.toEqual({ outcome: 'held' })
   })
 })
