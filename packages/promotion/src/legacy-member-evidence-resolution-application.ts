@@ -6,6 +6,8 @@ export type ResolutionApplicationReceipt = {
   eligibleCount: number
   appliedCount: number
   unresolvedCount: number
+  unresolvedUnknownTypeCount: number
+  unresolvedAmbiguousIdentityCount: number
   staleCount: number
   technicalCount: number
   status: 'committed'
@@ -56,6 +58,8 @@ function receipt(row: StoredReceipt): ResolutionApplicationReceipt {
     eligibleCount: number(row.eligibleCount),
     appliedCount: number(row.appliedCount),
     unresolvedCount: number(row.unresolvedCount),
+    unresolvedUnknownTypeCount: number(row.unresolvedUnknownTypeCount),
+    unresolvedAmbiguousIdentityCount: number(row.unresolvedAmbiguousIdentityCount),
     staleCount: number(row.staleCount),
     technicalCount: number(row.technicalCount),
     status: row.status,
@@ -80,6 +84,7 @@ export async function applyLegacyMemberEvidenceResolutions(
   importBatchId: string,
   executionIdentity: string,
   schema = 'socios',
+  expectedApplicationFingerprint?: string,
 ): Promise<ResolutionApplicationReceipt> {
   if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) throw new Error(`Invalid schema: ${schema}`)
   const client = await source.acquire()
@@ -106,12 +111,19 @@ export async function applyLegacyMemberEvidenceResolutions(
       ),
     )
     const applicationFingerprint = resolutionApplicationFingerprint(leaves)
+    if (
+      expectedApplicationFingerprint !== undefined &&
+      expectedApplicationFingerprint !== applicationFingerprint
+    )
+      throw new Error('incompatible resolution application fingerprint')
     const existing = rows<StoredReceipt>(
       await client.query(
         `SELECT selected_batch_id, application_fingerprint AS "applicationFingerprint",
-          eligible_count AS "eligibleCount", applied_count AS "appliedCount",
-          unresolved_count AS "unresolvedCount", stale_count AS "staleCount",
-          technical_count AS "technicalCount", status
+           eligible_count AS "eligibleCount", applied_count AS "appliedCount",
+           unresolved_count AS "unresolvedCount", stale_count AS "staleCount",
+           unresolved_unknown_type_count AS "unresolvedUnknownTypeCount",
+           unresolved_ambiguous_identity_count AS "unresolvedAmbiguousIdentityCount",
+           technical_count AS "technicalCount", status
          FROM ${schema}.legacy_member_evidence_resolution_application_receipts
          WHERE execution_identity = $1 FOR UPDATE`,
         [executionIdentity],
@@ -127,16 +139,20 @@ export async function applyLegacyMemberEvidenceResolutions(
       committed = true
       return receipt(existing)
     }
-    const counts = { applied: 0, unresolved: 0, stale: 0, technical: 0 }
+    const counts = { applied: 0, unresolved: 0, unknown: 0, ambiguous: 0, stale: 0, technical: 0 }
     for (const leaf of leaves) {
       const state = outcome(leaf)
       counts[state]++
+      if (state === 'unresolved')
+        counts[leaf.evidence_kind === 'unknown_type' ? 'unknown' : 'ambiguous']++
     }
     const result: ResolutionApplicationReceipt = {
       applicationFingerprint,
       eligibleCount: leaves.length,
       appliedCount: counts.applied,
       unresolvedCount: counts.unresolved,
+      unresolvedUnknownTypeCount: counts.unknown,
+      unresolvedAmbiguousIdentityCount: counts.ambiguous,
       staleCount: counts.stale,
       technicalCount: counts.technical,
       status: 'committed',
@@ -144,8 +160,9 @@ export async function applyLegacyMemberEvidenceResolutions(
     await client.query(
       `INSERT INTO ${schema}.legacy_member_evidence_resolution_application_receipts
         (execution_identity, selected_batch_id, application_fingerprint, eligible_count, applied_count,
-         unresolved_count, stale_count, technical_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         unresolved_count, unresolved_unknown_type_count, unresolved_ambiguous_identity_count,
+         stale_count, technical_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         executionIdentity,
         importBatchId,
@@ -153,6 +170,8 @@ export async function applyLegacyMemberEvidenceResolutions(
         result.eligibleCount,
         result.appliedCount,
         result.unresolvedCount,
+        result.unresolvedUnknownTypeCount,
+        result.unresolvedAmbiguousIdentityCount,
         result.staleCount,
         result.technicalCount,
       ],

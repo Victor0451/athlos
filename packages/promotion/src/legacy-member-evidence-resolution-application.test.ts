@@ -58,6 +58,8 @@ describe('applyLegacyMemberEvidenceResolutions', () => {
       eligibleCount: 1,
       appliedCount: 1,
       unresolvedCount: 0,
+      unresolvedUnknownTypeCount: 0,
+      unresolvedAmbiguousIdentityCount: 0,
       staleCount: 0,
       technicalCount: 0,
     })
@@ -73,6 +75,8 @@ describe('applyLegacyMemberEvidenceResolutions', () => {
       eligibleCount: 1,
       appliedCount: 1,
       unresolvedCount: 0,
+      unresolvedUnknownTypeCount: 0,
+      unresolvedAmbiguousIdentityCount: 0,
       staleCount: 0,
       technicalCount: 0,
       status: 'committed',
