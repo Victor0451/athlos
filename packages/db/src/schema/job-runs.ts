@@ -5,7 +5,7 @@ import { index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from '
  * `job_runs` — one row per scheduled job invocation.
  *
  * State machine (spec §"Job Lifecycle"):
- *   pending → running → succeeded
+ *   pending → running → succeeded | completed_with_review
  *                     → failed → (retry in place: attempt++) → running
  *                              → dead_letter (after 3 failed attempts)
  *
@@ -32,7 +32,15 @@ export const jobRuns = pgTable(
     status: text('status')
       .notNull()
       .default('pending')
-      .$type<'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter' | 'cancelled'>(),
+      .$type<
+        | 'pending'
+        | 'running'
+        | 'succeeded'
+        | 'completed_with_review'
+        | 'failed'
+        | 'dead_letter'
+        | 'cancelled'
+      >(),
     attempt: integer('attempt').notNull().default(1),
     errorMessage: text('error_message'),
     /** Free-form key-value bag (e.g. drift count, deleted token count). */
