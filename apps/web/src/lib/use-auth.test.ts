@@ -19,7 +19,7 @@ const authState = vi.hoisted(() => {
       operator_id: string
       role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
       username: string
-      permissions: { can_reprint: boolean; can_anulate: boolean }
+      permissions: { can_reprint: boolean; can_anulate: boolean; data_steward: boolean }
     },
     accessToken: null as string | null,
   }
@@ -94,7 +94,7 @@ describe('useAuth', () => {
       expires_in: 900,
       operator_id: 'op-42',
       role: 'ADMIN',
-      permissions: { can_reprint: true, can_anulate: true },
+      permissions: { can_reprint: true, can_anulate: true, data_steward: true },
     })
 
     const { result } = renderHook(() => useAuth())
@@ -108,7 +108,7 @@ describe('useAuth', () => {
       operator_id: 'op-42',
       role: 'ADMIN',
       username: 'admin',
-      permissions: { can_reprint: true, can_anulate: true },
+      permissions: { can_reprint: true, can_anulate: true, data_steward: true },
     })
     expect(result.current.isAuthenticated).toBe(true)
   })
@@ -118,7 +118,7 @@ describe('useAuth', () => {
       operator_id: 'op-1',
       role: 'TESORERO',
       username: 'tesorero',
-      permissions: { can_reprint: true, can_anulate: false },
+      permissions: { can_reprint: true, can_anulate: false, data_steward: false },
     }
     authState.accessToken = 'seeded.token'
 
@@ -143,7 +143,7 @@ describe('useAuth', () => {
       operator_id: 'op-2',
       role: 'OPERADOR',
       username: 'op_user',
-      permissions: { can_reprint: false, can_anulate: false },
+      permissions: { can_reprint: false, can_anulate: false, data_steward: false },
     }
     refreshMock.mockResolvedValueOnce('rotated.access.token')
 
