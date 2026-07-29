@@ -85,6 +85,7 @@ export {
   legacyMemberFeeState,
   legacyMemberReviewState,
   legacyMemberEvidence,
+  legacyMemberEvidenceResolutions,
 } from './socios'
 export type {
   Socio,
@@ -120,6 +121,8 @@ export type {
   NewLegacyCatalogMaterializationReceipt,
   LegacyMemberEvidence,
   NewLegacyMemberEvidence,
+  LegacyMemberEvidenceResolution,
+  NewLegacyMemberEvidenceResolution,
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────

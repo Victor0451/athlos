@@ -21,18 +21,34 @@ const memberEvidenceMigration = join(
   'drizzle',
   '0039_socios_legacy_member_evidence.sql',
 )
+const closurePhaseMigration = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'drizzle',
+  '0043_socios_closure_phase_receipts.sql',
+)
+const resolutionMigration = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'drizzle',
+  '0044_socios_member_evidence_resolutions.sql',
+)
 let pool: Pool
 
 async function applyMigration(migration: string) {
   await pool.query(
     `SET search_path TO ${q}, public; ${readFileSync(migration, 'utf8')
       .replaceAll('socios.', `${q}.`)
-      .replaceAll('public.raw_events', `${q}.raw_events`)}`,
+      .replaceAll('public.raw_events', `${q}.raw_events`)
+      .replaceAll('public.operators', `${q}.operators`)}`,
   )
 }
 
 async function migrateCatalog() {
   await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.raw_events (id uuid PRIMARY KEY)`)
+  await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.operators (id uuid PRIMARY KEY)`)
   await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.member_identities (id uuid PRIMARY KEY)`)
   await pool.query(`CREATE TABLE IF NOT EXISTS ${q}.legacy_identity_evidence (id uuid PRIMARY KEY)`)
   await applyMigration(catalogMigration)
@@ -40,6 +56,12 @@ async function migrateCatalog() {
 
 async function migrateMemberEvidence() {
   await applyMigration(memberEvidenceMigration)
+}
+
+async function migrateResolutions() {
+  await migrateMemberEvidence()
+  await applyMigration(closurePhaseMigration)
+  await applyMigration(resolutionMigration)
 }
 
 async function seed(batch: string, rows: Array<[number, string, string]>) {
@@ -278,5 +300,110 @@ describe('legacy membership catalog evidence', () => {
       { fee_state: 'zero', fee_value: '0.00' },
       { fee_state: 'non_zero', fee_value: '9.50' },
     ])
+  })
+
+  it('keeps exception resolutions immutable, evidence-bound, and singly superseded', async () => {
+    await migrateCatalog()
+    await migrateResolutions()
+    const batch = randomUUID()
+    const rawEvent = randomUUID()
+    const identityEvidence = randomUUID()
+    const member = randomUUID()
+    const operator = randomUUID()
+    await seed(batch, [[1, '4', 'Type four']])
+    await project(batch)
+    const candidate = await pool.query<{ source_row_id: string }>(
+      `SELECT source_row_id FROM ${q}.legacy_membership_type_candidates`,
+    )
+    await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1)`, [rawEvent])
+    await pool.query(`INSERT INTO ${q}.legacy_identity_evidence VALUES ($1)`, [identityEvidence])
+    await pool.query(`INSERT INTO ${q}.member_identities VALUES ($1)`, [member])
+    await pool.query(`INSERT INTO ${q}.operators VALUES ($1)`, [operator])
+    const evidence = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO ${q}.legacy_member_evidence
+          (raw_event_id, import_batch, identity_evidence_id, legacy_type_code, fee_state, review_state)
+         VALUES ($1, $2, $3, '99', 'blank', 'unknown_type') RETURNING id`,
+        [rawEvent, batch, identityEvidence],
+      )
+    ).rows[0]!.id
+    const fingerprint = 'a'.repeat(64)
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, steward_operator_id, reason, idempotency_key, evidence_fingerprint)
+         VALUES ($1, 'unknown_type', $2, $3, 'reason', 'missing-type', $4)`,
+        [evidence, member, operator, fingerprint],
+      ),
+    ).rejects.toThrow()
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, steward_operator_id, reason, idempotency_key, evidence_fingerprint)
+         VALUES ($1, 'ambiguous_identity', $2, $3, 'reason', 'wrong-kind', $4)`,
+        [evidence, member, operator, fingerprint],
+      ),
+    ).rejects.toThrow()
+    const resolution = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, selected_membership_type_candidate_source_row_id,
+           steward_operator_id, reason, idempotency_key, evidence_fingerprint)
+         VALUES ($1, 'unknown_type', $2, $3, $4, 'resolved from retained source', 'resolution-1', $5) RETURNING id`,
+        [evidence, member, candidate.rows[0]!.source_row_id, operator, fingerprint],
+      )
+    ).rows[0]!.id
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, selected_membership_type_candidate_source_row_id,
+           steward_operator_id, reason, idempotency_key, evidence_fingerprint)
+         VALUES ($1, 'unknown_type', $2, $3, $4, 'competing root', 'root-conflict', $5)`,
+        [evidence, member, candidate.rows[0]!.source_row_id, operator, fingerprint],
+      ),
+    ).rejects.toThrow()
+    await expect(
+      pool.query(`DELETE FROM ${q}.member_identities WHERE id = $1`, [member]),
+    ).rejects.toThrow()
+    await expect(
+      pool.query(
+        `UPDATE ${q}.legacy_member_evidence_resolutions SET reason = 'changed' WHERE id = $1`,
+        [resolution],
+      ),
+    ).rejects.toThrow('append-only')
+    await pool.query(
+      `INSERT INTO ${q}.legacy_member_evidence_resolutions
+        (legacy_member_evidence_id, resolution_kind, selected_member_id, selected_membership_type_candidate_source_row_id,
+         steward_operator_id, reason, idempotency_key, evidence_fingerprint, supersedes_resolution_id)
+       VALUES ($1, 'unknown_type', $2, $3, $4, 'corrected selection', 'resolution-2', $5, $6)`,
+      [evidence, member, candidate.rows[0]!.source_row_id, operator, fingerprint, resolution],
+    )
+    const ambiguousRawEvent = randomUUID()
+    await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1)`, [ambiguousRawEvent])
+    const ambiguousEvidence = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO ${q}.legacy_member_evidence
+          (raw_event_id, import_batch, identity_evidence_id, legacy_type_code, fee_state, review_state)
+         VALUES ($1, $2, $3, '4', 'blank', 'ambiguous_identity') RETURNING id`,
+        [ambiguousRawEvent, batch, identityEvidence],
+      )
+    ).rows[0]!.id
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, steward_operator_id, reason, idempotency_key, evidence_fingerprint)
+         VALUES ($1, 'ambiguous_identity', $2, $3, 'duplicate caller key', 'resolution-2', $4)`,
+        [ambiguousEvidence, member, operator, fingerprint],
+      ),
+    ).rejects.toThrow()
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.legacy_member_evidence_resolutions
+          (legacy_member_evidence_id, resolution_kind, selected_member_id, selected_membership_type_candidate_source_row_id,
+           steward_operator_id, reason, idempotency_key, evidence_fingerprint, supersedes_resolution_id)
+         VALUES ($1, 'unknown_type', $2, $3, $4, 'competing correction', 'resolution-3', $5, $6)`,
+        [evidence, member, candidate.rows[0]!.source_row_id, operator, fingerprint, resolution],
+      ),
+    ).rejects.toThrow()
   })
 })
