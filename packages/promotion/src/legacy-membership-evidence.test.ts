@@ -101,6 +101,12 @@ async function migrate() {
   await pool.query(
     `SET search_path TO ${q}, public; ${migration('0039_socios_legacy_member_evidence.sql')}`,
   )
+  for (const name of [
+    '0040_socios_closure_receipts.sql',
+    '0043_socios_closure_phase_receipts.sql',
+  ]) {
+    await pool.query(`SET search_path TO ${q}, public; ${migration(name)}`)
+  }
 }
 
 async function seedProjection(batch: string) {
@@ -129,6 +135,7 @@ async function seedProjection(batch: string) {
     ['4', 'category-a', '12.50', 'validated', validMember],
     ['99', 'category-b', '0', 'validated', validMember],
     ['4', 'category-c', '', 'review_required', null],
+    ['4', 'category-d', '7', 'validated', null],
   ]) {
     const event = randomUUID()
     const identity = randomUUID()
@@ -147,8 +154,9 @@ async function seedProjection(batch: string) {
   }
 }
 
-function trackedPool() {
+function trackedPool(releaseError?: Error) {
   const clients: object[] = []
+  const calls: string[] = []
   let releases = 0
   return {
     boundary: {
@@ -156,16 +164,26 @@ function trackedPool() {
         const client = await pool.connect()
         clients.push(client)
         return {
-          query: client.query.bind(client),
+          async query(text: string, values?: unknown[]) {
+            calls.push(text)
+            return client.query(text, values)
+          },
           release() {
             releases++
             client.release()
+            if (releaseError) throw releaseError
           },
         }
       },
     },
     evidence: () => ({ clients, releases }),
+    calls,
   }
+}
+
+async function count(query: string, values: unknown[] = []) {
+  const { rows } = await pool.query(query, values)
+  return rows[0].count
 }
 
 describe('projectLegacyMemberEvidence', () => {
@@ -220,9 +238,102 @@ describe('projectLegacyMemberEvidence', () => {
         member_unattached: true,
         type_unattached: true,
       },
+      {
+        legacy_type_code: '4',
+        legacy_category: 'category-d',
+        fee_state: 'non_zero',
+        fee_value: '7.00',
+        review_state: 'missing_identity',
+        member_unattached: true,
+        type_unattached: true,
+      },
+    ])
+    expect(
+      (
+        await pool.query(`SELECT eligible_count, projected_count, exception_count,
+        unknown_type_count, ambiguous_identity_count, missing_identity_count, status
+        FROM ${q}.evidence_closure_phase_receipts WHERE phase = 'members'`)
+      ).rows,
+    ).toEqual([
+      {
+        eligible_count: 4,
+        projected_count: 1,
+        exception_count: 3,
+        unknown_type_count: 1,
+        ambiguous_identity_count: 1,
+        missing_identity_count: 1,
+        status: 'committed',
+      },
     ])
     expect(tracked.evidence().releases).toBe(2)
     expect(tracked.evidence().clients).toHaveLength(2)
+  })
+
+  it('chooses equal-ordinal candidates by id and records a stable compatible replay', async () => {
+    const batch = randomUUID()
+    await seedProjection(batch)
+    const winner = 'ffffffff-ffff-4fff-8fff-ffffffffffff'
+    const event = randomUUID()
+    await pool.query(`INSERT INTO ${q}.raw_events VALUES ($1, 'tiposoci', '5', '{}', $2)`, [
+      event,
+      batch,
+    ])
+    await pool.query(
+      `INSERT INTO ${q}.legacy_membership_type_source_rows
+       (id, raw_event_id, batch_id, record_ordinal, code, name, letter, content_hash)
+       VALUES ($1, $2, $3, 1, '4', 'Latest type four', 'L', 'hash-2')`,
+      [winner, event, batch],
+    )
+    const identity = { executionIdentity: `run:${batch}`, fingerprint: 'fingerprint-a' }
+    const tracked = trackedPool()
+
+    const first = await projectLegacyMembershipCandidates(tracked.boundary, batch, identity, schema)
+    const replay = await projectLegacyMembershipCandidates(
+      tracked.boundary,
+      batch,
+      identity,
+      schema,
+    )
+
+    expect(first).toEqual(replay)
+    expect(
+      (
+        await pool.query(
+          `SELECT source_row_id FROM ${q}.legacy_membership_type_candidates WHERE snapshot_batch_id = $1`,
+          [batch],
+        )
+      ).rows,
+    ).toEqual([{ source_row_id: winner }])
+    await expect(
+      projectLegacyMembershipCandidates(
+        trackedPool().boundary,
+        batch,
+        { ...identity, fingerprint: 'fingerprint-b' },
+        schema,
+      ),
+    ).rejects.toThrow('Incompatible candidates receipt binding')
+    expect(
+      await count(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_phase_receipts
+         WHERE execution_identity = $1 AND phase = 'candidates'`,
+        [identity.executionIdentity],
+      ),
+    ).toBe(1)
+    await pool.query(`CREATE FUNCTION ${q}.reject_candidate() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'forced candidate failure'; END $$;
+      CREATE TRIGGER reject_candidate BEFORE INSERT ON ${q}.legacy_membership_type_candidates
+      FOR EACH ROW EXECUTE FUNCTION ${q}.reject_candidate()`)
+    const failedIdentity = { executionIdentity: `failed:${batch}`, fingerprint: 'fingerprint-a' }
+    await expect(
+      projectLegacyMembershipCandidates(trackedPool().boundary, batch, failedIdentity, schema),
+    ).rejects.toThrow('forced candidate failure')
+    expect(
+      await count(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_phase_receipts WHERE execution_identity = $1`,
+        [failedIdentity.executionIdentity],
+      ),
+    ).toBe(0)
+    await pool.query(`DROP TRIGGER reject_candidate ON ${q}.legacy_membership_type_candidates`)
   })
 
   it('rolls back a failed projection on its acquired PostgreSQL session and releases it', async () => {
@@ -245,6 +356,13 @@ describe('projectLegacyMemberEvidence', () => {
         )
       ).rows,
     ).toEqual([{ count: 0 }])
+    expect(
+      await count(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_phase_receipts
+         WHERE phase = 'members' AND execution_identity = $1`,
+        [batch],
+      ),
+    ).toBe(0)
     expect(tracked.evidence().releases).toBe(1)
     expect(tracked.evidence().clients).toHaveLength(1)
     await pool.query(`DROP TRIGGER reject_member_evidence ON ${q}.legacy_member_evidence`)
@@ -256,6 +374,44 @@ describe('projectLegacyMemberEvidence', () => {
           [batch],
         )
       ).rows,
-    ).toEqual([{ count: 3 }])
+    ).toEqual([{ count: 4 }])
+    expect(
+      await count(
+        `SELECT count(*)::int AS count FROM ${q}.evidence_closure_phase_receipts
+         WHERE phase = 'members' AND execution_identity = $1`,
+        [batch],
+      ),
+    ).toBe(1)
+  })
+
+  it('keeps committed evidence and its receipt when session release fails after COMMIT', async () => {
+    const batch = randomUUID()
+    await seedProjection(batch)
+    const tracked = trackedPool(new Error('forced release failure'))
+
+    await expect(projectLegacyMemberEvidence(tracked.boundary, batch, schema)).rejects.toThrow(
+      'forced release failure',
+    )
+    expect(tracked.calls).toContain('COMMIT')
+    expect(tracked.calls).not.toContain('ROLLBACK')
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM ${q}.legacy_member_evidence WHERE import_batch = $1`,
+          [batch],
+        )
+      ).rows,
+    ).toEqual([{ count: 4 }])
+    expect(
+      (
+        await pool.query(
+          `SELECT eligible_count, projected_count, exception_count, status
+           FROM ${q}.evidence_closure_phase_receipts
+           WHERE execution_identity = $1 AND phase = 'members'`,
+          [batch],
+        )
+      ).rows,
+    ).toEqual([{ eligible_count: 4, projected_count: 1, exception_count: 3, status: 'committed' }])
+    expect(tracked.evidence().releases).toBe(1)
   })
 })
