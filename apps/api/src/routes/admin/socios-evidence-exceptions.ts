@@ -77,6 +77,20 @@ function detailDto(row: EvidenceExceptionDetail) {
   return {
     ...exceptionDto(row),
     deterministic_type_candidate_source_row_id: row.deterministicTypeCandidateSourceRowId,
+    known_member: row.knownMember && {
+      id: row.knownMember.id,
+      member_number: row.knownMember.memberNumber,
+      credential_ref: row.knownMember.credentialRef,
+      lifecycle_state: row.knownMember.lifecycleState,
+    },
+    current_resolution: row.currentResolution && {
+      id: row.currentResolution.id,
+      selected_member_id: row.currentResolution.selectedMemberId,
+      selected_type_candidate_source_row_id: row.currentResolution.selectedTypeCandidateSourceRowId,
+      application_status: row.currentResolution.applicationStatus,
+      created_at: row.currentResolution.createdAt.toISOString(),
+      applied_at: row.currentResolution.appliedAt?.toISOString() ?? null,
+    },
   }
 }
 

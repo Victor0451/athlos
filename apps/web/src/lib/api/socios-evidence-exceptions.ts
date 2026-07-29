@@ -30,6 +30,8 @@ export interface SociosEvidenceExceptionParams {
 
 export interface SociosEvidenceExceptionDetail extends SociosEvidenceException {
   deterministic_type_candidate_source_row_id: string | null
+  known_member: MemberOption | null
+  current_resolution: (EvidenceResolution & { applied_at: string | null }) | null
 }
 
 export interface MemberOption {
@@ -61,7 +63,7 @@ export interface EvidenceResolution {
   kind: EvidenceExceptionKind
   selected_member_id: string
   selected_type_candidate_source_row_id: string | null
-  application_status: 'pending_application'
+  application_status: 'pending_application' | 'applied'
   created_at: string
 }
 
