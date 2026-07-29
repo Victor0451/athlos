@@ -4,8 +4,12 @@ vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }))
 
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
-const { getSociosEvidenceExceptions, resolveSociosEvidenceException } =
-  await import('./socios-evidence-exceptions')
+const {
+  confirmSociosEvidenceClosure,
+  getSociosEvidenceExceptions,
+  previewSociosEvidenceClosure,
+  resolveSociosEvidenceException,
+} = await import('./socios-evidence-exceptions')
 
 describe('socios evidence exceptions API', () => {
   beforeEach(() => apiFetchMock.mockReset())
@@ -39,6 +43,34 @@ describe('socios evidence exceptions API', () => {
         method: 'POST',
         body: input,
         headers: { 'Idempotency-Key': 'attempt-key' },
+      },
+    )
+  })
+
+  it('keeps preview and confirmation payloads resolution-aware', async () => {
+    const reference = {
+      catalogBatchId: '00000000-0000-4000-8000-000000000010',
+      sociosBatchId: '00000000-0000-4000-8000-000000000011',
+    }
+    const preview = {
+      previewId: '00000000-0000-4000-8000-000000000012',
+      fingerprint: 'a'.repeat(64),
+      resolutionSetFingerprint: 'b'.repeat(64),
+    }
+    await previewSociosEvidenceClosure(reference)
+    await confirmSociosEvidenceClosure({ ...reference, ...preview }, 'confirm-once')
+    expect(apiFetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/admin/socios-evidence-closures/preview',
+      { method: 'POST', body: reference },
+    )
+    expect(apiFetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/admin/socios-evidence-closures/confirm',
+      {
+        method: 'POST',
+        body: { ...reference, ...preview },
+        headers: { 'Idempotency-Key': 'confirm-once' },
       },
     )
   })

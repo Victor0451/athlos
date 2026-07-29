@@ -41,6 +41,8 @@ export interface EvidenceException {
 }
 
 export interface EvidenceExceptionDetail extends EvidenceException {
+  sociosBatchId: string
+  catalogBatchId: string | null
   deterministicTypeCandidateSourceRowId: string | null
   knownMember: MemberOption | null
   currentResolution:
@@ -246,6 +248,7 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
         fingerprint: rawEvents.contentHash,
         legacyTypeCode: legacyMemberEvidence.legacyTypeCode,
         createdAt: legacyMemberEvidence.createdAt,
+        sociosBatchId: legacyMemberEvidence.importBatch,
         deterministicTypeCandidateSourceRowId:
           legacyMemberEvidence.membershipTypeCandidateSourceRowId,
         knownMemberId: memberIdentities.id,
@@ -272,6 +275,20 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
       return null
     }
     const currentResolution = await this.findCurrentLeaf(id)
+    const catalogBatchId = currentResolution?.selectedTypeCandidateSourceRowId
+      ? ((
+          await this.db
+            .select({ batchId: legacyMembershipTypeCandidates.snapshotBatchId })
+            .from(legacyMembershipTypeCandidates)
+            .where(
+              eq(
+                legacyMembershipTypeCandidates.sourceRowId,
+                currentResolution.selectedTypeCandidateSourceRowId,
+              ),
+            )
+            .limit(1)
+        )[0]?.batchId ?? null)
+      : null
     const appliedAt = currentResolution
       ? ((
           await this.db.execute<{ created_at: Date }>(sql`
@@ -287,6 +304,8 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
       fingerprint: evidence.fingerprint,
       legacyTypeCode: evidence.legacyTypeCode,
       createdAt: evidence.createdAt,
+      sociosBatchId: evidence.sociosBatchId,
+      catalogBatchId,
       deterministicTypeCandidateSourceRowId: evidence.deterministicTypeCandidateSourceRowId,
       knownMember:
         evidence.kind === 'unknown_type' && evidence.knownMemberId
