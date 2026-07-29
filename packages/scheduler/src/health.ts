@@ -1,4 +1,4 @@
-import type { Db } from '@athlos/db'
+import type { Db, JobRunStatus } from '@athlos/db'
 import type { JobDefinition } from './types.ts'
 import { getLastRun } from './run-tracker.ts'
 
@@ -20,7 +20,7 @@ export interface JobHealth {
   /** Last run row (any status), or `null` if the job has never run. */
   lastRun: {
     id: string
-    status: 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter' | 'cancelled'
+    status: JobRunStatus
     startedAt: Date | null
     finishedAt: Date | null
     attempt: number
