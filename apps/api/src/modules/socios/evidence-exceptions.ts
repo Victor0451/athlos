@@ -5,6 +5,7 @@ import {
   legacyMemberEvidence,
   legacyMemberEvidenceResolutions,
   legacyMembershipTypeCandidates,
+  legacyMembershipTypeSnapshots,
   legacyMembershipTypeSourceRows,
   memberIdentities,
   rawEvents,
@@ -17,8 +18,11 @@ import {
   eq,
   exists,
   inArray,
+  ilike,
   isNull,
   notExists,
+  or,
+  sql,
   type SQL,
 } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -36,9 +40,22 @@ export interface EvidenceException {
 }
 
 export interface EvidenceExceptionDetail extends EvidenceException {
-  memberChoices: { id: string; memberNumber: number }[]
-  typeChoices: { sourceRowId: string; code: string; name: string }[]
   deterministicTypeCandidateSourceRowId: string | null
+}
+
+export interface MemberOption {
+  id: string
+  memberNumber: number
+  credentialRef: string | null
+  lifecycleState: 'imported' | 'validated' | 'review_required'
+}
+
+export interface MembershipTypeOption {
+  sourceRowId: string
+  snapshotBatchId: string
+  code: string
+  name: string
+  letter: string
 }
 
 export interface EvidenceResolution {
@@ -64,6 +81,8 @@ export interface EvidenceExceptionRepository {
     status?: ExceptionStatus
   }): Promise<{ items: EvidenceException[]; total: number }>
   findExceptionDetail(id: string): Promise<EvidenceExceptionDetail | null>
+  searchMemberOptions(query: string): Promise<MemberOption[]>
+  searchMembershipTypeOptions(query: string): Promise<MembershipTypeOption[]>
   findResolutionByIdempotencyKey(
     operatorId: string,
     key: string,
@@ -229,27 +248,7 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
     if (!evidence || (evidence.kind !== 'unknown_type' && evidence.kind !== 'ambiguous_identity')) {
       return null
     }
-    const [memberChoices, typeChoices, resolved] = await Promise.all([
-      this.db
-        .select({ id: memberIdentities.id, memberNumber: memberIdentities.memberNumber })
-        .from(memberIdentities)
-        .orderBy(asc(memberIdentities.memberNumber), asc(memberIdentities.id)),
-      this.db
-        .select({
-          sourceRowId: legacyMembershipTypeCandidates.sourceRowId,
-          code: legacyMembershipTypeCandidates.code,
-          name: legacyMembershipTypeSourceRows.name,
-        })
-        .from(legacyMembershipTypeCandidates)
-        .innerJoin(
-          legacyMembershipTypeSourceRows,
-          eq(legacyMembershipTypeCandidates.sourceRowId, legacyMembershipTypeSourceRows.id),
-        )
-        .orderBy(
-          asc(legacyMembershipTypeCandidates.code),
-          asc(legacyMembershipTypeSourceRows.name),
-          asc(legacyMembershipTypeCandidates.sourceRowId),
-        ),
+    const [resolved] = await Promise.all([
       this.db
         .select({ id: legacyMemberEvidenceResolutions.id })
         .from(legacyMemberEvidenceResolutions)
@@ -263,10 +262,64 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
       fingerprint: evidence.fingerprint,
       legacyTypeCode: evidence.legacyTypeCode,
       createdAt: evidence.createdAt,
-      memberChoices,
-      typeChoices,
       deterministicTypeCandidateSourceRowId: evidence.deterministicTypeCandidateSourceRowId,
     }
+  }
+
+  async searchMemberOptions(query: string): Promise<MemberOption[]> {
+    return this.db
+      .select({
+        id: memberIdentities.id,
+        memberNumber: memberIdentities.memberNumber,
+        credentialRef: memberIdentities.credentialRef,
+        lifecycleState: memberIdentities.lifecycleState,
+      })
+      .from(memberIdentities)
+      .where(
+        or(
+          ilike(memberIdentities.credentialRef, `${query}%`),
+          sql`${memberIdentities.memberNumber}::text ILIKE ${`${query}%`}`,
+        ),
+      )
+      .orderBy(asc(memberIdentities.memberNumber), asc(memberIdentities.id))
+      .limit(20)
+  }
+
+  async searchMembershipTypeOptions(query: string): Promise<MembershipTypeOption[]> {
+    return this.db
+      .select({
+        sourceRowId: legacyMembershipTypeCandidates.sourceRowId,
+        snapshotBatchId: legacyMembershipTypeCandidates.snapshotBatchId,
+        code: legacyMembershipTypeCandidates.code,
+        name: legacyMembershipTypeSourceRows.name,
+        letter: legacyMembershipTypeSourceRows.letter,
+      })
+      .from(legacyMembershipTypeCandidates)
+      .innerJoin(
+        legacyMembershipTypeSourceRows,
+        eq(legacyMembershipTypeCandidates.sourceRowId, legacyMembershipTypeSourceRows.id),
+      )
+      .innerJoin(
+        legacyMembershipTypeSnapshots,
+        and(
+          eq(legacyMembershipTypeCandidates.snapshotBatchId, legacyMembershipTypeSnapshots.batchId),
+          eq(legacyMembershipTypeSnapshots.state, 'applied'),
+        ),
+      )
+      .where(
+        or(
+          ilike(legacyMembershipTypeCandidates.code, `${query}%`),
+          ilike(legacyMembershipTypeSourceRows.name, `${query}%`),
+          ilike(legacyMembershipTypeSourceRows.letter, `${query}%`),
+        ),
+      )
+      .orderBy(
+        asc(legacyMembershipTypeCandidates.code),
+        asc(legacyMembershipTypeSourceRows.name),
+        asc(legacyMembershipTypeSourceRows.letter),
+        asc(legacyMembershipTypeCandidates.sourceRowId),
+      )
+      .limit(20)
   }
 
   findResolutionContext(id: string): Promise<EvidenceExceptionDetail | null> {
@@ -305,7 +358,19 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
         await this.db
           .select({ id: legacyMembershipTypeCandidates.sourceRowId })
           .from(legacyMembershipTypeCandidates)
-          .where(eq(legacyMembershipTypeCandidates.sourceRowId, sourceRowId))
+          .innerJoin(
+            legacyMembershipTypeSnapshots,
+            eq(
+              legacyMembershipTypeCandidates.snapshotBatchId,
+              legacyMembershipTypeSnapshots.batchId,
+            ),
+          )
+          .where(
+            and(
+              eq(legacyMembershipTypeCandidates.sourceRowId, sourceRowId),
+              eq(legacyMembershipTypeSnapshots.state, 'applied'),
+            ),
+          )
           .limit(1)
       ).length > 0
     )
@@ -383,6 +448,17 @@ export async function getEvidenceException(
   const detail = await repo.findExceptionDetail(id)
   if (!detail) throw BusinessError(ErrorCode.NOT_FOUND, 'Evidence exception not found')
   return detail
+}
+
+export async function searchMemberOptions(repo: EvidenceExceptionRepository, query: string) {
+  return (await repo.searchMemberOptions(query)).slice(0, 20)
+}
+
+export async function searchMembershipTypeOptions(
+  repo: EvidenceExceptionRepository,
+  query: string,
+) {
+  return (await repo.searchMembershipTypeOptions(query)).slice(0, 20)
 }
 
 function sameCommand(row: EvidenceResolution, input: ResolveEvidenceExceptionInput): boolean {
