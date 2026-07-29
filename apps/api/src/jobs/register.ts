@@ -9,6 +9,7 @@ import {
   makeReconciliationHandler,
   makeScheduledImportHandler,
   makeScheduledPromotionHandler,
+  makeSociosEvidenceClosureHandler,
   makeTokenCleanupHandler,
 } from './index.ts'
 import { reconcileOrphanedRuns } from '@athlos/scheduler'
@@ -125,6 +126,11 @@ export async function buildScheduler(opts: {
     'scheduled-promotion',
     env.PROMOTION_CRON,
     makeScheduledPromotionHandler(db, container),
+  )
+  scheduler.schedule(
+    'socios-evidence-runtime-closure',
+    null,
+    makeSociosEvidenceClosureHandler(container.pool),
   )
   if (env.RECONCILIATION_CRON) {
     scheduler.schedule(

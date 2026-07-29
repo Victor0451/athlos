@@ -357,6 +357,11 @@ export class InProcessScheduler implements JobScheduler {
           status: result.status,
           ...(Object.keys(merged).length > 0 ? { metadata: merged } : {}),
         })
+        try {
+          await result.afterCommit?.()
+        } catch {
+          childLog.warn({ event: 'JOB_POST_COMMIT_CLEANUP_FAILED' }, 'post-commit cleanup failed')
+        }
         childLog.info({ event: 'JOB_SUCCEEDED' }, 'job succeeded')
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)

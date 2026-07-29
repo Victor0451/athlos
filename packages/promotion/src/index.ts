@@ -29,10 +29,12 @@ export { transformCaja } from './transforms/caja.ts'
 export {
   projectLegacyMemberEvidence,
   projectLegacyMembershipCandidates,
+  type ClosurePhaseReceipt,
   type SqlTransactionSession,
   type SqlTransactionSource,
 } from './legacy-membership-evidence.ts'
 export {
+  catalogInputHash,
   materializeLegacyMembershipCatalog,
   type SqlTransactionSession as CatalogSqlTransactionSession,
   type SqlTransactionSource as CatalogSqlTransactionSource,

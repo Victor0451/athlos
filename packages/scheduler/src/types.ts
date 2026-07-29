@@ -53,6 +53,8 @@ export interface JobContext {
 export interface JobResult {
   status: 'succeeded' | 'completed_with_review'
   metadata?: Record<string, unknown>
+  /** Best-effort cleanup only after the terminal row is durable. */
+  afterCommit?: () => Promise<void>
 }
 
 /**
