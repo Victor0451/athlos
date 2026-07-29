@@ -4,7 +4,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }))
 
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
-const { getSociosEvidenceException, getSociosEvidenceExceptions } =
+const { getSociosEvidenceExceptions, resolveSociosEvidenceException } =
   await import('./socios-evidence-exceptions')
 
 describe('socios evidence exceptions API', () => {
@@ -23,11 +23,23 @@ describe('socios evidence exceptions API', () => {
     })
   })
 
-  it('gets one exception detail', async () => {
-    apiFetchMock.mockResolvedValueOnce({ id: 'evidence-id' })
-    await getSociosEvidenceException('evidence-id')
+  it('posts the trusted resolution shape with its idempotency key', async () => {
+    const input = {
+      kind: 'unknown_type' as const,
+      evidence_fingerprint: 'a'.repeat(64),
+      reason: 'Verified',
+      selected_member_id: 'member-id',
+      selected_type_candidate_source_row_id: 'type-id',
+    }
+    apiFetchMock.mockResolvedValueOnce({ application_status: 'pending_application' })
+    await resolveSociosEvidenceException('evidence-id', input, 'attempt-key')
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/v1/admin/socios-evidence-exceptions/evidence-id',
+      '/api/v1/admin/socios-evidence-exceptions/evidence-id/resolutions',
+      {
+        method: 'POST',
+        body: input,
+        headers: { 'Idempotency-Key': 'attempt-key' },
+      },
     )
   })
 })
