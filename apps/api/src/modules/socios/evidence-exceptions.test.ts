@@ -19,6 +19,8 @@ const detail: EvidenceExceptionDetail = {
   legacyTypeCode: 'A',
   createdAt: new Date(),
   deterministicTypeCandidateSourceRowId: null,
+  knownMember: null,
+  currentResolution: null,
 }
 const command = {
   evidenceId: detail.id,
@@ -128,15 +130,17 @@ describe('Socios evidence exceptions', () => {
     ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: null })
   })
 
-  it('uses the current leaf as the correction predecessor and rejects a concurrent loser', async () => {
+  it('rejects a second root resolution because correction is not supported here', async () => {
     const { repo, resolutions } = fake()
-    const first = await resolveEvidenceException(repo, command)
-    const correction = await resolveEvidenceException(repo, {
-      ...command,
-      idempotencyKey: 'request-2',
-    })
-    expect(correction.supersedesResolutionId).toBe(first.id)
-    expect(resolutions).toHaveLength(2)
+    await resolveEvidenceException(repo, command)
+    await rejects(
+      resolveEvidenceException(repo, {
+        ...command,
+        idempotencyKey: 'request-2',
+      }),
+      ErrorCode.CONFLICT,
+    )
+    expect(resolutions).toHaveLength(1)
     await rejects(
       resolveEvidenceException(fake({ appendResolution: async () => null }).repo, command),
       ErrorCode.CONFLICT,

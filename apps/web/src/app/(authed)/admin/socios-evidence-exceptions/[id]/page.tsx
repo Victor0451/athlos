@@ -57,7 +57,7 @@ export default function SociosEvidenceExceptionDetailPage() {
           kind: evidence.kind,
           evidence_fingerprint: evidence.fingerprint,
           reason: reason.trim(),
-          selected_member_id: memberId,
+          selected_member_id: evidence.known_member?.id ?? memberId,
           ...(needsType(evidence.kind, evidence.deterministic_type_candidate_source_row_id)
             ? { selected_type_candidate_source_row_id: typeId }
             : {}),
@@ -85,7 +85,8 @@ export default function SociosEvidenceExceptionDetailPage() {
     )
   const evidence = detail.data!
   const requireType = needsType(evidence.kind, evidence.deterministic_type_candidate_source_row_id)
-  const complete = memberId && reason.trim() && (!requireType || typeId)
+  const knownMember = evidence.known_member
+  const complete = (knownMember || memberId) && reason.trim() && (!requireType || typeId)
   const stale = resolution.error instanceof ApiError && resolution.error.status === 409
 
   return (
@@ -110,9 +111,11 @@ export default function SociosEvidenceExceptionDetailPage() {
         <Info
           label="Estado"
           value={
-            evidence.status === 'resolved'
-              ? 'Resolución registrada; pendiente de aplicación ADMIN'
-              : 'Pendiente de resolución'
+            evidence.current_resolution?.application_status === 'applied'
+              ? 'Resolución aplicada'
+              : evidence.status === 'resolved'
+                ? 'Resolución registrada; pendiente de aplicación ADMIN'
+                : 'Pendiente de resolución'
           }
         />
       </section>
@@ -124,7 +127,7 @@ export default function SociosEvidenceExceptionDetailPage() {
       ) : evidence.status === 'resolved' ? (
         <State
           kind="status"
-          message="Esta excepción ya tiene una resolución registrada y sigue pendiente de aplicación ADMIN."
+          message={`Esta excepción ya tiene una resolución registrada${evidence.current_resolution?.application_status === 'applied' ? ' y aplicada.' : ' y pendiente de aplicación ADMIN.'}`}
         />
       ) : (
         <section className="rounded-lg border border-ink-100 bg-surface p-4">
@@ -133,23 +136,32 @@ export default function SociosEvidenceExceptionDetailPage() {
             Seleccioná registros existentes. No se muestran datos de origen ni identificadores
             internos.
           </p>
-          <label className="mt-4 block text-sm text-ink-700">Miembro existente</label>
-          <input
-            value={memberSearch}
-            onChange={(e) => {
-              setMemberSearch(e.target.value)
-              setMemberId('')
-            }}
-            className={inputClass}
-            placeholder="Buscar por número o credencial"
-          />
-          <Options
-            items={members.data?.items ?? []}
-            loading={members.isFetching}
-            selected={memberId}
-            onSelect={setMemberId}
-            member
-          />
+          {knownMember ? (
+            <Info
+              label="Miembro validado"
+              value={`Socio ${knownMember.member_number} · ${knownMember.credential_ref ?? 'Sin credencial'} · ${knownMember.lifecycle_state}`}
+            />
+          ) : (
+            <>
+              <label className="mt-4 block text-sm text-ink-700">Miembro existente</label>
+              <input
+                value={memberSearch}
+                onChange={(e) => {
+                  setMemberSearch(e.target.value)
+                  setMemberId('')
+                }}
+                className={inputClass}
+                placeholder="Buscar por número o credencial"
+              />
+              <Options
+                items={members.data?.items ?? []}
+                loading={members.isFetching}
+                selected={memberId}
+                onSelect={setMemberId}
+                member
+              />
+            </>
+          )}
           {requireType ? (
             <>
               <label className="mt-4 block text-sm text-ink-700">Tipo de afiliación aplicado</label>

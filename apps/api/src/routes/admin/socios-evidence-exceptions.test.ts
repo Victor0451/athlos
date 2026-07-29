@@ -95,6 +95,13 @@ beforeEach(() => {
     legacyTypeCode: 'A',
     createdAt: new Date('2026-07-29T12:00:00.000Z'),
     deterministicTypeCandidateSourceRowId: null,
+    knownMember: {
+      id: IDS.member,
+      memberNumber: 12,
+      credentialRef: 'CARD-001',
+      lifecycleState: 'validated',
+    },
+    currentResolution: null,
   })
   mocks.resolve.mockResolvedValue(resolution)
   mocks.members.mockResolvedValue([])
@@ -182,6 +189,38 @@ describe('socios evidence exception routes', () => {
       letter: 'A',
     })
     expect(`${members.body}${types.body}`).not.toContain('rawPayload')
+  })
+
+  it('returns safe known-member and active-resolution detail context', async () => {
+    const app = await buildApp()
+    mocks.detail.mockResolvedValueOnce({
+      ...(await mocks.detail()),
+      currentResolution: {
+        ...resolution,
+        applicationStatus: 'applied',
+        appliedAt: new Date('2026-07-30T12:00:00.000Z'),
+      },
+    })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/socios-evidence-exceptions/${IDS.evidence}`,
+      headers: { authorization: `Bearer ${token(IDS.admin, 'ADMIN')}` },
+    })
+    expect(response.json()).toMatchObject({
+      known_member: {
+        id: IDS.member,
+        member_number: 12,
+        credential_ref: 'CARD-001',
+        lifecycle_state: 'validated',
+      },
+      current_resolution: {
+        id: IDS.resolution,
+        selected_member_id: IDS.member,
+        application_status: 'applied',
+        applied_at: '2026-07-30T12:00:00.000Z',
+      },
+    })
+    expect(response.body).not.toContain('Verified against source register')
   })
 
   it('protects option lookups and validates a specific query', async () => {
