@@ -70,6 +70,61 @@ WHERE operator_id = '<operator-uuid>' AND permission_key = 'data_steward';
 - [ ] Verify `GET /api/v1/admin/jobs/runs?job_name=reconciliation` shows recent runs
 - [ ] If `RECONCILIATION_CRON` is set, verify the job fires at the expected time
 
+### Socios evidence closure — future beta acceptance (PR4)
+
+> This is an operator checklist for a **future beta execution**. It does not deploy an image, run a closure, or authorize production use. Record only sanitized identifiers and aggregate evidence; never copy legacy payloads into tickets, logs, or this document.
+
+#### Preflight — every item is required
+
+- [ ] Record the immutable beta API image digest and revision; do not use a mutable tag.
+- [ ] Verify migration status is clean and that `0040` through `0043` are applied.
+- [ ] Verify a current database backup is present, readable, and the beta database is ready.
+- [ ] Verify the operator is authenticated as `ADMIN` and the audit identity is correct.
+- [ ] Record the selected catalog batch ID and Socios batch ID; verify they are the intended distinct pair.
+- [ ] Create a new preview and record its sanitized ID and fingerprint. Confirm it is fresh immediately before confirmation.
+- [ ] Verify no closure lease is active for the selected pair.
+- [ ] Generate and record one explicit idempotency key bound to this preview; do not reuse a key for another pair or fingerprint.
+- [ ] Record the approved delivery/maintenance change authorization and governance state for this beta run, including approver and timestamp. This is approval evidence, not a runtime review-mode API expectation.
+
+#### Execute and observe
+
+1. Request the ADMIN dry-run/preview for the exact selected pair. Record only its `previewId`, `fingerprint`, `counts.catalog`, and `counts.socios`; stop if it is missing, stale, or invalid.
+2. Stop unless the preview fingerprint is fresh immediately before confirmation. Eligible, projected, and exception reconciliation is terminal runner evidence, not preview evidence.
+3. Confirm once with the recorded idempotency key, preview ID, and fingerprint. A compatible replay is evidence of the same request; do not issue a different key while the pair is leased.
+4. Observe the returned `jobRunId` through the existing unfiltered `GET /api/v1/admin/jobs/runs` history: find the item whose `id` equals that value and record its terminal status and timestamps. Do not use a status filter; the endpoint's supported status enum does not include `completed_with_review`, and it does not expose metadata.
+5. If explicitly authorized for read-only operational database access, collect terminal reconciliation evidence from the actual schema: the matched `public.job_runs` row's `metadata` plus `socios.evidence_closure_phase_receipts`. Verify the job row's `id`, `job_name`, `status`, `started_at`, and `finished_at`; inspect actual metadata keys without assuming an API projection. For the receipt rows, retain only `execution_identity`, `phase`, `selected_batch_id`, `fingerprint`, `eligible_count`, `projected_count`, `exception_count`, `unknown_type_count`, `ambiguous_identity_count`, `missing_identity_count`, `status`, `started_at`, and `committed_at`. Establish the real metadata-to-`execution_identity` binding before using receipt rows; if it is absent or cannot be read, no-go. Do not invent a receipt endpoint, metadata field, filter, or SQL column.
+
+#### Go / no-go
+
+| Outcome                                                                                                                                  | Decision       |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Terminal reconciliation evidence exactly matches its receipt constraints; every eligible row is projected or explicitly excepted         | Go             |
+| `completed_with_review` with exact reconciliation and explicit exception counts                                                          | Go with review |
+| Missing or incomplete authorized evidence, stale/mismatched preview, technical failure, non-terminal job, or any reconciliation mismatch | No-go          |
+
+#### Sanitized acceptance evidence
+
+```text
+imageDigest: sha256:<digest>
+revision: <immutable revision>
+catalogBatchId: <uuid>
+sociosBatchId: <uuid>
+previewId: <uuid>
+fingerprint: <sha256>
+leaseFence: <integer>
+jobRunId: <uuid>
+previewCounts: catalog=<n>, socios=<n>
+terminalReconciliation: eligible=<n>, projected=<n>, exceptions=<n>, unknownType=<n>, ambiguousIdentity=<n>, missingIdentity=<n>
+durationsMs: preview=<n>, execution=<n>
+status: completed | completed_with_review | failed
+```
+
+For `completed_with_review`, record the follow-up owner in the external acceptance-evidence record or runbook signoff; do not persist it as runtime metadata. Do not add raw legacy identifiers, names, payloads, SQL output, tokens, or credentials to acceptance evidence.
+
+#### Abort and recovery boundary
+
+Before durable idempotency-key reservation, aborting leaves no closure effects. After reservation commits, it is the point of no return: never delete the shared key, closure evidence, or committed phase receipts. Stop future phases at the next documented boundary, preserve committed receipts, and fence or release the lease only through its safe owner-aware lifecycle. Recover schema or data defects with a forward-fix migration; recover a runtime defect by rolling back to the prior immutable image when applicable. Re-run only through the same durable receipt and idempotency contracts.
+
 ## Rollback Procedure
 
 <!-- DEPRECATED 2026-06-18: the rollback procedure that lived here was removed.
