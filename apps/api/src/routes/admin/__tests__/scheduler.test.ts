@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { signAccessToken } from '@athlos/auth'
 import type { Env } from '@athlos/config'
 import { createStandinDb } from '../../../test-standins/db.ts'
@@ -306,6 +306,7 @@ describe('POST /api/v1/admin/socios-evidence-closures/confirm', () => {
     async (_name, outcome, leaseHeld, status) => {
       const { app } = await bootstrap(closurePool(outcome, leaseHeld))
       try {
+        const enqueue = vi.spyOn(app.scheduler, 'runNow')
         const res = await app.inject({
           method: 'POST',
           url: '/api/v1/admin/socios-evidence-closures/confirm',
@@ -317,8 +318,12 @@ describe('POST /api/v1/admin/socios-evidence-closures/confirm', () => {
           payload: closureBody,
         })
         expect(res.statusCode).toBe(status)
-        if (status === 202) expect(res.json()).toMatchObject({ status: 'accepted', fence: 1 })
+        if (status === 202)
+          expect(res.json()).toMatchObject({ status: 'accepted', jobRunId: expect.any(String) })
         if (status === 200) expect(res.json()).toEqual({ status: 'replay' })
+        expect(enqueue.mock.calls.map(([name]) => name)).toEqual(
+          status === 202 ? ['socios-evidence-runtime-closure'] : [],
+        )
       } finally {
         await app.close()
       }
