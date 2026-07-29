@@ -119,6 +119,32 @@ describe('Socios evidence exceptions', () => {
     )
   })
 
+  it('replays a same-command insert race without emitting a second audit event', async () => {
+    const resolution: EvidenceResolution = {
+      id: 'resolution-race',
+      evidenceId: command.evidenceId,
+      kind: command.kind,
+      selectedMemberId: command.selectedMemberId,
+      selectedTypeCandidateSourceRowId: command.selectedTypeCandidateSourceRowId,
+      stewardOperatorId: command.operatorId,
+      reason: command.reason,
+      idempotencyKey: command.idempotencyKey,
+      evidenceFingerprint: command.evidenceFingerprint,
+      supersedesResolutionId: null,
+      createdAt: new Date(),
+    }
+    let lookupCount = 0
+    const { repo, audits } = fake({
+      findResolutionByIdempotencyKey: async () => {
+        lookupCount += 1
+        return lookupCount === 1 ? null : resolution
+      },
+      appendResolution: async () => null,
+    })
+    await expect(resolveEvidenceException(repo, command)).resolves.toEqual(resolution)
+    expect(audits).toHaveLength(0)
+  })
+
   it('does not expose a scheduling dependency', async () => {
     const { repo, audits } = fake()
     await resolveEvidenceException(repo, command)
