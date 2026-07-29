@@ -94,6 +94,8 @@ beforeEach(() => {
     fingerprint,
     legacyTypeCode: 'A',
     createdAt: new Date('2026-07-29T12:00:00.000Z'),
+    sociosBatchId: IDS.evidence,
+    catalogBatchId: IDS.type,
     deterministicTypeCandidateSourceRowId: null,
     knownMember: {
       id: IDS.member,
@@ -207,6 +209,8 @@ describe('socios evidence exception routes', () => {
       headers: { authorization: `Bearer ${token(IDS.admin, 'ADMIN')}` },
     })
     expect(response.json()).toMatchObject({
+      socios_batch_id: IDS.evidence,
+      catalog_batch_id: IDS.type,
       known_member: {
         id: IDS.member,
         member_number: 12,

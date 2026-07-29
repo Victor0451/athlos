@@ -18,6 +18,8 @@ const detail: EvidenceExceptionDetail = {
   fingerprint: 'a'.repeat(64),
   legacyTypeCode: 'A',
   createdAt: new Date(),
+  sociosBatchId: '00000000-0000-4000-8000-000000000011',
+  catalogBatchId: '00000000-0000-4000-8000-000000000010',
   deterministicTypeCandidateSourceRowId: null,
   knownMember: null,
   currentResolution: null,
