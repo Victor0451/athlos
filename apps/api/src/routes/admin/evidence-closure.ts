@@ -57,18 +57,26 @@ export const evidenceClosureRoutes: FastifyPluginCallback = (app, _opts, done) =
           z.string().min(1).max(128),
           request.headers['idempotency-key'] ?? '',
         )
+        const leaseOwner = randomUUID()
         const result = await confirmClosureReservation(
           app.container.pool,
           'public',
           { ...body, idempotencyKey },
-          randomUUID(),
+          leaseOwner,
           () => cancelled,
           'socios',
         )
         if (result.outcome === 'cancelled') return reply.code(499).send()
         if (result.outcome === 'replay') return reply.code(200).send({ status: 'replay' })
-        if (result.outcome === 'accepted')
-          return reply.code(202).send({ status: 'accepted', fence: result.fence })
+        if (result.outcome === 'accepted') {
+          const run = await app.scheduler.runNow('socios-evidence-runtime-closure', {
+            ...body,
+            idempotencyKey,
+            leaseOwner,
+            leaseFence: result.fence,
+          })
+          return reply.code(202).send({ status: 'accepted', jobRunId: run.jobRunId })
+        }
         return reply.code(409).send({ error: 'CLOSURE_CONFIRMATION_CONFLICT' })
       } finally {
         request.raw.removeListener('aborted', onAborted)

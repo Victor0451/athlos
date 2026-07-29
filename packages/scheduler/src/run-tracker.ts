@@ -2,6 +2,16 @@ import { and, desc, eq, gte, type SQL } from 'drizzle-orm'
 import { jobRuns, type Db, type JobRun, type JobRunStatus, type JobTrigger } from '@athlos/db'
 import type { RunFinishInput, RunStartInput } from './types.ts'
 
+const BINDING_METADATA_KEYS = [
+  'catalogBatchId',
+  'sociosBatchId',
+  'previewId',
+  'fingerprint',
+  'idempotencyKey',
+  'leaseOwner',
+  'leaseFence',
+] as const
+
 /**
  * Job-run persistence layer. Every state transition in the lifecycle
  * goes through one of these functions so the SQL surface lives in a
@@ -72,9 +82,22 @@ export async function recordFinish(db: Db, input: RunFinishInput): Promise<JobRu
   if (input.errorMessage !== undefined) patch.errorMessage = input.errorMessage
   if (input.attempt !== undefined) patch.attempt = input.attempt
   if (input.metadata !== undefined) {
-    // Merge with whatever the row already has (a previous attempt may
-    // have written partial metadata before failing).
-    patch.metadata = input.metadata
+    const [existing] = await db
+      .select({ metadata: jobRuns.metadata })
+      .from(jobRuns)
+      .where(eq(jobRuns.id, input.jobRunId))
+    const initial: Record<string, unknown> =
+      existing?.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {}
+    const binding = Object.fromEntries(
+      BINDING_METADATA_KEYS.filter((key) => key in initial).map((key) => [key, initial[key]]),
+    )
+    // Handler result metadata adds terminal evidence but can never replace
+    // the sanitized handoff binding persisted when the job was enqueued.
+    patch.metadata = { ...input.metadata, ...binding }
   }
   const [row] = await db
     .update(jobRuns)

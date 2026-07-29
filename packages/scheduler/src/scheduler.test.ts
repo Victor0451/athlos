@@ -87,21 +87,45 @@ describe('InProcessScheduler — runNow', () => {
     expect(row?.finishedAt).toBeInstanceOf(Date)
   })
 
-  it('persists completed_with_review without scheduling a retry', async () => {
+  it('persists completed_with_review, binding metadata, then tolerates release failure', async () => {
     vi.useFakeTimers()
     const { standin, scheduler } = makeScheduler()
+    const lifecycle: string[] = []
+    let jobRunId = ''
     const handler = vi.fn<JobHandler>().mockResolvedValue({
       status: 'completed_with_review',
-      metadata: { exception_count: 2 },
+      metadata: { exception_count: 2, fingerprint: 'handler-must-not-overwrite' },
+      afterCommit: async () => {
+        lifecycle.push(findRow(standin, jobRunId)?.status ?? 'missing')
+        throw new Error('release failed')
+      },
     })
     scheduler.schedule('socios-evidence-runtime-closure', null, handler)
-
-    const { jobRunId } = await scheduler.runNow('socios-evidence-runtime-closure')
+    ;({ jobRunId } = await scheduler.runNow('socios-evidence-runtime-closure', {
+      catalogBatchId: 'catalog',
+      sociosBatchId: 'socios',
+      previewId: 'preview',
+      fingerprint: 'bound-fingerprint',
+      idempotencyKey: 'key',
+      leaseOwner: 'owner',
+      leaseFence: 3,
+    }))
     await vi.runAllTimersAsync()
 
     const row = findRow(standin, jobRunId)
     expect(row?.status).toBe('completed_with_review')
-    expect(row?.metadata).toMatchObject({ exception_count: 2 })
+    expect(row?.metadata).toMatchObject({
+      catalogBatchId: 'catalog',
+      sociosBatchId: 'socios',
+      previewId: 'preview',
+      fingerprint: 'bound-fingerprint',
+      idempotencyKey: 'key',
+      leaseOwner: 'owner',
+      leaseFence: 3,
+      exception_count: 2,
+    })
+    expect(row?.finishedAt).toBeInstanceOf(Date)
+    expect(lifecycle).toEqual(['completed_with_review'])
     expect(handler).toHaveBeenCalledTimes(1)
     await scheduler.stop(100)
   })
@@ -132,7 +156,7 @@ describe('InProcessScheduler — runNow', () => {
     scheduler.schedule('drift-detection', '*/15 * * * *', handler)
 
     await scheduler.runNow('drift-detection')
-    await vi.advanceTimersByTimeAsync(31_000)
+    await vi.advanceTimersByTimeAsync(37_000)
 
     expect(handler).toHaveBeenCalledTimes(2)
     await scheduler.stop(100)
