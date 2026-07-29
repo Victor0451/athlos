@@ -176,6 +176,13 @@
       "when": 1785330000000,
       "tag": "0042_socios_closure_confirmation_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785400000000,
+      "tag": "0043_socios_closure_phase_receipts",
+      "breakpoints": true
     }
   ]
 }
