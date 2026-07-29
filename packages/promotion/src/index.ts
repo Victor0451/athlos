@@ -34,6 +34,11 @@ export {
   type SqlTransactionSource,
 } from './legacy-membership-evidence.ts'
 export {
+  applyLegacyMemberEvidenceResolutions,
+  resolutionApplicationFingerprint,
+  type ResolutionApplicationReceipt,
+} from './legacy-member-evidence-resolution-application.ts'
+export {
   catalogInputHash,
   materializeLegacyMembershipCatalog,
   type SqlTransactionSession as CatalogSqlTransactionSession,
