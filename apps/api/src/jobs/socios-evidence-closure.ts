@@ -5,8 +5,11 @@ import {
   materializeLegacyMembershipCatalog,
   projectLegacyMemberEvidence,
   projectLegacyMembershipCandidates,
+  applyLegacyMemberEvidenceResolutions,
   type ClosurePhaseReceipt,
+  type ResolutionApplicationReceipt,
 } from '@athlos/promotion'
+type ResolutionApplication = { executionIdentity: string; resolutionSetFingerprint: string }
 type Metadata = {
   catalogBatchId: string
   sociosBatchId: string
@@ -15,6 +18,7 @@ type Metadata = {
   idempotencyKey: string
   leaseOwner: string
   leaseFence: number
+  resolutionApplication?: ResolutionApplication | undefined
 }
 type Dependencies = {
   renew: () => Promise<boolean>
@@ -23,6 +27,7 @@ type Dependencies = {
   catalog: () => Promise<void>
   candidates: () => Promise<ClosurePhaseReceipt>
   members: () => Promise<ClosurePhaseReceipt>
+  apply?: () => Promise<ResolutionApplicationReceipt>
   cancelled?: () => boolean
 }
 type Pool = {
@@ -36,6 +41,7 @@ function closureMetadata(value: Record<string, unknown>): Metadata {
   const text = (key: keyof Metadata) =>
     typeof value[key] === 'string' && value[key] ? (value[key] as string) : null
   const leaseFence = value.leaseFence
+  const resolution = value.resolutionApplication
   const parsed = [
     'catalogBatchId',
     'sociosBatchId',
@@ -50,6 +56,18 @@ function closureMetadata(value: Record<string, unknown>): Metadata {
     (leaseFence as number) < 1
   )
     throw new Error('invalid closure job metadata')
+  if (resolution !== undefined) {
+    if (
+      !resolution ||
+      typeof resolution !== 'object' ||
+      typeof (resolution as ResolutionApplication).executionIdentity !== 'string' ||
+      typeof (resolution as ResolutionApplication).resolutionSetFingerprint !== 'string' ||
+      !(resolution as ResolutionApplication).executionIdentity ||
+      !/^[a-f0-9]{64}$/.test((resolution as ResolutionApplication).resolutionSetFingerprint) ||
+      (resolution as ResolutionApplication).executionIdentity === value.idempotencyKey
+    )
+      throw new Error('invalid resolution application metadata')
+  }
   return {
     catalogBatchId: parsed[0]!,
     sociosBatchId: parsed[1]!,
@@ -58,6 +76,7 @@ function closureMetadata(value: Record<string, unknown>): Metadata {
     idempotencyKey: parsed[4]!,
     leaseOwner: parsed[5]!,
     leaseFence: leaseFence as number,
+    resolutionApplication: resolution as ResolutionApplication | undefined,
   }
 }
 
@@ -66,6 +85,24 @@ function reconciled(receipt: ClosurePhaseReceipt): boolean {
     receipt.eligibleCount === receipt.projectedCount + receipt.exceptionCount &&
     receipt.exceptionCount ===
       receipt.unknownTypeCount + receipt.ambiguousIdentityCount + receipt.missingIdentityCount
+  )
+}
+
+function applicationReconciled(
+  members: ClosurePhaseReceipt,
+  application: ResolutionApplicationReceipt,
+): boolean {
+  return (
+    application.eligibleCount === members.exceptionCount &&
+    application.eligibleCount ===
+      application.appliedCount +
+        application.unresolvedUnknownTypeCount +
+        application.unresolvedAmbiguousIdentityCount +
+        application.staleCount +
+        application.technicalCount &&
+    application.unresolvedCount ===
+      application.unresolvedUnknownTypeCount + application.unresolvedAmbiguousIdentityCount &&
+    application.technicalCount === members.missingIdentityCount
   )
 }
 
@@ -82,9 +119,28 @@ export async function runSociosEvidenceClosure(
   await phase(deps.catalog)
   const candidates = await phase(deps.candidates)
   const members = await phase(deps.members)
-  if (!reconciled(candidates) || !reconciled(members) || members.missingIdentityCount > 0)
+  if (!reconciled(candidates) || !reconciled(members))
     throw new Error('incomplete closure reconciliation')
-  const status = members.exceptionCount ? 'completed_with_review' : 'succeeded'
+  const application = metadata.resolutionApplication
+    ? await phase(() => {
+        if (!deps.apply) throw new Error('resolution application dependency missing')
+        return deps.apply()
+      })
+    : undefined
+  if (
+    (application && !applicationReconciled(members, application)) ||
+    (!application && members.missingIdentityCount > 0) ||
+    (application && (application.staleCount > 0 || application.technicalCount > 0))
+  )
+    throw new Error('incomplete closure reconciliation')
+  const status = application
+    ? application.unresolvedCount
+      ? 'completed_with_review'
+      : 'succeeded'
+    : members.exceptionCount
+      ? 'completed_with_review'
+      : 'succeeded'
+  if (application) await phase(async () => undefined)
   return {
     status,
     metadata: {
@@ -98,6 +154,15 @@ export async function runSociosEvidenceClosure(
       unknownType: members.unknownTypeCount,
       ambiguousIdentity: members.ambiguousIdentityCount,
       missingIdentity: members.missingIdentityCount,
+      ...(application && {
+        resolutionExecutionIdentity: metadata.resolutionApplication!.executionIdentity,
+        resolutionSetFingerprint: application.applicationFingerprint,
+        applied: application.appliedCount,
+        unresolvedUnknownType: application.unresolvedUnknownTypeCount,
+        unresolvedAmbiguousIdentity: application.unresolvedAmbiguousIdentityCount,
+        staleResolutions: application.staleCount,
+        technicalMissingIdentity: application.technicalCount,
+      }),
     },
     afterCommit: async () => {
       try {
@@ -111,7 +176,8 @@ export function makeSociosEvidenceClosureHandler(pool: Pool): JobHandler {
   return async (ctx) => {
     const metadata = closureMetadata(ctx.metadata)
     const identity = {
-      executionIdentity: metadata.idempotencyKey,
+      executionIdentity:
+        metadata.resolutionApplication?.executionIdentity ?? metadata.idempotencyKey,
       fingerprint: metadata.fingerprint,
     }
     const lease = () =>
@@ -174,6 +240,14 @@ export function makeSociosEvidenceClosureHandler(pool: Pool): JobHandler {
           metadata.sociosBatchId,
           'socios',
           identity,
+        ),
+      apply: () =>
+        applyLegacyMemberEvidenceResolutions(
+          { acquire: () => pool.connect() },
+          metadata.sociosBatchId,
+          identity.executionIdentity,
+          'socios',
+          metadata.resolutionApplication?.resolutionSetFingerprint,
         ),
       cancelled: () => ctx.signal.aborted,
     })
