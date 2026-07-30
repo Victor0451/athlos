@@ -67,6 +67,18 @@ describe('applyLegacyMemberEvidenceResolutions', () => {
     expect(db.calls.at(-1)).toBe('COMMIT')
   })
 
+  it('plans a deterministic ambiguous-identity resolution as applied', async () => {
+    await expect(
+      applyLegacyMemberEvidenceResolutions(
+        source([
+          { ...valid, evidence_kind: 'ambiguous_identity', resolution_kind: 'ambiguous_identity' },
+        ]),
+        'batch-a',
+        'execution-ambiguous',
+      ),
+    ).resolves.toMatchObject({ appliedCount: 1, staleCount: 0 })
+  })
+
   it('replays exact committed truth and rejects incompatible or forked leaves', async () => {
     const fingerprint = resolutionApplicationFingerprint([valid])
     const existing = {

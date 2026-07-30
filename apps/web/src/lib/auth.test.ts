@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearAccessToken,
   getAccessToken,
+  getCurrentUser,
   login,
   logout,
   refreshAccessToken,
@@ -77,28 +78,50 @@ describe('auth module', () => {
       const reimported = await import('./auth')
       expect(reimported.getAccessToken()).toBe('persisted.token')
     })
+
+    it('defaults a persisted user without data_steward to false', async () => {
+      vi.resetModules()
+      localStorage.setItem(
+        'athlos.auth',
+        JSON.stringify({
+          accessToken: 'persisted.token',
+          refreshToken: 'persisted.refresh',
+          currentUser: {
+            operator_id: 'op-1',
+            role: 'OPERADOR',
+            username: 'operator',
+            permissions: { can_reprint: false, can_anulate: false },
+          },
+        }),
+      )
+      const reimported = await import('./auth')
+      expect(reimported.getCurrentUser()?.permissions.data_steward).toBe(false)
+    })
   })
 
   describe('login()', () => {
     it('POSTs to /api/v1/auth/login with credentials and stores the access token', async () => {
-      const fetchMock = vi.fn().mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            access_token: 'login.access.token',
-            refresh_token: 'login.refresh.token',
-            expires_in: 900,
-            operator_id: 'op-1',
-            role: 'ADMIN',
-            permissions: { can_reprint: true, can_anulate: true },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      )
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              access_token: 'login.access.token',
+              refresh_token: 'login.refresh.token',
+              expires_in: 900,
+              operator_id: 'op-1',
+              role: 'ADMIN',
+              permissions: { can_reprint: true, can_anulate: true },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+        )
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ data_steward: true }) })
       vi.stubGlobal('fetch', fetchMock)
 
       const result = await login('admin', 'secret123')
 
-      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
       expect(url).toBe('/api/v1/auth/login')
       expect(init.method).toBe('POST')
@@ -110,6 +133,7 @@ describe('auth module', () => {
       expect(result.access_token).toBe('login.access.token')
       expect(result.role).toBe('ADMIN')
       expect(getAccessToken()).toBe('login.access.token')
+      expect(getCurrentUser()?.permissions.data_steward).toBe(true)
     })
 
     it('throws with the API error code on 401 invalid credentials', async () => {
@@ -167,6 +191,12 @@ describe('auth module', () => {
           ),
         )
         .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+        .mockResolvedValueOnce(
           new Response(
             JSON.stringify({
               access_token: 'second.access.token',
@@ -176,6 +206,12 @@ describe('auth module', () => {
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
         )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
       vi.stubGlobal('fetch', fetchMock)
 
       await login('admin', 'secret')
@@ -183,13 +219,14 @@ describe('auth module', () => {
 
       expect(refreshed).toBe('second.access.token')
       expect(getAccessToken()).toBe('second.access.token')
-      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock).toHaveBeenCalledTimes(4)
 
-      const refreshCall = fetchMock.mock.calls[1] as [string, RequestInit]
+      const refreshCall = fetchMock.mock.calls[2] as [string, RequestInit]
       expect(refreshCall[0]).toBe('/api/v1/auth/refresh')
       expect(JSON.parse(refreshCall[1].body as string)).toEqual({
         refresh_token: 'first.refresh.token',
       })
+      expect(getCurrentUser()?.permissions.data_steward).toBe(false)
     })
 
     it('clears the access token and rejects when the API returns 401', async () => {
@@ -230,6 +267,12 @@ describe('auth module', () => {
           ),
         )
         .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
+        .mockResolvedValueOnce(
           new Response(JSON.stringify({ message: 'Logged out' }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
@@ -242,7 +285,7 @@ describe('auth module', () => {
 
       await logout()
 
-      const logoutCall = fetchMock.mock.calls[1] as [string, RequestInit]
+      const logoutCall = fetchMock.mock.calls[2] as [string, RequestInit]
       expect(logoutCall[0]).toBe('/api/v1/auth/logout')
       expect(logoutCall[1].method).toBe('POST')
       expect(getAccessToken()).toBeNull()
