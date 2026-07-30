@@ -17,7 +17,7 @@ const authState = vi.hoisted(() => {
       operator_id: string
       role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
       username: string
-      permissions: { can_reprint: boolean; can_anulate: boolean }
+      permissions: { can_reprint: boolean; can_anulate: boolean; data_steward: boolean }
     },
     token: null as string | null,
   }
@@ -38,12 +38,12 @@ vi.mock('next/navigation', () => ({
 
 const { default: Sidebar } = await import('./Sidebar.tsx')
 
-function seedUser(role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA') {
+function seedUser(role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA', dataSteward = false) {
   authState.user = {
     operator_id: 'op-1',
     role,
     username: 'op_user',
-    permissions: { can_reprint: true, can_anulate: false },
+    permissions: { can_reprint: true, can_anulate: false, data_steward: dataSteward },
   }
   authState.token = 'seeded.token'
 }
@@ -107,11 +107,30 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
   })
 
+  it('shows Socios exceptions only to ADMIN or a granted data steward', () => {
+    seedUser('OPERADOR', true)
+    let view = render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /socios: excepciones/i })).toBeInTheDocument()
+
+    authState.user = {
+      ...authState.user!,
+      permissions: { ...authState.user!.permissions, data_steward: false },
+    }
+    view.unmount()
+    view = render(<Sidebar />)
+    expect(screen.queryByRole('link', { name: /socios: excepciones/i })).not.toBeInTheDocument()
+
+    seedUser('ADMIN')
+    view.unmount()
+    render(<Sidebar />)
+    expect(screen.getAllByRole('link', { name: /socios: excepciones/i })).not.toHaveLength(0)
+  })
+
   it('marks the active item with aria-current="page"', () => {
     seedUser('ADMIN')
     mockPathname = '/socios'
     render(<Sidebar />)
-    const activeLink = screen.getByRole('link', { name: /socios/i })
+    const activeLink = screen.getByRole('link', { name: /^socios$/i })
     expect(activeLink).toHaveAttribute('aria-current', 'page')
   })
 })
