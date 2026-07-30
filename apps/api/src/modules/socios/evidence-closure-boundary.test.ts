@@ -45,12 +45,27 @@ const confirmationSql = readFileSync(
   ),
   'utf8',
 ).replaceAll('socios.', `${q}.`)
+const resolutionSql = readFileSync(
+  join(
+    import.meta.dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    '..',
+    'packages',
+    'db',
+    'drizzle',
+    '0047_socios_closure_resolution_fingerprint.sql',
+  ),
+  'utf8',
+).replaceAll('socios.', `${q}.`)
 const { pool } = createDb({ connectionString: url ?? '' })
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
   await pool.query(
-    `CREATE SCHEMA ${q}; CREATE TABLE ${q}.raw_events (id uuid PRIMARY KEY, source_table text NOT NULL, import_batch uuid NOT NULL, content_hash text NOT NULL, payload jsonb NOT NULL); ${sql} ${confirmationSql} ${confirmationSql}`,
+    `CREATE SCHEMA ${q}; CREATE TABLE ${q}.raw_events (id uuid PRIMARY KEY, source_table text NOT NULL, import_batch uuid NOT NULL, content_hash text NOT NULL, payload jsonb NOT NULL); CREATE TABLE ${q}.legacy_member_evidence (id uuid, raw_event_id uuid, review_state text, import_batch uuid); CREATE TABLE ${q}.legacy_member_evidence_resolutions (id uuid, legacy_member_evidence_id uuid, resolution_kind text, evidence_fingerprint text, reason text, steward_operator_id uuid, idempotency_key text, selected_member_id uuid, selected_membership_type_candidate_source_row_id uuid, supersedes_resolution_id uuid); CREATE TABLE ${q}.member_identities (id uuid); CREATE TABLE ${q}.legacy_membership_type_candidates (source_row_id uuid); ${sql} ${confirmationSql} ${resolutionSql}`,
   )
 })
 afterAll(async () => {
@@ -83,7 +98,7 @@ describe('closure preview boundary', () => {
     )
     await seed('socios', socios)
     const preview = await createClosurePreview(pool, schema, catalog, socios)
-    expect(preview.counts).toEqual({ catalog: 1, socios: 2 })
+    expect(preview.counts).toEqual({ catalog: 1, socios: 2, resolutions: 0 })
     await expect(
       validateClosurePreview(pool, schema, preview.previewId, catalog, socios),
     ).resolves.toMatchObject({ outcome: 'fresh' })
@@ -123,6 +138,7 @@ describe('closure preview boundary', () => {
       sociosBatchId: socios,
       previewId: preview.previewId,
       fingerprint: preview.fingerprint,
+      resolutionSetFingerprint: preview.resolutionSetFingerprint,
       idempotencyKey: replayKey,
     }
     const [first, second] = await Promise.all([
@@ -151,6 +167,7 @@ describe('closure preview boundary', () => {
         sociosBatchId: otherSocios,
         previewId: otherPreview.previewId,
         fingerprint: otherPreview.fingerprint,
+        resolutionSetFingerprint: otherPreview.resolutionSetFingerprint,
       }),
     ).resolves.toEqual({ outcome: 'conflict' })
     await expect(
@@ -198,6 +215,7 @@ describe('closure preview boundary', () => {
       sociosBatchId: otherSocios,
       previewId: otherPreview.previewId,
       fingerprint: otherPreview.fingerprint,
+      resolutionSetFingerprint: otherPreview.resolutionSetFingerprint,
       idempotencyKey: key,
     })
     await insertEntered
@@ -206,6 +224,7 @@ describe('closure preview boundary', () => {
       sociosBatchId: socios,
       previewId: preview.previewId,
       fingerprint: preview.fingerprint,
+      resolutionSetFingerprint: preview.resolutionSetFingerprint,
       idempotencyKey: key,
     })
     releaseInsert()
@@ -229,6 +248,7 @@ describe('closure preview boundary', () => {
       sociosBatchId: socios,
       previewId: preview.previewId,
       fingerprint: preview.fingerprint,
+      resolutionSetFingerprint: preview.resolutionSetFingerprint,
       idempotencyKey: randomUUID(),
     }
     await expect(

@@ -4,6 +4,7 @@ import type { Env } from '@athlos/config'
 import { createStandinDb } from '../../../test-standins/db.ts'
 import { buildServer } from '../../../server.ts'
 import { previewFingerprint, type Db } from '@athlos/db'
+import { resolutionApplicationFingerprint } from '@athlos/promotion'
 import type { Pool } from 'pg'
 
 /**
@@ -96,7 +97,8 @@ const closureFingerprint = previewFingerprint(
   closurePair.sociosBatchId,
   closureInputs,
 )
-const closureBody = { ...closurePair, fingerprint: closureFingerprint }
+const resolutionSetFingerprint = resolutionApplicationFingerprint([])
+const closureBody = { ...closurePair, fingerprint: closureFingerprint, resolutionSetFingerprint }
 
 function closurePool(
   outcome: 'reserved' | 'replay' | 'conflict' | 'stale',
@@ -113,6 +115,7 @@ function closurePool(
                 socios_batch_id: closurePair.sociosBatchId,
                 preview_id: closurePair.previewId,
                 fingerprint: closureFingerprint,
+                resolution_set_fingerprint: resolutionSetFingerprint,
               },
             ],
           }
@@ -124,6 +127,7 @@ function closurePool(
                 socios_batch_id: closurePair.sociosBatchId,
                 preview_id: closurePair.previewId,
                 fingerprint: 'x'.repeat(64),
+                resolution_set_fingerprint: resolutionSetFingerprint,
               },
             ],
           }
@@ -138,10 +142,12 @@ function closurePool(
                   catalog_batch_id: closurePair.catalogBatchId,
                   socios_batch_id: closurePair.sociosBatchId,
                   fingerprint: closureFingerprint,
+                  resolution_set_fingerprint: resolutionSetFingerprint,
                   expires_at: new Date(Date.now() + 60_000),
                 },
               ],
             }
+      if (text.includes('legacy_member_evidence e')) return { rows: [] }
       if (text.includes('raw_events'))
         return {
           rows: closureInputs.map((input) => ({
@@ -162,6 +168,7 @@ function closurePool(
               socios_batch_id: closurePair.sociosBatchId,
               preview_id: closurePair.previewId,
               fingerprint: closureFingerprint,
+              resolution_set_fingerprint: resolutionSetFingerprint,
               created: true,
             },
           ],
