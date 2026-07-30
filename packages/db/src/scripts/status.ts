@@ -46,6 +46,15 @@ interface AppliedMigration {
   createdAt: Date
 }
 
+const DRIZZLE_LEDGER = 'drizzle.__drizzle_migrations'
+const PUBLIC_LEDGER = 'public.__drizzle_migrations'
+
+class MigrationLedgerMissingError extends Error {
+  constructor() {
+    super(`migration ledger not found (checked ${DRIZZLE_LEDGER} and ${PUBLIC_LEDGER})`)
+  }
+}
+
 export function getDrizzleDir(): string {
   return fileURLToPath(new URL('../../drizzle/', import.meta.url))
 }
@@ -112,8 +121,22 @@ export async function getAppliedMigrationsWithDates(
   const pool = new Pool({ connectionString })
   try {
     await pool.query(`SET statement_timeout = '5s'`)
+    // Drizzle Kit 0.30 creates the drizzle ledger. Retain public as a
+    // deterministic fallback for databases created by older tooling.
+    const ledgers = await pool.query<{ drizzle: string | null; public: string | null }>(
+      'SELECT to_regclass($1)::text AS drizzle, to_regclass($2)::text AS public',
+      [DRIZZLE_LEDGER, PUBLIC_LEDGER],
+    )
+    const ledger = ledgers.rows[0]?.drizzle
+      ? DRIZZLE_LEDGER
+      : ledgers.rows[0]?.public
+        ? PUBLIC_LEDGER
+        : null
+    if (!ledger) throw new MigrationLedgerMissingError()
     const result = await pool.query<{ hash: string; created_at: string | number }>(
-      'SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id ASC',
+      ledger === DRIZZLE_LEDGER
+        ? 'SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id ASC'
+        : 'SELECT hash, created_at FROM public.__drizzle_migrations ORDER BY id ASC',
     )
     return result.rows.map((row) => ({
       hash: row.hash,
@@ -153,7 +176,11 @@ export async function main(argv: string[]): Promise<void> {
     else printHuman(output, metadata)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error(`db package: cannot connect to <redacted>: ${message}`)
+    if (error instanceof MigrationLedgerMissingError) {
+      console.error(`db package: ${message}; run migrate before migrate:status`)
+    } else {
+      console.error(`db package: cannot read migration ledger from <redacted>: ${message}`)
+    }
     process.exitCode = 2
   }
 }
