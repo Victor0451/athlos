@@ -25,6 +25,7 @@ interface NavItem {
   label: string
   /** Roles allowed to see this item. Empty = visible to all roles. */
   roles?: Role[]
+  permission?: 'data_steward'
 }
 
 const ITEMS: NavItem[] = [
@@ -36,6 +37,11 @@ const ITEMS: NavItem[] = [
   { href: '/admin/approvals', label: 'Approvals', roles: ['ADMIN'] },
   { href: '/admin/settings', label: 'Settings', roles: ['ADMIN'] },
   { href: '/admin/gastos', label: 'Gastos', roles: ['ADMIN'] },
+  {
+    href: '/admin/socios-evidence-exceptions',
+    label: 'Socios: excepciones',
+    permission: 'data_steward',
+  },
 ]
 
 export default function Sidebar() {
@@ -43,7 +49,11 @@ export default function Sidebar() {
   const pathname = usePathname()
   const role = user?.role
 
-  const visible = ITEMS.filter((item) => !item.roles || (role && item.roles.includes(role)))
+  const visible = ITEMS.filter(
+    (item) =>
+      (!item.roles || (role && item.roles.includes(role))) &&
+      (!item.permission || role === 'ADMIN' || user?.permissions[item.permission] === true),
+  )
   const hasAdmin = visible.some((item) => item.roles?.includes('ADMIN'))
 
   return (
