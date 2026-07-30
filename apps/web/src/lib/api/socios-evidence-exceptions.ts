@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api'
+import { ApiError, apiFetch } from '@/lib/api'
 
 export type EvidenceExceptionKind = 'unknown_type' | 'ambiguous_identity'
 export type EvidenceExceptionStatus = 'unresolved' | 'resolved'
@@ -29,6 +29,8 @@ export interface SociosEvidenceExceptionParams {
 }
 
 export interface SociosEvidenceExceptionDetail extends SociosEvidenceException {
+  socios_batch_id: string
+  catalog_batch_id: string | null
   deterministic_type_candidate_source_row_id: string | null
   known_member: MemberOption | null
   current_resolution: (EvidenceResolution & { applied_at: string | null }) | null
@@ -65,6 +67,24 @@ export interface EvidenceResolution {
   selected_type_candidate_source_row_id: string | null
   application_status: 'pending_application' | 'applied'
   created_at: string
+}
+
+export interface ClosurePreview {
+  previewId: string
+  fingerprint: string
+  resolutionSetFingerprint: string
+  counts: { catalog: number; socios: number; resolutions: number }
+}
+
+export type ClosureConfirmation =
+  | { status: 'accepted'; jobRunId: string }
+  | { status: 'replay' }
+  | { status: 'conflict' | 'stale' | 'held' }
+  | { status: 'cancelled' }
+
+export interface ClosureReference {
+  catalogBatchId: string
+  sociosBatchId: string
 }
 
 const BASE_PATH = '/api/v1/admin/socios-evidence-exceptions'
@@ -104,4 +124,25 @@ export function resolveSociosEvidenceException(
     body: input,
     headers: { 'Idempotency-Key': idempotencyKey },
   })
+}
+
+export function previewSociosEvidenceClosure(input: ClosureReference): Promise<ClosurePreview> {
+  return apiFetch('/api/v1/admin/socios-evidence-closures/preview', { method: 'POST', body: input })
+}
+
+export async function confirmSociosEvidenceClosure(
+  input: ClosureReference &
+    Pick<ClosurePreview, 'previewId' | 'fingerprint' | 'resolutionSetFingerprint'>,
+  idempotencyKey: string,
+): Promise<ClosureConfirmation> {
+  try {
+    return await apiFetch('/api/v1/admin/socios-evidence-closures/confirm', {
+      method: 'POST',
+      body: input,
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 499) return { status: 'cancelled' }
+    throw error
+  }
 }
