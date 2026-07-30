@@ -18,6 +18,8 @@ const detail: EvidenceExceptionDetail = {
   fingerprint: 'a'.repeat(64),
   legacyTypeCode: 'A',
   createdAt: new Date(),
+  sociosBatchId: '00000000-0000-4000-8000-000000000011',
+  catalogBatchId: '00000000-0000-4000-8000-000000000010',
   deterministicTypeCandidateSourceRowId: null,
   knownMember: null,
   currentResolution: null,
@@ -127,7 +129,13 @@ describe('Socios evidence exceptions', () => {
         ...withoutType,
         kind: 'ambiguous_identity',
       }),
-    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: null })
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
+    await expect(
+      resolveEvidenceException(deterministic.repo, {
+        ...withoutType,
+        kind: 'ambiguous_identity',
+      }),
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
   })
 
   it('rejects a second root resolution because correction is not supported here', async () => {
