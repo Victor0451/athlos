@@ -520,6 +520,9 @@ export async function searchMembershipTypeOptions(
 }
 
 function sameCommand(row: EvidenceResolution, input: ResolveEvidenceExceptionInput): boolean {
+  const selectedType =
+    input.selectedTypeCandidateSourceRowId ??
+    (row.kind === 'ambiguous_identity' ? row.selectedTypeCandidateSourceRowId : null)
   return (
     row.evidenceId === input.evidenceId &&
     row.kind === input.kind &&
@@ -527,7 +530,7 @@ function sameCommand(row: EvidenceResolution, input: ResolveEvidenceExceptionInp
     row.stewardOperatorId === input.operatorId &&
     row.reason === input.reason.trim() &&
     row.selectedMemberId === input.selectedMemberId &&
-    row.selectedTypeCandidateSourceRowId === (input.selectedTypeCandidateSourceRowId ?? null)
+    row.selectedTypeCandidateSourceRowId === selectedType
   )
 }
 
@@ -559,7 +562,7 @@ async function validateSelection(
   if (detail.deterministicTypeCandidateSourceRowId) {
     if (selectedType)
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Type is already deterministic')
-    return null
+    return detail.deterministicTypeCandidateSourceRowId
   }
   if (!selectedType || !(await repo.hasTypeCandidate(selectedType))) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'An existing type candidate must be selected')
