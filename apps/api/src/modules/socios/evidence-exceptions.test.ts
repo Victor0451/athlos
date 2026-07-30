@@ -4,6 +4,8 @@ import {
   getEvidenceException,
   listEvidenceExceptions,
   resolveEvidenceException,
+  searchMemberOptions,
+  searchMembershipTypeOptions,
   type EvidenceExceptionDetail,
   type EvidenceExceptionRepository,
   type EvidenceResolution,
@@ -16,9 +18,11 @@ const detail: EvidenceExceptionDetail = {
   fingerprint: 'a'.repeat(64),
   legacyTypeCode: 'A',
   createdAt: new Date(),
-  memberChoices: [{ id: 'member-1', memberNumber: 1 }],
-  typeChoices: [{ sourceRowId: 'type-1', code: 'A', name: 'Active' }],
+  sociosBatchId: '00000000-0000-4000-8000-000000000011',
+  catalogBatchId: '00000000-0000-4000-8000-000000000010',
   deterministicTypeCandidateSourceRowId: null,
+  knownMember: null,
+  currentResolution: null,
 }
 const command = {
   evidenceId: detail.id,
@@ -38,6 +42,8 @@ function fake(overrides: Partial<EvidenceExceptionRepository> = {}) {
     transaction: (work) => work(repo),
     listExceptions: async () => ({ items: [detail], total: 1 }),
     findExceptionDetail: async () => detail,
+    searchMemberOptions: async () => [],
+    searchMembershipTypeOptions: async () => [],
     findResolutionByIdempotencyKey: async (operatorId, key) =>
       resolutions.find(
         (row) => row.stewardOperatorId === operatorId && row.idempotencyKey === key,
@@ -68,6 +74,28 @@ describe('Socios evidence exceptions', () => {
       listEvidenceExceptions(repo, { page: 1, limit: 20, status: 'unresolved' }),
     ).resolves.toMatchObject({ total: 1 })
     await expect(getEvidenceException(repo, detail.id)).resolves.toEqual(detail)
+  })
+
+  it('caps selectable option searches even if a repository returns more rows', async () => {
+    const members = Array.from({ length: 21 }, (_, memberNumber) => ({
+      id: `member-${memberNumber}`,
+      memberNumber,
+      credentialRef: null,
+      lifecycleState: 'imported' as const,
+    }))
+    const types = Array.from({ length: 21 }, (_, index) => ({
+      sourceRowId: `type-${index}`,
+      snapshotBatchId: 'batch-1',
+      code: `A${index}`,
+      name: 'Active',
+      letter: 'A',
+    }))
+    const { repo } = fake({
+      searchMemberOptions: async () => members,
+      searchMembershipTypeOptions: async () => types,
+    })
+    await expect(searchMemberOptions(repo, '12')).resolves.toHaveLength(20)
+    await expect(searchMembershipTypeOptions(repo, 'ac')).resolves.toHaveLength(20)
   })
 
   it('replays an identical command and conflicts for a changed command with the same key', async () => {
@@ -101,18 +129,26 @@ describe('Socios evidence exceptions', () => {
         ...withoutType,
         kind: 'ambiguous_identity',
       }),
-    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: null })
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
+    await expect(
+      resolveEvidenceException(deterministic.repo, {
+        ...withoutType,
+        kind: 'ambiguous_identity',
+      }),
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
   })
 
-  it('uses the current leaf as the correction predecessor and rejects a concurrent loser', async () => {
+  it('rejects a second root resolution because correction is not supported here', async () => {
     const { repo, resolutions } = fake()
-    const first = await resolveEvidenceException(repo, command)
-    const correction = await resolveEvidenceException(repo, {
-      ...command,
-      idempotencyKey: 'request-2',
-    })
-    expect(correction.supersedesResolutionId).toBe(first.id)
-    expect(resolutions).toHaveLength(2)
+    await resolveEvidenceException(repo, command)
+    await rejects(
+      resolveEvidenceException(repo, {
+        ...command,
+        idempotencyKey: 'request-2',
+      }),
+      ErrorCode.CONFLICT,
+    )
+    expect(resolutions).toHaveLength(1)
     await rejects(
       resolveEvidenceException(fake({ appendResolution: async () => null }).repo, command),
       ErrorCode.CONFLICT,
