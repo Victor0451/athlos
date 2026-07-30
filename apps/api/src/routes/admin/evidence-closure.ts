@@ -12,6 +12,7 @@ const pair = z.object({ catalogBatchId: z.string().uuid(), sociosBatchId: z.stri
 const confirmation = pair.extend({
   previewId: z.string().uuid(),
   fingerprint: z.string().length(64),
+  resolutionSetFingerprint: z.string().length(64),
 })
 export const evidenceClosureRoutes: FastifyPluginCallback = (app, _opts, done) => {
   app.post(
@@ -74,10 +75,17 @@ export const evidenceClosureRoutes: FastifyPluginCallback = (app, _opts, done) =
             idempotencyKey,
             leaseOwner,
             leaseFence: result.fence,
+            resolutionApplication: {
+              executionIdentity: randomUUID(),
+              resolutionSetFingerprint: body.resolutionSetFingerprint,
+            },
           })
           return reply.code(202).send({ status: 'accepted', jobRunId: run.jobRunId })
         }
-        return reply.code(409).send({ error: 'CLOSURE_CONFIRMATION_CONFLICT' })
+        return reply.code(409).send({
+          status: result.outcome,
+          error: `CLOSURE_CONFIRMATION_${result.outcome.toUpperCase()}`,
+        })
       } finally {
         request.raw.removeListener('aborted', onAborted)
         reply.raw.removeListener('close', onClose)
