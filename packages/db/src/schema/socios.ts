@@ -2,6 +2,7 @@ import {
   bigint,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -16,6 +17,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import { operators } from './operators'
 import { rawEvents } from './public'
 
 /**
@@ -422,6 +424,7 @@ export const legacyMemberReviewState = sociosSchema.enum('legacy_member_review_s
   'validated',
   'unknown_type',
   'ambiguous_identity',
+  'missing_identity',
 ])
 
 export const legacyMemberEvidence = sociosSchema.table(
@@ -463,6 +466,67 @@ export const legacyMemberEvidence = sociosSchema.table(
   }),
 )
 
+export const legacyMemberEvidenceResolutions = sociosSchema.table(
+  'legacy_member_evidence_resolutions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    legacyMemberEvidenceId: uuid('legacy_member_evidence_id')
+      .notNull()
+      .references(() => legacyMemberEvidence.id, { onDelete: 'restrict' }),
+    resolutionKind: legacyMemberReviewState('resolution_kind').notNull(),
+    selectedMemberId: uuid('selected_member_id').references(() => memberIdentities.id, {
+      onDelete: 'restrict',
+    }),
+    selectedMembershipTypeCandidateSourceRowId: uuid(
+      'selected_membership_type_candidate_source_row_id',
+    ).references(() => legacyMembershipTypeCandidates.sourceRowId, { onDelete: 'restrict' }),
+    stewardOperatorId: uuid('steward_operator_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'restrict' }),
+    reason: text('reason').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    evidenceFingerprint: varchar('evidence_fingerprint', { length: 64 }).notNull(),
+    supersedesResolutionId: uuid('supersedes_resolution_id').references(
+      (): AnyPgColumn => legacyMemberEvidenceResolutions.id,
+      { onDelete: 'restrict' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    kindMatchesEvidence: foreignKey({
+      columns: [table.legacyMemberEvidenceId, table.resolutionKind],
+      foreignColumns: [legacyMemberEvidence.id, legacyMemberEvidence.reviewState],
+      name: 'legacy_member_evidence_resolutions_kind_matches_evidence_fk',
+    }),
+    resolutionSelections: check(
+      'legacy_member_evidence_resolutions_selection_check',
+      sql`(${table.resolutionKind} = 'unknown_type' AND ${table.selectedMemberId} IS NOT NULL AND ${table.selectedMembershipTypeCandidateSourceRowId} IS NOT NULL)
+        OR (${table.resolutionKind} = 'ambiguous_identity' AND ${table.selectedMemberId} IS NOT NULL)`,
+    ),
+    reasonNonblank: check(
+      'legacy_member_evidence_resolutions_reason_nonblank_check',
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    idempotencyKeyNonblank: check(
+      'legacy_member_evidence_resolutions_idempotency_key_nonblank_check',
+      sql`length(btrim(${table.idempotencyKey})) > 0`,
+    ),
+    fingerprintLength: check(
+      'legacy_member_evidence_resolutions_fingerprint_length_check',
+      sql`length(${table.evidenceFingerprint}) = 64`,
+    ),
+    idempotencyUnique: uniqueIndex(
+      'legacy_member_evidence_resolutions_steward_idempotency_key_unique',
+    ).on(table.stewardOperatorId, table.idempotencyKey),
+    rootEvidenceUnique: uniqueIndex('legacy_member_evidence_resolutions_root_evidence_unique')
+      .on(table.legacyMemberEvidenceId)
+      .where(sql`${table.supersedesResolutionId} IS NULL`),
+    successorUnique: uniqueIndex('legacy_member_evidence_resolutions_successor_unique')
+      .on(table.supersedesResolutionId)
+      .where(sql`${table.supersedesResolutionId} IS NOT NULL`),
+  }),
+)
+
 export type MembershipAccount = typeof membershipAccounts.$inferSelect
 export type NewMembershipAccount = typeof membershipAccounts.$inferInsert
 export type MemberIdentity = typeof memberIdentities.$inferSelect
@@ -485,6 +549,8 @@ export type NewLegacyCatalogMaterializationReceipt =
   typeof legacyCatalogMaterializationReceipts.$inferInsert
 export type LegacyMemberEvidence = typeof legacyMemberEvidence.$inferSelect
 export type NewLegacyMemberEvidence = typeof legacyMemberEvidence.$inferInsert
+export type LegacyMemberEvidenceResolution = typeof legacyMemberEvidenceResolutions.$inferSelect
+export type NewLegacyMemberEvidenceResolution = typeof legacyMemberEvidenceResolutions.$inferInsert
 
 /**
  * Attachment category — `dni | comprobante | foto | contrato | otro`.
