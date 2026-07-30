@@ -144,38 +144,11 @@ describe('api client', () => {
     it('retries the original request exactly once after a successful refresh', async () => {
       const authModule = await import('./auth.ts')
 
-      // First call: 401. Second call (refresh): 200 with new access token.
-      // Third call (retry): 200 with success body.
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ code: 'TOKEN_EXPIRED' }), {
-            status: 401,
-            headers: { 'content-type': 'application/json' },
-          }),
-        )
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              access_token: 'refreshed.access.token',
-              refresh_token: 'refreshed.refresh.token',
-              expires_in: 900,
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          ),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ ok: true }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }),
-        )
+      const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
 
       // Seed tokens so refreshAccessToken has something to rotate.
       // We don't expose setRefreshToken publicly — go through login() instead.
-      // Clear the fetch mock and re-stub for the login call:
-      fetchMock.mockReset()
       fetchMock
         .mockResolvedValueOnce(
           new Response(
@@ -190,6 +163,13 @@ describe('api client', () => {
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
         )
+        // login() synchronizes data-steward permissions before resolving.
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ code: 'TOKEN_EXPIRED' }), {
             status: 401,
@@ -205,6 +185,13 @@ describe('api client', () => {
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
+        )
+        // refreshAccessToken() synchronizes data-steward permissions before retrying.
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ ok: true }), {
@@ -220,12 +207,12 @@ describe('api client', () => {
       expect(result).toEqual({ ok: true })
       expect(authModule.getAccessToken()).toBe('refreshed.access.token')
 
-      // 4 calls total: login + 401 + refresh + retry.
-      expect(fetchMock).toHaveBeenCalledTimes(4)
+      // 6 calls: login + permission sync + 401 + refresh + permission sync + retry.
+      expect(fetchMock).toHaveBeenCalledTimes(6)
       const calls = fetchMock.mock.calls.map((c) => c[0])
-      expect(calls[1]).toMatch(/\/api\/v1\/me$/)
-      expect(calls[2]).toBe('/api/v1/auth/refresh')
-      expect(calls[3]).toMatch(/\/api\/v1\/me$/)
+      expect(calls[2]).toMatch(/\/api\/v1\/me$/)
+      expect(calls[3]).toBe('/api/v1/auth/refresh')
+      expect(calls[5]).toMatch(/\/api\/v1\/me$/)
     })
 
     it('issues exactly ONE refresh request when 5 concurrent calls 401', async () => {
@@ -247,6 +234,13 @@ describe('api client', () => {
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
+        )
+        // login() synchronizes data-steward permissions before resolving.
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
         )
         // 5 × 401 for the original apiFetch calls.
         .mockResolvedValueOnce(
@@ -289,6 +283,13 @@ describe('api client', () => {
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
+        )
+        // refreshAccessToken() synchronizes data-steward permissions before retrying.
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
         )
         // 5 × 200 for the retried original calls.
         .mockResolvedValueOnce(
@@ -355,6 +356,13 @@ describe('api client', () => {
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
+        )
+        // login() synchronizes data-steward permissions before resolving.
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ data_steward: false }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ code: 'TOKEN_EXPIRED' }), {
