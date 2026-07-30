@@ -129,7 +129,13 @@ describe('Socios evidence exceptions', () => {
         ...withoutType,
         kind: 'ambiguous_identity',
       }),
-    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: null })
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
+    await expect(
+      resolveEvidenceException(deterministic.repo, {
+        ...withoutType,
+        kind: 'ambiguous_identity',
+      }),
+    ).resolves.toMatchObject({ selectedTypeCandidateSourceRowId: 'type-1' })
   })
 
   it('rejects a second root resolution because correction is not supported here', async () => {
