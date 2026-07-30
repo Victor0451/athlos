@@ -66,7 +66,7 @@ export interface CurrentUser {
   operator_id: string
   role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
   username: string
-  permissions: { can_reprint: boolean; can_anulate: boolean }
+  permissions: { can_reprint: boolean; can_anulate: boolean; data_steward: boolean }
 }
 
 /** Error thrown by the auth module when the API rejects the request. */
@@ -116,7 +116,14 @@ function readStorage(): PersistedAuth {
       refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
       currentUser:
         parsed.currentUser && typeof parsed.currentUser === 'object'
-          ? (parsed.currentUser as CurrentUser)
+          ? {
+              ...(parsed.currentUser as CurrentUser),
+              permissions: {
+                ...(parsed.currentUser as CurrentUser).permissions,
+                data_steward:
+                  (parsed.currentUser as CurrentUser).permissions?.data_steward === true,
+              },
+            }
           : null,
     }
   } catch {
@@ -191,6 +198,29 @@ function setCurrentUser(user: CurrentUser | null): void {
   writeStorage({ accessToken, refreshToken, currentUser })
 }
 
+async function syncDataStewardPermission(): Promise<void> {
+  if (!accessToken || !currentUser) return
+  try {
+    const res = await fetch('/api/v1/auth/me/permissions', {
+      headers: { authorization: `Bearer ${accessToken}` },
+      credentials: 'include',
+    })
+    const body = (await res.json()) as { data_steward?: unknown }
+    setCurrentUser({
+      ...currentUser,
+      permissions: {
+        ...currentUser.permissions,
+        data_steward: res.ok && body.data_steward === true,
+      },
+    })
+  } catch {
+    setCurrentUser({
+      ...currentUser,
+      permissions: { ...currentUser.permissions, data_steward: false },
+    })
+  }
+}
+
 async function parseError(res: Response): Promise<AuthError> {
   let body: ApiErrorBody = {}
   try {
@@ -231,8 +261,9 @@ export async function login(username: string, password: string): Promise<LoginRe
     operator_id: body.operator_id,
     role: body.role,
     username,
-    permissions: body.permissions,
+    permissions: { ...body.permissions, data_steward: false },
   })
+  await syncDataStewardPermission()
   return body
 }
 
@@ -269,6 +300,7 @@ export async function refreshAccessToken(): Promise<string> {
   const body = (await res.json()) as RefreshResponse
   setAccessToken(body.access_token)
   setRefreshToken(body.refresh_token)
+  await syncDataStewardPermission()
   return body.access_token
 }
 
