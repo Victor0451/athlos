@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   detail: vi.fn(),
   resolve: vi.fn(),
+  members: vi.fn(),
+  types: vi.fn(),
 }))
 
 vi.mock('../../modules/socios/evidence-exceptions.ts', () => ({
@@ -22,6 +24,8 @@ vi.mock('../../modules/socios/evidence-exceptions.ts', () => ({
   listEvidenceExceptions: mocks.list,
   getEvidenceException: mocks.detail,
   resolveEvidenceException: mocks.resolve,
+  searchMemberOptions: mocks.members,
+  searchMembershipTypeOptions: mocks.types,
 }))
 
 import { sociosEvidenceExceptionRoutes } from './socios-evidence-exceptions.ts'
@@ -90,11 +94,20 @@ beforeEach(() => {
     fingerprint,
     legacyTypeCode: 'A',
     createdAt: new Date('2026-07-29T12:00:00.000Z'),
-    memberChoices: [],
-    typeChoices: [],
+    sociosBatchId: IDS.evidence,
+    catalogBatchId: IDS.type,
     deterministicTypeCandidateSourceRowId: null,
+    knownMember: {
+      id: IDS.member,
+      memberNumber: 12,
+      credentialRef: 'CARD-001',
+      lifecycleState: 'validated',
+    },
+    currentResolution: null,
   })
   mocks.resolve.mockResolvedValue(resolution)
+  mocks.members.mockResolvedValue([])
+  mocks.types.mockResolvedValue([])
 })
 
 describe('socios evidence exception routes', () => {
@@ -124,6 +137,112 @@ describe('socios evidence exception routes', () => {
         headers: { authorization: `Bearer ${token(IDS.member, 'CONSULTA')}` },
       }),
     ).resolves.toMatchObject({ statusCode: 403 })
+  })
+
+  it('returns capped, safe member and applied type option DTOs', async () => {
+    const app = await buildApp()
+    const steward = await buildApp(true)
+    const auth = { authorization: `Bearer ${token(IDS.admin, 'ADMIN')}` }
+    mocks.members.mockResolvedValue(
+      Array.from({ length: 21 }, (_, memberNumber) => ({
+        id: IDS.member,
+        memberNumber,
+        credentialRef: 'CARD-001',
+        lifecycleState: 'validated',
+        rawPayload: 'must not leak',
+      })),
+    )
+    mocks.types.mockResolvedValue([
+      {
+        sourceRowId: IDS.type,
+        snapshotBatchId: IDS.evidence,
+        code: 'A',
+        name: 'Adulto',
+        letter: 'A',
+        rawPayload: 'must not leak',
+      },
+    ])
+
+    const members = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/socios-evidence-exceptions/options/members?q=12',
+      headers: auth,
+    })
+    const types = await steward.inject({
+      method: 'GET',
+      url: '/api/v1/admin/socios-evidence-exceptions/options/membership-types?q=ad',
+      headers: { authorization: `Bearer ${token(IDS.steward, 'TESORERO')}` },
+    })
+
+    expect(members.statusCode).toBe(200)
+    expect(members.json().items).toHaveLength(20)
+    expect(members.json().items[0]).toEqual({
+      id: IDS.member,
+      member_number: 0,
+      credential_ref: 'CARD-001',
+      lifecycle_state: 'validated',
+    })
+    expect(types.statusCode).toBe(200)
+    expect(types.json().items[0]).toEqual({
+      source_row_id: IDS.type,
+      snapshot_batch_id: IDS.evidence,
+      code: 'A',
+      name: 'Adulto',
+      letter: 'A',
+    })
+    expect(`${members.body}${types.body}`).not.toContain('rawPayload')
+  })
+
+  it('returns safe known-member and active-resolution detail context', async () => {
+    const app = await buildApp()
+    mocks.detail.mockResolvedValueOnce({
+      ...(await mocks.detail()),
+      currentResolution: {
+        ...resolution,
+        applicationStatus: 'applied',
+        appliedAt: new Date('2026-07-30T12:00:00.000Z'),
+      },
+    })
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/socios-evidence-exceptions/${IDS.evidence}`,
+      headers: { authorization: `Bearer ${token(IDS.admin, 'ADMIN')}` },
+    })
+    expect(response.json()).toMatchObject({
+      socios_batch_id: IDS.evidence,
+      catalog_batch_id: IDS.type,
+      known_member: {
+        id: IDS.member,
+        member_number: 12,
+        credential_ref: 'CARD-001',
+        lifecycle_state: 'validated',
+      },
+      current_resolution: {
+        id: IDS.resolution,
+        selected_member_id: IDS.member,
+        application_status: 'applied',
+        applied_at: '2026-07-30T12:00:00.000Z',
+      },
+    })
+    expect(response.body).not.toContain('Verified against source register')
+  })
+
+  it('protects option lookups and validates a specific query', async () => {
+    const app = await buildApp()
+    const unauthenticated = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/socios-evidence-exceptions/options/members?q=12',
+    })
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/socios-evidence-exceptions/options/membership-types?q=__',
+      headers: { authorization: `Bearer ${token(IDS.admin, 'ADMIN')}` },
+    })
+
+    expect(unauthenticated.statusCode).toBe(401)
+    expect(invalid.statusCode).toBe(400)
+    expect(mocks.members).not.toHaveBeenCalled()
+    expect(mocks.types).not.toHaveBeenCalled()
   })
 
   it('uses the authenticated operator and declares application pending without a scheduler', async () => {
