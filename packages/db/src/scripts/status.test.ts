@@ -21,18 +21,23 @@ import { diffMigrations, getAppliedMigrationsWithDates, statusSchema } from './s
 
 const connectionString = process.env.ATHLOS_TEST_DATABASE_URL
 const drizzleDir = fileURLToPath(new URL('../../drizzle/', import.meta.url))
-const ledger = 'drizzle.__drizzle_migrations'
+const drizzleLedger = 'drizzle.__drizzle_migrations'
+const publicLedger = 'public.__drizzle_migrations'
 let pool: Pool
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
-  return new Promise<{ exitCode: number; stdout: string }>((resolve, reject) => {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(command, args, { cwd, env })
     let stdout = ''
+    let stderr = ''
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
     })
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
     child.once('error', reject)
-    child.once('close', (exitCode) => resolve({ exitCode: exitCode ?? 1, stdout }))
+    child.once('close', (exitCode) => resolve({ exitCode: exitCode ?? 1, stdout, stderr }))
   })
 }
 
@@ -61,7 +66,7 @@ beforeAll(async () => {
   pool = new Pool({ connectionString })
   await pool.query(`
     CREATE SCHEMA drizzle;
-    CREATE TABLE ${ledger} (
+    CREATE TABLE ${drizzleLedger} (
       id serial PRIMARY KEY,
       hash text NOT NULL,
       created_at bigint NOT NULL
@@ -87,8 +92,8 @@ describe('migrate:status', () => {
     await expect(localMigrationNames()).resolves.toContain('0042_socios_closure_confirmation_keys')
   })
 
-  it('reads the hash and created_at columns used by the Drizzle migration ledger', async () => {
-    await pool.query(`INSERT INTO ${ledger} (hash, created_at) VALUES ($1, $2)`, [
+  it('reads Drizzle Kit 0.30 default drizzle ledger columns', async () => {
+    await pool.query(`INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`, [
       'ledger-hash',
       1_700_000_000_000,
     ])
@@ -100,9 +105,9 @@ describe('migrate:status', () => {
 
   it('emits clean JSON with exit code 0 when every local migration hash is applied', async () => {
     const hashes = await localMigrationHashes()
-    await pool.query(`TRUNCATE ${ledger}`)
+    await pool.query(`TRUNCATE ${drizzleLedger}`)
     for (const [index, hash] of hashes.entries()) {
-      await pool.query(`INSERT INTO ${ledger} (hash, created_at) VALUES ($1, $2)`, [
+      await pool.query(`INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`, [
         hash,
         1_700_000_000_000 + index,
       ])
@@ -120,7 +125,7 @@ describe('migrate:status', () => {
   })
 
   it('emits only JSON with exit code 1 when local migrations are pending', async () => {
-    await pool.query(`TRUNCATE ${ledger}`)
+    await pool.query(`TRUNCATE ${drizzleLedger}`)
 
     const result = await run(
       fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
@@ -136,6 +141,36 @@ describe('migrate:status', () => {
       divergence: [],
       exitCode: 1,
     })
+  })
+
+  it('falls back to the public ledger when the default drizzle ledger is absent', async () => {
+    await pool.query(`DROP TABLE ${drizzleLedger}`)
+    await pool.query(
+      `CREATE TABLE ${publicLedger} (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint NOT NULL)`,
+    )
+    await pool.query(`INSERT INTO ${publicLedger} (hash, created_at) VALUES ($1, $2)`, [
+      'legacy-public-hash',
+      1_700_000_000_000,
+    ])
+
+    await expect(getAppliedMigrationsWithDates(connectionString!)).resolves.toEqual([
+      { hash: 'legacy-public-hash', createdAt: new Date(1_700_000_000_000) },
+    ])
+  })
+
+  it('fails explicitly when neither supported ledger exists', async () => {
+    await pool.query(`DROP TABLE ${publicLedger}`)
+
+    const result = await run(
+      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
+      ['src/scripts/status.ts', '--json'],
+      fileURLToPath(new URL('../../', import.meta.url)),
+      { ...process.env, DATABASE_URL: connectionString },
+    )
+
+    expect(result.exitCode).toBe(2)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('migration ledger not found')
   })
 })
 

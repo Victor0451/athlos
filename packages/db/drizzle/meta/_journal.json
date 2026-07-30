@@ -152,43 +152,127 @@
     {
       "idx": 21,
       "version": "7",
+      "when": 1783463220000,
+      "tag": "0021_socio_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783522285000,
+      "tag": "0030_socio_fecha_nacimiento",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1783631288000,
+      "tag": "0031_ctacte_movement_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1783688478000,
+      "tag": "0032_ctacte_payment_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1783691107000,
+      "tag": "0033_ctacte_comprobante_retries",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1783722786000,
+      "tag": "0034_ctacte_movement_notes_idempotency_key_full_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1784210677000,
+      "tag": "0035_ctacte_comprobante_failure_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785111672000,
+      "tag": "0037_socios_legacy_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785167477000,
+      "tag": "0038_socios_legacy_membership_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
       "when": 1785189922165,
       "tag": "0039_socios_legacy_member_evidence",
       "breakpoints": true
     },
     {
-      "idx": 22,
+      "idx": 31,
       "version": "7",
       "when": 1785300000000,
       "tag": "0040_socios_closure_receipts",
       "breakpoints": true
     },
     {
-      "idx": 23,
+      "idx": 32,
       "version": "7",
       "when": 1785301000000,
       "tag": "0041_socios_evidence_closure_preview",
       "breakpoints": true
     },
     {
-      "idx": 24,
+      "idx": 33,
       "version": "7",
       "when": 1785330000000,
       "tag": "0042_socios_closure_confirmation_keys",
       "breakpoints": true
     },
     {
-      "idx": 25,
+      "idx": 34,
       "version": "7",
       "when": 1785400000000,
       "tag": "0043_socios_closure_phase_receipts",
       "breakpoints": true
     },
     {
-      "idx": 26,
+      "idx": 35,
       "version": "7",
       "when": 1785758400000,
       "tag": "0044_socios_member_evidence_resolutions",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785365364000,
+      "tag": "0045_socios_member_evidence_resolution_applications",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1785365801000,
+      "tag": "0046_socios_resolution_application_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785366299000,
+      "tag": "0047_socios_closure_resolution_fingerprint",
       "breakpoints": true
     }
   ]
