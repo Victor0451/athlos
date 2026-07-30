@@ -13,6 +13,7 @@ import { changePassword, getMe, logout, refresh } from '../services/auth.ts'
  *   POST /refresh         — rotate refresh token → new pair
  *   POST /logout          — revoke a single refresh token
  *   GET  /me              — current operator profile (auth required)
+ *   GET  /me/permissions  — current navigation permissions (auth required)
  *   POST /change-password — update own password (auth required)
  *
  * All handlers delegate to a service function in
@@ -70,6 +71,19 @@ export const authRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     const dto = await getMe(container.db, request.operator.sub)
     return reply.code(200).send(dto)
   })
+
+  fastify.get(
+    '/api/v1/auth/me/permissions',
+    { preHandler: requireAuth() },
+    async (request, reply) => {
+      if (!request.operator) return
+      const dataSteward = await container.permissionsRepo.hasPermission(
+        request.operator.sub,
+        'data_steward',
+      )
+      return reply.code(200).send({ data_steward: dataSteward })
+    },
+  )
 
   fastify.post(
     '/api/v1/auth/change-password',
