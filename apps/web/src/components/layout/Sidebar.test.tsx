@@ -126,6 +126,25 @@ describe('Sidebar', () => {
     expect(screen.getAllByRole('link', { name: /socios: excepciones/i })).not.toHaveLength(0)
   })
 
+  it('shows membership types only to ADMIN or a granted data steward', () => {
+    seedUser('OPERADOR', true)
+    let view = render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /tipos de afiliación/i })).toBeInTheDocument()
+
+    authState.user = {
+      ...authState.user!,
+      permissions: { ...authState.user!.permissions, data_steward: false },
+    }
+    view.unmount()
+    view = render(<Sidebar />)
+    expect(screen.queryByRole('link', { name: /tipos de afiliación/i })).not.toBeInTheDocument()
+
+    seedUser('ADMIN')
+    view.unmount()
+    render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /tipos de afiliación/i })).toBeInTheDocument()
+  })
+
   it('marks the active item with aria-current="page"', () => {
     seedUser('ADMIN')
     mockPathname = '/socios'
