@@ -4,6 +4,7 @@ import {
   auditEvents,
   legacyMemberEvidence,
   legacyMemberEvidenceResolutions,
+  legacyIdentityEvidence,
   legacyMembershipTypeCandidates,
   legacyMembershipTypeSnapshots,
   legacyMembershipTypeSourceRows,
@@ -40,7 +41,16 @@ export interface EvidenceException {
 }
 
 export interface EvidenceExceptionDetail extends EvidenceException {
+  sociosBatchId: string
+  catalogBatchId: string | null
   deterministicTypeCandidateSourceRowId: string | null
+  knownMember: MemberOption | null
+  currentResolution:
+    | (EvidenceResolution & {
+        applicationStatus: 'pending_application' | 'applied'
+        appliedAt: Date | null
+      })
+    | null
 }
 
 export interface MemberOption {
@@ -238,31 +248,79 @@ export class DrizzleEvidenceExceptionRepository implements EvidenceExceptionRepo
         fingerprint: rawEvents.contentHash,
         legacyTypeCode: legacyMemberEvidence.legacyTypeCode,
         createdAt: legacyMemberEvidence.createdAt,
+        sociosBatchId: legacyMemberEvidence.importBatch,
         deterministicTypeCandidateSourceRowId:
           legacyMemberEvidence.membershipTypeCandidateSourceRowId,
+        knownMemberId: memberIdentities.id,
+        knownMemberNumber: memberIdentities.memberNumber,
+        knownMemberCredentialRef: memberIdentities.credentialRef,
+        knownMemberLifecycleState: memberIdentities.lifecycleState,
       })
       .from(legacyMemberEvidence)
       .innerJoin(rawEvents, eq(legacyMemberEvidence.rawEventId, rawEvents.id))
+      .innerJoin(
+        legacyIdentityEvidence,
+        eq(legacyMemberEvidence.identityEvidenceId, legacyIdentityEvidence.id),
+      )
+      .leftJoin(
+        memberIdentities,
+        and(
+          eq(legacyIdentityEvidence.memberId, memberIdentities.id),
+          eq(legacyIdentityEvidence.reviewState, 'validated'),
+        ),
+      )
       .where(eq(legacyMemberEvidence.id, id))
       .limit(1)
     if (!evidence || (evidence.kind !== 'unknown_type' && evidence.kind !== 'ambiguous_identity')) {
       return null
     }
-    const [resolved] = await Promise.all([
-      this.db
-        .select({ id: legacyMemberEvidenceResolutions.id })
-        .from(legacyMemberEvidenceResolutions)
-        .where(eq(legacyMemberEvidenceResolutions.legacyMemberEvidenceId, id))
-        .limit(1),
-    ])
+    const currentResolution = await this.findCurrentLeaf(id)
+    const catalogBatchId = currentResolution?.selectedTypeCandidateSourceRowId
+      ? ((
+          await this.db
+            .select({ batchId: legacyMembershipTypeCandidates.snapshotBatchId })
+            .from(legacyMembershipTypeCandidates)
+            .where(
+              eq(
+                legacyMembershipTypeCandidates.sourceRowId,
+                currentResolution.selectedTypeCandidateSourceRowId,
+              ),
+            )
+            .limit(1)
+        )[0]?.batchId ?? null)
+      : null
+    const appliedAt = currentResolution
+      ? ((
+          await this.db.execute<{ created_at: Date }>(sql`
+            SELECT a.created_at FROM socios.legacy_member_evidence_resolution_applications a
+            WHERE a.resolution_id = ${currentResolution.id} LIMIT 1
+          `)
+        ).rows[0]?.created_at ?? null)
+      : null
     return {
       id: evidence.id,
       kind: evidence.kind,
-      status: resolved.length ? 'resolved' : 'unresolved',
+      status: currentResolution ? 'resolved' : 'unresolved',
       fingerprint: evidence.fingerprint,
       legacyTypeCode: evidence.legacyTypeCode,
       createdAt: evidence.createdAt,
+      sociosBatchId: evidence.sociosBatchId,
+      catalogBatchId,
       deterministicTypeCandidateSourceRowId: evidence.deterministicTypeCandidateSourceRowId,
+      knownMember:
+        evidence.kind === 'unknown_type' && evidence.knownMemberId
+          ? {
+              id: evidence.knownMemberId,
+              memberNumber: evidence.knownMemberNumber!,
+              credentialRef: evidence.knownMemberCredentialRef,
+              lifecycleState: evidence.knownMemberLifecycleState!,
+            }
+          : null,
+      currentResolution: currentResolution && {
+        ...currentResolution,
+        applicationStatus: appliedAt ? 'applied' : 'pending_application',
+        appliedAt,
+      },
     }
   }
 
@@ -462,6 +520,9 @@ export async function searchMembershipTypeOptions(
 }
 
 function sameCommand(row: EvidenceResolution, input: ResolveEvidenceExceptionInput): boolean {
+  const selectedType =
+    input.selectedTypeCandidateSourceRowId ??
+    (row.kind === 'ambiguous_identity' ? row.selectedTypeCandidateSourceRowId : null)
   return (
     row.evidenceId === input.evidenceId &&
     row.kind === input.kind &&
@@ -469,7 +530,7 @@ function sameCommand(row: EvidenceResolution, input: ResolveEvidenceExceptionInp
     row.stewardOperatorId === input.operatorId &&
     row.reason === input.reason.trim() &&
     row.selectedMemberId === input.selectedMemberId &&
-    row.selectedTypeCandidateSourceRowId === (input.selectedTypeCandidateSourceRowId ?? null)
+    row.selectedTypeCandidateSourceRowId === selectedType
   )
 }
 
@@ -485,6 +546,12 @@ async function validateSelection(
   if (!input.selectedMemberId || !(await repo.hasMember(input.selectedMemberId))) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'An existing member must be selected')
   }
+  if (detail.knownMember && input.selectedMemberId !== detail.knownMember.id) {
+    throw BusinessError(
+      ErrorCode.VALIDATION_ERROR,
+      'Selected member differs from validated identity',
+    )
+  }
   const selectedType = input.selectedTypeCandidateSourceRowId
   if (detail.kind === 'unknown_type') {
     if (!selectedType || !(await repo.hasTypeCandidate(selectedType))) {
@@ -495,7 +562,7 @@ async function validateSelection(
   if (detail.deterministicTypeCandidateSourceRowId) {
     if (selectedType)
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Type is already deterministic')
-    return null
+    return detail.deterministicTypeCandidateSourceRowId
   }
   if (!selectedType || !(await repo.hasTypeCandidate(selectedType))) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'An existing type candidate must be selected')
@@ -525,8 +592,9 @@ export async function resolveEvidenceException(
     if (detail.kind !== input.kind || detail.fingerprint !== input.evidenceFingerprint) {
       return conflict('Evidence exception is stale')
     }
+    if (await tx.findCurrentLeaf(input.evidenceId))
+      return conflict('Evidence exception is already resolved')
     const selectedTypeCandidateSourceRowId = await validateSelection(tx, detail, input)
-    const leaf = await tx.findCurrentLeaf(input.evidenceId)
     const resolution = await tx.appendResolution({
       evidenceId: input.evidenceId,
       kind: input.kind,
@@ -536,7 +604,7 @@ export async function resolveEvidenceException(
       reason,
       idempotencyKey: input.idempotencyKey,
       evidenceFingerprint: input.evidenceFingerprint,
-      supersedesResolutionId: leaf?.id ?? null,
+      supersedesResolutionId: null,
     })
     if (!resolution) {
       const raced = await tx.findResolutionByIdempotencyKey(input.operatorId, input.idempotencyKey)
