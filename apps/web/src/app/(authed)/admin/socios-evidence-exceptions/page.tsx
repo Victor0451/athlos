@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
 import {
@@ -174,14 +175,12 @@ export default function SociosEvidenceExceptionsPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        disabled
-                        title="Detalle disponible próximamente"
-                        className="text-sm text-ink-500 disabled:cursor-not-allowed"
+                      <Link
+                        href={`/admin/socios-evidence-exceptions/${item.id}`}
+                        className="text-sm text-accent hover:text-accent-hover"
                       >
                         Ver detalle
-                      </button>
+                      </Link>
                     </td>
                   </tr>
                 ))}
