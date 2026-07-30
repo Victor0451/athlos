@@ -22,12 +22,12 @@ describe('membership types API', () => {
   it('gets associated members through the type source-row route', async () => {
     apiFetchMock.mockResolvedValueOnce({ items: [] })
 
-    await getMembershipTypeMembers('type-row-id', { page: 1, q: '12' })
+    await getMembershipTypeMembers('type-row-id', { page: 1, limit: 20, q: '12' })
 
     expect(apiFetchMock).toHaveBeenCalledWith(
       '/api/v1/admin/membership-types/type-row-id/members',
       {
-        query: { page: 1, q: '12' },
+        query: { page: 1, limit: 20, q: '12' },
       },
     )
   })

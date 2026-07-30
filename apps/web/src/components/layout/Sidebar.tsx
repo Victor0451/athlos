@@ -42,6 +42,7 @@ const ITEMS: NavItem[] = [
     label: 'Socios: excepciones',
     permission: 'data_steward',
   },
+  { href: '/admin/membership-types', label: 'Tipos de afiliación', permission: 'data_steward' },
 ]
 
 export default function Sidebar() {

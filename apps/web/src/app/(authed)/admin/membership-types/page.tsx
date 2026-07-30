@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs'
+import { useRouter } from 'next/navigation'
 import { DataTable, type ColumnDef } from '@/components/tables/DataTable'
 import { ApiError } from '@/lib/api'
 import {
@@ -44,6 +45,7 @@ function noPermission() {
 
 export default function MembershipTypesPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const [{ q, page }, setUrlState] = useQueryStates(urlStateSchema)
   const [searchDraft, setSearchDraft] = useState(q)
   const permitted = user?.role === 'ADMIN' || user?.permissions.data_steward === true
@@ -140,6 +142,7 @@ export default function MembershipTypesPage() {
                   total: result?.total ?? 0,
                   onPageChange: (nextPage) => setUrlState({ page: nextPage }),
                 }}
+                onRowClick={(item) => router.push(`/admin/membership-types/${item.source_row_id}`)}
               />
               {result?.snapshot.snapshot_batch_id ? (
                 <p className="text-xs text-ink-500">
