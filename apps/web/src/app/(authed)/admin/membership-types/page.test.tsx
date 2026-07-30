@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const getMembershipTypesMock = vi.fn()
 const setUrlStateMock = vi.fn()
+const pushMock = vi.fn()
 let authValue: { user: unknown } = { user: null }
 
 vi.mock('nuqs', () => ({
@@ -12,6 +13,7 @@ vi.mock('nuqs', () => ({
   parseAsInteger: { withDefault: (defaultValue: number) => ({ defaultValue }) },
   useQueryStates: () => [{ q: '', page: 1 }, setUrlStateMock],
 }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushMock }) }))
 vi.mock('@/lib/api/membership-types', () => ({
   getMembershipTypes: (...args: unknown[]) => getMembershipTypesMock(...args),
 }))
@@ -61,6 +63,7 @@ describe('Membership types page', () => {
   beforeEach(() => {
     getMembershipTypesMock.mockReset()
     setUrlStateMock.mockReset()
+    pushMock.mockReset()
     authValue = {
       user: {
         role: 'OPERADOR',
@@ -91,6 +94,13 @@ describe('Membership types page', () => {
 
     await user.click(screen.getByRole('button', { name: 'Siguiente' }))
     expect(setUrlStateMock).toHaveBeenCalledWith({ page: 2 })
+  })
+
+  it('opens the selected type detail by its machine key', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByTestId('membership-types-table-row-type-1'))
+    expect(pushMock).toHaveBeenCalledWith('/admin/membership-types/type-1')
   })
 
   it('shows loading, empty, unavailable, error, and permission states', async () => {
