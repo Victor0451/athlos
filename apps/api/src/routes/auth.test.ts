@@ -6,6 +6,7 @@ import { createStandinDb } from '../test-standins/db.ts'
 import { generateRefreshToken, hashRefreshToken } from '../services/auth.ts'
 import type { Db } from '@athlos/db'
 import type { Operator } from '@athlos/db/schema'
+import type { PermissionsRepo } from '@athlos/db/repositories/permissions'
 import { buildServer } from '../server.ts'
 import type { FastifyInstance } from 'fastify'
 
@@ -69,13 +70,19 @@ function bearer(payload: JWTPayload, env: Env): string {
   )
 }
 
-async function bootstrap(): Promise<{
+async function bootstrap(dataSteward = false): Promise<{
   app: FastifyInstance
   standin: ReturnType<typeof createStandinDb>
   env: Env
 }> {
   const standin = createStandinDb()
   const env = makeEnv()
+  const permissionsRepo: PermissionsRepo = {
+    hasPermission: async () => dataSteward,
+    grant: async () => undefined,
+    revoke: async () => undefined,
+    listOperatorsWithPermission: async () => [],
+  }
   const app = await buildServer({
     env: {
       ...process.env,
@@ -87,6 +94,7 @@ async function bootstrap(): Promise<{
     },
     containerOverrides: {
       db: standin.drizzle as unknown as Db,
+      permissionsRepo,
     },
     quietLogger: true,
   })
@@ -264,6 +272,52 @@ describe('GET /api/v1/auth/me', () => {
         headers: { authorization: 'Bearer not-a-jwt' },
       })
       expect(res.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('GET /api/v1/auth/me/permissions', () => {
+  it('returns the live data_steward grant for an authenticated operator', async () => {
+    const { app, standin, env } = await bootstrap(true)
+    try {
+      const op = makeOperator({ role: 'O' })
+      standin.state.operators.push(op)
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/me/permissions',
+        headers: {
+          authorization: `Bearer ${bearer(
+            { sub: op.id, role: 'OPERADOR', permissions: { can_reprint: true, can_anulate: true } },
+            env,
+          )}`,
+        },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ data_steward: true })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('does not infer data_steward from the ADMIN role', async () => {
+    const { app, standin, env } = await bootstrap(false)
+    try {
+      const op = makeOperator({ role: 'A' })
+      standin.state.operators.push(op)
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/me/permissions',
+        headers: {
+          authorization: `Bearer ${bearer(
+            { sub: op.id, role: 'ADMIN', permissions: { can_reprint: true, can_anulate: true } },
+            env,
+          )}`,
+        },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ data_steward: false })
     } finally {
       await app.close()
     }

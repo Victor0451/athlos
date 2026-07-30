@@ -9,6 +9,8 @@ import {
   getEvidenceException,
   listEvidenceExceptions,
   resolveEvidenceException,
+  searchMemberOptions,
+  searchMembershipTypeOptions,
   type EvidenceException,
   type EvidenceExceptionDetail,
   type EvidenceResolution,
@@ -20,6 +22,14 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   kind: z.enum(['unknown_type', 'ambiguous_identity']).optional(),
   status: z.enum(['unresolved', 'resolved']).optional(),
+})
+const optionSearchSchema = z.object({
+  q: z
+    .string()
+    .trim()
+    .min(2)
+    .max(64)
+    .regex(/[a-z0-9]/i),
 })
 const resolutionSchema = z
   .object({
@@ -66,16 +76,23 @@ function exceptionDto(row: EvidenceException) {
 function detailDto(row: EvidenceExceptionDetail) {
   return {
     ...exceptionDto(row),
-    member_choices: row.memberChoices.map((member) => ({
-      id: member.id,
-      member_number: member.memberNumber,
-    })),
-    type_choices: row.typeChoices.map((type) => ({
-      source_row_id: type.sourceRowId,
-      code: type.code,
-      name: type.name,
-    })),
+    socios_batch_id: row.sociosBatchId,
+    catalog_batch_id: row.catalogBatchId,
     deterministic_type_candidate_source_row_id: row.deterministicTypeCandidateSourceRowId,
+    known_member: row.knownMember && {
+      id: row.knownMember.id,
+      member_number: row.knownMember.memberNumber,
+      credential_ref: row.knownMember.credentialRef,
+      lifecycle_state: row.knownMember.lifecycleState,
+    },
+    current_resolution: row.currentResolution && {
+      id: row.currentResolution.id,
+      selected_member_id: row.currentResolution.selectedMemberId,
+      selected_type_candidate_source_row_id: row.currentResolution.selectedTypeCandidateSourceRowId,
+      application_status: row.currentResolution.applicationStatus,
+      created_at: row.currentResolution.createdAt.toISOString(),
+      applied_at: row.currentResolution.appliedAt?.toISOString() ?? null,
+    },
   }
 }
 
@@ -121,6 +138,37 @@ export const sociosEvidenceExceptionRoutes: FastifyPluginCallback = (fastify, _o
     async (request, reply) => {
       const { id } = throwIfInvalid(paramsSchema, request.params, 'params')
       return reply.code(200).send(detailDto(await getEvidenceException(repo, id)))
+    },
+  )
+
+  fastify.get('/api/v1/admin/socios-evidence-exceptions/options/members', gate, async (request) => {
+    const { q } = throwIfInvalid(optionSearchSchema, request.query, 'query')
+    const items = await searchMemberOptions(repo, q)
+    return {
+      items: items.slice(0, 20).map((member) => ({
+        id: member.id,
+        member_number: member.memberNumber,
+        credential_ref: member.credentialRef,
+        lifecycle_state: member.lifecycleState,
+      })),
+    }
+  })
+
+  fastify.get(
+    '/api/v1/admin/socios-evidence-exceptions/options/membership-types',
+    gate,
+    async (request) => {
+      const { q } = throwIfInvalid(optionSearchSchema, request.query, 'query')
+      const items = await searchMembershipTypeOptions(repo, q)
+      return {
+        items: items.slice(0, 20).map((type) => ({
+          source_row_id: type.sourceRowId,
+          snapshot_batch_id: type.snapshotBatchId,
+          code: type.code,
+          name: type.name,
+          letter: type.letter,
+        })),
+      }
     },
   )
 

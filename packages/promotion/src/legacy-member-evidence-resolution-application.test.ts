@@ -58,11 +58,25 @@ describe('applyLegacyMemberEvidenceResolutions', () => {
       eligibleCount: 1,
       appliedCount: 1,
       unresolvedCount: 0,
+      unresolvedUnknownTypeCount: 0,
+      unresolvedAmbiguousIdentityCount: 0,
       staleCount: 0,
       technicalCount: 0,
     })
     expect(db.calls.some((sql) => /^\s*(UPDATE|DELETE)/.test(sql))).toBe(false)
     expect(db.calls.at(-1)).toBe('COMMIT')
+  })
+
+  it('plans a deterministic ambiguous-identity resolution as applied', async () => {
+    await expect(
+      applyLegacyMemberEvidenceResolutions(
+        source([
+          { ...valid, evidence_kind: 'ambiguous_identity', resolution_kind: 'ambiguous_identity' },
+        ]),
+        'batch-a',
+        'execution-ambiguous',
+      ),
+    ).resolves.toMatchObject({ appliedCount: 1, staleCount: 0 })
   })
 
   it('replays exact committed truth and rejects incompatible or forked leaves', async () => {
@@ -73,6 +87,8 @@ describe('applyLegacyMemberEvidenceResolutions', () => {
       eligibleCount: 1,
       appliedCount: 1,
       unresolvedCount: 0,
+      unresolvedUnknownTypeCount: 0,
+      unresolvedAmbiguousIdentityCount: 0,
       staleCount: 0,
       technicalCount: 0,
       status: 'committed',
