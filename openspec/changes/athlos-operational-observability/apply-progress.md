@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live access, deployment, financial action, commit, push, or PR occurred.
+Phases 1–3 / Work Units 1–3 are complete. No production/live access, deployment, financial action, push, or PR occurred. Work Unit 3 was committed as `473ea7f` (`feat(dashboard): consume operational snapshot`).
 
 ## Delivery
 
@@ -10,9 +10,11 @@ Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live
 - Chain strategy: `feature-branch-chain`
 - Four slices: API safety, snapshot API, dashboard, and dynamic safe scheduler UI.
 - PR 1 size exception: maintainer-approved at 475 changed lines for completed Work Unit 1 only.
-- Current work unit: PR 2 — Snapshot API.
-- PR boundary: reusable readiness probe and one ADMIN-only, bounded aggregate snapshot route with independent signal envelopes.
-- Out of scope: dashboard and scheduler UI slices.
+- Work Unit 3 delivery: branch `feat/operational-observability-03-dashboard`, commit `473ea7f` (`feat(dashboard): consume operational snapshot`).
+- Work Unit 3 source/test diff: 300 changed lines (212 additions, 88 deletions), within the 400-line budget.
+- Current work unit: PR 3 — Dashboard (complete).
+- PR boundary: typed snapshot client and one ADMIN dashboard query that renders independent signals.
+- Out of scope: `/admin/scheduler` list/detail UI and Phase 4.
 
 ## Task Progress
 
@@ -26,6 +28,9 @@ Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live
 - [x] 2.3 RED: snapshot authorization, isolation, registry, bound, camelCase, and leakage tests
 - [x] 2.4 GREEN: operational snapshot service, ADMIN route, and server registration
 - [x] 2.5 REFACTOR/CHECK: focused verification, typecheck, and formatting
+- [x] 3.1 RED: snapshot query, polling, partial state, readiness, and attention-cap tests
+- [x] 3.2 GREEN: typed snapshot client and one ADMIN dashboard query
+- [x] 3.3 REFACTOR/CHECK: dashboard fan-out removal, scoped checks, and commit `473ea7f` on `feat/operational-observability-03-dashboard`
 
 ## TDD Cycle Evidence
 
@@ -41,6 +46,9 @@ Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live
 | 2.3 | `apps/api/src/routes/admin/operations.test.ts` | Unit/HTTP integration | N/A (new) | ✅ Absent route returned 404 for ADMIN and OPERADOR | ✅ 3/3 passed | ✅ independent rejection, canonical unknown freshness, 11-to-10 cap, dynamic runtime registry | ✅ Formatting rerun green |
 | 2.4 | `apps/api/src/routes/admin/operations.test.ts` | HTTP integration | ✅ 3/3 | ✅ Route contract from 2.3 | ✅ 3/3 passed | ✅ ADMIN 200 and OPERADOR 403 with no disclosure | ✅ Service owns allSettled envelopes; route owns transport/auth |
 | 2.5 | Focused Unit 2 suite | Unit/HTTP integration | ✅ 14/14 | N/A | ✅ 14/14 and API typecheck passed | N/A | ✅ Prettier applied and reverified |
+| 3.1 | `apps/web/src/app/(authed)/dashboard/page.test.tsx`, `apps/web/src/lib/api/operations.test.ts` | Component/API client | ✅ 6/6 dashboard baseline | ✅ Snapshot query assertion failed (0 calls); client module missing | ✅ 9/9 passed | ✅ mount/poll plus available/partial envelopes and 11-to-10 cap | ✅ Fake timer cleanup and legacy client documentation aligned |
+| 3.2 | `apps/web/src/app/(authed)/dashboard/page.test.tsx`, `apps/web/src/lib/api/operations.test.ts` | Component/API client | ✅ 6/6 dashboard baseline | ✅ Absent client and dashboard fan-out failed new contracts | ✅ 9/9 passed | ✅ typed endpoint plus ADMIN data, non-ADMIN suppression, safe bounded attention | ✅ One `useQuery` owns all dashboard operational data |
+| 3.3 | Focused Unit 3 suite | Component/API client | ✅ 9/9 | N/A | ✅ 9/9 and web typecheck passed | N/A | ✅ Scoped Prettier and diff checks passed |
 
 ## Work Unit 1 Evidence
 
@@ -58,6 +66,14 @@ Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live
 | Runtime harness command/scenario and exact result | Fastify `app.inject` in `operations.test.ts` — exit 0; ADMIN receives the snapshot, OPERADOR receives 403 without signal disclosure, and a runtime-registered job is included. No external runtime harness was used because this work unit has no external boundary. |
 | Rollback boundary | Revert `services/{readiness,operational-snapshot}.ts`, `routes/admin/operations.ts`, the `health.ts` delegation, and the `server.ts` registration; this removes Work Unit 2 without reverting Phase 1 safe projection/query behavior. |
 
+## Work Unit 3 Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command and exact result | `pnpm --filter @athlos/web exec vitest run 'src/lib/api/operations.test.ts' 'src/app/(authed)/dashboard/page.test.tsx'` — exit 0, 2 files, 9 passed. |
+| Runtime harness command/scenario and exact result | React Testing Library with TanStack `QueryClientProvider` — exit 0; ADMIN calls one snapshot query on mount and at 30 seconds, independently renders partial envelopes, and caps 11 attention records at 10. No external runtime boundary exists because this is a mocked web client/API contract. |
+| Rollback boundary | Revert `apps/web/src/lib/api/operations.{ts,test.ts}`, the dashboard page/test snapshot changes, and the health-client documentation update; this restores the prior dashboard fan-out without touching the snapshot API or scheduler UI. |
+
 ## Checks
 
 - Work Unit 1: `pnpm --filter @athlos/api typecheck` — exit 0.
@@ -69,7 +85,13 @@ Phase 1 / Work Unit 1 and Phase 2 / Work Unit 2 are complete. No production/live
 - `git diff --check` — exit 0.
 - Implementation source/test diff: 289 additions, 21 deletions, 310 changed lines; within the 400-line budget.
 - Artifact-only bookkeeping: `openspec/changes/athlos-operational-observability/tasks.md` — 5 additions, 5 deletions, 10 changed lines; reported separately from implementation.
+- `pnpm --filter @athlos/web exec vitest run 'src/lib/api/operations.test.ts' 'src/app/(authed)/dashboard/page.test.tsx'` — exit 0, 2 files, 9 passed.
+- `pnpm --filter @athlos/web typecheck` — exit 0.
+- `pnpm exec prettier --check` on Unit 3 source/test files — exit 0.
+- Implementation source/test diff: 212 additions, 88 deletions, 300 changed lines; within the 400-line budget.
+- Artifact-only bookkeeping: `openspec/changes/athlos-operational-observability/{tasks.md,apply-progress.md}` is reported separately from implementation.
+- Work Unit 3 commit: `473ea7f` — `feat(dashboard): consume operational snapshot` on `feat/operational-observability-03-dashboard`.
 
 ## Remaining Work
 
-Phase 3 tasks 3.1–3.3 and Phase 4 tasks 4.1–4.3 remain pending. No migration was added and no external runtime harness was required. No commit was created.
+Phase 4 tasks 4.1–4.3 remain pending. No migration was added and no external runtime harness was required.
