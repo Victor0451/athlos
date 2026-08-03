@@ -44,11 +44,11 @@ Integration branch: `feat/operational-observability`; only this branch will ulti
 
 ## Phase 2: Readiness and snapshot API
 
-- [ ] 2.1 **RED**: pin readiness 200/503 body in `health.test.ts` while schema/DB outcomes vary.
-- [ ] 2.2 **GREEN**: extract `apps/api/src/services/readiness.ts#probeReadiness`; adapt `apps/api/src/routes/health.ts` without drift.
-- [ ] 2.3 **RED**: test ADMIN 200/OPERADOR 403, independent rejection, dynamic registry, ≤10 attention, camelCase unknowns, and no leakage in `operations.test.ts`.
-- [ ] 2.4 **GREEN**: create `services/operational-snapshot.ts` and `routes/admin/operations.ts`; register in `server.ts` with `requireRole('ADMIN')` and `Promise.allSettled` envelopes.
-- [ ] 2.5 **REFACTOR/CHECK**: keep read-only; add no migration; run Unit 2 and commit `feat(operations): add bounded admin snapshot`.
+- [x] 2.1 **RED**: pin readiness 200/503 body in `health.test.ts` while schema/DB outcomes vary.
+- [x] 2.2 **GREEN**: extract `apps/api/src/services/readiness.ts#probeReadiness`; adapt `apps/api/src/routes/health.ts` without drift.
+- [x] 2.3 **RED**: test ADMIN 200/OPERADOR 403, independent rejection, dynamic registry, ≤10 attention, camelCase unknowns, and no leakage in `operations.test.ts`.
+- [x] 2.4 **GREEN**: create `services/operational-snapshot.ts` and `routes/admin/operations.ts`; register in `server.ts` with `requireRole('ADMIN')` and `Promise.allSettled` envelopes.
+- [x] 2.5 **REFACTOR/CHECK**: keep read-only; add no migration; run Unit 2 and commit `feat(operations): add bounded admin snapshot`.
 
 ## Phase 3: Snapshot web contract and dashboard
 
