@@ -6,6 +6,7 @@ import {
   reconcileOrphanedRuns,
   markInflightAsShutdown,
   getLastRun,
+  listAttentionRuns,
   listRuns,
 } from './run-tracker.ts'
 import { createStandinDb, asDrizzle, findRow, listRows, seedRow } from './test-standins/db.ts'
@@ -228,5 +229,64 @@ describe('listRuns', () => {
     // A limit of 1000 is capped at 200 — but we only inserted 5,
     // so the result is 5. The cap is enforced, not the floor.
     expect(await listRuns(db, { limit: 1000 })).toHaveLength(5)
+  })
+})
+
+describe('listAttentionRuns', () => {
+  it('returns only the four attention statuses in descending run order', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const oldest = seedRow(standin, {
+      jobName: 'old-failure',
+      status: 'failed',
+      startedAt: new Date('2026-08-01T08:00:00.000Z'),
+    })
+    const current = seedRow(standin, {
+      jobName: 'review-needed',
+      status: 'completed_with_review',
+      startedAt: new Date('2026-08-01T11:00:00.000Z'),
+    })
+    const cancelled = seedRow(standin, {
+      jobName: 'cancelled-job',
+      status: 'cancelled',
+      startedAt: new Date('2026-08-01T10:00:00.000Z'),
+    })
+    const deadLetter = seedRow(standin, {
+      jobName: 'dead-letter-job',
+      status: 'dead_letter',
+      startedAt: new Date('2026-08-01T09:00:00.000Z'),
+    })
+    seedRow(standin, {
+      jobName: 'successful-job',
+      status: 'succeeded',
+      startedAt: new Date('2026-08-01T12:00:00.000Z'),
+    })
+
+    const runs = await listAttentionRuns(db, 10)
+
+    expect(runs.map((run) => run.id)).toEqual([current.id, cancelled.id, deadLetter.id, oldest.id])
+    expect(runs.map((run) => run.status)).toEqual([
+      'completed_with_review',
+      'cancelled',
+      'dead_letter',
+      'failed',
+    ])
+  })
+
+  it('caps the attention list at the requested bounded limit', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    for (let i = 0; i < 3; i += 1) {
+      seedRow(standin, {
+        jobName: `failed-${i}`,
+        status: 'failed',
+        startedAt: new Date(`2026-08-01T0${i}:00:00.000Z`),
+      })
+    }
+
+    const runs = await listAttentionRuns(db, 2)
+
+    expect(runs).toHaveLength(2)
+    expect(runs.every((run) => run.status === 'failed')).toBe(true)
   })
 })

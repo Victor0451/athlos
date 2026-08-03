@@ -68,6 +68,48 @@ interface EqRef {
   value: unknown
 }
 
+interface InRef {
+  sqlCol: string
+  values: unknown[]
+}
+
+function parseInArrayLeaf(cond: unknown): InRef | null {
+  if (!cond || typeof cond !== 'object') return null
+  const chunks = (cond as { queryChunks?: unknown[] }).queryChunks
+  const containsIn = (chunk: unknown): boolean => {
+    if (!chunk || typeof chunk !== 'object') return false
+    const value = (chunk as { value?: unknown }).value
+    if (
+      Array.isArray(value) &&
+      value.some((item) => typeof item === 'string' && item.includes(' in '))
+    ) {
+      return true
+    }
+    return ((chunk as { queryChunks?: unknown[] }).queryChunks ?? []).some(containsIn)
+  }
+  if (!chunks || !chunks.some(containsIn)) return null
+  const column = chunks.find(
+    (chunk): chunk is { name: string } =>
+      typeof chunk === 'object' &&
+      chunk !== null &&
+      typeof (chunk as { name?: unknown }).name === 'string',
+  )
+  if (!column) return null
+  const values: unknown[] = []
+  const collect = (chunk: unknown): void => {
+    if (Array.isArray(chunk)) {
+      for (const child of chunk) collect(child)
+      return
+    }
+    if (!chunk || typeof chunk !== 'object') return
+    const value = (chunk as { value?: unknown }).value
+    if (value !== undefined && !Array.isArray(value)) values.push(value)
+    for (const child of (chunk as { queryChunks?: unknown[] }).queryChunks ?? []) collect(child)
+  }
+  for (const chunk of chunks) collect(chunk)
+  return values.length > 0 ? { sqlCol: column.name, values } : null
+}
+
 /**
  * Parse a Drizzle eq() leaf. Shape: 5 chunks, operator ` = ` at index 2.
  */
@@ -190,9 +232,21 @@ function flattenWhere(cond: unknown): EqRef[] {
 }
 
 function matchesWhere(row: JobRunRow, cond: unknown): boolean {
+  const inRef = parseInArrayLeaf(cond)
+  if (inRef) return inRef.values.includes(rowGet(row, inRef.sqlCol))
   const refs = flattenWhere(cond)
   if (refs.length === 0) return true
   return refs.every((r) => rowGet(row, r.sqlCol) === r.value)
+}
+
+function sortByNewestRun(rows: JobRunRow[]): JobRunRow[] {
+  return [...rows].sort((a, b) => {
+    const byStarted = (b.startedAt?.getTime() ?? -Infinity) - (a.startedAt?.getTime() ?? -Infinity)
+    if (byStarted !== 0) return byStarted
+    const byScheduled = b.scheduledAt.getTime() - a.scheduledAt.getTime()
+    if (byScheduled !== 0) return byScheduled
+    return b.id.localeCompare(a.id)
+  })
 }
 
 export function createStandinDb(): StandinDb {
@@ -239,13 +293,10 @@ export function asDrizzle(standin: StandinDb): Db {
           const matches = Array.from(standin.state.rows.values()).filter((r) =>
             matchesWhere(r, cond),
           )
-          // The scheduler's `listRuns` chains `where(...).orderBy(...).limit(...)`.
-          // The standin honours `limit` and ignores the sort key (rows
-          // are returned in insertion order; tests that depend on
-          // ordering should sort client-side or assert by id).
+          // The scheduler's history readers order newest runs first.
           return {
-            orderBy: (_sort: unknown) => ({
-              limit: (n: number) => Promise.resolve(matches.slice(0, n)),
+            orderBy: (..._sort: unknown[]) => ({
+              limit: (n: number) => Promise.resolve(sortByNewestRun(matches).slice(0, n)),
             }),
             limit: (n: number) => Promise.resolve(matches.slice(0, n)),
             then: (
@@ -254,8 +305,8 @@ export function asDrizzle(standin: StandinDb): Db {
             ) => Promise.resolve(matches).then(onFulfilled, onRejected),
           }
         },
-        orderBy: (_sort: unknown) => {
-          const all = Array.from(standin.state.rows.values())
+        orderBy: (..._sort: unknown[]) => {
+          const all = sortByNewestRun(Array.from(standin.state.rows.values()))
           return {
             limit: (n: number) => Promise.resolve(all.slice(0, n)),
             then: (
