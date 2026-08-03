@@ -1,4 +1,4 @@
-import type { Db, JobRunStatus } from '@athlos/db'
+import type { Db, JobRun, JobRunStatus } from '@athlos/db'
 import type { JobDefinition } from './types.ts'
 import { getLastRun } from './run-tracker.ts'
 
@@ -18,14 +18,7 @@ export interface JobHealth {
   /** True when a `job_runs` row for this name currently has `status='running'`. */
   inFlight: boolean
   /** Last run row (any status), or `null` if the job has never run. */
-  lastRun: {
-    id: string
-    status: JobRunStatus
-    startedAt: Date | null
-    finishedAt: Date | null
-    attempt: number
-    errorMessage: string | null
-  } | null
+  lastRun: JobRun | null
   /** True when last successful run is within `2× cadenceMinutes`. */
   healthy: boolean
   /** Empty when healthy; populated with a human-readable explanation otherwise. */
@@ -83,16 +76,7 @@ export async function getJobHealth(
       cadenceMinutes: def.cadenceMinutes,
       scheduled: def.enabled && def.cronExpr !== null,
       inFlight: last?.status === 'running',
-      lastRun: last
-        ? {
-            id: last.id,
-            status: last.status,
-            startedAt: last.startedAt,
-            finishedAt: last.finishedAt,
-            attempt: last.attempt,
-            errorMessage: last.errorMessage,
-          }
-        : null,
+      lastRun: last,
       healthy,
       reason,
     })
@@ -106,11 +90,7 @@ export async function getJobHealth(
  * "last successful run" baseline. Returns `null` if no matching row
  * exists.
  */
-async function getLastRunByStatus(
-  db: Db,
-  jobName: string,
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter',
-) {
+async function getLastRunByStatus(db: Db, jobName: string, status: JobRunStatus) {
   const { eq, and } = await import('drizzle-orm')
   const { jobRuns } = await import('@athlos/db')
   const rows = await db
