@@ -1,7 +1,8 @@
 'use client'
 
 import type { SchedulerJobRun } from '@/lib/api/scheduler'
-import { StatusBadge, type StatusBadgeKind } from '@/components/cards/StatusBadge'
+import { StatusBadge } from '@/components/cards/StatusBadge'
+import { schedulerStatusBadgeKind, schedulerStatusLabel } from './status'
 
 /**
  * JobCard — one clickable row in the scheduler job grid (TASK-031, PR 8c.1).
@@ -40,12 +41,9 @@ function formatTimestamp(iso: string | null): string {
   return DATETIME_FMT.format(d)
 }
 
-function resolveStatusKind(enabled: boolean, lastRun: SchedulerJobRun | null): StatusBadgeKind {
+function resolveStatusKind(enabled: boolean, lastRun: SchedulerJobRun | null) {
   if (!enabled) return 'disabled'
-  if (lastRun && (lastRun.status === 'failed' || lastRun.status === 'dead_letter')) {
-    return 'down'
-  }
-  return 'healthy'
+  return lastRun ? schedulerStatusBadgeKind(lastRun.status) : 'unknown'
 }
 
 export interface JobCardProps {
@@ -61,6 +59,7 @@ export function JobCard({ jobName, cronExpr, enabled, lastRun, onSelect }: JobCa
   const lastRunLabel = lastRun
     ? `Última corrida: ${formatTimestamp(lastRun.startedAt ?? lastRun.scheduledAt)}`
     : 'Sin corridas'
+  const statusLabel = lastRun ? schedulerStatusLabel(lastRun.status) : 'Sin estado'
 
   return (
     <li className="border-t border-ink-100 first:border-t-0" data-testid={`job-card-${jobName}`}>
@@ -76,6 +75,8 @@ export function JobCard({ jobName, cronExpr, enabled, lastRun, onSelect }: JobCa
             <span data-testid={`job-card-${jobName}-cron`}>{cronExpr}</span>
             <span aria-hidden="true"> · </span>
             <span data-testid={`job-card-${jobName}-last-run`}>{lastRunLabel}</span>
+            <span aria-hidden="true"> · </span>
+            <span data-testid={`job-card-${jobName}-status`}>{statusLabel}</span>
           </span>
         </span>
         <StatusBadge status={badgeKind} />

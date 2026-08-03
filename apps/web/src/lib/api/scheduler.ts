@@ -30,16 +30,33 @@ import { apiFetch } from '@/lib/api'
 
 /* ── /api/v1/admin/jobs/health ──────────────────────────────────── */
 
-export type JobRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'dead_letter'
+export type SchedulerRunStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'completed_with_review'
+  | 'failed'
+  | 'dead_letter'
+  | 'cancelled'
 
-export interface JobHealthLastRun {
+export interface SchedulerRunReason {
+  code: string
+  message: string
+}
+
+export type JobRunStatus = SchedulerRunStatus
+
+export interface SchedulerJobRun {
   id: string
+  jobName: string
   status: JobRunStatus
+  attempt: number
+  scheduledAt: string
   startedAt: string | null
   finishedAt: string | null
-  attempt: number
   durationMs: number | null
-  errorMessage: string | null
+  triggeredBy: string
+  reason?: SchedulerRunReason
 }
 
 export interface JobHealth {
@@ -51,7 +68,7 @@ export interface JobHealth {
   inFlight: boolean
   healthy: boolean
   reason: string | null
-  lastRun: JobHealthLastRun | null
+  lastRun: SchedulerJobRun | null
 }
 
 export interface SchedulerHealthResponse {
@@ -60,18 +77,7 @@ export interface SchedulerHealthResponse {
 
 /* ── /api/v1/admin/jobs/runs ─────────────────────────────────────── */
 
-export interface JobRunDTO {
-  id: string
-  jobName: string
-  status: JobRunStatus
-  attempt: number
-  scheduledAt: string
-  startedAt: string | null
-  finishedAt: string | null
-  triggeredBy: 'scheduler' | 'manual' | 'post-import'
-  errorMessage: string | null
-  durationMs: number | null
-}
+export type JobRunDTO = SchedulerJobRun
 
 export interface JobRunsResponse {
   items: JobRunDTO[]
@@ -109,19 +115,6 @@ export function getRecentRuns(limit = 5): Promise<JobRunsResponse> {
  * fields (e.g. operatorId on manual runs) without disturbing
  * the dashboard card.
  */
-export interface SchedulerJobRun {
-  id: string
-  jobName: string
-  status: string
-  attempt: number
-  scheduledAt: string
-  startedAt: string | null
-  finishedAt: string | null
-  triggeredBy: string
-  errorMessage: string | null
-  durationMs: number | null
-}
-
 /** Wire shape of `GET /api/v1/scheduler/jobs` — last 20 runs. */
 export interface SchedulerJobsListResponse {
   items: SchedulerJobRun[]

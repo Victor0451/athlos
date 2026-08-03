@@ -147,11 +147,32 @@ describe('JobCard', () => {
         jobName="scheduled-import"
         cronExpr="0 2 * * *"
         enabled
-        lastRun={{ ...SAMPLE_LAST_RUN, status: 'failed', errorMessage: 'disk full' }}
+        lastRun={{
+          ...SAMPLE_LAST_RUN,
+          status: 'failed',
+          reason: { code: 'EXECUTION_FAILED', message: 'The job failed during execution.' },
+        }}
         onSelect={onSelectMock}
       />,
     )
     expect(screen.getByText('Caído')).toBeInTheDocument()
+  })
+
+  it.each<[status: 'cancelled' | 'completed_with_review', label: string]>([
+    ['cancelled', 'Cancelada'],
+    ['completed_with_review', 'Requiere revisión'],
+  ])('renders the %s status with its operator-safe label', (status, label) => {
+    render(
+      <JobCard
+        jobName="scheduled-import"
+        cronExpr="0 2 * * *"
+        enabled
+        lastRun={{ ...SAMPLE_LAST_RUN, status }}
+        onSelect={onSelectMock}
+      />,
+    )
+
+    expect(screen.getByText(label)).toBeInTheDocument()
   })
 
   it('invokes onSelect(jobName) when the card is clicked', async () => {
