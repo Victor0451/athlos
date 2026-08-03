@@ -13,6 +13,9 @@
 | Work Unit 1 delivery | Completed on child branch `feat/operational-observability-01-api-safety` at commit `942a042` |
 | Work Unit 1 source/test diff | 475 lines: 327 additions, 148 deletions |
 | Work Unit 1 size exception | Maintainer-approved; applies only to Work Unit 1 |
+| Work Unit 3 delivery | Completed on child branch `feat/operational-observability-03-dashboard` at commit `473ea7f` |
+| Work Unit 3 source/test diff | 300 lines: 212 additions, 88 deletions |
+| Work Unit 3 budget | Within the 400-line budget |
 | Integration branch | `feat/operational-observability`; the only branch that will ultimately target `main` |
 
 Decision needed before apply: Yes
@@ -21,6 +24,9 @@ Chain strategy: feature-branch-chain
 Work Unit 1 delivery: completed on child branch `feat/operational-observability-01-api-safety` at commit `942a042`
 Work Unit 1 source/test diff: 475 lines (327 additions, 148 deletions)
 Work Unit 1 size exception: maintainer-approved; applies only to Work Unit 1
+Work Unit 3 delivery: completed on child branch `feat/operational-observability-03-dashboard` at commit `473ea7f`
+Work Unit 3 source/test diff: 300 lines (212 additions, 88 deletions)
+Work Unit 3 budget: within the 400-line budget
 Later slices: retain the 400-line budget
 Integration branch: `feat/operational-observability`; only this branch will ultimately target `main`
 400-line budget risk: High
@@ -52,9 +58,9 @@ Integration branch: `feat/operational-observability`; only this branch will ulti
 
 ## Phase 3: Snapshot web contract and dashboard
 
-- [ ] 3.1 **RED**: test one query at mount/30 seconds, partial envelopes, DB/schema labels, and ≤10 safe attention rows.
-- [ ] 3.2 **GREEN**: create `apps/web/src/lib/api/operations.ts`; update `lib/api/health.ts` and dashboard page to one ADMIN TanStack query (`refetchInterval: 30_000`).
-- [ ] 3.3 **REFACTOR/CHECK**: remove dashboard fan-out only; run Unit 3 and commit `feat(dashboard): consume operational snapshot`.
+- [x] 3.1 **RED**: test one query at mount/30 seconds, partial envelopes, DB/schema labels, and ≤10 safe attention rows.
+- [x] 3.2 **GREEN**: create `apps/web/src/lib/api/operations.ts`; update `lib/api/health.ts` and dashboard page to one ADMIN TanStack query (`refetchInterval: 30_000`).
+- [x] 3.3 **REFACTOR/CHECK**: remove dashboard fan-out only; Unit 3 checks passed and commit `473ea7f` (`feat(dashboard): consume operational snapshot`) was created on `feat/operational-observability-03-dashboard` within the 300-line budget.
 
 ## Phase 4: Dynamic scheduler UI
 
