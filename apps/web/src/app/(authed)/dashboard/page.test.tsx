@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
@@ -34,6 +34,7 @@ const getHealthMock = vi.fn()
 const getFreshnessMock = vi.fn()
 const getSchedulerHealthMock = vi.fn()
 const getRecentRunsMock = vi.fn()
+const getOperationalSnapshotMock = vi.fn()
 
 vi.mock('@/lib/api/health', () => ({
   getHealth: (...args: unknown[]) => getHealthMock(...args),
@@ -43,6 +44,10 @@ vi.mock('@/lib/api/health', () => ({
 vi.mock('@/lib/api/scheduler', () => ({
   getSchedulerHealth: (...args: unknown[]) => getSchedulerHealthMock(...args),
   getRecentRuns: (...args: unknown[]) => getRecentRunsMock(...args),
+}))
+
+vi.mock('@/lib/api/operations', () => ({
+  getOperationalSnapshot: (...args: unknown[]) => getOperationalSnapshotMock(...args),
 }))
 
 const useAuthMock = vi.fn()
@@ -102,6 +107,7 @@ describe('DashboardPage', () => {
     getFreshnessMock.mockReset()
     getSchedulerHealthMock.mockReset()
     getRecentRunsMock.mockReset()
+    getOperationalSnapshotMock.mockReset()
     useAuthMock.mockReset()
 
     // Default: ADMIN user with healthy responses.
@@ -190,10 +196,51 @@ describe('DashboardPage', () => {
         },
       ],
     })
+    getOperationalSnapshotMock.mockResolvedValue({
+      readiness: { overall: 'ready', db: 'ready', schema: 'ready' },
+      freshness: {
+        available: true,
+        items: [
+          {
+            domain: 'socios',
+            lastImportAt: '2026-06-29T08:00:00.000Z',
+            recordCount: 16383,
+            status: 'current',
+            ageDisplay: '4h',
+          },
+        ],
+      },
+      jobs: {
+        available: true,
+        items: [
+          {
+            name: 'scheduled-import',
+            healthy: true,
+            enabled: true,
+            cronExpr: '*/5 * * * *',
+            lastRun: { startedAt: '2026-06-29T11:59:00.000Z' },
+          },
+        ],
+      },
+      attention: {
+        available: true,
+        items: [
+          {
+            id: 'run-1',
+            jobName: 'scheduled-import',
+            status: 'failed',
+            startedAt: '2026-06-29T11:59:00.000Z',
+            durationMs: 4200,
+            reason: { code: 'EXECUTION_FAILED', message: 'Execution failed safely.' },
+          },
+        ],
+      },
+    })
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   it('renders the page heading', async () => {
@@ -201,19 +248,14 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: /dashboard/i, level: 1 })).toBeInTheDocument()
   })
 
-  it('renders the API Health card with version and uptime from /health', async () => {
+  it('renders DB and schema readiness from the operational snapshot', async () => {
     renderDashboard()
     await waitFor(() => {
-      expect(screen.getByText('0.5.12')).toBeInTheDocument()
+      expect(screen.getByText('Operativa')).toBeInTheDocument()
     })
-    // Uptime is formatted as "h" — 12345s ≈ 3h 25m
-    expect(screen.getByText(/3h/)).toBeInTheDocument()
-    // The health badge sits inside the API card specifically (not
-    // the per-job scheduler badges further down). Scope to the
-    // health-card testid to avoid colliding with the same-status
-    // scheduler badges that the ADMIN user also sees.
     const apiCard = screen.getByTestId('dashboard-health-card')
     expect(within(apiCard).getByRole('status', { name: /operativo/i })).toBeInTheDocument()
+    expect(within(apiCard).getByText('Schema')).toBeInTheDocument()
   })
 
   it('renders the Master Counts card with the row counts from /api/v1/freshness', async () => {
@@ -222,8 +264,6 @@ describe('DashboardPage', () => {
       expect(screen.getByText('socios')).toBeInTheDocument()
     })
     expect(screen.getByText('16.383')).toBeInTheDocument()
-    expect(screen.getByText('200.945')).toBeInTheDocument()
-    expect(screen.getByText('escuela')).toBeInTheDocument()
   })
 
   it('renders the Scheduler Status card for ADMIN', async () => {
@@ -232,29 +272,66 @@ describe('DashboardPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('scheduler-job-scheduled-import')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('scheduler-job-reconciliation')).toBeInTheDocument()
   })
 
   it('renders the Recent Runs card for ADMIN', async () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     renderDashboard()
     await waitFor(() => {
-      expect(screen.getByTestId('recent-run-run-1')).toBeInTheDocument()
+      expect(screen.getByTestId('attention-run-run-1')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('recent-run-run-2')).toBeInTheDocument()
   })
 
   it('hides the Scheduler Status + Recent Runs cards for non-ADMIN operators', async () => {
     useAuthMock.mockReturnValue(makeOperadorUser())
     renderDashboard()
-    // Wait for ADMIN-only queries to resolve (they shouldn't fire).
-    await waitFor(() => {
-      expect(getHealthMock).toHaveBeenCalled()
-    })
-    expect(getSchedulerHealthMock).not.toHaveBeenCalled()
-    expect(getRecentRunsMock).not.toHaveBeenCalled()
+    await act(async () => {})
+    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
     expect(screen.queryByTestId('dashboard-scheduler-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('dashboard-recent-runs-card')).not.toBeInTheDocument()
     expect(screen.queryByTestId('dashboard-admin-section')).not.toBeInTheDocument()
+  })
+
+  it('uses one operational snapshot query on mount and every 30 seconds', async () => {
+    vi.useFakeTimers()
+    renderDashboard()
+
+    await act(async () => {})
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('renders independent snapshot signals and caps safe attention rows at ten', async () => {
+    getOperationalSnapshotMock.mockResolvedValueOnce({
+      readiness: { overall: 'unavailable', db: 'ready', schema: 'unavailable' },
+      freshness: { available: false, items: [] },
+      jobs: { available: false, items: [] },
+      attention: {
+        available: true,
+        items: Array.from({ length: 11 }, (_, index) => ({
+          id: `attention-${index}`,
+          jobName: `job-${index}`,
+          status: 'failed',
+          startedAt: '2026-06-29T11:00:00.000Z',
+          durationMs: null,
+          reason: { code: 'EXECUTION_FAILED', message: 'Execution failed safely.' },
+        })),
+      },
+    })
+    renderDashboard()
+
+    await waitFor(() => expect(screen.getByTestId('attention-run-attention-0')).toBeInTheDocument())
+    expect(screen.getByText('DB')).toBeInTheDocument()
+    expect(screen.getByText('Schema')).toBeInTheDocument()
+    expect(screen.getByText(/sin datos de frescura/i)).toBeInTheDocument()
+    expect(screen.getByText(/sin datos de trabajos/i)).toBeInTheDocument()
+    expect(screen.getAllByTestId(/attention-run-/)).toHaveLength(10)
+    expect(screen.queryByTestId('attention-run-attention-10')).not.toBeInTheDocument()
+    expect(screen.queryByText(/raw exception/i)).not.toBeInTheDocument()
   })
 })
