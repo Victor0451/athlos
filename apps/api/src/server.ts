@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth.ts'
 import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.ts'
 import { adminOperatorsRoutes } from './routes/admin/operators.ts'
 import { adminJobsRoutes } from './routes/admin/jobs.ts'
+import { operationalSnapshotRoutes } from './routes/admin/operations.ts'
 import { schedulerAdminRoutes } from './routes/admin/scheduler.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
@@ -211,6 +212,7 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      and /api/v1/admin/jobs/health. Read-only views over the
   //      scheduler state. Same ADMIN gate as the operator routes.
   await app.register(adminJobsRoutes)
+  await app.register(operationalSnapshotRoutes)
 
   // 11c. Admin scheduler endpoints (athlos-async-scheduler): POST /run-now,
   //      GET /jobs, GET /jobs/:name, PATCH /jobs/:name for enable/disable.
