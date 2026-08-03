@@ -16,6 +16,10 @@
 | Work Unit 3 delivery | Completed on child branch `feat/operational-observability-03-dashboard` at commit `473ea7f` |
 | Work Unit 3 source/test diff | 300 lines: 212 additions, 88 deletions |
 | Work Unit 3 budget | Within the 400-line budget |
+| Work Unit 4 delivery | Completed on child branch `feat/operational-observability-04-scheduler-ui` at commit `2a7a6e3` |
+| Work Unit 4 source/test diff | 352 lines: 207 additions, 145 deletions |
+| Work Unit 4 budget | Within the 400-line budget |
+| Work Unit 4 integration | PR #205 merged at `270f8d1`; issue #204 closed |
 | Integration branch | `feat/operational-observability`; the only branch that will ultimately target `main` |
 
 Decision needed before apply: Yes
@@ -27,6 +31,10 @@ Work Unit 1 size exception: maintainer-approved; applies only to Work Unit 1
 Work Unit 3 delivery: completed on child branch `feat/operational-observability-03-dashboard` at commit `473ea7f`
 Work Unit 3 source/test diff: 300 lines (212 additions, 88 deletions)
 Work Unit 3 budget: within the 400-line budget
+Work Unit 4 delivery: completed on child branch `feat/operational-observability-04-scheduler-ui` at commit `2a7a6e3`
+Work Unit 4 source/test diff: 352 lines (207 additions, 145 deletions)
+Work Unit 4 budget: within the 400-line budget
+Work Unit 4 integration: PR #205 merged at `270f8d1`; issue #204 closed
 Later slices: retain the 400-line budget
 Integration branch: `feat/operational-observability`; only this branch will ultimately target `main`
 400-line budget risk: High
@@ -64,6 +72,6 @@ Integration branch: `feat/operational-observability`; only this branch will ulti
 
 ## Phase 4: Dynamic scheduler UI
 
-- [ ] 4.1 **RED**: test dynamic jobs, cancelled/review states, safe text, and OPERADOR suppression in scheduler page, `JobCard.test.tsx`, and `RunList.test.tsx`.
-- [ ] 4.2 **GREEN**: update `lib/api/scheduler.ts`, scheduler list/detail, `JobCard.tsx`, and `RunList.tsx` for projected DTOs and all statuses.
-- [ ] 4.3 **REFACTOR/CHECK**: remove fixed six-job assumptions; run Unit 4 plus `pnpm typecheck`; commit `feat(scheduler): render dynamic safe job status`.
+- [x] 4.1 **RED**: test dynamic jobs, cancelled/review states, safe text, and OPERADOR suppression in scheduler page, `JobCard.test.tsx`, and `RunList.test.tsx`.
+- [x] 4.2 **GREEN**: update `lib/api/scheduler.ts`, scheduler list/detail, `JobCard.tsx`, and `RunList.tsx` for projected DTOs and all statuses.
+- [x] 4.3 **REFACTOR/CHECK**: remove fixed six-job assumptions; run Unit 4 plus `pnpm typecheck`; commit `2a7a6e3` (`feat(scheduler): render dynamic safe job status`) on `feat/operational-observability-04-scheduler-ui` within the 352-line budget; PR #205 merged at `270f8d1` and issue #204 closed.
