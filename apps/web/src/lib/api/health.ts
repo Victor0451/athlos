@@ -3,12 +3,10 @@ import { apiFetch } from '@/lib/api'
 /**
  * Health + freshness API wrappers (TASK-014, PR 8a.3).
  *
- * The dashboard auto-refreshes these every 30 seconds per
- * `web-frontend/spec.md` (Dashboard Cards — Auto-refresh every 30
- * seconds). The wrappers are intentionally thin: they just declare
- * the response types and route through the shared `apiFetch` client
- * (auth header injection, single-flight 401 refresh — see
- * `lib/api.ts`).
+ * These legacy wrappers are intentionally thin: they declare the
+ * response types and route through the shared `apiFetch` client.
+ * The ADMIN dashboard uses the bounded operational snapshot instead
+ * of combining these endpoints with scheduler reads.
  *
  * `GET /health` is unauthenticated (the `apiFetch` request interceptor
  * checks for a token in module-scope memory and skips the header when
