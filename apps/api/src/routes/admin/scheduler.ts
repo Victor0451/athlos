@@ -6,6 +6,7 @@ import { getJobHealth, listRuns } from '@athlos/scheduler'
 import type { FastifyInstance } from 'fastify'
 import type { AppContainer } from '../../container.ts'
 import { emitAudit } from '@athlos/audit'
+import { projectSchedulerRun } from './scheduler-run-projector.ts'
 
 /**
  * Admin scheduler management routes — `/api/v1/scheduler/jobs/*`.
@@ -33,49 +34,6 @@ import { emitAudit } from '@athlos/audit'
  */
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
-
-/** DTO for a single job_runs row (camelCase + ISO timestamps). */
-interface JobRunDTO {
-  id: string
-  jobName: string
-  status: string
-  attempt: number
-  scheduledAt: string
-  startedAt: string | null
-  finishedAt: string | null
-  triggeredBy: string
-  errorMessage: string | null
-  durationMs: number | null
-}
-
-function toJobRunDTO(row: {
-  id: string
-  jobName: string
-  status: string
-  attempt: number
-  scheduledAt: Date
-  startedAt: Date | null
-  finishedAt: Date | null
-  triggeredBy: string
-  errorMessage: string | null
-}): JobRunDTO {
-  const startedAt = row.startedAt?.toISOString() ?? null
-  const finishedAt = row.finishedAt?.toISOString() ?? null
-  const durationMs =
-    startedAt && finishedAt ? new Date(finishedAt).getTime() - new Date(startedAt).getTime() : null
-  return {
-    id: row.id,
-    jobName: row.jobName,
-    status: row.status,
-    attempt: row.attempt,
-    scheduledAt: row.scheduledAt.toISOString(),
-    startedAt,
-    finishedAt,
-    triggeredBy: row.triggeredBy,
-    errorMessage: row.errorMessage,
-    durationMs,
-  }
-}
 
 export const schedulerAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container: AppContainer = (fastify as FastifyInstance).container
@@ -134,21 +92,7 @@ export const schedulerAdminRoutes: FastifyPluginCallback = (fastify, _opts, done
     const runs = await listRuns(container.db, { limit: 20 })
 
     return reply.code(200).send({
-      items: runs.map((row) => ({
-        id: row.id,
-        jobName: row.jobName,
-        status: row.status,
-        attempt: row.attempt,
-        scheduledAt: row.scheduledAt.toISOString(),
-        startedAt: row.startedAt?.toISOString() ?? null,
-        finishedAt: row.finishedAt?.toISOString() ?? null,
-        triggeredBy: row.triggeredBy,
-        errorMessage: row.errorMessage,
-        durationMs:
-          row.startedAt && row.finishedAt
-            ? row.finishedAt.getTime() - row.startedAt.getTime()
-            : null,
-      })),
+      items: runs.map(projectSchedulerRun),
     })
   })
 
@@ -178,7 +122,7 @@ export const schedulerAdminRoutes: FastifyPluginCallback = (fastify, _opts, done
         enabled: def.enabled,
         healthy: health?.healthy ?? false,
         reason: health?.reason ?? '',
-        lastRuns: lastRuns.map(toJobRunDTO),
+        lastRuns: lastRuns.map(projectSchedulerRun),
       })
     },
   )

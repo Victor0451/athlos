@@ -157,7 +157,41 @@ describe('GET /api/v1/admin/jobs/runs', () => {
       const ourRow = body.items.find((r) => r['id'] === jobRunId)
       expect(ourRow).toBeDefined()
       expect(ourRow?.['status']).toBe('failed')
-      expect(ourRow?.['errorMessage']).toBe('boom')
+      expect(ourRow?.['reason']).toEqual({
+        code: 'EXECUTION_FAILED',
+        message: 'The job failed during execution.',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns a projected failure without raw error or metadata', async () => {
+    const { app } = await bootstrap()
+    try {
+      app.scheduler.schedule('safe-failure', '0 0 31 2 *', async () => {
+        throw new Error('postgres://operator:secret@db')
+      })
+      const { jobRunId } = await app.scheduler.runNow('safe-failure')
+      await new Promise((resolve) => setImmediate(resolve))
+      await new Promise((resolve) => setImmediate(resolve))
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/jobs/runs?status=failed',
+        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+      })
+
+      expect(res.statusCode).toBe(200)
+      const row = (res.json() as { items: Array<Record<string, unknown>> }).items.find(
+        (item) => item['id'] === jobRunId,
+      )
+      expect(row).toMatchObject({
+        status: 'failed',
+        reason: { code: 'EXECUTION_FAILED', message: 'The job failed during execution.' },
+      })
+      expect(JSON.stringify(row)).not.toContain('postgres://operator:secret@db')
+      expect(row).not.toHaveProperty('metadata')
+      expect(row).not.toHaveProperty('errorMessage')
     } finally {
       await app.close()
     }
