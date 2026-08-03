@@ -35,8 +35,10 @@ vi.mock('next/navigation', () => ({
 }))
 
 const getSchedulerJobMock = vi.fn()
+const getSchedulerHealthMock = vi.fn()
 vi.mock('@/lib/api/scheduler', () => ({
   getSchedulerJob: (...args: unknown[]) => getSchedulerJobMock(...args),
+  getSchedulerHealth: (...args: unknown[]) => getSchedulerHealthMock(...args),
 }))
 
 const useAuthMock = vi.fn()
@@ -125,9 +127,18 @@ describe('Scheduler list page', () => {
     useAuthMock.mockReset()
     useAuthMock.mockReturnValue(makeAdminUser())
     getSchedulerJobMock.mockReset()
-    getSchedulerJobMock.mockImplementation((name: string) =>
-      Promise.resolve(makeJobDetail(name, '*/15 * * * *', 'succeeded')),
-    )
+    getSchedulerHealthMock.mockReset()
+    getSchedulerHealthMock.mockResolvedValue({
+      items: [
+        {
+          name: 'drift-detection',
+          cronExpr: '*/15 * * * *',
+          enabled: true,
+          healthy: true,
+          lastRun: makeJobDetail('drift-detection', '*/15 * * * *', 'succeeded').lastRuns[0],
+        },
+      ],
+    })
   })
 
   it('renders the page heading + intro copy', async () => {
@@ -135,38 +146,52 @@ describe('Scheduler list page', () => {
     expect(screen.getByRole('heading', { name: /scheduler/i, level: 1 })).toBeInTheDocument()
   })
 
-  it('fires 6 parallel getSchedulerJob calls (one per known job) on mount for ADMIN', async () => {
+  it('fires one dynamic health query on mount for ADMIN', async () => {
     renderPage()
     await waitFor(() => {
-      expect(getSchedulerJobMock).toHaveBeenCalledTimes(6)
+      expect(getSchedulerHealthMock).toHaveBeenCalledTimes(1)
     })
-    const calledNames = getSchedulerJobMock.mock.calls.map((c) => c[0] as string).sort()
-    expect(calledNames).toEqual([
-      'drift-detection',
-      'freshness-refresh',
-      'reconciliation',
-      'scheduled-import',
-      'scheduled-promotion',
-      'token-cleanup',
-    ])
+    expect(getSchedulerJobMock).not.toHaveBeenCalled()
   })
 
-  it('renders one JobCard per known job with the right name + cron + status badge', async () => {
+  it('renders runtime-registered jobs from one dynamic health query', async () => {
+    getSchedulerHealthMock.mockResolvedValue({
+      items: [
+        {
+          name: 'drift-detection',
+          cronExpr: '*/15 * * * *',
+          enabled: true,
+          healthy: true,
+          lastRun: null,
+        },
+        {
+          name: 'runtime-registered-job',
+          cronExpr: '0 * * * *',
+          enabled: true,
+          healthy: false,
+          lastRun: null,
+        },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByTestId('job-card-runtime-registered-job')).toBeInTheDocument()
+    expect(getSchedulerHealthMock).toHaveBeenCalledTimes(1)
+    expect(getSchedulerJobMock).not.toHaveBeenCalled()
+  })
+
+  it('renders one JobCard per registry job with the right name + cron + status badge', async () => {
     renderPage()
     expect(await screen.findByTestId('job-card-drift-detection')).toBeInTheDocument()
-    expect(screen.getByTestId('job-card-freshness-refresh')).toBeInTheDocument()
-    expect(screen.getByTestId('job-card-token-cleanup')).toBeInTheDocument()
-    expect(screen.getByTestId('job-card-scheduled-import')).toBeInTheDocument()
-    expect(screen.getByTestId('job-card-scheduled-promotion')).toBeInTheDocument()
-    expect(screen.getByTestId('job-card-reconciliation')).toBeInTheDocument()
   })
 
   it('navigates to /admin/scheduler/<name> when a card is clicked', async () => {
     const user = userEvent.setup()
     renderPage()
-    await screen.findByTestId('job-card-scheduled-import')
-    await user.click(screen.getByRole('button', { name: /scheduled-import/i }))
-    expect(pushMock).toHaveBeenCalledWith('/admin/scheduler/scheduled-import')
+    await screen.findByTestId('job-card-drift-detection')
+    await user.click(screen.getByRole('button', { name: /drift-detection/i }))
+    expect(pushMock).toHaveBeenCalledWith('/admin/scheduler/drift-detection')
   })
 
   it('renders the Próximamente placeholder for deferred advanced filters', () => {
@@ -175,21 +200,21 @@ describe('Scheduler list page', () => {
   })
 
   it('renders the loading skeleton while the queries are pending', () => {
-    getSchedulerJobMock.mockReturnValue(new Promise(() => {})) // never resolves
+    getSchedulerHealthMock.mockReturnValue(new Promise(() => {})) // never resolves
     renderPage()
     expect(screen.getByText(/cargando/i)).toBeInTheDocument()
   })
 
-  it('renders the error state when all 6 jobs fail to load', async () => {
-    getSchedulerJobMock.mockRejectedValue(new Error('network down'))
+  it('renders the error state when the dynamic job query fails', async () => {
+    getSchedulerHealthMock.mockRejectedValue(new Error('network down'))
     renderPage()
     expect(await screen.findByText(/no se pudo cargar/i)).toBeInTheDocument()
   })
 
-  it('does NOT fire any getSchedulerJob call for a non-ADMIN operator', () => {
+  it('does NOT fire the health query for a non-ADMIN operator', () => {
     useAuthMock.mockReturnValue(makeOperadorUser())
     renderPage()
-    expect(getSchedulerJobMock).not.toHaveBeenCalled()
+    expect(getSchedulerHealthMock).not.toHaveBeenCalled()
   })
 
   it('renders the "Sin permisos" copy for a non-ADMIN operator', () => {
@@ -205,9 +230,17 @@ describe('Scheduler list page', () => {
   })
 
   it('renders the Caído badge when the last run failed', async () => {
-    getSchedulerJobMock.mockImplementation((name: string) =>
-      Promise.resolve(makeJobDetail(name, '*/15 * * * *', 'failed')),
-    )
+    getSchedulerHealthMock.mockResolvedValue({
+      items: [
+        {
+          name: 'drift-detection',
+          cronExpr: '*/15 * * * *',
+          enabled: true,
+          healthy: false,
+          lastRun: makeJobDetail('drift-detection', '*/15 * * * *', 'failed').lastRuns[0],
+        },
+      ],
+    })
     renderPage()
     const card = await screen.findByTestId('job-card-drift-detection')
     expect(within(card).getByText('Caído')).toBeInTheDocument()

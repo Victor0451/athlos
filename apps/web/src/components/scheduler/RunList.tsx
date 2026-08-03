@@ -1,5 +1,6 @@
 import type { SchedulerJobRun } from '@/lib/api/scheduler'
-import { StatusBadge, type StatusBadgeKind } from '@/components/cards/StatusBadge'
+import { StatusBadge } from '@/components/cards/StatusBadge'
+import { schedulerStatusBadgeKind, schedulerStatusLabel } from './status'
 
 /**
  * RunList — recent runs for a single scheduler job (TASK-032, PR 8c.1).
@@ -38,21 +39,6 @@ function formatTimestamp(iso: string | null): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return DATETIME_FMT.format(d)
-}
-
-function runStatusToBadge(status: string): StatusBadgeKind {
-  switch (status) {
-    case 'succeeded':
-      return 'healthy'
-    case 'failed':
-    case 'dead_letter':
-      return 'down'
-    case 'running':
-    case 'pending':
-      return 'degraded'
-    default:
-      return 'unknown'
-  }
 }
 
 const TRIGGERED_BY_LABEL: Record<string, string> = {
@@ -118,31 +104,22 @@ export function RunList({ runs, loading = false }: RunListProps) {
       ) : (
         <ul className="divide-y divide-ink-100">
           {runs.map((run) => {
-            const isFailed = run.status === 'failed' || run.status === 'dead_letter'
+            const statusLabel = schedulerStatusLabel(run.status)
             return (
-              <li
-                key={run.id}
-                data-testid={`run-row-${run.id}`}
-                className={isFailed ? 'px-4 py-3 text-ink-500' : 'px-4 py-3'}
-              >
+              <li key={run.id} data-testid={`run-row-${run.id}`} className="px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex flex-col gap-0.5">
-                    <span
-                      className={
-                        isFailed
-                          ? 'font-mono text-xs text-ink-500'
-                          : 'font-mono text-xs text-ink-700'
-                      }
-                    >
+                    <span className="font-mono text-xs text-ink-700">
                       {formatTimestamp(run.startedAt)} · Intento {run.attempt} ·{' '}
                       {triggeredByLabel(run.triggeredBy)}
                     </span>
-                    {isFailed && run.errorMessage ? (
+                    <span className="font-body text-xs text-ink-500">{statusLabel}</span>
+                    {run.reason ? (
                       <span
                         className="font-body text-xs text-danger"
                         data-testid={`run-row-${run.id}-error`}
                       >
-                        {run.errorMessage}
+                        {run.reason.message}
                       </span>
                     ) : null}
                   </div>
@@ -150,7 +127,7 @@ export function RunList({ runs, loading = false }: RunListProps) {
                     <span className="font-mono text-xs text-ink-500">
                       {formatDuration(run.durationMs)}
                     </span>
-                    <StatusBadge status={runStatusToBadge(run.status)} />
+                    <StatusBadge status={schedulerStatusBadgeKind(run.status)} />
                   </div>
                 </div>
               </li>
