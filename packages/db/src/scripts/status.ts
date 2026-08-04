@@ -16,24 +16,37 @@ import { statusSchema } from './status.schema.ts'
 
 const { Pool } = pg
 
-/** Pure three-set diff function. */
+interface TimestampedMigration {
+  hash: string
+  createdAt: Date
+}
+
+/** Pure Drizzle migrator frontier diff with ledger divergence detection. */
 export function diffMigrations(
-  applied: string[],
-  local: string[],
+  applied: TimestampedMigration[],
+  local: TimestampedMigration[],
 ): { applied: string[]; pending: string[]; divergence: string[] } {
-  const appliedSet = new Set(applied)
-  const localSet = new Set(local)
+  const localHashes = new Set(local.map((migration) => migration.hash))
+  const frontier = applied.reduce(
+    (latest, migration) => Math.max(latest, migration.createdAt.getTime()),
+    Number.NEGATIVE_INFINITY,
+  )
 
   return {
-    applied: applied.filter((migration) => localSet.has(migration)),
-    pending: local.filter((migration) => !appliedSet.has(migration)),
-    divergence: applied.filter((migration) => !localSet.has(migration)),
+    applied: local
+      .filter((migration) => migration.createdAt.getTime() <= frontier)
+      .map((migration) => migration.hash),
+    pending: local
+      .filter((migration) => migration.createdAt.getTime() > frontier)
+      .map((migration) => migration.hash),
+    divergence: applied
+      .filter((migration) => !localHashes.has(migration.hash))
+      .map((migration) => migration.hash),
   }
 }
 
-interface LocalMigration {
+interface LocalMigration extends TimestampedMigration {
   name: string
-  hash: string
 }
 
 interface MigrationMeta {
@@ -41,10 +54,7 @@ interface MigrationMeta {
   createdAt: Date
 }
 
-interface AppliedMigration {
-  hash: string
-  createdAt: Date
-}
+type AppliedMigration = TimestampedMigration
 
 const DRIZZLE_LEDGER = 'drizzle.__drizzle_migrations'
 const PUBLIC_LEDGER = 'public.__drizzle_migrations'
@@ -62,11 +72,12 @@ export function getDrizzleDir(): string {
 /** Read migration names and hashes from Drizzle's journal. */
 async function getLocalMigrations(drizzleDir: string): Promise<LocalMigration[]> {
   const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
-    entries: Array<{ tag: string }>
+    entries: Array<{ tag: string; when: number }>
   }
   return Promise.all(
     journal.entries.map(async (entry) => ({
       name: entry.tag,
+      createdAt: new Date(entry.when),
       hash: createHash('sha256')
         .update(await readFile(`${drizzleDir}/${entry.tag}.sql`, 'utf8'))
         .digest('hex'),
@@ -157,17 +168,14 @@ export async function main(argv: string[]): Promise<void> {
     const namesByHash = new Map(
       localMigrations.map((migration) => [migration.hash, migration.name]),
     )
-    const result = diffMigrations(
-      appliedWithDates.map((migration) => migration.hash),
-      localMigrations.map((migration) => migration.hash),
-    )
+    const result = diffMigrations(appliedWithDates, localMigrations)
     const output = {
       applied: result.applied.map((hash) => namesByHash.get(hash) ?? hash),
       pending: result.pending.map((hash) => namesByHash.get(hash) ?? hash),
       divergence: result.divergence,
     }
-    const metadata = appliedWithDates.map(({ hash, createdAt }) => ({
-      tag: namesByHash.get(hash) ?? hash,
+    const metadata = localMigrations.map(({ name, createdAt }) => ({
+      tag: name,
       createdAt,
     }))
     const exitCode: 0 | 1 = output.pending.length || output.divergence.length ? 1 : 0
