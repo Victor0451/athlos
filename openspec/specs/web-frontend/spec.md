@@ -92,27 +92,18 @@ The system SHALL render every authed page inside an AppShell with a Topbar (nigh
 
 ### Requirement: Dashboard Cards
 
-The system SHALL render `/dashboard` with auto-refreshing cards: API Health, Master Table Counts, Scheduler Status, Recent Runs.
+The ADMIN dashboard SHALL obtain readiness, canonical freshness, job health, and ≤10 attention runs through one query. It MUST poll every 30 seconds, show independent signals, identify only DB/schema readiness, and never present legacy-share or raw data.
+(Previously: separate scheduler and run queries.)
 
-#### Scenario: Auto-refresh every 30 seconds
-
-- GIVEN any dashboard card is mounted
+#### Scenario: Single dashboard refresh
+- GIVEN an ADMIN dashboard is mounted
 - WHEN 30 seconds elapse
-- THEN each card SHALL refetch without a full page reload
+- THEN it MUST issue one snapshot query and update available signals
 
-#### Scenario: API Health and Master Counts cards
-
-- GIVEN the dashboard mounts
-- WHEN the cards fetch
-- THEN API Health SHALL display `status`, `version`, `uptime` from `GET /health`
-- AND Master Counts SHALL display row counts for all 8 master tables (socios, escuela, disciplinas, locacion, caja_movimiento, gastos, ctacte, ctacte1)
-
-#### Scenario: Scheduler Status and Recent Runs cards (ADMIN)
-
-- GIVEN an ADMIN operator on the dashboard
-- WHEN the cards fetch
-- THEN Scheduler Status SHALL display 6 jobs from `GET /api/v1/admin/jobs/health`
-- AND Recent Runs SHALL display last 5 runs from `GET /api/v1/admin/jobs/runs?limit=5`
+#### Scenario: Attention is bounded
+- GIVEN more than 10 attention runs exist
+- WHEN the dashboard receives a snapshot
+- THEN it MUST render no more than 10 attention runs
 
 ### Requirement: Design System and Deferred Features
 
