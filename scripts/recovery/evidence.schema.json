@@ -1,1 +1,13 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["target","checksum","runs","audit_events","rollback"],"properties":{"target":{"enum":["ephemeral-clone","clone"]},"checksum":{"type":"string","pattern":"^[a-f0-9]{64}$"},"runs":{"const":2},"audit_events":{"type":"integer","minimum":0},"rollback":{"type":"string"}},"additionalProperties":false}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["target", "checksum", "runs", "audit_events", "rollback"],
+  "properties": {
+    "target": { "enum": ["ephemeral-clone", "clone"] },
+    "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "runs": { "const": 2 },
+    "audit_events": { "type": "integer", "minimum": 0 },
+    "rollback": { "type": "string" }
+  },
+  "additionalProperties": false
+}
