@@ -10,26 +10,18 @@ Operator-facing surface for the Athlos scheduler subsystem. ADMIN operators SHAL
 
 ### Requirement: Scheduler Job List
 
-The system SHALL render a `/admin/scheduler` page listing all 6 registered scheduler jobs with their status, last run time, and next run time. The page SHALL be ADMIN-only.
+The ADMIN-only `/admin/scheduler` page SHALL use dynamic scheduler reads, one entry per job. It SHALL present all seven statuses and safe projected reason/message only; raw errors and metadata MUST NOT render.
+(Previously: fixed six-job grid and raw errors.)
 
-#### Scenario: Authenticated ADMIN sees job grid
-
-- GIVEN an authenticated operator with role `ADMIN`
-- WHEN they navigate to `/admin/scheduler`
-- THEN the page SHALL call `GET /api/v1/admin/jobs/health`
-- AND SHALL display one row per job with: name, healthy flag, last successful run timestamp, next scheduled tick
+#### Scenario: Dynamic status presentation
+- GIVEN a registered job is `cancelled`
+- WHEN an ADMIN opens the scheduler page
+- THEN it SHALL show cancelled status and safe text only
 
 #### Scenario: Non-ADMIN denied
-
-- GIVEN an authenticated operator with role `OPERADOR`
+- GIVEN an authenticated OPERADOR
 - WHEN they navigate to `/admin/scheduler`
-- THEN the page SHALL redirect to `/dashboard` with a "Sin permisos" toast
-
-#### Scenario: Job click navigates to detail
-
-- GIVEN the job grid renders
-- WHEN the operator clicks a job row
-- THEN the system SHALL navigate to `/admin/scheduler/[name]`
+- THEN the page SHALL deny access
 
 ### Requirement: Job Detail Page
 

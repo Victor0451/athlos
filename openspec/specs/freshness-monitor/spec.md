@@ -8,31 +8,21 @@ UI indicators showing sync status and import age per domain, giving operators vi
 
 ### Requirement: Freshness Status Display
 
-The UI MUST display freshness status per domain showing: domain name, last import timestamp, record count, and status.
-
-`status` MUST be one of exactly three values: `'current' | 'stale' | 'unknown'`. A domain is `'current'` when the most recent `raw_events.imported_at` for that source_table is within the per-domain threshold; `'stale'` when it exceeds the threshold; `'unknown'` when no raw events exist for the domain.
-
-The response MUST also include `age_display` — a human-readable duration string (e.g., "15 minutes ago", "5 days ago").
+The UI MUST display `lastImportAt`, `recordCount`, `status`, and `ageDisplay`. `status` MUST be `current`, `stale`, or `unknown`. Dashboard responses MUST use camelCase, never snake_case.
+(Previously: snake_case fields.)
 
 #### Scenario: Current data
 
 - GIVEN domain `ctacte` was imported at 2024-06-11 14:30 with 50,000 records
 - AND the `ctacte` threshold in `thresholds.ts` is 1 hour
 - WHEN `freshness.getFreshness({ domain: "ctacte" })` is called
-- THEN the row MUST show: `last_import_at: "2024-06-11T14:30:00Z"`, `record_count: 50000`, `status: "current"`, `age_display: "<elapsed>"`
-
-#### Scenario: Stale data
-
-- GIVEN domain `socios` last import was 48 hours ago
-- AND the `socios` threshold in `thresholds.ts` is 1 hour
-- WHEN freshness is queried
-- THEN the row MUST show: `status: "stale"`, `age_display: "2 days ago"`, and the UI must render a warning indicator
+- THEN it MUST use camelCase and `status: "current"`
 
 #### Scenario: Unknown data (no raw events)
 
 - GIVEN `raw_events` contains zero rows for source_table `caja`
 - WHEN freshness is queried
-- THEN the row MUST show: `status: "unknown"`, `last_import_at: null`, `record_count: 0`
+- THEN it MUST include `lastImportAt: null`, `recordCount: 0`, and `status: "unknown"`
 
 ### Requirement: Import Age Indicator
 
