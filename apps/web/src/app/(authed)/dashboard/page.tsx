@@ -2,8 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/lib/use-auth'
-import { getFreshness, getHealth } from '@/lib/api/health'
-import { getRecentRuns, getSchedulerHealth } from '@/lib/api/scheduler'
+import { getOperationalSnapshot } from '@/lib/api/operations'
 import { MetricCard } from '@/components/cards/MetricCard'
 import { StatusBadge, type StatusBadgeKind } from '@/components/cards/StatusBadge'
 
@@ -30,16 +29,6 @@ import { StatusBadge, type StatusBadgeKind } from '@/components/cards/StatusBadg
  */
 
 const REFETCH_INTERVAL_MS = 30_000
-
-function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '—'
-  const totalMinutes = Math.floor(seconds / 60)
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  if (hours <= 0) return `${minutes}m`
-  if (minutes === 0) return `${hours}h`
-  return `${hours}h ${minutes}m`
-}
 
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-AR').format(n)
@@ -84,30 +73,9 @@ export default function DashboardPage() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
 
-  // Always-on queries.
-  const healthQuery = useQuery({
-    queryKey: ['dashboard', 'health'],
-    queryFn: getHealth,
-    refetchInterval: REFETCH_INTERVAL_MS,
-  })
-  const freshnessQuery = useQuery({
-    queryKey: ['dashboard', 'freshness'],
-    queryFn: getFreshness,
-    refetchInterval: REFETCH_INTERVAL_MS,
-  })
-
-  // ADMIN-only queries — the role check in `enabled` prevents the
-  // query from firing for non-ADMIN operators (matches the spec's
-  // "ADMIN only" requirement without bouncing them to /dashboard).
-  const schedulerQuery = useQuery({
-    queryKey: ['dashboard', 'scheduler-health'],
-    queryFn: getSchedulerHealth,
-    enabled: isAdmin,
-    refetchInterval: REFETCH_INTERVAL_MS,
-  })
-  const recentRunsQuery = useQuery({
-    queryKey: ['dashboard', 'recent-runs'],
-    queryFn: () => getRecentRuns(5),
+  const snapshotQuery = useQuery({
+    queryKey: ['dashboard', 'operational-snapshot'],
+    queryFn: getOperationalSnapshot,
     enabled: isAdmin,
     refetchInterval: REFETCH_INTERVAL_MS,
   })
@@ -121,34 +89,35 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      {/* API Health */}
       <section
-        aria-label="Salud del API"
+        aria-label="Readiness"
         className="rounded-lg bg-surface-elevated p-4 shadow-sm"
         data-testid="dashboard-health-card"
       >
         <header className="flex items-baseline justify-between">
           <h2 className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-            API
+            Readiness
           </h2>
-          {healthQuery.isPending ? (
+          {snapshotQuery.isPending ? (
             <StatusBadge status="unknown" />
-          ) : healthQuery.data ? (
-            <StatusBadge status={healthQuery.data.status === 'ok' ? 'healthy' : 'down'} />
+          ) : snapshotQuery.data ? (
+            <StatusBadge
+              status={snapshotQuery.data.readiness.overall === 'ready' ? 'healthy' : 'down'}
+            />
           ) : (
             <StatusBadge status="unknown" />
           )}
         </header>
         <dl className="mt-3 grid grid-cols-2 gap-4">
           <MetricCard
-            label="Versión"
-            value={healthQuery.data?.version ?? '—'}
-            loading={healthQuery.isPending}
+            label="DB"
+            value={snapshotQuery.data?.readiness.db === 'ready' ? 'Operativa' : 'No disponible'}
+            loading={snapshotQuery.isPending}
           />
           <MetricCard
-            label="Uptime"
-            value={healthQuery.data ? formatUptime(healthQuery.data.uptime) : '—'}
-            loading={healthQuery.isPending}
+            label="Schema"
+            value={snapshotQuery.data?.readiness.schema === 'ready' ? 'Operativo' : 'No disponible'}
+            loading={snapshotQuery.isPending}
           />
         </dl>
       </section>
@@ -164,28 +133,28 @@ export default function DashboardPage() {
             Tablas maestras
           </h2>
           <span className="font-mono text-xs text-ink-300">
-            {freshnessQuery.data ? `${freshnessQuery.data.items.length} dominios` : '—'}
+            {snapshotQuery.data ? `${snapshotQuery.data.freshness.items.length} dominios` : '—'}
           </span>
         </header>
-        {freshnessQuery.isError ? (
+        {!snapshotQuery.data?.freshness.available && !snapshotQuery.isPending ? (
           <p className="mt-3 text-sm text-ink-500">
-            No se pudieron cargar los conteos. Reintentando automáticamente…
+            Sin datos de frescura. Reintentando automáticamente…
           </p>
         ) : null}
         <dl
           className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
           data-testid="master-counts-grid"
         >
-          {freshnessQuery.isPending
+          {snapshotQuery.isPending
             ? Array.from({ length: 8 }).map((_, i) => (
                 <MetricCard key={i} label="…" value="…" loading />
               ))
-            : (freshnessQuery.data?.items ?? []).map((item) => (
+            : (snapshotQuery.data?.freshness.items ?? []).map((item) => (
                 <MetricCard
                   key={item.domain}
                   label={item.domain}
-                  value={formatNumber(item.row_count)}
-                  sublabel={`Actualizado ${formatTimestamp(item.last_update)}`}
+                  value={formatNumber(item.recordCount)}
+                  sublabel={`${item.status} · ${item.ageDisplay} · ${formatTimestamp(item.lastImportAt)}`}
                 />
               ))}
         </dl>
@@ -207,10 +176,10 @@ export default function DashboardPage() {
                 Scheduler
               </h2>
               <span className="font-mono text-xs text-ink-300">
-                {schedulerQuery.data ? `${schedulerQuery.data.items.length} trabajos` : '—'}
+                {snapshotQuery.data ? `${snapshotQuery.data.jobs.items.length} trabajos` : '—'}
               </span>
             </header>
-            {schedulerQuery.isPending ? (
+            {snapshotQuery.isPending ? (
               <ul className="mt-3 space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <li
@@ -222,9 +191,11 @@ export default function DashboardPage() {
                   </li>
                 ))}
               </ul>
+            ) : !snapshotQuery.data?.jobs.available ? (
+              <p className="mt-3 text-sm text-ink-500">Sin datos de trabajos.</p>
             ) : (
               <ul className="mt-3 space-y-2" data-testid="scheduler-jobs-list">
-                {(schedulerQuery.data?.items ?? []).map((job) => (
+                {(snapshotQuery.data?.jobs.items ?? []).map((job) => (
                   <li
                     key={job.name}
                     className="flex items-center justify-between rounded-md bg-surface-sunken px-3 py-2"
@@ -255,10 +226,12 @@ export default function DashboardPage() {
                 Corridas recientes
               </h2>
               <span className="font-mono text-xs text-ink-300">
-                {recentRunsQuery.data ? `${recentRunsQuery.data.items.length} corridas` : '—'}
+                {snapshotQuery.data
+                  ? `${Math.min(snapshotQuery.data.attention.items.length, 10)} corridas`
+                  : '—'}
               </span>
             </header>
-            {recentRunsQuery.isPending ? (
+            {snapshotQuery.isPending ? (
               <ul className="mt-3 space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => (
                   <li
@@ -270,13 +243,15 @@ export default function DashboardPage() {
                   </li>
                 ))}
               </ul>
+            ) : !snapshotQuery.data?.attention.available ? (
+              <p className="mt-3 text-sm text-ink-500">Sin datos de atención.</p>
             ) : (
               <ul className="mt-3 space-y-2" data-testid="recent-runs-list">
-                {(recentRunsQuery.data?.items ?? []).map((run) => (
+                {(snapshotQuery.data?.attention.items ?? []).slice(0, 10).map((run) => (
                   <li
                     key={run.id}
                     className="flex items-center justify-between rounded-md bg-surface-sunken px-3 py-2"
-                    data-testid={`recent-run-${run.id}`}
+                    data-testid={`attention-run-${run.id}`}
                   >
                     <div>
                       <p className="font-display text-sm font-semibold text-ink-900">
@@ -286,6 +261,9 @@ export default function DashboardPage() {
                         {formatTimestamp(run.startedAt)} ·{' '}
                         {run.durationMs !== null ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
                       </p>
+                      {run.reason ? (
+                        <p className="font-mono text-[11px] text-ink-500">{run.reason.message}</p>
+                      ) : null}
                     </div>
                     <StatusBadge status={runStatusToBadge(run.status)} />
                   </li>

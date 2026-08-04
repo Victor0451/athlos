@@ -112,6 +112,22 @@ describe('GET /health', () => {
 })
 
 describe('GET /health/ready', () => {
+  it('preserves the public 200 body while every required relation is available', async () => {
+    const app = await buildWithStubPool()
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health/ready' })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({
+        status: 'ok',
+        db: 'ok',
+        schema: 'ok',
+        latency_ms: expect.any(Number),
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
   it('returns 200 with the readiness shape (stub DB)', async () => {
     const app = await buildWithStubPool()
     try {
@@ -149,7 +165,12 @@ describe('GET /health/ready', () => {
     try {
       const res = await app.inject({ method: 'GET', url: '/health/ready' })
       expect(res.statusCode).toBe(503)
-      expect(res.json()).toMatchObject({ status: 'down', db: 'down', schema: 'down' })
+      expect(res.json()).toEqual({
+        status: 'down',
+        db: 'down',
+        schema: 'down',
+        latency_ms: expect.any(Number),
+      })
       expect(res.body).not.toContain('secret')
     } finally {
       await app.close()

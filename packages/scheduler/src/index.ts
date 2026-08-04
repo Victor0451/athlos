@@ -27,6 +27,7 @@ export {
   markInflightAsShutdown,
   getLastRun,
   listRuns,
+  listAttentionRuns,
   type RunHistoryFilter,
 } from './run-tracker.ts'
 export { getJobHealth, type JobHealth } from './health.ts'

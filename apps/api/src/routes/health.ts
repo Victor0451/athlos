@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify'
 import type { Pool } from 'pg'
+import { probeReadiness } from '../services/readiness.ts'
 
 /**
  * Health endpoints — three surfaces per the monitoring design.
@@ -34,10 +35,6 @@ interface ReadinessBody {
   latency_ms: number
 }
 
-const READINESS_TIMEOUT_MS = 2000
-const REQUIRED_RELATIONS_QUERY =
-  "SELECT to_regclass('operators') AS operators, to_regclass('refresh_tokens') AS refresh_tokens, to_regclass('job_runs') AS job_runs"
-
 export const healthRoutes: FastifyPluginAsync<HealthDeps> = async (fastify, { pool, version }) => {
   // Liveness — no DB call, no auth.
   fastify.get('/health', async () => ({
@@ -50,22 +47,7 @@ export const healthRoutes: FastifyPluginAsync<HealthDeps> = async (fastify, { po
   // Readiness — pings the DB with a 2s ceiling.
   fastify.get('/health/ready', async (_request, reply) => {
     const start = Date.now()
-    const probe = (async (): Promise<{ db: 'ok' | 'down'; schema: 'ok' | 'down' }> => {
-      try {
-        await pool.query('SELECT 1')
-        const result = await pool.query(REQUIRED_RELATIONS_QUERY)
-        const relations = result.rows[0]
-        const schema =
-          relations?.operators && relations?.refresh_tokens && relations?.job_runs ? 'ok' : 'down'
-        return { db: 'ok', schema }
-      } catch {
-        return { db: 'down', schema: 'down' }
-      }
-    })()
-    const timeout = new Promise<{ db: 'down'; schema: 'down' }>((resolve) => {
-      setTimeout(() => resolve({ db: 'down', schema: 'down' }), READINESS_TIMEOUT_MS)
-    })
-    const result = await Promise.race([probe, timeout])
+    const result = await probeReadiness(pool)
     const ok = result.db === 'ok' && result.schema === 'ok'
     const body: ReadinessBody = {
       status: ok ? 'ok' : 'down',
