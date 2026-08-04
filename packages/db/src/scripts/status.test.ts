@@ -12,33 +12,53 @@
  * - connection error → exit 2
  */
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { Pool } from 'pg'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { diffMigrations, getAppliedMigrationsWithDates, statusSchema } from './status.ts'
+import { Pool, type PoolClient } from 'pg'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { diffMigrations, getAppliedMigrationsWithDates, main, statusSchema } from './status.ts'
 
 const connectionString = process.env.ATHLOS_TEST_DATABASE_URL
 const drizzleDir = fileURLToPath(new URL('../../drizzle/', import.meta.url))
 const drizzleLedger = 'drizzle.__drizzle_migrations'
 const publicLedger = 'public.__drizzle_migrations'
-let pool: Pool
+// Two fixed PostgreSQL int4 keys: "ATHL" / "STAT". This lock scopes only this file's ledger DDL.
+const advisoryLockNamespace = 0x4154484c
+const advisoryLockKey = 0x53544154
+let pool: Pool | undefined
+let client: PoolClient | undefined
+let lockHeld = false
+let setupFailed = false
 
-function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += String(chunk)
-    })
-    child.once('error', reject)
-    child.once('close', (exitCode) => resolve({ exitCode: exitCode ?? 1, stdout, stderr }))
+function databaseClient(): PoolClient {
+  if (!client) throw new Error('status test database client is unavailable')
+  return client
+}
+
+async function runStatus(args: string[]) {
+  const previousDatabaseUrl = process.env.DATABASE_URL
+  const previousExitCode = process.exitCode
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const info = vi.spyOn(console, 'info').mockImplementation((...messages: unknown[]) => {
+    stdout.push(messages.map(String).join(' '))
   })
+  const error = vi.spyOn(console, 'error').mockImplementation((...messages: unknown[]) => {
+    stderr.push(messages.map(String).join(' '))
+  })
+
+  process.env.DATABASE_URL = connectionString
+  process.exitCode = undefined
+  try {
+    await main(args)
+    return { exitCode: process.exitCode ?? 0, stdout: stdout.join('\n'), stderr: stderr.join('\n') }
+  } finally {
+    info.mockRestore()
+    error.mockRestore()
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
+    process.exitCode = previousExitCode
+  }
 }
 
 async function localMigrationHashes(): Promise<string[]> {
@@ -61,10 +81,10 @@ async function localMigrationNames(): Promise<string[]> {
   return journal.entries.map((entry) => entry.tag).sort()
 }
 
-beforeAll(async () => {
-  if (!connectionString) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
-  pool = new Pool({ connectionString })
-  await pool.query(`
+async function resetLedger() {
+  await databaseClient().query(`
+    DROP SCHEMA IF EXISTS drizzle CASCADE;
+    DROP TABLE IF EXISTS ${publicLedger};
     CREATE SCHEMA drizzle;
     CREATE TABLE ${drizzleLedger} (
       id serial PRIMARY KEY,
@@ -72,11 +92,72 @@ beforeAll(async () => {
       created_at bigint NOT NULL
     )
   `)
+}
+
+async function cleanupLedgers() {
+  if (!client) return
+  await client.query(`
+    DROP SCHEMA IF EXISTS drizzle CASCADE;
+    DROP TABLE IF EXISTS ${publicLedger};
+  `)
+}
+
+beforeAll(async () => {
+  if (!connectionString) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
+  pool = new Pool({ connectionString })
+  try {
+    client = await pool.connect()
+    await client.query('SELECT pg_advisory_lock($1, $2)', [advisoryLockNamespace, advisoryLockKey])
+    lockHeld = true
+    await resetLedger()
+  } catch (error) {
+    setupFailed = true
+    throw error
+  }
+})
+
+afterEach(async () => {
+  await resetLedger()
 })
 
 afterAll(async () => {
-  await pool.query('DROP SCHEMA IF EXISTS drizzle CASCADE')
-  await pool.end()
+  const cleanupErrors: unknown[] = []
+  try {
+    if (lockHeld) await cleanupLedgers()
+  } catch (error) {
+    cleanupErrors.push(error)
+  } finally {
+    try {
+      if (lockHeld && client) {
+        await client.query('SELECT pg_advisory_unlock($1, $2)', [
+          advisoryLockNamespace,
+          advisoryLockKey,
+        ])
+      }
+    } catch (error) {
+      cleanupErrors.push(error)
+    } finally {
+      lockHeld = false
+      try {
+        client?.release()
+      } catch (error) {
+        cleanupErrors.push(error)
+      } finally {
+        client = undefined
+        try {
+          await pool?.end()
+        } catch (error) {
+          cleanupErrors.push(error)
+        } finally {
+          pool = undefined
+        }
+      }
+    }
+  }
+  // Preserve setup failures as the primary error while still unwinding every acquired resource.
+  if (!setupFailed && cleanupErrors.length === 1) throw cleanupErrors[0]
+  if (!setupFailed && cleanupErrors.length > 1)
+    throw new AggregateError(cleanupErrors, 'status test cleanup failed')
 })
 
 describe('migrate:status', () => {
@@ -93,10 +174,10 @@ describe('migrate:status', () => {
   })
 
   it('reads Drizzle Kit 0.30 default drizzle ledger columns', async () => {
-    await pool.query(`INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`, [
-      'ledger-hash',
-      1_700_000_000_000,
-    ])
+    await databaseClient().query(
+      `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
+      ['ledger-hash', 1_700_000_000_000],
+    )
 
     await expect(getAppliedMigrationsWithDates(connectionString!)).resolves.toEqual([
       { hash: 'ledger-hash', createdAt: new Date(1_700_000_000_000) },
@@ -105,34 +186,24 @@ describe('migrate:status', () => {
 
   it('emits clean JSON with exit code 0 when every local migration hash is applied', async () => {
     const hashes = await localMigrationHashes()
-    await pool.query(`TRUNCATE ${drizzleLedger}`)
+    await databaseClient().query(`TRUNCATE ${drizzleLedger}`)
     for (const [index, hash] of hashes.entries()) {
-      await pool.query(`INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`, [
-        hash,
-        1_700_000_000_000 + index,
-      ])
+      await databaseClient().query(
+        `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
+        [hash, 1_700_000_000_000 + index],
+      )
     }
 
-    const result = await run(
-      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
-      ['src/scripts/status.ts', '--json'],
-      fileURLToPath(new URL('../../', import.meta.url)),
-      { ...process.env, DATABASE_URL: connectionString },
-    )
+    const result = await runStatus(['--json'])
 
     expect(result.exitCode).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({ pending: [], divergence: [], exitCode: 0 })
   })
 
   it('emits only JSON with exit code 1 when local migrations are pending', async () => {
-    await pool.query(`TRUNCATE ${drizzleLedger}`)
+    await databaseClient().query(`TRUNCATE ${drizzleLedger}`)
 
-    const result = await run(
-      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
-      ['src/scripts/status.ts', '--json'],
-      fileURLToPath(new URL('../../', import.meta.url)),
-      { ...process.env, DATABASE_URL: connectionString },
-    )
+    const result = await runStatus(['--json'])
 
     expect(result.exitCode).toBe(1)
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -144,11 +215,11 @@ describe('migrate:status', () => {
   })
 
   it('falls back to the public ledger when the default drizzle ledger is absent', async () => {
-    await pool.query(`DROP TABLE ${drizzleLedger}`)
-    await pool.query(
+    await databaseClient().query(`DROP TABLE ${drizzleLedger}`)
+    await databaseClient().query(
       `CREATE TABLE ${publicLedger} (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint NOT NULL)`,
     )
-    await pool.query(`INSERT INTO ${publicLedger} (hash, created_at) VALUES ($1, $2)`, [
+    await databaseClient().query(`INSERT INTO ${publicLedger} (hash, created_at) VALUES ($1, $2)`, [
       'legacy-public-hash',
       1_700_000_000_000,
     ])
@@ -159,14 +230,9 @@ describe('migrate:status', () => {
   })
 
   it('fails explicitly when neither supported ledger exists', async () => {
-    await pool.query(`DROP TABLE ${publicLedger}`)
+    await databaseClient().query(`DROP TABLE ${drizzleLedger}`)
 
-    const result = await run(
-      fileURLToPath(new URL('../../node_modules/.bin/tsx', import.meta.url)),
-      ['src/scripts/status.ts', '--json'],
-      fileURLToPath(new URL('../../', import.meta.url)),
-      { ...process.env, DATABASE_URL: connectionString },
-    )
+    const result = await runStatus(['--json'])
 
     expect(result.exitCode).toBe(2)
     expect(result.stdout).toBe('')
