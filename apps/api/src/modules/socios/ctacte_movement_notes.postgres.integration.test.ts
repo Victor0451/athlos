@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { createDb, type Db } from '@athlos/db'
+import * as schema from '@athlos/db/schema'
 import { insertNote, findNoteByIdempotencyKey } from './ctacte_movement_notes_repository.ts'
 
 /**
@@ -29,6 +32,49 @@ import { insertNote, findNoteByIdempotencyKey } from './ctacte_movement_notes_re
 
 const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
 let db: { db: Db; pool: Pool } | undefined
+let sociosSchema: string
+let tesoreriaSchema: string
+
+interface QueryTarget {
+  query(this: unknown, ...args: unknown[]): unknown
+  connect(): Promise<Pool>
+}
+
+function rewriteSql(text: string): string {
+  return text
+    .replaceAll('"socios".', `"${sociosSchema}".`)
+    .replaceAll('"tesoreria".', `"${tesoreriaSchema}".`)
+    .replaceAll('socios.', `${sociosSchema}.`)
+    .replaceAll('tesoreria.', `${tesoreriaSchema}.`)
+}
+
+function wrapPool(pool: Pool): Pool {
+  const query = (target: QueryTarget) =>
+    function (this: unknown, ...args: unknown[]): unknown {
+      const [config, ...rest] = args
+      if (typeof config === 'string') return target.query.call(target, rewriteSql(config), ...rest)
+      if (config && typeof config === 'object' && 'text' in (config as Record<string, unknown>)) {
+        const value = config as { text: string } & Record<string, unknown>
+        return target.query.call(target, { ...value, text: rewriteSql(value.text) }, ...rest)
+      }
+      return target.query.call(target, config, ...rest)
+    }
+  return new Proxy(pool, {
+    get(target, property, receiver) {
+      if (property === 'query') return query(target as unknown as QueryTarget)
+      if (property === 'connect')
+        return async () => wrapPool(await (target as unknown as QueryTarget).connect())
+      return Reflect.get(target, property, receiver)
+    },
+  }) as Pool
+}
+
+async function assertTestDatabase(pool: Pool): Promise<void> {
+  const result = await pool.query<{ name: string }>('SELECT current_database() AS name')
+  const name = result.rows[0]?.name
+  if (!name || !/_test$/.test(name))
+    throw new Error(`refusing non-test database: ${name ?? 'unknown'}`)
+}
 
 async function readSql(filename: string): Promise<string> {
   // Resolve the package's migrations directory from the test file path:
@@ -71,22 +117,28 @@ beforeAll(async () => {
     throw new Error(
       'ATHLOS_TEST_DATABASE_URL is required for ctacte_movement_notes PostgreSQL tests',
     )
-  db = createDb({ connectionString: databaseUrl })
-  // Lightweight connectivity probe.
-  await db.pool.query('SELECT 1')
+  const handle = createDb({ connectionString: databaseUrl })
+  await assertTestDatabase(handle.pool)
+  const suffix = randomBytes(12).toString('hex')
+  sociosSchema = `socios_r3_${suffix}`
+  tesoreriaSchema = `tesoreria_r3_${suffix}`
+  db = {
+    db: drizzle(wrapPool(handle.pool), { schema }) as Db,
+    pool: wrapPool(handle.pool),
+  }
 })
 
 beforeEach(async () => {
   if (!db) return
   // Reset both schemas to a clean slate. Using `IF EXISTS` makes the
   // test safe to run against a database that has other tenants.
-  await db.pool.query('DROP SCHEMA IF EXISTS "socios" CASCADE')
-  await db.pool.query('DROP SCHEMA IF EXISTS "tesoreria" CASCADE')
+  await db.pool.query(`DROP SCHEMA IF EXISTS "${sociosSchema}" CASCADE`)
+  await db.pool.query(`DROP SCHEMA IF EXISTS "${tesoreriaSchema}" CASCADE`)
   // Recreate the bare minimum needed for migration 0031 (which adds a
   // `comprobante_attachment_id UUID REFERENCES socios.socio_attachments(id)`
   // column on `tesoreria.ctacte`).
-  await db.pool.query('CREATE SCHEMA "tesoreria"')
-  await db.pool.query('CREATE SCHEMA "socios"')
+  await db.pool.query(`CREATE SCHEMA "${tesoreriaSchema}"`)
+  await db.pool.query(`CREATE SCHEMA "${sociosSchema}"`)
   await db.pool.query(`
     CREATE TABLE "socios"."socios" (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -128,6 +180,10 @@ beforeEach(async () => {
 })
 
 afterAll(async () => {
+  if (db && sociosSchema && tesoreriaSchema) {
+    await db.pool.query(`DROP SCHEMA IF EXISTS "${sociosSchema}" CASCADE`)
+    await db.pool.query(`DROP SCHEMA IF EXISTS "${tesoreriaSchema}" CASCADE`)
+  }
   await db?.pool.end()
 })
 
@@ -147,14 +203,15 @@ describe('ctacte_movement_notes PostgreSQL idempotency inference (R3 fix #1)', (
     // would still fail in production).
     const indexRow = await db.pool.query<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes
-         WHERE schemaname = 'socios'
-           AND tablename  = 'ctacte_movement_notes'
-           AND indexname  = 'ctacte_movement_notes_idempotency_key_unique'`,
+         WHERE schemaname = $1
+          AND tablename  = 'ctacte_movement_notes'
+          AND indexname  = 'ctacte_movement_notes_idempotency_key_unique'`,
+      [sociosSchema],
     )
     expect(indexRow.rowCount).toBe(1)
     const def = indexRow.rows[0]!.indexdef
     expect(def).toMatch(/UNIQUE INDEX/i)
-    expect(def).toMatch(/ON\s+socios\.ctacte_movement_notes/i)
+    expect(def).toMatch(new RegExp(`ON\\s+${sociosSchema}\\.ctacte_movement_notes`, 'i'))
     // Critically: full unique index has NO WHERE predicate.
     expect(def).not.toMatch(/WHERE/i)
   })

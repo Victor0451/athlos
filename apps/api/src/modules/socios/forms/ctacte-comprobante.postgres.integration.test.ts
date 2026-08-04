@@ -1,46 +1,36 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { createDb } from '@athlos/db'
-import { createPostgresComprobanteLeaseStore, renderComprobante } from './ctacte-comprobante.ts'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { renderComprobante } from './ctacte-comprobante.ts'
 import { createIsolatedComprobanteHarness } from './ctacte-comprobante.postgres-harness.test-support.ts'
 import { ManualClock } from './ctacte-comprobante.timeout.test-support.ts'
 
 const url = process.env['ATHLOS_TEST_DATABASE_URL']
-let first: ReturnType<typeof createDb> | undefined
-let second: ReturnType<typeof createDb> | undefined
+let harness: Awaited<ReturnType<typeof createIsolatedComprobanteHarness>> | undefined
 
-beforeAll(async () => {
-  if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required for PostgreSQL lease tests')
-  first = createDb({ connectionString: url })
-  second = createDb({ connectionString: url })
-  await first.pool.query('SELECT 1')
-})
 beforeEach(async () => {
-  if (!first) return
-  await first.pool.query(`DROP SCHEMA IF EXISTS tesoreria CASCADE; CREATE SCHEMA tesoreria;
-    CREATE TABLE tesoreria.ctacte_comprobante_retries (
-       idempotency_key text PRIMARY KEY, request_fingerprint text NOT NULL, status text NOT NULL, pdf_base64 text, sha256 text,
-      byte_size integer, filename text, movement_count integer, failure_reason text, lease_owner text,
-      lease_expires_at timestamptz, attempt_count integer NOT NULL DEFAULT 0,
-      updated_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`)
+  if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required for PostgreSQL lease tests')
+  harness = await createIsolatedComprobanteHarness(url)
 })
-afterAll(async () => {
-  await first?.pool.end()
-  await second?.pool.end()
+afterEach(async () => {
+  await harness?.cleanup()
+  harness = undefined
 })
 
 describe('PostgreSQL comprobante lease', () => {
   it('atomically selects one owner across two independent database clients and protects completion by owner', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const ownerStore = createPostgresComprobanteLeaseStore(first.db)
-    const followerStore = createPostgresComprobanteLeaseStore(second.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore, rivalStore: followerStore } = harness
     const now = Date.now()
     const [one, two] = await Promise.all([
       ownerStore.claim('key', 'fingerprint', 'owner-a', now, 1_000, 60_000),
       followerStore.claim('key', 'fingerprint', 'owner-b', now, 1_000, 60_000),
     ])
     expect([one.kind, two.kind].filter((kind) => kind === 'owner')).toHaveLength(1)
+    const owner = one.kind === 'owner' ? ownerStore : followerStore
+    const ownerId = one.kind === 'owner' ? 'owner-a' : 'owner-b'
+    const nonOwner = one.kind === 'owner' ? followerStore : ownerStore
+    const nonOwnerId = one.kind === 'owner' ? 'owner-b' : 'owner-a'
     expect(
-      await followerStore.complete('key', 'owner-b', {
+      await nonOwner.complete('key', nonOwnerId, {
         pdf: Buffer.from('%PDF-wrong'),
         filename: 'wrong.pdf',
         sha256: 'wrong',
@@ -48,8 +38,6 @@ describe('PostgreSQL comprobante lease', () => {
         movementCount: 9,
       }),
     ).toBe(false)
-    const owner = one.kind === 'owner' ? ownerStore : followerStore
-    const ownerId = one.kind === 'owner' ? 'owner-a' : 'owner-b'
     expect(
       await owner.complete('key', ownerId, {
         pdf: Buffer.from('%PDF-right'),
@@ -74,9 +62,8 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('reclaims a stale owner atomically and rejects the restarted owner completion', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const formerOwner = createPostgresComprobanteLeaseStore(first.db)
-    const reclaimer = createPostgresComprobanteLeaseStore(second.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore: formerOwner, rivalStore: reclaimer } = harness
     const now = Date.now()
     expect(
       await formerOwner.claim('stale-key', 'fingerprint', 'dead-instance', now, 1, 60_000),
@@ -113,8 +100,8 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('conflicts on a changed fingerprint and lets an expired completed result start a new owner attempt', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const store = createPostgresComprobanteLeaseStore(first.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore: store } = harness
     const now = Date.now()
     expect(await store.claim('expiry-key', 'range-a', 'owner-a', now, 1_000, 1)).toMatchObject({
       kind: 'owner',
@@ -132,9 +119,8 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('rejects a changed fingerprint before reclaiming failed and stale rows', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const original = createPostgresComprobanteLeaseStore(first.db)
-    const retry = createPostgresComprobanteLeaseStore(second.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore: original, rivalStore: retry } = harness
     const now = Date.now()
 
     expect(
@@ -156,9 +142,8 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('persists timeout, reclaims ordinary failure, and fences both race orders', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const owner = createPostgresComprobanteLeaseStore(first.db)
-    const rival = createPostgresComprobanteLeaseStore(second.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore: owner, rivalStore: rival } = harness
     const now = Date.now()
     const result = {
       pdf: Buffer.from('ok'),
@@ -185,9 +170,8 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('linearizes an owner deadline against late completion and leaves a healthy owner unchanged by a follower', async () => {
-    if (!first || !second) throw new Error('PostgreSQL clients were not initialized')
-    const owner = createPostgresComprobanteLeaseStore(first.db)
-    const follower = createPostgresComprobanteLeaseStore(second.db)
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const { ownerStore: owner, rivalStore: follower } = harness
     const now = Date.now()
     const result = {
       pdf: Buffer.from('late'),
@@ -205,10 +189,7 @@ describe('PostgreSQL comprobante lease', () => {
       follower.complete('deadline-race', 'owner', result),
     ])
     expect([failed, completed].filter(Boolean)).toHaveLength(1)
-    const row = await first.pool.query(
-      "SELECT status, failure_reason, pdf_base64 FROM tesoreria.ctacte_comprobante_retries WHERE idempotency_key = 'deadline-race'",
-    )
-    expect(row.rows[0]).toEqual(
+    expect(await harness.snapshot('deadline-race')).toEqual(
       failed
         ? expect.objectContaining({
             status: 'failed',
@@ -224,10 +205,7 @@ describe('PostgreSQL comprobante lease', () => {
     expect(
       await follower.claim('healthy-owner', 'same', 'follower', now + 1, 5_000, 60_000),
     ).toEqual({ kind: 'follower' })
-    const healthy = await first.pool.query(
-      "SELECT status, lease_owner, failure_reason FROM tesoreria.ctacte_comprobante_retries WHERE idempotency_key = 'healthy-owner'",
-    )
-    expect(healthy.rows[0]).toMatchObject({
+    expect(await harness.snapshot('healthy-owner')).toMatchObject({
       status: 'rendering',
       lease_owner: 'owner',
       failure_reason: null,
@@ -235,10 +213,10 @@ describe('PostgreSQL comprobante lease', () => {
   })
 
   it('drives a real follower deadline without mutating its healthy owner and fences late audit publication', async () => {
-    if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required for PostgreSQL lease tests')
-    const harness = await createIsolatedComprobanteHarness(url, { barrierTimeoutMs: 500 })
-    const key = `deadline-${harness.schema}`
-    const entityId = `entity-${harness.schema}`
+    if (!harness) throw new Error('PostgreSQL harness was not initialized')
+    const activeHarness = harness
+    const key = `deadline-${activeHarness.schema}`
+    const entityId = `entity-${activeHarness.schema}`
     const now = Date.UTC(2026, 0, 1)
     const fingerprint = 'b44e9496ab7e46d76a163ee32bfa2964858e7ecb28ac99bd109b55df3d6603f2'
     const result = {
@@ -248,66 +226,68 @@ describe('PostgreSQL comprobante lease', () => {
       byteSize: 9,
       movementCount: 4,
     }
-    try {
-      expect(
-        await harness.ownerStore.claim(key, fingerprint, 'healthy', now, 60_000, 60_000),
-      ).toEqual({
-        kind: 'owner',
-      })
-      const clock = new ManualClock(now)
-      const follower = renderComprobante({
-        socioId: 's-1',
-        cuenta: 'principal',
-        operatorId: 'o-1',
-        from: '2026-07-01',
-        to: '2026-07-31',
-        idempotencyKey: key,
-        db: {} as never,
-        leaseStore: harness.rivalStore,
-        pdfGenerator: { generate: async () => Buffer.from('%PDF-unused') } as never,
-        now: clock.now,
-        timers: clock,
-      })
-      await clock.flush()
-      const beforeFollowerDeadline = await harness.snapshot(key)
-      expect(beforeFollowerDeadline).toMatchObject({
-        status: 'rendering',
-        lease_owner: 'healthy',
-        failure_reason: null,
-        attempt_count: 1,
-      })
-      await clock.advanceBy(30_000)
-      await expect(follower).rejects.toMatchObject({ role: 'follower', live: true })
-      expect(await harness.snapshot(key)).toEqual(beforeFollowerDeadline)
-      expect(clock.pendingCount()).toBe(0)
+    expect(
+      await activeHarness.ownerStore.claim(key, fingerprint, 'healthy', now, 60_000, 60_000),
+    ).toEqual({
+      kind: 'owner',
+    })
+    const clock = new ManualClock(now)
+    const follower = renderComprobante({
+      socioId: 's-1',
+      cuenta: 'principal',
+      operatorId: 'o-1',
+      from: '2026-07-01',
+      to: '2026-07-31',
+      idempotencyKey: key,
+      db: {} as never,
+      leaseStore: activeHarness.rivalStore,
+      pdfGenerator: { generate: async () => Buffer.from('%PDF-unused') } as never,
+      now: clock.now,
+      timers: clock,
+    })
+    await clock.flush()
+    const beforeFollowerDeadline = await activeHarness.snapshot(key)
+    expect(beforeFollowerDeadline).toMatchObject({
+      status: 'rendering',
+      lease_owner: 'healthy',
+      failure_reason: null,
+      attempt_count: 1,
+    })
+    await clock.advanceBy(30_000)
+    await expect(follower).rejects.toMatchObject({ role: 'follower', live: true })
+    expect(await activeHarness.snapshot(key)).toEqual(beforeFollowerDeadline)
+    expect(clock.pendingCount()).toBe(0)
 
-      const barrier = harness.createBarrier()
-      const lateCompletion = harness.completeAndPublish({
-        store: harness.ownerStore,
+    const barrier = activeHarness.createBarrier()
+    const lateCompletion = activeHarness.completeAndPublish({
+      store: activeHarness.ownerStore,
+      key,
+      owner: 'healthy',
+      entityId,
+      result,
+      barrier,
+    })
+    await barrier.entered
+    expect(await activeHarness.rivalStore.failTimeout(key, 'healthy')).toBe(true)
+    const timedOut = await activeHarness.snapshot(key)
+    expect(timedOut).toMatchObject({
+      status: 'failed',
+      failure_reason: 'RENDER_TIMEOUT',
+      lease_owner: null,
+      pdf_base64: null,
+      sha256: null,
+    })
+    barrier.release()
+    await expect(lateCompletion).resolves.toBe(false)
+    expect(await activeHarness.snapshot(key)).toEqual(timedOut)
+    await expect(
+      activeHarness.observePrintedAudit({
         key,
-        owner: 'healthy',
         entityId,
-        result,
-        barrier,
-      })
-      await barrier.entered
-      expect(await harness.rivalStore.failTimeout(key, 'healthy')).toBe(true)
-      const timedOut = await harness.snapshot(key)
-      expect(timedOut).toMatchObject({
-        status: 'failed',
-        failure_reason: 'RENDER_TIMEOUT',
-        lease_owner: null,
-        pdf_base64: null,
-        sha256: null,
-      })
-      barrier.release()
-      await expect(lateCompletion).resolves.toBe(false)
-      expect(await harness.snapshot(key)).toEqual(timedOut)
-      await expect(
-        harness.observePrintedAudit({ key, entityId, expectedCount: 0, timeoutMs: 40, pollMs: 5 }),
-      ).resolves.toBe(0)
-    } finally {
-      await harness.cleanup()
-    }
+        expectedCount: 0,
+        timeoutMs: 40,
+        pollMs: 5,
+      }),
+    ).resolves.toBe(0)
   })
 })
