@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { throwIfInvalid } from '@athlos/errors'
 import { requireRole } from '@athlos/auth'
 import { getJobHealth, listRuns } from '@athlos/scheduler'
-import type { JobRun, JobRunStatus } from '@athlos/db/schema'
+import type { JobRunStatus } from '@athlos/db/schema'
 import type { FastifyInstance } from 'fastify'
 import type { AppContainer } from '../../container.ts'
+import { projectSchedulerRun } from './scheduler-run-projector.ts'
 
 /**
  * Admin `/api/v1/admin/jobs/*` routes — TASK-050.
@@ -37,8 +38,10 @@ const JOB_RUN_STATUSES = [
   'pending',
   'running',
   'succeeded',
+  'completed_with_review',
   'failed',
   'dead_letter',
+  'cancelled',
 ] as const satisfies readonly JobRunStatus[]
 
 const runsQuerySchema = z.object({
@@ -49,45 +52,6 @@ const runsQuerySchema = z.object({
 })
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
-
-/**
- * Public DTO for a single run row. Mirrors the `job_runs` row
- * shape with `camelCase` keys + ISO timestamps. The DTO is
- * the contract: don't expose `metadata` raw (it can carry
- * domain-specific PII), don't expose `attempt` directly (the
- * UI shows it as a human count).
- */
-interface JobRunDTO {
-  id: string
-  jobName: string
-  status: JobRunStatus
-  attempt: number
-  scheduledAt: string
-  startedAt: string | null
-  finishedAt: string | null
-  triggeredBy: 'scheduler' | 'manual' | 'post-import'
-  errorMessage: string | null
-  durationMs: number | null
-}
-
-function toJobRunDTO(row: JobRun): JobRunDTO {
-  const startedAt = row.startedAt?.toISOString() ?? null
-  const finishedAt = row.finishedAt?.toISOString() ?? null
-  const durationMs =
-    startedAt && finishedAt ? new Date(finishedAt).getTime() - new Date(startedAt).getTime() : null
-  return {
-    id: row.id,
-    jobName: row.jobName,
-    status: row.status,
-    attempt: row.attempt,
-    scheduledAt: row.scheduledAt.toISOString(),
-    startedAt,
-    finishedAt,
-    triggeredBy: row.triggeredBy,
-    errorMessage: row.errorMessage,
-    durationMs,
-  }
-}
 
 export const adminJobsRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container: AppContainer = fastify.container
@@ -103,7 +67,7 @@ export const adminJobsRoutes: FastifyPluginCallback = (fastify, _opts, done) => 
       ...(from ? { from } : {}),
     })
     return reply.code(200).send({
-      items: items.map(toJobRunDTO),
+      items: items.map(projectSchedulerRun),
     })
   })
 
@@ -125,20 +89,7 @@ export const adminJobsRoutes: FastifyPluginCallback = (fastify, _opts, done) => 
         inFlight: h.inFlight,
         healthy: h.healthy,
         reason: h.reason,
-        lastRun: h.lastRun
-          ? {
-              id: h.lastRun.id,
-              status: h.lastRun.status,
-              startedAt: h.lastRun.startedAt?.toISOString() ?? null,
-              finishedAt: h.lastRun.finishedAt?.toISOString() ?? null,
-              attempt: h.lastRun.attempt,
-              durationMs:
-                h.lastRun.startedAt && h.lastRun.finishedAt
-                  ? h.lastRun.finishedAt.getTime() - h.lastRun.startedAt.getTime()
-                  : null,
-              errorMessage: h.lastRun.errorMessage,
-            }
-          : null,
+        lastRun: h.lastRun ? projectSchedulerRun(h.lastRun) : null,
       })),
     })
   })

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,6 +31,12 @@ import { ensurePgcrypto } from './pgcrypto.ts'
 
 const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
 const SKIP_DB = !databaseUrl
+// Only reset() callers on the shared test database can wait behind pgcrypto's
+// database-global advisory lock. Keep every unrelated test at Vitest's default.
+const PGCRYPTO_LOCK_TIMEOUT_MS = 30_000
+const schemaSuffix = randomUUID().replaceAll('-', '')
+const sociosSchema = `s0_socios_${schemaSuffix}`
+const tesoreriaSchema = `s0_tesoreria_${schemaSuffix}`
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const specsRoot = join(
   repoRoot,
@@ -209,7 +216,13 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await pool?.end()
+  if (!pool) return
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${tesoreriaSchema} CASCADE`)
+    await pool.query(`DROP SCHEMA IF EXISTS ${sociosSchema} CASCADE`)
+  } finally {
+    await pool.end()
+  }
 })
 
 // REL-001: enforce the frozen-receipt invariant. The committed artifacts
@@ -242,204 +255,230 @@ afterAll(() => {
 
 async function apply(file: string) {
   if (!pool) throw new Error('pool not initialized')
-  await pool.query(readFileSync(join(drizzleDir, file), 'utf8'))
+  await pool.query(
+    readFileSync(join(drizzleDir, file), 'utf8')
+      .replaceAll('"socios".', `"${sociosSchema}".`)
+      .replaceAll('"tesoreria".', `"${tesoreriaSchema}".`)
+      .replaceAll('socios.', `${sociosSchema}.`)
+      .replaceAll('tesoreria.', `${tesoreriaSchema}.`),
+  )
 }
 
-async function reset() {
-  if (!pool) throw new Error('pool not initialized')
+async function reset(
+  database: Pick<Pool, 'query'> = pool ??
+    (() => {
+      throw new Error('pool not initialized')
+    })(),
+) {
   // Deterministic PostgreSQL prerequisite: pgcrypto MUST be installed BEFORE
   // any CREATE TABLE that references gen_random_uuid(). On PostgreSQL ≥ 13
   // the function also lives in pg_catalog, but we keep the extension as the
   // authoritative source so the prerequisite is explicit and portable to
   // PostgreSQL < 13 disposable containers.
-  await ensurePgcrypto(pool)
-  await pool.query('DROP SCHEMA IF EXISTS tesoreria CASCADE')
-  await pool.query('DROP SCHEMA IF EXISTS socios CASCADE')
-  await pool.query('CREATE SCHEMA IF NOT EXISTS tesoreria')
-  await pool.query('CREATE SCHEMA IF NOT EXISTS socios')
-  await pool.query('CREATE TABLE socios.socios (id uuid PRIMARY KEY DEFAULT gen_random_uuid())')
-  await pool.query('CREATE TABLE tesoreria.ctacte (id uuid PRIMARY KEY DEFAULT gen_random_uuid())')
-  await pool.query(`
-    CREATE TABLE socios.socio_attachments (
+  await ensurePgcrypto(database)
+  await database.query(`DROP SCHEMA IF EXISTS ${tesoreriaSchema} CASCADE`)
+  await database.query(`DROP SCHEMA IF EXISTS ${sociosSchema} CASCADE`)
+  await database.query(`CREATE SCHEMA ${tesoreriaSchema}`)
+  await database.query(`CREATE SCHEMA ${sociosSchema}`)
+  await database.query(
+    `CREATE TABLE ${sociosSchema}.socios (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`,
+  )
+  await database.query(
+    `CREATE TABLE ${tesoreriaSchema}.ctacte (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`,
+  )
+  await database.query(`
+    CREATE TABLE ${sociosSchema}.socio_attachments (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      socio_id uuid NOT NULL REFERENCES socios.socios(id)
+      socio_id uuid NOT NULL REFERENCES ${sociosSchema}.socios(id)
     )
   `)
 }
 
 describe.skipIf(SKIP_DB)('0034 lifecycle — RED proof (without 0034: ON CONFLICT fails)', () => {
-  it('partial unique index from 0031 cannot be inferred by bare ON CONFLICT', async () => {
-    await reset()
-    await apply('0031_ctacte_movement_notes.sql')
-    await apply('0032_ctacte_payment_idempotency.sql')
-    await apply('0033_ctacte_comprobante_retries.sql')
-    let err: { code?: string; message?: string } | undefined
-    try {
-      if (!pool) throw new Error('pool not initialized')
-      await pool.query(
-        `INSERT INTO socios.ctacte_movement_notes
-           (ctacte_movement_id, body, author_operator_id, idempotency_key)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (idempotency_key) DO NOTHING`,
-        [
-          '00000000-0000-0000-0000-000000000001',
-          'red body',
-          '00000000-0000-0000-0000-000000000002',
-          'k-red',
-        ],
-      )
-    } catch (e) {
-      err = e as { code?: string; message?: string }
-    }
-    expect(err?.code ?? '').toMatch(/42P10|0A000/)
-    expect(err?.message ?? '').toMatch(/there is no unique or exclusion constraint matching/i)
-  })
-})
-
-// ─── pgcrypto deterministic prerequisite — RED proof on fresh disposable PG ──
-//
-// Deterministic prerequisite: any SQL that references `gen_random_uuid()` MUST
-// run after `CREATE EXTENSION pgcrypto` is executed. PostgreSQL ≥ 13 also
-// exposes `gen_random_uuid()` in `pg_catalog`, so the bug is currently HIDDEN
-// on PostgreSQL 17 — but the schema must remain explicit because:
-//   (1) reviewers must see the prerequisite enforced, not implied, and
-//   (2) disposable PG < 13 in CI/local would crash at table creation time.
-//
-// RED proof: capture every `pool.query` invocation during `reset()`, find
-// the index of `CREATE EXTENSION pgcrypto` and the first `CREATE TABLE`
-// whose DDL contains `gen_random_uuid`, and assert the extension index is
-// strictly less. With the current reset() ordering (pgcrypto last), this
-// assertion FAILS — proving the bug. After the GREEN fix (pgcrypto first),
-// the same assertion PASSES.
-
-describe.skipIf(SKIP_DB)('pgcrypto deterministic prerequisite — RED proof on fresh PG', () => {
-  it('installs pgcrypto BEFORE any CREATE TABLE that references gen_random_uuid()', async () => {
-    if (!pool) throw new Error('pool not initialized')
-    // Simulate a truly fresh disposable PG: drop pgcrypto + all schemas.
-    await pool.query('DROP SCHEMA IF EXISTS tesoreria CASCADE')
-    await pool.query('DROP SCHEMA IF EXISTS socios CASCADE')
-    await pool.query('DROP EXTENSION IF EXISTS pgcrypto CASCADE')
-
-    // Spy on pool.query to capture every SQL string reset() emits.
-    const executed: string[] = []
-    const originalQuery = pool.query.bind(pool)
-    type QueryArg = string | { text: string }
-    const spy = (q: QueryArg) => {
-      const text = typeof q === 'string' ? q : q.text
-      executed.push(text)
-      return originalQuery(q as never)
-    }
-    ;(pool as unknown as { query: typeof spy }).query = spy
-
-    try {
-      await reset()
-    } finally {
-      ;(pool as unknown as { query: typeof originalQuery }).query = originalQuery
-    }
-
-    const pgcryptoIdx = executed.findIndex((q) => /CREATE\s+EXTENSION[^;]*pgcrypto/i.test(q))
-    const firstGenUuidTableIdx = executed.findIndex((q) =>
-      /CREATE\s+TABLE[\s\S]*gen_random_uuid\(\)/i.test(q),
-    )
-
-    expect(pgcryptoIdx).toBeGreaterThanOrEqual(0)
-    expect(firstGenUuidTableIdx).toBeGreaterThanOrEqual(0)
-    expect(pgcryptoIdx).toBeLessThan(firstGenUuidTableIdx)
-  })
-})
-
-describe.skipIf(SKIP_DB)('0034 lifecycle — GREEN proof (full chain + evidence)', () => {
-  it('applies and asserts 0031 → 0032 → 0033 → 0034 twice with deterministic evidence', async () => {
-    if (!pool) throw new Error('pool not initialized')
-    const runs: Array<{
-      rows: Array<{ s: string; t: string; i: string; d: string }>
-      first: number | null
-      duplicate: number | null
-    }> = []
-
-    for (let run = 1; run <= 2; run += 1) {
+  it(
+    'partial unique index from 0031 cannot be inferred by bare ON CONFLICT',
+    async () => {
       await reset()
       await apply('0031_ctacte_movement_notes.sql')
       await apply('0032_ctacte_payment_idempotency.sql')
       await apply('0033_ctacte_comprobante_retries.sql')
-      await apply('0034_ctacte_movement_notes_idempotency_key_full_unique.sql')
-      const idx = await pool.query<{ indexdef: string }>(
-        `SELECT indexdef FROM pg_indexes
-         WHERE indexname IN (
-           'ctacte_idempotency_key_unique',
-           'ctacte_movement_notes_idempotency_key_unique'
-         )`,
-      )
-      expect(idx.rows).toHaveLength(2)
-      for (const row of idx.rows) {
-        expect(row.indexdef.toLowerCase()).toContain('unique')
-        expect(row.indexdef.toLowerCase()).not.toMatch(/\bwhere\b/)
+      let err: { code?: string; message?: string } | undefined
+      try {
+        if (!pool) throw new Error('pool not initialized')
+        await pool.query(
+          `INSERT INTO ${sociosSchema}.ctacte_movement_notes
+           (ctacte_movement_id, body, author_operator_id, idempotency_key)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+          [
+            '00000000-0000-0000-0000-000000000001',
+            'red body',
+            '00000000-0000-0000-0000-000000000002',
+            'k-red',
+          ],
+        )
+      } catch (e) {
+        err = e as { code?: string; message?: string }
       }
-      const rows = await pool.query<{ s: string; t: string; i: string; d: string }>(
-        `SELECT schemaname AS s, tablename AS t, indexname AS i, indexdef AS d FROM pg_indexes
-         WHERE schemaname IN ('socios','tesoreria')
+      expect(err?.code ?? '').toMatch(/42P10|0A000/)
+      expect(err?.message ?? '').toMatch(/there is no unique or exclusion constraint matching/i)
+    },
+    PGCRYPTO_LOCK_TIMEOUT_MS,
+  )
+})
+
+// ─── pgcrypto deterministic prerequisite — RED proof on fresh disposable PG ──
+//
+// This uses a UUID-named database on the persistent test-only PostgreSQL
+// server. Its extension catalog starts empty, unlike the shared database.
+// reset() still acquires pgcrypto's advisory lock, but no shared extension is
+// dropped or modified, so concurrent schema-isolated suites remain unaffected.
+
+describe.skipIf(SKIP_DB)('pgcrypto deterministic prerequisite — RED proof on fresh PG', () => {
+  it('installs pgcrypto BEFORE any CREATE TABLE that references gen_random_uuid()', async () => {
+    if (!databaseUrl) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
+    const databaseName = `s0_pgcrypto_${randomUUID().replaceAll('-', '')}`
+    const adminUrl = new URL(databaseUrl)
+    adminUrl.pathname = '/postgres'
+    const freshUrl = new URL(databaseUrl)
+    freshUrl.pathname = `/${databaseName}`
+    const admin = new Pool({ connectionString: adminUrl.toString() })
+    let freshPool: Pool | undefined
+
+    try {
+      await admin.query(`CREATE DATABASE "${databaseName}"`)
+      freshPool = new Pool({ connectionString: freshUrl.toString() })
+      expect(
+        await freshPool.query("SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'"),
+      ).toMatchObject({ rowCount: 0 })
+
+      const executed: string[] = []
+      const tracedDatabase = {
+        query: async (text: string) => {
+          executed.push(text)
+          return freshPool!.query(text)
+        },
+      } as Pick<Pool, 'query'>
+      await reset(tracedDatabase)
+
+      expect(
+        await freshPool.query("SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'"),
+      ).toMatchObject({ rowCount: 1 })
+
+      const pgcryptoIdx = executed.findIndex((q) => /CREATE\s+EXTENSION[^;]*pgcrypto/i.test(q))
+      const firstGenUuidTableIdx = executed.findIndex((q) =>
+        /CREATE\s+TABLE[\s\S]*gen_random_uuid\(\)/i.test(q),
+      )
+
+      expect(pgcryptoIdx).toBeGreaterThanOrEqual(0)
+      expect(firstGenUuidTableIdx).toBeGreaterThanOrEqual(0)
+      expect(pgcryptoIdx).toBeLessThan(firstGenUuidTableIdx)
+    } finally {
+      await freshPool?.end()
+      await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
+      await admin.end()
+    }
+  })
+})
+
+describe.skipIf(SKIP_DB)('0034 lifecycle — GREEN proof (full chain + evidence)', () => {
+  it(
+    'applies and asserts 0031 → 0032 → 0033 → 0034 twice with deterministic evidence',
+    async () => {
+      if (!pool) throw new Error('pool not initialized')
+      const runs: Array<{
+        rows: Array<{ s: string; t: string; i: string; d: string }>
+        first: number | null
+        duplicate: number | null
+      }> = []
+
+      for (let run = 1; run <= 2; run += 1) {
+        await reset()
+        await apply('0031_ctacte_movement_notes.sql')
+        await apply('0032_ctacte_payment_idempotency.sql')
+        await apply('0033_ctacte_comprobante_retries.sql')
+        await apply('0034_ctacte_movement_notes_idempotency_key_full_unique.sql')
+        const idx = await pool.query<{ indexdef: string }>(
+          `SELECT indexdef FROM pg_indexes
+         WHERE indexname IN (
+            'ctacte_idempotency_key_unique',
+            'ctacte_movement_notes_idempotency_key_unique'
+          ) AND schemaname IN ($1, $2)`,
+          [sociosSchema, tesoreriaSchema],
+        )
+        expect(idx.rows).toHaveLength(2)
+        for (const row of idx.rows) {
+          expect(row.indexdef.toLowerCase()).toContain('unique')
+          expect(row.indexdef.toLowerCase()).not.toMatch(/\bwhere\b/)
+        }
+        const rows = await pool.query<{ s: string; t: string; i: string; d: string }>(
+          `SELECT schemaname AS s, tablename AS t, indexname AS i, indexdef AS d FROM pg_indexes
+          WHERE schemaname IN ($1, $2)
            AND (tablename IN ('ctacte','ctacte_movement_notes','ctacte_comprobante_retries')
                 OR indexname IN ('ctacte_idempotency_key_unique',
                                   'ctacte_movement_notes_idempotency_key_unique'))
-         ORDER BY schemaname, tablename, indexname`,
-      )
-      const parent = await pool.query<{ id: string }>(
-        `INSERT INTO tesoreria.ctacte DEFAULT VALUES RETURNING id`,
-      )
-      const parentId = parent.rows[0]?.id ?? '00000000-0000-0000-0000-000000000000'
-      const first = await pool.query(
-        `INSERT INTO socios.ctacte_movement_notes
+          ORDER BY schemaname, tablename, indexname`,
+          [sociosSchema, tesoreriaSchema],
+        )
+        const parent = await pool.query<{ id: string }>(
+          `INSERT INTO ${tesoreriaSchema}.ctacte DEFAULT VALUES RETURNING id`,
+        )
+        const parentId = parent.rows[0]?.id ?? '00000000-0000-0000-0000-000000000000'
+        const first = await pool.query(
+          `INSERT INTO ${sociosSchema}.ctacte_movement_notes
           (ctacte_movement_id, body, author_operator_id, idempotency_key)
           VALUES ($1,$2,$3,$4)
           ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`,
-        [parentId, 'first', '00000000-0000-0000-0000-000000000099', 'evidence-key'],
-      )
-      const duplicate = await pool.query(
-        `INSERT INTO socios.ctacte_movement_notes
+          [parentId, 'first', '00000000-0000-0000-0000-000000000099', 'evidence-key'],
+        )
+        const duplicate = await pool.query(
+          `INSERT INTO ${sociosSchema}.ctacte_movement_notes
           (ctacte_movement_id, body, author_operator_id, idempotency_key)
           VALUES ($1,$2,$3,$4)
           ON CONFLICT (idempotency_key) DO NOTHING RETURNING id`,
-        [parentId, 'dup', '00000000-0000-0000-0000-000000000098', 'evidence-key'],
-      )
-      expect([first.rowCount, duplicate.rowCount]).toEqual([1, 0])
-      runs.push({ rows: rows.rows, first: first.rowCount, duplicate: duplicate.rowCount })
-    }
+          [parentId, 'dup', '00000000-0000-0000-0000-000000000098', 'evidence-key'],
+        )
+        expect([first.rowCount, duplicate.rowCount]).toEqual([1, 0])
+        runs.push({ rows: rows.rows, first: first.rowCount, duplicate: duplicate.rowCount })
+      }
 
-    expect(runs).toHaveLength(2)
-    expect(runs.map((run) => [run.first, run.duplicate])).toEqual([
-      [1, 0],
-      [1, 0],
-    ])
-    const evidenceLines = [
-      '# 0034-lifecycle evidence',
-      '# athlos-ctacte-security-reliability-remediation / S0 / PR1',
-      '# source: deterministic disposable PostgreSQL validation',
-      '# assertions:',
-      '#   0031 → 0032 → 0033 → 0034 applied in order twice',
-      '#   two FULL UNIQUE INDEXes (no WHERE predicate) expected per run',
-      '',
-      'schemaname | tablename | indexname | indexdef',
-      '--- | --- | --- | ---',
-      ...runs[1]!.rows.map((row) => `${row.s} | ${row.t} | ${row.i} | ${row.d}`),
-      '',
-      '# run 1 ON CONFLICT inference: first=1 dup=0 -> PASS',
-      '# run 2 ON CONFLICT inference: first=1 dup=0 -> PASS',
-      '',
-    ]
-    // REL-001: runtime-generated evidence output goes to a temporary
-    // directory (NOT to the tracked `artifacts/` path). The committed
-    // `artifacts/0034-lifecycle.txt` is a frozen receipt validated
-    // structurally by the REL-001 describe block.
-    const tempDir = mkdtempSync(join(tmpdir(), 's0-pr1-0034-evidence-'))
-    const tempEvidencePath = join(tempDir, '0034-lifecycle.runtime.txt')
-    try {
-      writeArtifact(tempEvidencePath, evidenceLines)
-      expect(readFileSync(tempEvidencePath, 'utf8')).toBe(evidenceLines.join('\n') + '\n')
-      expect(runs[1]!.rows.length).toBeGreaterThan(0)
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true })
-    }
-  })
+      expect(runs).toHaveLength(2)
+      expect(runs.map((run) => [run.first, run.duplicate])).toEqual([
+        [1, 0],
+        [1, 0],
+      ])
+      const evidenceLines = [
+        '# 0034-lifecycle evidence',
+        '# athlos-ctacte-security-reliability-remediation / S0 / PR1',
+        '# source: deterministic disposable PostgreSQL validation',
+        '# assertions:',
+        '#   0031 → 0032 → 0033 → 0034 applied in order twice',
+        '#   two FULL UNIQUE INDEXes (no WHERE predicate) expected per run',
+        '',
+        'schemaname | tablename | indexname | indexdef',
+        '--- | --- | --- | ---',
+        ...runs[1]!.rows.map((row) => `${row.s} | ${row.t} | ${row.i} | ${row.d}`),
+        '',
+        '# run 1 ON CONFLICT inference: first=1 dup=0 -> PASS',
+        '# run 2 ON CONFLICT inference: first=1 dup=0 -> PASS',
+        '',
+      ]
+      // REL-001: runtime-generated evidence output goes to a temporary
+      // directory (NOT to the tracked `artifacts/` path). The committed
+      // `artifacts/0034-lifecycle.txt` is a frozen receipt validated
+      // structurally by the REL-001 describe block.
+      const tempDir = mkdtempSync(join(tmpdir(), 's0-pr1-0034-evidence-'))
+      const tempEvidencePath = join(tempDir, '0034-lifecycle.runtime.txt')
+      try {
+        writeArtifact(tempEvidencePath, evidenceLines)
+        expect(readFileSync(tempEvidencePath, 'utf8')).toBe(evidenceLines.join('\n') + '\n')
+        expect(runs[1]!.rows.length).toBeGreaterThan(0)
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
+    PGCRYPTO_LOCK_TIMEOUT_MS,
+  )
 })
 
 // ─── REL-001: committed frozen S0 evidence is structurally valid (read-only) ─
