@@ -61,16 +61,18 @@ async function runStatus(args: string[]) {
   }
 }
 
-async function localMigrationHashes(): Promise<string[]> {
+async function localMigrations(): Promise<Array<{ name: string; hash: string; createdAt: Date }>> {
   const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
-    entries: Array<{ tag: string }>
+    entries: Array<{ tag: string; when: number }>
   }
   return Promise.all(
-    journal.entries.map(async (entry) =>
-      createHash('sha256')
+    journal.entries.map(async (entry) => ({
+      name: entry.tag,
+      hash: createHash('sha256')
         .update(await readFile(`${drizzleDir}/${entry.tag}.sql`, 'utf8'))
         .digest('hex'),
-    ),
+      createdAt: new Date(entry.when),
+    })),
   )
 }
 
@@ -185,12 +187,12 @@ describe('migrate:status', () => {
   })
 
   it('emits clean JSON with exit code 0 when every local migration hash is applied', async () => {
-    const hashes = await localMigrationHashes()
+    const migrations = await localMigrations()
     await databaseClient().query(`TRUNCATE ${drizzleLedger}`)
-    for (const [index, hash] of hashes.entries()) {
+    for (const migration of migrations) {
       await databaseClient().query(
         `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
-        [hash, 1_700_000_000_000 + index],
+        [migration.hash, migration.createdAt.getTime()],
       )
     }
 
@@ -198,6 +200,28 @@ describe('migrate:status', () => {
 
     expect(result.exitCode).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({ pending: [], divergence: [], exitCode: 0 })
+  })
+
+  it('treats a single 0044 ledger row as the frontier for all current journal migrations', async () => {
+    const migrations = await localMigrations()
+    const baseline = migrations.find(
+      (migration) => migration.name === '0044_socios_member_evidence_resolutions',
+    )
+    expect(baseline).toBeDefined()
+    await databaseClient().query(
+      `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
+      [baseline!.hash, baseline!.createdAt.getTime()],
+    )
+
+    const result = await runStatus(['--json'])
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({
+      applied: migrations.map((migration) => migration.name),
+      pending: [],
+      divergence: [],
+      exitCode: 0,
+    })
   })
 
   it('emits only JSON with exit code 1 when local migrations are pending', async () => {
@@ -241,10 +265,12 @@ describe('migrate:status', () => {
 })
 
 describe('diffMigrations', () => {
+  const migration = (hash: string, createdAt: number) => ({ hash, createdAt: new Date(createdAt) })
+
   describe('empty applied list', () => {
     it('should mark all local migrations as pending', () => {
-      const applied: string[] = []
-      const local = ['0001_funny_eternals', '0002_stale_tyrannus']
+      const applied: Array<{ hash: string; createdAt: Date }> = []
+      const local = [migration('0001_funny_eternals', 1), migration('0002_stale_tyrannus', 2)]
       const result = diffMigrations(applied, local)
       expect(result.pending).toEqual(['0001_funny_eternals', '0002_stale_tyrannus'])
       expect(result.applied).toEqual([])
@@ -252,62 +278,42 @@ describe('diffMigrations', () => {
     })
   })
 
-  describe('partial applied list', () => {
-    it('should mark only applied as applied, remainder as pending', () => {
-      const applied = ['0000_quick_wraith']
-      const local = ['0000_quick_wraith', '0001_funny_eternals', '0002_stale_tyrannus']
+  describe('frontier semantics', () => {
+    it('should apply out-of-order journal migrations at or below the frontier', () => {
+      const applied = [migration('0044_baseline', 40)]
+      const local = [
+        migration('0043_before_baseline', 30),
+        migration('0044_baseline', 40),
+        migration('0045_out_of_order', 35),
+      ]
       const result = diffMigrations(applied, local)
-      expect(result.applied).toEqual(['0000_quick_wraith'])
-      expect(result.pending).toEqual(['0001_funny_eternals', '0002_stale_tyrannus'])
+      expect(result.applied).toEqual(['0043_before_baseline', '0044_baseline', '0045_out_of_order'])
+      expect(result.pending).toEqual([])
       expect(result.divergence).toEqual([])
     })
-  })
 
-  describe('full applied list', () => {
-    it('should have no pending or divergence when local matches applied', () => {
-      const applied = ['0000_quick_wraith', '0001_funny_eternals', '0002_stale_tyrannus']
-      const local = ['0000_quick_wraith', '0001_funny_eternals', '0002_stale_tyrannus']
+    it('should mark journal migrations above the frontier as pending', () => {
+      const applied = [migration('0001_applied', 10)]
+      const local = [migration('0001_applied', 10), migration('0002_pending', 11)]
       const result = diffMigrations(applied, local)
-      expect(result.applied).toEqual([
-        '0000_quick_wraith',
-        '0001_funny_eternals',
-        '0002_stale_tyrannus',
-      ])
-      expect(result.pending).toEqual([])
+      expect(result.applied).toEqual(['0001_applied'])
+      expect(result.pending).toEqual(['0002_pending'])
       expect(result.divergence).toEqual([])
     })
   })
 
   describe('drift: DB row missing from filesystem', () => {
     it('should mark DB-only migration as divergence', () => {
-      const applied = ['0000_quick_wraith', '0001_funny_eternals', '0099_ghost_migration']
-      const local = ['0000_quick_wraith', '0001_funny_eternals']
+      const applied = [
+        migration('0000_quick_wraith', 1),
+        migration('0001_funny_eternals', 2),
+        migration('0099_ghost_migration', 3),
+      ]
+      const local = [migration('0000_quick_wraith', 1), migration('0001_funny_eternals', 2)]
       const result = diffMigrations(applied, local)
       expect(result.applied).toEqual(['0000_quick_wraith', '0001_funny_eternals'])
       expect(result.pending).toEqual([])
       expect(result.divergence).toEqual(['0099_ghost_migration'])
-    })
-  })
-
-  describe('pending: filesystem entry not in DB', () => {
-    it('should mark filesystem-only migration as pending', () => {
-      const applied = ['0000_quick_wraith']
-      const local = ['0000_quick_wraith', '0001_funny_eternals', '0002_stale_tyrannus']
-      const result = diffMigrations(applied, local)
-      expect(result.applied).toEqual(['0000_quick_wraith'])
-      expect(result.pending).toEqual(['0001_funny_eternals', '0002_stale_tyrannus'])
-      expect(result.divergence).toEqual([])
-    })
-  })
-
-  describe('symmetry property', () => {
-    it('applied ∪ pending ∪ divergence should equal applied ∪ local', () => {
-      const applied = ['0000_quick_wraith', '0001_funny_eternals']
-      const local = ['0000_quick_wraith', '0002_stale_tyrannus']
-      const result = diffMigrations(applied, local)
-      const all = [...result.applied, ...result.pending, ...result.divergence].sort()
-      const union = [...new Set([...applied, ...local])].sort()
-      expect(all).toEqual(union)
     })
   })
 })
