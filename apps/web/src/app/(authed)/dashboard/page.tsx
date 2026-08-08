@@ -5,6 +5,9 @@ import { useAuth } from '@/lib/use-auth'
 import { getOperationalSnapshot } from '@/lib/api/operations'
 import { MetricCard } from '@/components/cards/MetricCard'
 import { StatusBadge, type StatusBadgeKind } from '@/components/cards/StatusBadge'
+import { NotificationSummary } from '@/components/dashboard/NotificationSummary'
+import { SociosSummary } from '@/components/dashboard/SociosSummary'
+import { WorkspaceCards } from '@/components/dashboard/WorkspaceCards'
 
 /**
  * Dashboard landing page (`/dashboard`) — PR 8a.3.
@@ -88,6 +91,12 @@ export default function DashboardPage() {
           Resumen operativo del club. Las tarjetas se actualizan automáticamente cada 30 segundos.
         </p>
       </header>
+
+      {user ? <WorkspaceCards role={user.role} /> : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SociosSummary />
+        <NotificationSummary />
+      </div>
 
       <section
         aria-label="Readiness"

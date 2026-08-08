@@ -1180,6 +1180,14 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
               },
             }
           },
+          groupBy: (_column: unknown) => {
+            const counts = new Map<string, number>()
+            for (const row of getRows(realTname)) {
+              const estado = String((row as Record<string, unknown>)['estado'])
+              counts.set(estado, (counts.get(estado) ?? 0) + 1)
+            }
+            return Promise.resolve([...counts].map(([estado, n]) => ({ estado, n })))
+          },
           limit: (n: number) => {
             const resolveAll = (offset: number): Promise<unknown[]> => {
               const rows = getRows(realTname)
