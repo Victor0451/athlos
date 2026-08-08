@@ -35,6 +35,8 @@ const getFreshnessMock = vi.fn()
 const getSchedulerHealthMock = vi.fn()
 const getRecentRunsMock = vi.fn()
 const getOperationalSnapshotMock = vi.fn()
+const getSociosAggregateMock = vi.fn()
+const getNotificationsMock = vi.fn()
 
 vi.mock('@/lib/api/health', () => ({
   getHealth: (...args: unknown[]) => getHealthMock(...args),
@@ -48,6 +50,14 @@ vi.mock('@/lib/api/scheduler', () => ({
 
 vi.mock('@/lib/api/operations', () => ({
   getOperationalSnapshot: (...args: unknown[]) => getOperationalSnapshotMock(...args),
+}))
+
+vi.mock('@/lib/api/socios', () => ({
+  getSociosAggregate: (...args: unknown[]) => getSociosAggregateMock(...args),
+}))
+
+vi.mock('@/lib/api/notifications', () => ({
+  getNotifications: (...args: unknown[]) => getNotificationsMock(...args),
 }))
 
 const useAuthMock = vi.fn()
@@ -108,6 +118,8 @@ describe('DashboardPage', () => {
     getSchedulerHealthMock.mockReset()
     getRecentRunsMock.mockReset()
     getOperationalSnapshotMock.mockReset()
+    getSociosAggregateMock.mockReset()
+    getNotificationsMock.mockReset()
     useAuthMock.mockReset()
 
     // Default: ADMIN user with healthy responses.
@@ -236,6 +248,20 @@ describe('DashboardPage', () => {
         ],
       },
     })
+    getSociosAggregateMock.mockResolvedValue({ activos: 12, suspendidos: 1, baja: 2, total: 15 })
+    getNotificationsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'notification-1',
+          body: 'La cuota vence mañana.',
+          status: 'pending',
+        },
+      ],
+      page: 1,
+      limit: 20,
+      total: 1,
+      has_more: false,
+    })
   })
 
   afterEach(() => {
@@ -333,5 +359,61 @@ describe('DashboardPage', () => {
     expect(screen.getAllByTestId(/attention-run-/)).toHaveLength(10)
     expect(screen.queryByTestId('attention-run-attention-10')).not.toBeInTheDocument()
     expect(screen.queryByText(/raw exception/i)).not.toBeInTheDocument()
+  })
+
+  it.each(['TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
+    'keeps workspace cards usable without requesting the ADMIN snapshot for %s',
+    async (role) => {
+      useAuthMock.mockReturnValue({
+        ...makeOperadorUser(),
+        user: { ...makeOperadorUser().user, role },
+      })
+      renderDashboard()
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Resumen de socios')).toHaveTextContent('15 socios')
+      })
+      expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
+      expect(screen.getByRole('link', { name: /cuenta corriente/i })).toHaveAttribute(
+        'href',
+        '/ctacte',
+      )
+      expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+      expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
+    },
+  )
+
+  it('shows an independent aggregate loading state while empty notifications leave cards usable', async () => {
+    getSociosAggregateMock.mockImplementation(() => new Promise(() => undefined))
+    getNotificationsMock.mockResolvedValue({
+      items: [],
+      page: 1,
+      limit: 20,
+      total: 0,
+      has_more: false,
+    })
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderDashboard()
+
+    expect(screen.getByText(/cargando resumen de socios/i)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByLabelText('Notificaciones')).toHaveTextContent(
+        'No hay notificaciones pendientes.',
+      )
+    })
+    expect(screen.getByRole('link', { name: /padrones/i })).toHaveAttribute('href', '/padrones')
+  })
+
+  it('shows a safe aggregate error without hiding notification and workspace regions', async () => {
+    getSociosAggregateMock.mockRejectedValue(new Error('raw backend detail'))
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderDashboard()
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert', { name: /resumen de socios/i })).toBeInTheDocument(),
+    )
+    expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+    expect(screen.queryByText(/raw backend detail/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /socios/i })).toBeInTheDocument()
   })
 })

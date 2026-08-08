@@ -102,6 +102,34 @@ describe('GET /api/v1/socios', () => {
       await app.close()
     }
   })
+
+  it('denies the aggregate to an anonymous request', async () => {
+    const { app } = await bootstrap()
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/socios?aggregate=1' })
+      expect(res.statusCode).toBe(401)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it.each(['ADMIN', 'TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
+    'returns the aggregate for an authenticated %s',
+    async (role) => {
+      const { app } = await bootstrap()
+      try {
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/v1/socios?aggregate=1',
+          headers: { authorization: `Bearer ${bearer(role)}` },
+        })
+        expect(res.statusCode).toBe(200)
+        expect(res.json()).toEqual({ activos: 0, suspendidos: 0, baja: 0, total: 0 })
+      } finally {
+        await app.close()
+      }
+    },
+  )
 })
 
 describe('GET /api/v1/socios/:id', () => {
