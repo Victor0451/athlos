@@ -28,8 +28,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Public and Truthful Data Foundation
 
-- [ ] 1.1 **RED U1:** add `apps/web/src/app/page.test.tsx` for landing, sole primary `/login`, and no metrics/member/scheduler/status; run U1 and observe failure.
-- [ ] 1.2 **GREEN/REFACTOR U1:** update `apps/web/src/app/page.tsx` minimally; rerun U1 and browser check.
+- [x] 1.1 **RED U1:** add `apps/web/src/app/page.test.tsx` for landing, sole primary `/login`, and no metrics/member/scheduler/status; run U1 and observe failure.
+- [x] 1.2 **GREEN/REFACTOR U1:** update `apps/web/src/app/page.tsx` minimally; rerun U1 and browser check.
 - [ ] 1.3 **RED U2:** extend `apps/api/src/routes/socios.test.ts`: anonymous aggregate denial; all roles succeed; observe failure.
 - [ ] 1.4 **GREEN/REFACTOR U2:** preserve the existing `requireAuth()` aggregate gate; pass API test before consuming it.
 - [ ] 1.5 **RED U2:** add dashboard tests for independent loading/empty/error, notifications, aggregate, and no invented totals; observe failure.
