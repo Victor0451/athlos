@@ -1,21 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * Dashboard page tests (TASK-016, PR 8a.3).
- *
  * Covers `web-frontend/spec.md` Dashboard Cards scenarios:
- *   - API Health card shows status / version / uptime from /health
- *   - Master Counts card shows row counts from /api/v1/freshness
- *   - Scheduler Status + Recent Runs cards render for ADMIN only
- *   - Non-ADMIN operators do NOT see the scheduler cards
- *   - All cards auto-refresh every 30 seconds (verified by passing
- *     `refetchInterval: 30_000` to the queries — we don't need to
- *     fake time)
  *
  * We mock the API + auth modules (no fetch in the test) and provide
- * a fresh `QueryClient` per test so the cache state is isolated.
+ * a fresh QueryClient per test so the cache state is isolated.
  */
 
 const replaceMock = vi.fn()
@@ -274,91 +265,34 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: /dashboard/i, level: 1 })).toBeInTheDocument()
   })
 
-  it('renders DB and schema readiness from the operational snapshot', async () => {
-    renderDashboard()
-    await waitFor(() => {
-      expect(screen.getByText('Operativa')).toBeInTheDocument()
-    })
-    const apiCard = screen.getByTestId('dashboard-health-card')
-    expect(within(apiCard).getByRole('status', { name: /operativo/i })).toBeInTheDocument()
-    expect(within(apiCard).getByText('Schema')).toBeInTheDocument()
-  })
-
-  it('renders the Master Counts card with the row counts from /api/v1/freshness', async () => {
-    renderDashboard()
-    await waitFor(() => {
-      expect(screen.getByText('socios')).toBeInTheDocument()
-    })
-    expect(screen.getByText('16.383')).toBeInTheDocument()
-  })
-
-  it('renders the Scheduler Status card for ADMIN', async () => {
+  it('keeps U2 regions while omitting legacy operational telemetry for ADMIN', async () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     renderDashboard()
     await waitFor(() => {
-      expect(screen.getByTestId('scheduler-job-scheduled-import')).toBeInTheDocument()
+      expect(screen.getByLabelText('Resumen de socios')).toHaveTextContent('15 socios')
     })
-  })
-
-  it('renders the Recent Runs card for ADMIN', async () => {
-    useAuthMock.mockReturnValue(makeAdminUser())
-    renderDashboard()
-    await waitFor(() => {
-      expect(screen.getByTestId('attention-run-run-1')).toBeInTheDocument()
-    })
-  })
-
-  it('hides the Scheduler Status + Recent Runs cards for non-ADMIN operators', async () => {
-    useAuthMock.mockReturnValue(makeOperadorUser())
-    renderDashboard()
-    await act(async () => {})
+    expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
+    expect(screen.queryByLabelText('Readiness')).not.toBeInTheDocument()
+    expect(screen.queryByText('DB')).not.toBeInTheDocument()
+    expect(screen.queryByText('Schema')).not.toBeInTheDocument()
+    expect(screen.queryByText(/tablas maestras/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/scheduler/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/corridas recientes/i)).not.toBeInTheDocument()
     expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('dashboard-scheduler-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('dashboard-recent-runs-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('dashboard-admin-section')).not.toBeInTheDocument()
   })
 
-  it('uses one operational snapshot query on mount and every 30 seconds', async () => {
+  it('does not request the snapshot after 30 seconds for ADMIN', async () => {
     vi.useFakeTimers()
     renderDashboard()
 
     await act(async () => {})
-    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
+    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000)
     })
-    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(2)
-    vi.useRealTimers()
-  })
-
-  it('renders independent snapshot signals and caps safe attention rows at ten', async () => {
-    getOperationalSnapshotMock.mockResolvedValueOnce({
-      readiness: { overall: 'unavailable', db: 'ready', schema: 'unavailable' },
-      freshness: { available: false, items: [] },
-      jobs: { available: false, items: [] },
-      attention: {
-        available: true,
-        items: Array.from({ length: 11 }, (_, index) => ({
-          id: `attention-${index}`,
-          jobName: `job-${index}`,
-          status: 'failed',
-          startedAt: '2026-06-29T11:00:00.000Z',
-          durationMs: null,
-          reason: { code: 'EXECUTION_FAILED', message: 'Execution failed safely.' },
-        })),
-      },
-    })
-    renderDashboard()
-
-    await waitFor(() => expect(screen.getByTestId('attention-run-attention-0')).toBeInTheDocument())
-    expect(screen.getByText('DB')).toBeInTheDocument()
-    expect(screen.getByText('Schema')).toBeInTheDocument()
-    expect(screen.getByText(/sin datos de frescura/i)).toBeInTheDocument()
-    expect(screen.getByText(/sin datos de trabajos/i)).toBeInTheDocument()
-    expect(screen.getAllByTestId(/attention-run-/)).toHaveLength(10)
-    expect(screen.queryByTestId('attention-run-attention-10')).not.toBeInTheDocument()
-    expect(screen.queryByText(/raw exception/i)).not.toBeInTheDocument()
+    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
   })
 
   it.each(['TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
