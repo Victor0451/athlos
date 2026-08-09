@@ -48,8 +48,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Personal Boundary
 
-- [ ] 3.1 **RED U4:** create account/page tests for all roles’ menu actions, excluded ADMIN settings, `getMe`, read-only preferences (no write/editor), password success/retry, and logout-to-`/login`.
-- [ ] 3.2 **GREEN/REFACTOR U4:** create `app/(authed)/account/{page.tsx,password/page.tsx,preferences/page.tsx}` and `components/layout/PersonalMenu.tsx`; update `Topbar.tsx` to use it, `lib/api/auth.ts` only as existing contract; retain in-menu `useAuth().logout`.
+- [x] 3.1 **RED U4:** create account/page tests for all roles’ menu actions, excluded ADMIN settings, `getMe`, read-only preferences (no write/editor), password success/retry, and logout-to-`/login`.
+- [x] 3.2 **GREEN/REFACTOR U4:** create `app/(authed)/account/{page.tsx,password/page.tsx,preferences/page.tsx}` and `components/layout/PersonalMenu.tsx`; update `Topbar.tsx` to use it, `lib/api/auth.ts` only as existing contract; retain in-menu `useAuth().logout`.
 
 ## Phase 4: Accessible Mobile Shell and Final Gates
 
