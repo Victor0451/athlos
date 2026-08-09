@@ -75,14 +75,18 @@ describe('Sidebar', () => {
     expect(within(nav).getByRole('link', { name: /padrones/i })).toBeInTheDocument()
   })
 
-  it('shows Scheduler, Approvals, Settings and Gastos for ADMIN', () => {
+  it('groups ADMIN operations destinations without changing their scheduler target or active state', () => {
     seedUser('ADMIN')
+    mockPathname = '/admin/scheduler/daily-summary'
     render(<Sidebar />)
-    const nav = screen.getByRole('navigation')
-    expect(within(nav).getByRole('link', { name: /scheduler/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /settings/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
+    const operations = screen.getByRole('region', { name: 'Operations' })
+    const scheduler = within(operations).getByRole('link', { name: /scheduler/i })
+
+    expect(scheduler).toHaveAttribute('href', '/admin/scheduler')
+    expect(scheduler).toHaveAttribute('aria-current', 'page')
+    expect(within(operations).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
+    expect(within(operations).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument()
   })
 
   it('hides Scheduler, Approvals, Settings and Gastos for non-ADMIN roles', () => {
@@ -93,6 +97,7 @@ describe('Sidebar', () => {
     expect(within(nav).queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /gastos/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Operations' })).not.toBeInTheDocument()
   })
 
   it('hides Scheduler, Approvals and Settings for TESORERO and OPERADOR too', () => {
