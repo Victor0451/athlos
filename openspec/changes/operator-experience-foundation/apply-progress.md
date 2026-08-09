@@ -35,7 +35,7 @@
 
 - [x] 1.1–1.6 U1/U2 remain accepted.
 - [x] 2.1–2.2 U3a1 telemetry cleanup is accepted: dashboard page/test changes total 360 lines (16 additions, 344 deletions), meeting the 360-line cap.
-- [ ] 2.3–2.4 U3a2 ADMIN attention remains unstarted.
+- [x] 2.3–2.4 U3a2 ADMIN attention is complete: the bounded safe-link region refreshes every 30 seconds for ADMIN only, makes zero non-ADMIN snapshot requests, and exposes no controls or raw-error output.
 - [ ] 2.5–2.6 U3b navigation remains unstarted.
 - [ ] 3.1–4.3 U4/U5 remain pending.
 
@@ -43,8 +43,8 @@
 
 - Delivery strategy: ask-on-risk (split approved)
 - Chain strategy: stacked-to-main
-- U3a1 is complete. PR4 U3a2 may start only after U3a1 merges to `main`; PR5 U3b follows U3a2.
-- This rescope records U3a1 delivery success only; U3a2 and U3b remain incomplete.
+- U3a1 and PR4/U3a2 are complete; PR5/U3b follows U3a2 and remains pending.
+- This rescope records U3a1 and U3a2 delivery success only; U3b remains incomplete.
 
 ## U3a1 Telemetry Cleanup Evidence
 
@@ -62,9 +62,21 @@
 | 2.1 | `apps/web/src/app/(authed)/dashboard/page.test.tsx` | Component integration | 1 file / 10 tests passed | Focused command exited 1: ADMIN snapshot was called once | N/A — RED-only task | ADMIN proves no snapshot or telemetry; non-ADMIN proves no snapshot while U2 regions remain | N/A — test task |
 | 2.2 | `apps/web/src/app/(authed)/dashboard/page.test.tsx` | Component integration | Reused 1 file / 10 tests | Reused 2.1 failure | Focused command exited 0: 1 file / 8 tests passed | ADMIN immediate and 30-second paths plus the table-driven TESORERO/OPERADOR/CONSULTA paths prove zero snapshot requests while retaining U2 cards | Removed the redundant standalone OPERADOR duplicate and its local timer reset; retained the shared setup documentation; focused test, typecheck, and Prettier remained green |
 
+### U3a2 ADMIN Attention Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command and exact result | `pnpm --filter '@athlos/web' exec vitest run 'src/app/(authed)/dashboard/page.test.tsx' 'src/components/dashboard/OperationsAttention.test.tsx' --config vitest.config.mts` exited 0: 2 files / 12 tests passed. |
+| Runtime harness command/scenario and exact result | N/A — authenticated browser credentials were not supplied; RTL proves ADMIN render/refetch and zero non-ADMIN snapshot requests. |
+| Typecheck | `pnpm --filter '@athlos/web' typecheck` exited 0. |
+| Prettier | `pnpm exec prettier --check 'apps/web/src/app/(authed)/dashboard/page.tsx' 'apps/web/src/app/(authed)/dashboard/page.test.tsx' 'apps/web/src/components/dashboard/OperationsAttention.tsx' 'apps/web/src/components/dashboard/OperationsAttention.test.tsx' 'openspec/changes/operator-experience-foundation/tasks.md'` exited 0. |
+| Diff check / cap | `git diff --check` exited 0. U3a2 implementation files total 170 additions + 5 deletions = 175 changed lines; with the two U3a2 task-checkbox lines, the worktree total is 172 additions + 7 deletions = 179, within the 180-line cap. |
+| Rollback boundary | `apps/web/src/components/dashboard/{OperationsAttention.tsx,OperationsAttention.test.tsx}` plus U3a2 changes in `apps/web/src/app/(authed)/dashboard/{page.tsx,page.test.tsx}`; task-checkbox lines are independently revertible. |
+| Runtime token | `sha256:89b89b7c2e043b0efcf6b17f71a362864a2cc565ae164c06a0f35046322b0dea` |
+
 ### Validation
 
 - `pnpm --filter '@athlos/web' typecheck` exited 0.
 - `pnpm exec prettier --check "apps/web/src/app/(authed)/dashboard/page.tsx" "apps/web/src/app/(authed)/dashboard/page.test.tsx"` exited 0.
-- U3a2 `OperationsAttention` source/test and page integration remain absent; U3a2 and U3b checkboxes remain unchecked.
-- The focused suite, typecheck, Prettier, and `git diff --check` passed. No deviation from the U3a1 design; its 360-line cap is met.
+- U3a2 `OperationsAttention` source/test and minimal page integration are complete; its 2.3–2.4 task checkboxes are checked, while U3b remains unchecked.
+- U3a1 and U3a2 focused suites, typecheck, Prettier, and `git diff --check` passed. No deviation from the U3a1/U3a2 design; their 360-line and 180-line caps are met.
