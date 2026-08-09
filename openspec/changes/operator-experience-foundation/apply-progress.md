@@ -36,15 +36,15 @@
 - [x] 1.1–1.6 U1/U2 remain accepted.
 - [x] 2.1–2.2 U3a1 telemetry cleanup is accepted: dashboard page/test changes total 360 lines (16 additions, 344 deletions), meeting the 360-line cap.
 - [x] 2.3–2.4 U3a2 ADMIN attention is complete: the bounded safe-link region refreshes every 30 seconds for ADMIN only, makes zero non-ADMIN snapshot requests, and exposes no controls or raw-error output.
-- [ ] 2.5–2.6 U3b navigation remains unstarted.
+- [x] 2.5–2.6 U3b navigation is complete: ADMIN links are grouped under Operations through the shared navigation model; scheduler targets and active accent remain unchanged, and non-ADMIN has no Operations group.
 - [ ] 3.1–4.3 U4/U5 remain pending.
 
 ## Workload / Chain Boundary
 
 - Delivery strategy: ask-on-risk (split approved)
 - Chain strategy: stacked-to-main
-- U3a1 and PR4/U3a2 are complete; PR5/U3b follows U3a2 and remains pending.
-- This rescope records U3a1 and U3a2 delivery success only; U3b remains incomplete.
+- U3a1, PR4/U3a2, and PR5/U3b are complete; U4 follows U3b.
+- This rescope records U3a1, U3a2, and U3b delivery success; U4/U5 remain incomplete.
 
 ## U3a1 Telemetry Cleanup Evidence
 
@@ -78,5 +78,24 @@
 
 - `pnpm --filter '@athlos/web' typecheck` exited 0.
 - `pnpm exec prettier --check "apps/web/src/app/(authed)/dashboard/page.tsx" "apps/web/src/app/(authed)/dashboard/page.test.tsx"` exited 0.
-- U3a2 `OperationsAttention` source/test and minimal page integration are complete; its 2.3–2.4 task checkboxes are checked, while U3b remains unchecked.
+- U3a2 `OperationsAttention` source/test and minimal page integration are complete; its 2.3–2.4 task checkboxes are checked.
 - U3a1 and U3a2 focused suites, typecheck, Prettier, and `git diff --check` passed. No deviation from the U3a1/U3a2 design; their 360-line and 180-line caps are met.
+
+### U3b Operations Navigation Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command and exact result | `pnpm --filter '@athlos/web' exec vitest run 'src/components/layout/Sidebar.test.tsx' --config vitest.config.mts` exited 0: 1 file / 8 tests passed. |
+| Runtime harness command/scenario and exact result | N/A — no authenticated browser credentials were supplied; RTL proves ADMIN Operations grouping, scheduler route identity, active state, and non-ADMIN absence. |
+| Typecheck | `pnpm --filter '@athlos/web' typecheck` exited 0. |
+| Prettier | `pnpm exec prettier --check "apps/web/src/lib/navigation.ts" "apps/web/src/components/layout/Sidebar.tsx" "apps/web/src/components/layout/Sidebar.test.tsx"` exited 0. |
+| Diff check / cap | `git diff --check` exited 0. U3b implementation files total 81 additions + 51 deletions = 132 changed lines; the two task-checkbox lines bring the U3b delivery total to 136, 14 below the 150-line cap. |
+| Rollback boundary | Revert `apps/web/src/lib/navigation.ts`, `apps/web/src/components/layout/Sidebar.tsx`, and `apps/web/src/components/layout/Sidebar.test.tsx`; revert the two U3b task-checkbox lines independently. |
+| Runtime token | `sha256:530006fd06e5f563ed8917116657b769236f5e32cb9bf60fbd7452d9ade2474f` |
+
+### U3b TDD Cycle Evidence
+
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|
+| 2.5 | Component integration | 1 file / 8 tests passed | Operations landmark absent | N/A — RED-only task | ADMIN and CONSULTA permission paths | N/A — test task |
+| 2.6 | Component integration | Reused baseline | Reused 2.5 failure | 1 file / 8 tests passed | Group, scheduler route identity, active state, and non-ADMIN absence | Removed the reusable list abstraction; the shared `navigation.ts` model remains the single permission source. |
