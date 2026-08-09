@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+
 /**
  * Topbar tests (TASK-010 + PR 8d integration).
  *
@@ -99,7 +101,7 @@ describe('Topbar', () => {
     expect(screen.getByTestId('topbar-role-badge')).toHaveTextContent('ADMIN')
   })
 
-  it('exposes a "Salir" button that calls useAuth().logout on click', async () => {
+  it('exposes the personal-menu trigger for an authenticated operator', async () => {
     authState.user = {
       operator_id: 'op-7',
       role: 'TESORERO',
@@ -112,13 +114,8 @@ describe('Topbar', () => {
     const user = userEvent.setup()
     render(<Topbar />)
 
-    const logoutButton = screen.getByRole('button', { name: /salir/i })
-    expect(logoutButton).toBeInTheDocument()
-
-    await user.click(logoutButton)
-
-    expect(logoutMock).toHaveBeenCalledTimes(1)
-    expect(authState.user).toBeNull()
+    await user.click(screen.getByRole('button', { name: /menú personal/i }))
+    expect(screen.getByRole('link', { name: /mi cuenta/i })).toHaveAttribute('href', '/account')
   })
 
   it('renders inside a banner landmark with the Athlos brand group', () => {
