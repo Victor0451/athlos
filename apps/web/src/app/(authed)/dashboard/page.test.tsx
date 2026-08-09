@@ -265,7 +265,7 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: /dashboard/i, level: 1 })).toBeInTheDocument()
   })
 
-  it('keeps U2 regions while omitting legacy operational telemetry for ADMIN', async () => {
+  it('keeps U2 regions while showing safe operational attention for ADMIN', async () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     renderDashboard()
     await waitFor(() => {
@@ -273,26 +273,32 @@ describe('DashboardPage', () => {
     })
     expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /scheduled-import/i })).toHaveAttribute(
+        'href',
+        '/admin/scheduler/scheduled-import',
+      )
+    })
     expect(screen.queryByLabelText('Readiness')).not.toBeInTheDocument()
     expect(screen.queryByText('DB')).not.toBeInTheDocument()
     expect(screen.queryByText('Schema')).not.toBeInTheDocument()
     expect(screen.queryByText(/tablas maestras/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/scheduler/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/corridas recientes/i)).not.toBeInTheDocument()
-    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
   })
 
-  it('does not request the snapshot after 30 seconds for ADMIN', async () => {
+  it('refreshes the ADMIN snapshot after 30 seconds', async () => {
     vi.useFakeTimers()
     renderDashboard()
 
     await act(async () => {})
-    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000)
     })
-    expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(2)
   })
 
   it.each(['TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
