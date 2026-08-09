@@ -41,8 +41,8 @@ Chain strategy: stacked-to-main
 
 - [x] 2.1 **RED U3a1:** extend `apps/web/src/app/(authed)/dashboard/page.test.tsx` to prove detailed task telemetry is absent while U2 regions remain; run the U3a1 command and observe failure. Depends on U2.
 - [x] 2.2 **GREEN/REFACTOR U3a1:** update only `apps/web/src/app/(authed)/dashboard/{page.tsx,page.test.tsx}` to remove rendered detailed telemetry. Pass U3a1; ~296 lines; revert only these two files.
-- [ ] 2.3 **RED U3a2:** add `apps/web/src/components/dashboard/OperationsAttention.test.tsx` and extend `page.test.tsx` for ADMIN-only ≤10 safe links, fake 30-second refresh, no controls, and zero non-ADMIN snapshot requests. Depends on U3a1 main.
-- [ ] 2.4 **GREEN/REFACTOR U3a2:** create `OperationsAttention.tsx` and minimally integrate it in `page.tsx`. Pass U3a2; ~124 lines; revert the component/test and only U3a2 page integration.
+- [x] 2.3 **RED U3a2:** add `apps/web/src/components/dashboard/OperationsAttention.test.tsx` and extend `page.test.tsx` for ADMIN-only ≤10 safe links, fake 30-second refresh, no controls, and zero non-ADMIN snapshot requests. Depends on U3a1 main.
+- [x] 2.4 **GREEN/REFACTOR U3a2:** create `OperationsAttention.tsx` and minimally integrate it in `page.tsx`. Pass U3a2; ~124 lines; revert the component/test and only U3a2 page integration.
 - [ ] 2.5 **RED U3b:** add `apps/web/src/components/layout/Sidebar.test.tsx` for ADMIN Operations grouping, active accent, unchanged `/admin/scheduler` targets, and no non-ADMIN group. Depends on U3a2 main.
 - [ ] 2.6 **GREEN/REFACTOR U3b:** create `apps/web/src/lib/navigation.ts`; update `Sidebar.tsx` to group existing ADMIN links. Pass U3b; ~95 lines; revert only its three files.
 

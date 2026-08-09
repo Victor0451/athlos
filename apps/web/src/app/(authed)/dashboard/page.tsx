@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/lib/use-auth'
 import { NotificationSummary } from '@/components/dashboard/NotificationSummary'
+import { OperationsAttention } from '@/components/dashboard/OperationsAttention'
 import { SociosSummary } from '@/components/dashboard/SociosSummary'
 import { WorkspaceCards } from '@/components/dashboard/WorkspaceCards'
 
@@ -20,6 +21,7 @@ export default function DashboardPage() {
         <SociosSummary />
         <NotificationSummary />
       </div>
+      <OperationsAttention isAdmin={user?.role === 'ADMIN'} />
     </div>
   )
 }
