@@ -2,6 +2,7 @@
 
 import { useAuth } from '@/lib/use-auth'
 import NotificationBell from '@/components/notifications/NotificationBell'
+import PersonalMenu from './PersonalMenu'
 
 /**
  * Topbar — the dark chrome strip at the top of every authed page.
@@ -25,7 +26,7 @@ const ROLE_LABEL: Record<'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA', string>
 }
 
 export default function Topbar() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
 
   return (
     <header
@@ -58,16 +59,7 @@ export default function Topbar() {
             {ROLE_LABEL[user.role]}
           </span>
           <NotificationBell />
-          <button
-            type="button"
-            onClick={() => {
-              void logout()
-            }}
-            className="rounded-md bg-night-800 px-3 py-1 text-sm font-medium text-white transition-colors duration-fast hover:bg-night-900 hover:text-accent"
-            data-testid="topbar-logout"
-          >
-            Salir
-          </button>
+          <PersonalMenu />
         </div>
       ) : (
         <span className="text-sm text-ink-300">Sin sesión</span>
