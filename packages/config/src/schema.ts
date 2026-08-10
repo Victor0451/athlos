@@ -28,6 +28,7 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   FROM_ADDRESS: z.string().email().default('noreply@gorriti.app'),
+  IMPLEMENTATION_CONTACT_RECIPIENT: z.string().email().optional(),
   // Scheduler cron expressions (PR 6a). The defaults match the
   // scheduler-jobs spec §"Cron Configuration" — change here and the
   // scheduler picks them up on next boot. `RECONCILIATION_CRON` is
@@ -71,6 +72,9 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): Env {
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')
     throw new Error(`Environment validation failed:\n${issues}`)
+  }
+  if (result.data.NODE_ENV !== 'test' && !result.data.IMPLEMENTATION_CONTACT_RECIPIENT) {
+    throw new Error('Environment validation failed:\n  IMPLEMENTATION_CONTACT_RECIPIENT: Required')
   }
   if (result.data.NODE_ENV === 'production' || result.data.NODE_ENV === 'staging') {
     if (!fs.existsSync(result.data.LEGACY_DB_PATH)) {
