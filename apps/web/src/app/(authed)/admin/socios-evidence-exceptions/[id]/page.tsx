@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { useAuth } from '@/lib/use-auth'
 import {
   confirmSociosEvidenceClosure,
@@ -58,7 +59,7 @@ export default function SociosEvidenceExceptionDetailPage() {
   const resolution = useMutation({
     mutationFn: () => {
       const evidence = detail.data!
-      const key = crypto.randomUUID() // One opaque key per explicit confirmation attempt.
+      const key = generateOpaqueIdempotencyKey() // One opaque key per explicit confirmation attempt.
       return resolveSociosEvidenceException(
         id,
         {
@@ -131,7 +132,7 @@ export default function SociosEvidenceExceptionDetailPage() {
           fingerprint,
           resolutionSetFingerprint,
         },
-        crypto.randomUUID(),
+        generateOpaqueIdempotencyKey(),
       )
       setClosurePreview(null)
       setClosureMessage(
