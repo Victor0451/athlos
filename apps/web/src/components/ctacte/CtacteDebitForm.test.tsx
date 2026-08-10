@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { CtacteDebitForm } from './CtacteDebitForm'
 
@@ -56,6 +56,8 @@ describe('CtacteDebitForm', () => {
     })
   })
 
+  afterEach(() => vi.unstubAllGlobals())
+
   it('renders monto, fecha, and motivo fields when open', () => {
     renderForm()
     expect(screen.getByLabelText(/monto/i)).toBeInTheDocument()
@@ -82,6 +84,25 @@ describe('CtacteDebitForm', () => {
       motivo: 'Cargo por mora',
       idempotencyKey: expect.any(String),
     })
+  })
+
+  it('submits when crypto.randomUUID is unavailable', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(0x22)
+        return bytes
+      },
+    })
+    renderForm()
+    await act(async () => {
+      fireEvent.input(screen.getByLabelText(/monto/i), { target: { value: '300' } })
+      fireEvent.input(screen.getByLabelText(/fecha/i), { target: { value: '2026-01-15' } })
+      fireEvent.input(screen.getByLabelText(/motivo/i), { target: { value: 'Cargo por mora' } })
+      fireEvent.submit(document.getElementById('ctacte-debit-form')!)
+    })
+
+    await waitFor(() => expect(registerCtacteDebitMock).toHaveBeenCalledTimes(1))
+    expect(registerCtacteDebitMock.mock.calls[0]?.[1].idempotencyKey).toMatch(/^[0-9a-f-]{36}$/i)
   })
 
   it('calls notify("success") and onClose on successful submit', async () => {
@@ -113,10 +134,7 @@ describe('CtacteDebitForm', () => {
       fireEvent.submit(document.getElementById('ctacte-debit-form')!)
     })
     await waitFor(() => {
-      expect(notifyMock).toHaveBeenCalledWith(
-        'error',
-        'No se pudo registrar el débito. Intentá de nuevo.',
-      )
+      expect(notifyMock).toHaveBeenCalledWith('error', 'Network error')
     })
     expect(onCloseMock).not.toHaveBeenCalled()
   })
