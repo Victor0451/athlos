@@ -87,6 +87,49 @@ describe('InProcessScheduler — runNow', () => {
     expect(row?.finishedAt).toBeInstanceOf(Date)
   })
 
+  it('persists completed_with_review, binding metadata, then tolerates release failure', async () => {
+    vi.useFakeTimers()
+    const { standin, scheduler } = makeScheduler()
+    const lifecycle: string[] = []
+    let jobRunId = ''
+    const handler = vi.fn<JobHandler>().mockResolvedValue({
+      status: 'completed_with_review',
+      metadata: { exception_count: 2, fingerprint: 'handler-must-not-overwrite' },
+      afterCommit: async () => {
+        lifecycle.push(findRow(standin, jobRunId)?.status ?? 'missing')
+        throw new Error('release failed')
+      },
+    })
+    scheduler.schedule('socios-evidence-runtime-closure', null, handler)
+    ;({ jobRunId } = await scheduler.runNow('socios-evidence-runtime-closure', {
+      catalogBatchId: 'catalog',
+      sociosBatchId: 'socios',
+      previewId: 'preview',
+      fingerprint: 'bound-fingerprint',
+      idempotencyKey: 'key',
+      leaseOwner: 'owner',
+      leaseFence: 3,
+    }))
+    await vi.runAllTimersAsync()
+
+    const row = findRow(standin, jobRunId)
+    expect(row?.status).toBe('completed_with_review')
+    expect(row?.metadata).toMatchObject({
+      catalogBatchId: 'catalog',
+      sociosBatchId: 'socios',
+      previewId: 'preview',
+      fingerprint: 'bound-fingerprint',
+      idempotencyKey: 'key',
+      leaseOwner: 'owner',
+      leaseFence: 3,
+      exception_count: 2,
+    })
+    expect(row?.finishedAt).toBeInstanceOf(Date)
+    expect(lifecycle).toEqual(['completed_with_review'])
+    expect(handler).toHaveBeenCalledTimes(1)
+    await scheduler.stop(100)
+  })
+
   it('handler failure marks the row failed with errorMessage and increments attempt', async () => {
     const { standin, scheduler } = makeScheduler()
     const handler: JobHandler = async () => {
@@ -103,6 +146,19 @@ describe('InProcessScheduler — runNow', () => {
     expect(row?.errorMessage).toBe('boom')
     expect(row?.attempt).toBe(1)
     // Clean up: stop the scheduler so the retry timer is cleared.
+    await scheduler.stop(100)
+  })
+
+  it('retries failed handlers', async () => {
+    vi.useFakeTimers()
+    const { scheduler } = makeScheduler()
+    const handler = vi.fn<JobHandler>().mockRejectedValue(new Error('boom'))
+    scheduler.schedule('drift-detection', '*/15 * * * *', handler)
+
+    await scheduler.runNow('drift-detection')
+    await vi.advanceTimersByTimeAsync(37_000)
+
+    expect(handler).toHaveBeenCalledTimes(2)
     await scheduler.stop(100)
   })
 
@@ -156,6 +212,24 @@ describe('InProcessScheduler — concurrency guard', () => {
     // doesn't throw and the test passes — the actual row check is
     // redundant with the per-row assertions in other tests.
     expect(firstRow).toBeUndefined()
+    await scheduler.stop(100)
+  })
+})
+
+describe('InProcessScheduler — manual-only jobs', () => {
+  it('runs manual-only jobs through runNow without a cron registration', async () => {
+    const { standin, scheduler } = makeScheduler()
+    const handler: JobHandler = async () => ({ status: 'succeeded' })
+    scheduler.schedule('manual-closure', null, handler)
+    await scheduler.start()
+
+    const registration = scheduler.list()[0]
+    expect(registration?.cronExpr).toBeNull()
+    expect(registration?.cadenceMinutes).toBeNull()
+
+    const { jobRunId } = await scheduler.runNow('manual-closure')
+    await flush()
+    expect(findRow(standin, jobRunId)?.status).toBe('succeeded')
     await scheduler.stop(100)
   })
 })

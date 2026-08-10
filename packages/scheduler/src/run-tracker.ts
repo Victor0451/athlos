@@ -1,6 +1,16 @@
-import { and, desc, eq, gte, type SQL } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, sql, type SQL } from 'drizzle-orm'
 import { jobRuns, type Db, type JobRun, type JobRunStatus, type JobTrigger } from '@athlos/db'
 import type { RunFinishInput, RunStartInput } from './types.ts'
+
+const BINDING_METADATA_KEYS = [
+  'catalogBatchId',
+  'sociosBatchId',
+  'previewId',
+  'fingerprint',
+  'idempotencyKey',
+  'leaseOwner',
+  'leaseFence',
+] as const
 
 /**
  * Job-run persistence layer. Every state transition in the lifecycle
@@ -72,9 +82,22 @@ export async function recordFinish(db: Db, input: RunFinishInput): Promise<JobRu
   if (input.errorMessage !== undefined) patch.errorMessage = input.errorMessage
   if (input.attempt !== undefined) patch.attempt = input.attempt
   if (input.metadata !== undefined) {
-    // Merge with whatever the row already has (a previous attempt may
-    // have written partial metadata before failing).
-    patch.metadata = input.metadata
+    const [existing] = await db
+      .select({ metadata: jobRuns.metadata })
+      .from(jobRuns)
+      .where(eq(jobRuns.id, input.jobRunId))
+    const initial: Record<string, unknown> =
+      existing?.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {}
+    const binding = Object.fromEntries(
+      BINDING_METADATA_KEYS.filter((key) => key in initial).map((key) => [key, initial[key]]),
+    )
+    // Handler result metadata adds terminal evidence but can never replace
+    // the sanitized handoff binding persisted when the job was enqueued.
+    patch.metadata = { ...input.metadata, ...binding }
   }
   const [row] = await db
     .update(jobRuns)
@@ -188,4 +211,22 @@ export async function listRuns(db: Db, filter: RunHistoryFilter): Promise<JobRun
     ? base.where(where).orderBy(desc(jobRuns.startedAt)).limit(limit)
     : base.orderBy(desc(jobRuns.startedAt)).limit(limit)
   return await q
+}
+
+const ATTENTION_STATUSES = [
+  'failed',
+  'dead_letter',
+  'cancelled',
+  'completed_with_review',
+] as const satisfies readonly JobRunStatus[]
+
+/** Returns the newest bounded set of runs that require operator attention. */
+export async function listAttentionRuns(db: Db, limit = 10): Promise<JobRun[]> {
+  const boundedLimit = Math.min(Math.max(limit, 1), 10)
+  return await db
+    .select()
+    .from(jobRuns)
+    .where(inArray(jobRuns.status, [...ATTENTION_STATUSES]))
+    .orderBy(sql`${jobRuns.startedAt} DESC NULLS LAST`, desc(jobRuns.scheduledAt), desc(jobRuns.id))
+    .limit(boundedLimit)
 }

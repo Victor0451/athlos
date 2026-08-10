@@ -17,7 +17,7 @@ const authState = vi.hoisted(() => {
       operator_id: string
       role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
       username: string
-      permissions: { can_reprint: boolean; can_anulate: boolean }
+      permissions: { can_reprint: boolean; can_anulate: boolean; data_steward: boolean }
     },
     token: null as string | null,
   }
@@ -38,12 +38,12 @@ vi.mock('next/navigation', () => ({
 
 const { default: Sidebar } = await import('./Sidebar.tsx')
 
-function seedUser(role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA') {
+function seedUser(role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA', dataSteward = false) {
   authState.user = {
     operator_id: 'op-1',
     role,
     username: 'op_user',
-    permissions: { can_reprint: true, can_anulate: false },
+    permissions: { can_reprint: true, can_anulate: false, data_steward: dataSteward },
   }
   authState.token = 'seeded.token'
 }
@@ -75,14 +75,18 @@ describe('Sidebar', () => {
     expect(within(nav).getByRole('link', { name: /padrones/i })).toBeInTheDocument()
   })
 
-  it('shows Scheduler, Approvals, Settings and Gastos for ADMIN', () => {
+  it('groups ADMIN operations destinations without changing their scheduler target or active state', () => {
     seedUser('ADMIN')
+    mockPathname = '/admin/scheduler/daily-summary'
     render(<Sidebar />)
-    const nav = screen.getByRole('navigation')
-    expect(within(nav).getByRole('link', { name: /scheduler/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /settings/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
+    const operations = screen.getByRole('region', { name: 'Operations' })
+    const scheduler = within(operations).getByRole('link', { name: /scheduler/i })
+
+    expect(scheduler).toHaveAttribute('href', '/admin/scheduler')
+    expect(scheduler).toHaveAttribute('aria-current', 'page')
+    expect(within(operations).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
+    expect(within(operations).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument()
   })
 
   it('hides Scheduler, Approvals, Settings and Gastos for non-ADMIN roles', () => {
@@ -93,6 +97,7 @@ describe('Sidebar', () => {
     expect(within(nav).queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /gastos/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Operations' })).not.toBeInTheDocument()
   })
 
   it('hides Scheduler, Approvals and Settings for TESORERO and OPERADOR too', () => {
@@ -107,11 +112,49 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
   })
 
+  it('shows Socios exceptions only to ADMIN or a granted data steward', () => {
+    seedUser('OPERADOR', true)
+    let view = render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /socios: excepciones/i })).toBeInTheDocument()
+
+    authState.user = {
+      ...authState.user!,
+      permissions: { ...authState.user!.permissions, data_steward: false },
+    }
+    view.unmount()
+    view = render(<Sidebar />)
+    expect(screen.queryByRole('link', { name: /socios: excepciones/i })).not.toBeInTheDocument()
+
+    seedUser('ADMIN')
+    view.unmount()
+    render(<Sidebar />)
+    expect(screen.getAllByRole('link', { name: /socios: excepciones/i })).not.toHaveLength(0)
+  })
+
+  it('shows membership types only to ADMIN or a granted data steward', () => {
+    seedUser('OPERADOR', true)
+    let view = render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /tipos de afiliación/i })).toBeInTheDocument()
+
+    authState.user = {
+      ...authState.user!,
+      permissions: { ...authState.user!.permissions, data_steward: false },
+    }
+    view.unmount()
+    view = render(<Sidebar />)
+    expect(screen.queryByRole('link', { name: /tipos de afiliación/i })).not.toBeInTheDocument()
+
+    seedUser('ADMIN')
+    view.unmount()
+    render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /tipos de afiliación/i })).toBeInTheDocument()
+  })
+
   it('marks the active item with aria-current="page"', () => {
     seedUser('ADMIN')
     mockPathname = '/socios'
     render(<Sidebar />)
-    const activeLink = screen.getByRole('link', { name: /socios/i })
+    const activeLink = screen.getByRole('link', { name: /^socios$/i })
     expect(activeLink).toHaveAttribute('aria-current', 'page')
   })
 })

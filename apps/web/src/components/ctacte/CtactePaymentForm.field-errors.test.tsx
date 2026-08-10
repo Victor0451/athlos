@@ -45,12 +45,7 @@ function apiErrorWith(details: unknown) {
 
 function renderForm() {
   return render(
-    <CtactePaymentForm
-      open
-      socioId={SOCIO_ID}
-      onSuccess={onSuccessMock}
-      onClose={onCloseMock}
-    />,
+    <CtactePaymentForm open socioId={SOCIO_ID} onSuccess={onSuccessMock} onClose={onCloseMock} />,
   )
 }
 
@@ -94,9 +89,7 @@ describe('CtactePaymentForm R4 — server ApiError.details routing', () => {
     renderForm()
     await fillAndSubmit()
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        /outside socio's relationship range/i,
-      )
+      expect(screen.getByRole('alert')).toHaveTextContent(/outside socio's relationship range/i)
     })
     expect(screen.getByLabelText(/fecha/i)).toHaveAttribute('aria-invalid', 'true')
     expect(notifyMock).toHaveBeenCalledWith('error', expect.stringMatching(/no se pudo/i))

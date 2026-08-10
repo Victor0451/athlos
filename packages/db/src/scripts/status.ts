@@ -1,64 +1,52 @@
 /**
  * migrate:status command.
  *
- * Reads __drizzle_migrations table, compares against drizzle/*.sql filesystem entries,
+ * Reads Drizzle's migration ledger, compares it against local migration files,
  * and reports applied, pending, and divergent migrations.
  *
  * Supports --json flag with Zod-validated output.
  * Exit codes: 0 (clean), 1 (pending/divergence), 2 (connection error).
  */
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import pg from 'pg'
 export { statusSchema } from './status.schema.ts'
 import { statusSchema } from './status.schema.ts'
 
 const { Pool } = pg
 
-/**
- * Pure three-set diff function.
- *
- * - applied: migrations in DB that are also in the local set
- * - pending: migrations in local but not yet applied to DB
- * - divergence: migrations applied to DB but missing from local filesystem
- */
-export function diffMigrations(
-  applied: string[],
-  local: string[],
-): { applied: string[]; pending: string[]; divergence: string[] } {
-  const appliedSet = new Set(applied)
-  const localSet = new Set(local)
+interface TimestampedMigration {
+  hash: string
+  createdAt: Date
+}
 
-  const inBoth = applied.filter((m) => localSet.has(m))
-  const onlyLocal = local.filter((m) => !appliedSet.has(m))
-  const onlyApplied = applied.filter((m) => !localSet.has(m))
+/** Pure Drizzle migrator frontier diff with ledger divergence detection. */
+export function diffMigrations(
+  applied: TimestampedMigration[],
+  local: TimestampedMigration[],
+): { applied: string[]; pending: string[]; divergence: string[] } {
+  const localHashes = new Set(local.map((migration) => migration.hash))
+  const frontier = applied.reduce(
+    (latest, migration) => Math.max(latest, migration.createdAt.getTime()),
+    Number.NEGATIVE_INFINITY,
+  )
 
   return {
-    applied: inBoth,
-    pending: onlyLocal,
-    divergence: onlyApplied,
+    applied: local
+      .filter((migration) => migration.createdAt.getTime() <= frontier)
+      .map((migration) => migration.hash),
+    pending: local
+      .filter((migration) => migration.createdAt.getTime() > frontier)
+      .map((migration) => migration.hash),
+    divergence: applied
+      .filter((migration) => !localHashes.has(migration.hash))
+      .map((migration) => migration.hash),
   }
 }
 
-/**
- * Scan drizzle/ directory for migration files.
- * Matches pattern NNNN_<adjective>_<noun>.sql (e.g., 0000_quick_wraith.sql).
- */
-async function getLocalMigrations(drizzleDir: string): Promise<string[]> {
-  const entries = await readdir(drizzleDir, { withFileTypes: true })
-  const migrations: string[] = []
-
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.sql')) {
-      // Match pattern: 4 digits underscore name .sql
-      const match = entry.name.match(/^(\d{4}_.+)\.sql$/)
-      if (match?.[1]) {
-        migrations.push(match[1])
-      }
-    }
-  }
-
-  return migrations.sort()
+interface LocalMigration extends TimestampedMigration {
+  name: string
 }
 
 interface MigrationMeta {
@@ -66,13 +54,41 @@ interface MigrationMeta {
   createdAt: Date
 }
 
+type AppliedMigration = TimestampedMigration
+
+const DRIZZLE_LEDGER = 'drizzle.__drizzle_migrations'
+const PUBLIC_LEDGER = 'public.__drizzle_migrations'
+
+class MigrationLedgerMissingError extends Error {
+  constructor() {
+    super(`migration ledger not found (checked ${DRIZZLE_LEDGER} and ${PUBLIC_LEDGER})`)
+  }
+}
+
+export function getDrizzleDir(): string {
+  return fileURLToPath(new URL('../../drizzle/', import.meta.url))
+}
+
+/** Read migration names and hashes from Drizzle's journal. */
+async function getLocalMigrations(drizzleDir: string): Promise<LocalMigration[]> {
+  const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
+    entries: Array<{ tag: string; when: number }>
+  }
+  return Promise.all(
+    journal.entries.map(async (entry) => ({
+      name: entry.tag,
+      createdAt: new Date(entry.when),
+      hash: createHash('sha256')
+        .update(await readFile(`${drizzleDir}/${entry.tag}.sql`, 'utf8'))
+        .digest('hex'),
+    })),
+  )
+}
+
 function formatDate(date: Date): string {
   return new Date(date).toISOString()
 }
 
-/**
- * Print a section header and list of migrations to the given output stream.
- */
 function printSection(
   label: string,
   migrations: string[],
@@ -83,29 +99,20 @@ function printSection(
   const stream = isError ? console.error.bind(console) : console.info.bind(console)
   stream(`\n${label}`)
   for (const tag of migrations) {
-    if (meta.length > 0) {
-      const entry = meta.find((m) => m.tag === tag)
-      const date = entry ? formatDate(entry.createdAt) : 'unknown'
-      stream(`  ${tag} (${date})`)
-    } else {
-      stream(`  ${tag}`)
-    }
+    const entry = meta.find((migration) => migration.tag === tag)
+    stream(`  ${tag}${entry ? ` (${formatDate(entry.createdAt)})` : ''}`)
   }
 }
 
-/**
- * Print human-readable status output.
- */
-function printHuman(result: diffMigrationsResult, meta: MigrationMeta[]): void {
-  printSection('Applied migrations:', result.applied, meta, false)
-  printSection('Pending migrations (not yet applied):', result.pending, [], false)
+function printHuman(result: ReturnType<typeof diffMigrations>, meta: MigrationMeta[]): void {
+  printSection('Applied migrations:', result.applied, meta)
+  printSection('Pending migrations (not yet applied):', result.pending, [])
   printSection(
     'Divergence detected (DB has migrations not in filesystem):',
     result.divergence,
     [],
     true,
   )
-
   if (
     result.applied.length === 0 &&
     result.pending.length === 0 &&
@@ -115,82 +122,81 @@ function printHuman(result: diffMigrationsResult, meta: MigrationMeta[]): void {
   }
 }
 
-type diffMigrationsResult = { applied: string[]; pending: string[]; divergence: string[] }
-
-/**
- * Print JSON output (Zod-validated).
- */
-function printJson(result: diffMigrationsResult, exitCode: 0 | 1): void {
-  const output = statusSchema.parse({
-    applied: result.applied,
-    pending: result.pending,
-    divergence: result.divergence,
-    exitCode,
-  })
-  console.info(JSON.stringify(output, null, 2))
+function printJson(result: ReturnType<typeof diffMigrations>, exitCode: 0 | 1): void {
+  console.info(JSON.stringify(statusSchema.parse({ ...result, exitCode }), null, 2))
 }
 
-/**
- * Parse minimal argv (no external deps).
- */
-function parseArgv(argv: string[]): { json: boolean } {
-  return { json: argv.includes('--json') }
-}
-
-/**
- * Get applied migrations with their creation timestamps.
- */
-async function getAppliedMigrationsWithDates(connectionString: string): Promise<MigrationMeta[]> {
+export async function getAppliedMigrationsWithDates(
+  connectionString: string,
+): Promise<AppliedMigration[]> {
   const pool = new Pool({ connectionString })
-
   try {
-    const result = await pool.query<{ tag: string; created_at: Date }>(
-      `SET LOCAL statement_timeout = '5s';
-       SELECT tag, created_at FROM __drizzle_migrations ORDER BY id ASC`,
+    await pool.query(`SET statement_timeout = '5s'`)
+    // Drizzle Kit 0.30 creates the drizzle ledger. Retain public as a
+    // deterministic fallback for databases created by older tooling.
+    const ledgers = await pool.query<{ drizzle: string | null; public: string | null }>(
+      'SELECT to_regclass($1)::text AS drizzle, to_regclass($2)::text AS public',
+      [DRIZZLE_LEDGER, PUBLIC_LEDGER],
     )
-    return result.rows.map((row) => ({ tag: row.tag, createdAt: row.created_at }))
+    const ledger = ledgers.rows[0]?.drizzle
+      ? DRIZZLE_LEDGER
+      : ledgers.rows[0]?.public
+        ? PUBLIC_LEDGER
+        : null
+    if (!ledger) throw new MigrationLedgerMissingError()
+    const result = await pool.query<{ hash: string; created_at: string | number }>(
+      ledger === DRIZZLE_LEDGER
+        ? 'SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id ASC'
+        : 'SELECT hash, created_at FROM public.__drizzle_migrations ORDER BY id ASC',
+    )
+    return result.rows.map((row) => ({
+      hash: row.hash,
+      createdAt: new Date(Number(row.created_at)),
+    }))
   } finally {
     await pool.end()
   }
 }
 
-/**
- * Main CLI entry point.
- */
-async function main(argv: string[]): Promise<void> {
-  const { json } = parseArgv(argv)
+export async function main(argv: string[]): Promise<void> {
+  const json = argv.includes('--json')
   const connectionString =
     process.env.DATABASE_URL ?? 'postgresql://athlos:athlos@localhost:5432/athlos'
-  const drizzleDir = join(__dirname, '..', '..', 'drizzle')
-
-  let appliedWithDates: MigrationMeta[] = []
-
   try {
-    appliedWithDates = await getAppliedMigrationsWithDates(connectionString)
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error(`db package: cannot connect to <redacted>: ${message}`)
+    const appliedWithDates = await getAppliedMigrationsWithDates(connectionString)
+    const localMigrations = await getLocalMigrations(getDrizzleDir())
+    const namesByHash = new Map(
+      localMigrations.map((migration) => [migration.hash, migration.name]),
+    )
+    const result = diffMigrations(appliedWithDates, localMigrations)
+    const output = {
+      applied: result.applied.map((hash) => namesByHash.get(hash) ?? hash),
+      pending: result.pending.map((hash) => namesByHash.get(hash) ?? hash),
+      divergence: result.divergence,
+    }
+    const metadata = localMigrations.map(({ name, createdAt }) => ({
+      tag: name,
+      createdAt,
+    }))
+    const exitCode: 0 | 1 = output.pending.length || output.divergence.length ? 1 : 0
+    process.exitCode = exitCode
+    if (json) printJson(output, exitCode)
+    else printHuman(output, metadata)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof MigrationLedgerMissingError) {
+      console.error(`db package: ${message}; run migrate before migrate:status`)
+    } else {
+      console.error(`db package: cannot read migration ledger from <redacted>: ${message}`)
+    }
     process.exitCode = 2
-    return
-  }
-
-  const applied = appliedWithDates.map((m) => m.tag)
-  const local = await getLocalMigrations(drizzleDir)
-  const result = diffMigrations(applied, local)
-
-  if (result.pending.length > 0 || result.divergence.length > 0) {
-    process.exitCode = 1
-  }
-
-  if (json) {
-    printJson(result, process.exitCode as 0 | 1)
-  } else {
-    printHuman(result, appliedWithDates)
   }
 }
 
-main(process.argv.slice(2)).catch((err) => {
-  const message = err instanceof Error ? err.message : String(err)
-  console.error(`db package: unexpected error: ${message}`)
-  process.exitCode = 2
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main(process.argv.slice(2)).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`db package: unexpected error: ${message}`)
+    process.exitCode = 2
+  })
+}

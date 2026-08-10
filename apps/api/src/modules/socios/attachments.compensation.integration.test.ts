@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { createDb, type Db } from '@athlos/db'
+import * as schema from '@athlos/db/schema'
 import { LocalFileStorage } from '../file-storage/index.ts'
 import { compensateNewAttachment } from './attachments.ts'
 import * as repo from './attachments-repository.ts'
@@ -25,28 +28,70 @@ const databaseUrl = process.env['ATHLOS_TEST_DATABASE_URL']
 let db: { db: Db; pool: Pool } | undefined
 let storageDir: string
 let storage: LocalFileStorage
+let schemaName: string
+
+interface QueryTarget {
+  query(this: unknown, ...args: unknown[]): unknown
+  connect(): Promise<Pool>
+}
+
+function rewriteSql(text: string): string {
+  return text.replaceAll('"socios".', `"${schemaName}".`).replaceAll('socios.', `${schemaName}.`)
+}
+
+function wrapPool(pool: Pool): Pool {
+  const query = (target: QueryTarget) =>
+    function (this: unknown, ...args: unknown[]): unknown {
+      const [config, ...rest] = args
+      if (typeof config === 'string') return target.query.call(target, rewriteSql(config), ...rest)
+      if (config && typeof config === 'object' && 'text' in (config as Record<string, unknown>)) {
+        const value = config as { text: string } & Record<string, unknown>
+        return target.query.call(target, { ...value, text: rewriteSql(value.text) }, ...rest)
+      }
+      return target.query.call(target, config, ...rest)
+    }
+  return new Proxy(pool, {
+    get(target, property, receiver) {
+      if (property === 'query') return query(target as unknown as QueryTarget)
+      if (property === 'connect')
+        return async () => wrapPool(await (target as unknown as QueryTarget).connect())
+      return Reflect.get(target, property, receiver)
+    },
+  }) as Pool
+}
+
+async function assertTestDatabase(pool: Pool): Promise<void> {
+  const result = await pool.query<{ name: string }>('SELECT current_database() AS name')
+  const name = result.rows[0]?.name
+  if (!name || !/_test$/.test(name))
+    throw new Error(`refusing non-test database: ${name ?? 'unknown'}`)
+}
 
 beforeAll(async () => {
   if (!databaseUrl)
     throw new Error(
       'ATHLOS_TEST_DATABASE_URL is required for attachments compensation PostgreSQL tests',
     )
-  db = createDb({ connectionString: databaseUrl })
-  await db.pool.query('SELECT 1')
-  await db.pool.query('SET search_path TO "socios", "tesoreria", "public"')
+  const handle = createDb({ connectionString: databaseUrl })
+  await assertTestDatabase(handle.pool)
+  schemaName = `socios_s3f_${randomBytes(12).toString('hex')}`
+  db = {
+    db: drizzle(wrapPool(handle.pool), { schema }) as Db,
+    pool: wrapPool(handle.pool),
+  }
   storageDir = mkdtempSync(join(tmpdir(), 'athlos-s3f-it-'))
   storage = new LocalFileStorage({ baseDir: storageDir, maxBytes: 1024 * 1024 })
 })
 
 afterAll(async () => {
+  if (db && schemaName) await db.pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)
   await db?.pool.end()
   if (storageDir) rmSync(storageDir, { recursive: true, force: true })
 })
 
 async function resetSchemas(pool: Pool): Promise<void> {
-  await pool.query('DROP SCHEMA IF EXISTS "socios" CASCADE')
-  await pool.query('DROP SCHEMA IF EXISTS "tesoreria" CASCADE')
-  await pool.query('CREATE SCHEMA "socios"')
+  await pool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`)
+  await pool.query(`CREATE SCHEMA "${schemaName}"`)
   // Mirror the production `socios` shape (PR 8d.1 added fechaNacimiento).
   await pool.query(`
     CREATE TABLE "socios"."socios" (

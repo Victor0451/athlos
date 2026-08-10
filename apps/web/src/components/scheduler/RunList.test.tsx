@@ -46,7 +46,7 @@ const RUN_FAILED = {
   startedAt: '2026-06-27T09:45:01.000Z',
   finishedAt: '2026-06-27T09:45:02.000Z',
   triggeredBy: 'scheduler' as const,
-  errorMessage: 'connection refused to upstream',
+  reason: { code: 'EXECUTION_FAILED', message: 'The job failed during execution.' },
   durationMs: 1000,
 }
 
@@ -75,14 +75,41 @@ describe('RunList', () => {
     expect(screen.getByText(/intento\s*2/i)).toBeInTheDocument()
   })
 
-  it('renders the error message when a run failed', () => {
+  it('renders the projected message when a run failed', () => {
     render(<RunList runs={[RUN_FAILED]} loading={false} />)
-    expect(screen.getByText('connection refused to upstream')).toBeInTheDocument()
+    expect(screen.getByText('The job failed during execution.')).toBeInTheDocument()
+  })
+
+  it('renders only the projected message for cancelled and review-required runs', () => {
+    render(
+      <RunList
+        runs={[
+          {
+            ...RUN_SUCCEEDED,
+            id: 'run-cancelled',
+            status: 'cancelled',
+            reason: { code: 'CANCELLED', message: 'The job was cancelled.' },
+          },
+          {
+            ...RUN_SUCCEEDED,
+            id: 'run-review',
+            status: 'completed_with_review',
+            reason: { code: 'REVIEW_REQUIRED', message: 'The job completed and requires review.' },
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Cancelada')).toBeInTheDocument()
+    expect(screen.getByText('Requiere revisión')).toBeInTheDocument()
+    expect(screen.getByText('The job was cancelled.')).toBeInTheDocument()
+    expect(screen.getByText('The job completed and requires review.')).toBeInTheDocument()
+    expect(screen.queryByText('connection refused to upstream')).not.toBeInTheDocument()
   })
 
   it('does NOT render an error row when the run succeeded', () => {
     render(<RunList runs={[RUN_SUCCEEDED]} loading={false} />)
-    expect(screen.queryByText(/connection refused/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/failed during execution/i)).not.toBeInTheDocument()
   })
 
   it('renders the empty state when there are no runs', () => {

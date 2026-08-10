@@ -192,6 +192,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           permissions: { can_reprint: true, can_anulate: false },
         }),
       )
+      // login() synchronizes data-steward permissions before resolving.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       // 2) comprobante.pdf → 401 (token expired)
       .mockResolvedValueOnce(jsonResponse({ error: 'TOKEN_EXPIRED' }, 401))
       // 3) /auth/refresh → 200 (success)
@@ -202,6 +204,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           expires_in: 900,
         }),
       )
+      // refreshAccessToken() synchronizes data-steward permissions before retrying.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       // 4) comprobante.pdf → 400 (cap exceeded) — the retry
       .mockResolvedValueOnce(
         jsonResponse(
@@ -246,6 +250,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           permissions: { can_reprint: true, can_anulate: false },
         }),
       )
+      // login() synchronizes data-steward permissions before resolving.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       .mockResolvedValueOnce(jsonResponse({ error: 'TOKEN_EXPIRED' }, 401))
       .mockResolvedValueOnce(
         jsonResponse({
@@ -254,6 +260,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           expires_in: 900,
         }),
       )
+      // refreshAccessToken() synchronizes data-steward permissions before retrying.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       .mockResolvedValueOnce(
         jsonResponse(
           {
@@ -301,6 +309,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           permissions: { can_reprint: true, can_anulate: false },
         }),
       )
+      // login() synchronizes data-steward permissions before resolving.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       .mockResolvedValueOnce(jsonResponse({ error: 'TOKEN_EXPIRED' }, 401))
       .mockResolvedValueOnce(
         jsonResponse({
@@ -309,6 +319,8 @@ describe('apiFetchBlob retry-after-refresh (defect #3)', () => {
           expires_in: 900,
         }),
       )
+      // refreshAccessToken() synchronizes data-steward permissions before retrying.
+      .mockResolvedValueOnce(jsonResponse({ data_steward: false }))
       .mockResolvedValueOnce(jsonResponse({ error: 'TOKEN_INVALID' }, 401))
     vi.stubGlobal('fetch', fetchMock)
 

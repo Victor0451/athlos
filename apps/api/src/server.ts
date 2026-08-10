@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth.ts'
 import { approvalRoutes, internalApprovalLinksRoutes } from './routes/approval.ts'
 import { adminOperatorsRoutes } from './routes/admin/operators.ts'
 import { adminJobsRoutes } from './routes/admin/jobs.ts'
+import { operationalSnapshotRoutes } from './routes/admin/operations.ts'
 import { schedulerAdminRoutes } from './routes/admin/scheduler.ts'
 import { healthRoutes } from './routes/health.ts'
 import { versionsRoutes } from './routes/versions.ts'
@@ -42,6 +43,9 @@ import { notificationRoutes } from './routes/notifications.ts'
 // 9. N16 (athlos-n16-gastos-ctacte-fk): admin gastos CRUD + mapping routes
 import { gastosAdminRoutes } from './routes/admin/gastos.ts'
 import { gastosCtacteAdminRoutes } from './routes/admin/gastos-ctacte.ts'
+import { evidenceClosureRoutes } from './routes/admin/evidence-closure.ts'
+import { sociosEvidenceExceptionRoutes } from './routes/admin/socios-evidence-exceptions.ts'
+import { membershipTypeRoutes } from './routes/admin/membership-types.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -208,6 +212,7 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      and /api/v1/admin/jobs/health. Read-only views over the
   //      scheduler state. Same ADMIN gate as the operator routes.
   await app.register(adminJobsRoutes)
+  await app.register(operationalSnapshotRoutes)
 
   // 11c. Admin scheduler endpoints (athlos-async-scheduler): POST /run-now,
   //      GET /jobs, GET /jobs/:name, PATCH /jobs/:name for enable/disable.
@@ -283,6 +288,9 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   //      6 gastos↔ctacte mapping (link create/delete/anular, candidates).
   await app.register(gastosAdminRoutes)
   await app.register(gastosCtacteAdminRoutes)
+  await app.register(evidenceClosureRoutes)
+  await app.register(sociosEvidenceExceptionRoutes)
+  await app.register(membershipTypeRoutes)
 
   // 21. Version discovery (PR 4b TASK-035): /api/versions is
   //     intentionally unversioned — clients discover it without

@@ -363,9 +363,6 @@ describe('PATCH /api/v1/gastos/:id', () => {
         headers: { authorization: `Bearer ${bearer('ADMIN')}` },
         payload: { concepto: 'updated', importe: '6000.00' },
       })
-      if (updated.statusCode !== 200) {
-        console.log('PATCH failed:', updated.statusCode, await updated.body)
-      }
       expect(updated.statusCode).toBe(200)
       const body = updated.json() as { concepto: string; importe: string }
       expect(body.concepto).toBe('updated')

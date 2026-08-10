@@ -41,19 +41,20 @@ export interface JobContext {
 }
 
 /**
- * Handler return shape. The only required field is `status: 'succeeded'`;
+ * Handler return shape. A handler returns a terminal success-like status;
  * `metadata` is merged into the `job_runs.metadata` jsonb on success so
  * the admin history endpoint can surface domain-specific details (e.g.
  * `drift_count`, `tokens_deleted`).
  *
- * Returning anything other than `{ status: 'succeeded' }` is reserved
- * for future "skip" semantics — the scheduler treats any other shape
- * as a no-op success and the row is marked `succeeded` without a
- * metadata merge.
+ * `completed_with_review` means the work reconciled but has explicit
+ * business exceptions requiring follow-up. It is terminal and does not
+ * enter the failure retry path.
  */
 export interface JobResult {
-  status: 'succeeded'
+  status: 'succeeded' | 'completed_with_review'
   metadata?: Record<string, unknown>
+  /** Best-effort cleanup only after the terminal row is durable. */
+  afterCommit?: () => Promise<void>
 }
 
 /**
@@ -95,7 +96,7 @@ export interface JobScheduler {
    * the previous definition (test convenience; prod code calls once at
    * boot). Throws on invalid cron expression.
    */
-  schedule(name: string, cronExpr: string, handler: JobHandler, opts?: ScheduleOptions): void
+  schedule(name: string, cronExpr: string | null, handler: JobHandler, opts?: ScheduleOptions): void
 
   /** Start ticking. Calls `schedule()` on every enabled job's
    * `node-cron` task. Must be called exactly once at boot. */

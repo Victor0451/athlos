@@ -1,21 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 /**
- * Dashboard page tests (TASK-016, PR 8a.3).
- *
  * Covers `web-frontend/spec.md` Dashboard Cards scenarios:
- *   - API Health card shows status / version / uptime from /health
- *   - Master Counts card shows row counts from /api/v1/freshness
- *   - Scheduler Status + Recent Runs cards render for ADMIN only
- *   - Non-ADMIN operators do NOT see the scheduler cards
- *   - All cards auto-refresh every 30 seconds (verified by passing
- *     `refetchInterval: 30_000` to the queries — we don't need to
- *     fake time)
  *
  * We mock the API + auth modules (no fetch in the test) and provide
- * a fresh `QueryClient` per test so the cache state is isolated.
+ * a fresh QueryClient per test so the cache state is isolated.
  */
 
 const replaceMock = vi.fn()
@@ -34,6 +25,9 @@ const getHealthMock = vi.fn()
 const getFreshnessMock = vi.fn()
 const getSchedulerHealthMock = vi.fn()
 const getRecentRunsMock = vi.fn()
+const getOperationalSnapshotMock = vi.fn()
+const getSociosAggregateMock = vi.fn()
+const getNotificationsMock = vi.fn()
 
 vi.mock('@/lib/api/health', () => ({
   getHealth: (...args: unknown[]) => getHealthMock(...args),
@@ -43,6 +37,18 @@ vi.mock('@/lib/api/health', () => ({
 vi.mock('@/lib/api/scheduler', () => ({
   getSchedulerHealth: (...args: unknown[]) => getSchedulerHealthMock(...args),
   getRecentRuns: (...args: unknown[]) => getRecentRunsMock(...args),
+}))
+
+vi.mock('@/lib/api/operations', () => ({
+  getOperationalSnapshot: (...args: unknown[]) => getOperationalSnapshotMock(...args),
+}))
+
+vi.mock('@/lib/api/socios', () => ({
+  getSociosAggregate: (...args: unknown[]) => getSociosAggregateMock(...args),
+}))
+
+vi.mock('@/lib/api/notifications', () => ({
+  getNotifications: (...args: unknown[]) => getNotificationsMock(...args),
 }))
 
 const useAuthMock = vi.fn()
@@ -102,6 +108,9 @@ describe('DashboardPage', () => {
     getFreshnessMock.mockReset()
     getSchedulerHealthMock.mockReset()
     getRecentRunsMock.mockReset()
+    getOperationalSnapshotMock.mockReset()
+    getSociosAggregateMock.mockReset()
+    getNotificationsMock.mockReset()
     useAuthMock.mockReset()
 
     // Default: ADMIN user with healthy responses.
@@ -190,10 +199,65 @@ describe('DashboardPage', () => {
         },
       ],
     })
+    getOperationalSnapshotMock.mockResolvedValue({
+      readiness: { overall: 'ready', db: 'ready', schema: 'ready' },
+      freshness: {
+        available: true,
+        items: [
+          {
+            domain: 'socios',
+            lastImportAt: '2026-06-29T08:00:00.000Z',
+            recordCount: 16383,
+            status: 'current',
+            ageDisplay: '4h',
+          },
+        ],
+      },
+      jobs: {
+        available: true,
+        items: [
+          {
+            name: 'scheduled-import',
+            healthy: true,
+            enabled: true,
+            cronExpr: '*/5 * * * *',
+            lastRun: { startedAt: '2026-06-29T11:59:00.000Z' },
+          },
+        ],
+      },
+      attention: {
+        available: true,
+        items: [
+          {
+            id: 'run-1',
+            jobName: 'scheduled-import',
+            status: 'failed',
+            startedAt: '2026-06-29T11:59:00.000Z',
+            durationMs: 4200,
+            reason: { code: 'EXECUTION_FAILED', message: 'Execution failed safely.' },
+          },
+        ],
+      },
+    })
+    getSociosAggregateMock.mockResolvedValue({ activos: 12, suspendidos: 1, baja: 2, total: 15 })
+    getNotificationsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'notification-1',
+          body: 'La cuota vence mañana.',
+          status: 'pending',
+        },
+      ],
+      page: 1,
+      limit: 20,
+      total: 1,
+      has_more: false,
+    })
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   it('renders the page heading', async () => {
@@ -201,60 +265,95 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: /dashboard/i, level: 1 })).toBeInTheDocument()
   })
 
-  it('renders the API Health card with version and uptime from /health', async () => {
-    renderDashboard()
-    await waitFor(() => {
-      expect(screen.getByText('0.5.12')).toBeInTheDocument()
-    })
-    // Uptime is formatted as "h" — 12345s ≈ 3h 25m
-    expect(screen.getByText(/3h/)).toBeInTheDocument()
-    // The health badge sits inside the API card specifically (not
-    // the per-job scheduler badges further down). Scope to the
-    // health-card testid to avoid colliding with the same-status
-    // scheduler badges that the ADMIN user also sees.
-    const apiCard = screen.getByTestId('dashboard-health-card')
-    expect(within(apiCard).getByRole('status', { name: /operativo/i })).toBeInTheDocument()
-  })
-
-  it('renders the Master Counts card with the row counts from /api/v1/freshness', async () => {
-    renderDashboard()
-    await waitFor(() => {
-      expect(screen.getByText('socios')).toBeInTheDocument()
-    })
-    expect(screen.getByText('16.383')).toBeInTheDocument()
-    expect(screen.getByText('200.945')).toBeInTheDocument()
-    expect(screen.getByText('escuela')).toBeInTheDocument()
-  })
-
-  it('renders the Scheduler Status card for ADMIN', async () => {
+  it('keeps U2 regions while showing safe operational attention for ADMIN', async () => {
     useAuthMock.mockReturnValue(makeAdminUser())
     renderDashboard()
     await waitFor(() => {
-      expect(screen.getByTestId('scheduler-job-scheduled-import')).toBeInTheDocument()
+      expect(screen.getByLabelText('Resumen de socios')).toHaveTextContent('15 socios')
     })
-    expect(screen.getByTestId('scheduler-job-reconciliation')).toBeInTheDocument()
-  })
-
-  it('renders the Recent Runs card for ADMIN', async () => {
-    useAuthMock.mockReturnValue(makeAdminUser())
-    renderDashboard()
+    expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
     await waitFor(() => {
-      expect(screen.getByTestId('recent-run-run-1')).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: /scheduled-import/i })).toHaveAttribute(
+        'href',
+        '/admin/scheduler/scheduled-import',
+      )
     })
-    expect(screen.getByTestId('recent-run-run-2')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Readiness')).not.toBeInTheDocument()
+    expect(screen.queryByText('DB')).not.toBeInTheDocument()
+    expect(screen.queryByText('Schema')).not.toBeInTheDocument()
+    expect(screen.queryByText(/tablas maestras/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/scheduler/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/corridas recientes/i)).not.toBeInTheDocument()
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
   })
 
-  it('hides the Scheduler Status + Recent Runs cards for non-ADMIN operators', async () => {
+  it('refreshes the ADMIN snapshot after 30 seconds', async () => {
+    vi.useFakeTimers()
+    renderDashboard()
+
+    await act(async () => {})
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    expect(getOperationalSnapshotMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
+    'keeps workspace cards usable without requesting the ADMIN snapshot for %s',
+    async (role) => {
+      useAuthMock.mockReturnValue({
+        ...makeOperadorUser(),
+        user: { ...makeOperadorUser().user, role },
+      })
+      renderDashboard()
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Resumen de socios')).toHaveTextContent('15 socios')
+      })
+      expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
+      expect(screen.getByRole('link', { name: /cuenta corriente/i })).toHaveAttribute(
+        'href',
+        '/ctacte',
+      )
+      expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+      expect(getOperationalSnapshotMock).not.toHaveBeenCalled()
+    },
+  )
+
+  it('shows an independent aggregate loading state while empty notifications leave cards usable', async () => {
+    getSociosAggregateMock.mockImplementation(() => new Promise(() => undefined))
+    getNotificationsMock.mockResolvedValue({
+      items: [],
+      page: 1,
+      limit: 20,
+      total: 0,
+      has_more: false,
+    })
     useAuthMock.mockReturnValue(makeOperadorUser())
     renderDashboard()
-    // Wait for ADMIN-only queries to resolve (they shouldn't fire).
+
+    expect(screen.getByText(/cargando resumen de socios/i)).toBeInTheDocument()
     await waitFor(() => {
-      expect(getHealthMock).toHaveBeenCalled()
+      expect(screen.getByLabelText('Notificaciones')).toHaveTextContent(
+        'No hay notificaciones pendientes.',
+      )
     })
-    expect(getSchedulerHealthMock).not.toHaveBeenCalled()
-    expect(getRecentRunsMock).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('dashboard-scheduler-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('dashboard-recent-runs-card')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('dashboard-admin-section')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /padrones/i })).toHaveAttribute('href', '/padrones')
+  })
+
+  it('shows a safe aggregate error without hiding notification and workspace regions', async () => {
+    getSociosAggregateMock.mockRejectedValue(new Error('raw backend detail'))
+    useAuthMock.mockReturnValue(makeOperadorUser())
+    renderDashboard()
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert', { name: /resumen de socios/i })).toBeInTheDocument(),
+    )
+    expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
+    expect(screen.queryByText(/raw backend detail/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /socios/i })).toBeInTheDocument()
   })
 })

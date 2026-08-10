@@ -1,16 +1,24 @@
 import {
   bigint,
+  check,
   date,
+  foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgSchema,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import { operators } from './operators'
+import { rawEvents } from './public'
 
 /**
  * `socios` schema — members (socios) of Club Atlético Gorriti.
@@ -193,6 +201,356 @@ export const socios = sociosSchema.table(
 
 export type Socio = typeof socios.$inferSelect
 export type NewSocio = typeof socios.$inferInsert
+
+export const identityLifecycleState = sociosSchema.enum('identity_lifecycle_state', [
+  'imported',
+  'validated',
+  'review_required',
+])
+
+export const membershipAccounts = sociosSchema.table(
+  'membership_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountNumber: bigint('account_number', { mode: 'number' })
+      .notNull()
+      .generatedAlwaysAsIdentity(),
+    lifecycleState: identityLifecycleState('lifecycle_state').notNull().default('imported'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    accountNumberUnique: uniqueIndex('membership_accounts_account_number_key').on(
+      table.accountNumber,
+    ),
+  }),
+)
+
+export const memberIdentities = sociosSchema.table(
+  'member_identities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memberNumber: bigint('member_number', { mode: 'number' }).notNull().generatedAlwaysAsIdentity(),
+    lifecycleState: identityLifecycleState('lifecycle_state').notNull().default('imported'),
+    credentialRef: text('credential_ref'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    memberNumberUnique: uniqueIndex('member_identities_member_number_key').on(table.memberNumber),
+    credentialRefUnique: uniqueIndex('member_identities_credential_ref_key').on(
+      table.credentialRef,
+    ),
+  }),
+)
+
+export const accountMemberships = sociosSchema.table(
+  'account_memberships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id')
+      .notNull()
+      .references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+  },
+  (table) => ({
+    accountMemberEffectiveFromUnique: unique(
+      'account_memberships_account_id_member_id_effective_from_key',
+    ).on(table.accountId, table.memberId, table.effectiveFrom),
+  }),
+)
+
+export const accountHolderHistory = sociosSchema.table(
+  'account_holder_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    membershipId: uuid('membership_id').notNull(),
+    effectiveFrom: timestamp('effective_from', { withTimezone: true }).notNull().defaultNow(),
+    effectiveTo: timestamp('effective_to', { withTimezone: true }),
+    predecessorId: uuid('predecessor_id').references((): AnyPgColumn => accountHolderHistory.id, {
+      onDelete: 'restrict',
+    }),
+    actorOperatorId: uuid('actor_operator_id'),
+    source: text('source').notNull(),
+    evidence: jsonb('evidence')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    idempotencyKey: text('idempotency_key'),
+  },
+  (table) => ({
+    currentAccountUnique: uniqueIndex('account_holder_history_current_account_unique')
+      .on(table.accountId)
+      .where(sql`${table.effectiveTo} IS NULL`),
+    idempotencyKeyUnique: uniqueIndex('account_holder_history_idempotency_key_key').on(
+      table.idempotencyKey,
+    ),
+  }),
+)
+
+export const legacyIdentityEvidence = sociosSchema.table(
+  'legacy_identity_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    accountId: uuid('account_id').references(() => membershipAccounts.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id').references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    sourceKey: text('source_key').notNull(),
+    importBatch: uuid('import_batch').notNull(),
+    soccarnet: text('soccarnet'),
+    socfamilia: text('socfamilia'),
+    anomalyCodes: text('anomaly_codes')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    reviewState: text('review_state', {
+      enum: ['imported', 'validated', 'review_required'],
+    })
+      .notNull()
+      .default('imported'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_identity_evidence_raw_event_id_key').on(table.rawEventId),
+    legacyPairIdx: index('legacy_identity_evidence_pair_idx').on(table.soccarnet, table.socfamilia),
+  }),
+)
+
+export const legacyMembershipSnapshotState = sociosSchema.enum('legacy_membership_snapshot_state', [
+  'applied',
+  'rolled_back',
+])
+
+export const legacyMembershipTypeSnapshots = sociosSchema.table(
+  'legacy_membership_type_snapshots',
+  {
+    batchId: uuid('batch_id').primaryKey(),
+    sequence: bigint('sequence', { mode: 'number' }).notNull().generatedAlwaysAsIdentity(),
+    state: legacyMembershipSnapshotState('state').notNull().default('applied'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sequenceUnique: unique('legacy_membership_type_snapshots_sequence_key').on(table.sequence),
+  }),
+)
+
+export const legacyMembershipTypeSourceRows = sociosSchema.table(
+  'legacy_membership_type_source_rows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    batchId: uuid('batch_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    recordOrdinal: integer('record_ordinal').notNull(),
+    code: text('code').notNull(),
+    name: text('name').notNull(),
+    letter: text('letter').notNull(),
+    contentHash: text('content_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_membership_type_source_rows_raw_event_id_key').on(
+      table.rawEventId,
+    ),
+    codeBatchIdx: index('legacy_membership_type_source_rows_code_batch_idx').on(
+      table.code,
+      table.batchId,
+    ),
+    recordOrdinalPositive: check(
+      'legacy_membership_type_source_rows_record_ordinal_positive',
+      sql`${table.recordOrdinal} > 0`,
+    ),
+  }),
+)
+
+export const legacyMembershipTypeCandidates = sociosSchema.table(
+  'legacy_membership_type_candidates',
+  {
+    snapshotBatchId: uuid('snapshot_batch_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    code: text('code').notNull(),
+    sourceRowId: uuid('source_row_id')
+      .notNull()
+      .references(() => legacyMembershipTypeSourceRows.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotCodePrimary: unique('legacy_membership_type_candidates_pkey').on(
+      table.snapshotBatchId,
+      table.code,
+    ),
+    sourceRowUnique: uniqueIndex('legacy_membership_type_candidates_source_row_id_key').on(
+      table.sourceRowId,
+    ),
+  }),
+)
+
+export const legacyCatalogMaterializationReceipts = sociosSchema.table(
+  'legacy_catalog_materialization_receipts',
+  {
+    batchId: uuid('batch_id')
+      .primaryKey()
+      .references(() => legacyMembershipTypeSnapshots.batchId, { onDelete: 'restrict' }),
+    phase: text('phase').notNull().default('catalog_materialization'),
+    inputHash: text('input_hash').notNull(),
+    eligibleSourceRowCount: integer('eligible_source_row_count').notNull(),
+    materializedSourceRowCount: integer('materialized_source_row_count').notNull(),
+    failedSourceRowCount: integer('failed_source_row_count').notNull().default(0),
+    outcome: text('outcome').notNull().default('materialized'),
+    committedAt: timestamp('committed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+)
+
+export const legacyMemberFeeState = sociosSchema.enum('legacy_member_fee_state', [
+  'blank',
+  'zero',
+  'non_zero',
+])
+
+export const legacyMemberReviewState = sociosSchema.enum('legacy_member_review_state', [
+  'validated',
+  'unknown_type',
+  'ambiguous_identity',
+  'missing_identity',
+])
+
+export const legacyMemberEvidence = sociosSchema.table(
+  'legacy_member_evidence',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rawEventId: uuid('raw_event_id')
+      .notNull()
+      .references(() => rawEvents.id, { onDelete: 'restrict' }),
+    importBatch: uuid('import_batch').notNull(),
+    identityEvidenceId: uuid('identity_evidence_id')
+      .notNull()
+      .references(() => legacyIdentityEvidence.id, { onDelete: 'restrict' }),
+    memberId: uuid('member_id').references(() => memberIdentities.id, { onDelete: 'restrict' }),
+    membershipTypeCandidateSourceRowId: uuid('membership_type_candidate_source_row_id').references(
+      () => legacyMembershipTypeCandidates.sourceRowId,
+      { onDelete: 'restrict' },
+    ),
+    legacyTypeCode: text('legacy_type_code').notNull(),
+    legacyCategory: text('legacy_category'),
+    feeState: legacyMemberFeeState('fee_state').notNull(),
+    feeValue: numeric('fee_value', { precision: 11, scale: 2 }),
+    reviewState: legacyMemberReviewState('review_state').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    rawEventUnique: uniqueIndex('legacy_member_evidence_raw_event_id_key').on(table.rawEventId),
+    feeStateValue: check(
+      'legacy_member_evidence_fee_state_value_check',
+      sql`(${table.feeState} = 'blank' AND ${table.feeValue} IS NULL)
+        OR (${table.feeState} = 'zero' AND ${table.feeValue} = 0)
+        OR (${table.feeState} = 'non_zero' AND ${table.feeValue} IS NOT NULL AND ${table.feeValue} <> 0)`,
+    ),
+    reviewAttachment: check(
+      'legacy_member_evidence_review_attachment_check',
+      sql`(${table.reviewState} = 'validated' AND ${table.memberId} IS NOT NULL AND ${table.membershipTypeCandidateSourceRowId} IS NOT NULL)
+        OR (${table.reviewState} IN ('unknown_type', 'ambiguous_identity') AND ${table.memberId} IS NULL AND ${table.membershipTypeCandidateSourceRowId} IS NULL)`,
+    ),
+  }),
+)
+
+export const legacyMemberEvidenceResolutions = sociosSchema.table(
+  'legacy_member_evidence_resolutions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    legacyMemberEvidenceId: uuid('legacy_member_evidence_id')
+      .notNull()
+      .references(() => legacyMemberEvidence.id, { onDelete: 'restrict' }),
+    resolutionKind: legacyMemberReviewState('resolution_kind').notNull(),
+    selectedMemberId: uuid('selected_member_id').references(() => memberIdentities.id, {
+      onDelete: 'restrict',
+    }),
+    selectedMembershipTypeCandidateSourceRowId: uuid(
+      'selected_membership_type_candidate_source_row_id',
+    ).references(() => legacyMembershipTypeCandidates.sourceRowId, { onDelete: 'restrict' }),
+    stewardOperatorId: uuid('steward_operator_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'restrict' }),
+    reason: text('reason').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    evidenceFingerprint: varchar('evidence_fingerprint', { length: 64 }).notNull(),
+    supersedesResolutionId: uuid('supersedes_resolution_id').references(
+      (): AnyPgColumn => legacyMemberEvidenceResolutions.id,
+      { onDelete: 'restrict' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    kindMatchesEvidence: foreignKey({
+      columns: [table.legacyMemberEvidenceId, table.resolutionKind],
+      foreignColumns: [legacyMemberEvidence.id, legacyMemberEvidence.reviewState],
+      name: 'legacy_member_evidence_resolutions_kind_matches_evidence_fk',
+    }),
+    resolutionSelections: check(
+      'legacy_member_evidence_resolutions_selection_check',
+      sql`(${table.resolutionKind} = 'unknown_type' AND ${table.selectedMemberId} IS NOT NULL AND ${table.selectedMembershipTypeCandidateSourceRowId} IS NOT NULL)
+        OR (${table.resolutionKind} = 'ambiguous_identity' AND ${table.selectedMemberId} IS NOT NULL)`,
+    ),
+    reasonNonblank: check(
+      'legacy_member_evidence_resolutions_reason_nonblank_check',
+      sql`length(btrim(${table.reason})) > 0`,
+    ),
+    idempotencyKeyNonblank: check(
+      'legacy_member_evidence_resolutions_idempotency_key_nonblank_check',
+      sql`length(btrim(${table.idempotencyKey})) > 0`,
+    ),
+    fingerprintLength: check(
+      'legacy_member_evidence_resolutions_fingerprint_length_check',
+      sql`length(${table.evidenceFingerprint}) = 64`,
+    ),
+    idempotencyUnique: uniqueIndex(
+      'legacy_member_evidence_resolutions_steward_idempotency_key_unique',
+    ).on(table.stewardOperatorId, table.idempotencyKey),
+    rootEvidenceUnique: uniqueIndex('legacy_member_evidence_resolutions_root_evidence_unique')
+      .on(table.legacyMemberEvidenceId)
+      .where(sql`${table.supersedesResolutionId} IS NULL`),
+    successorUnique: uniqueIndex('legacy_member_evidence_resolutions_successor_unique')
+      .on(table.supersedesResolutionId)
+      .where(sql`${table.supersedesResolutionId} IS NOT NULL`),
+  }),
+)
+
+export type MembershipAccount = typeof membershipAccounts.$inferSelect
+export type NewMembershipAccount = typeof membershipAccounts.$inferInsert
+export type MemberIdentity = typeof memberIdentities.$inferSelect
+export type NewMemberIdentity = typeof memberIdentities.$inferInsert
+export type AccountMembership = typeof accountMemberships.$inferSelect
+export type NewAccountMembership = typeof accountMemberships.$inferInsert
+export type AccountHolderHistory = typeof accountHolderHistory.$inferSelect
+export type NewAccountHolderHistory = typeof accountHolderHistory.$inferInsert
+export type LegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferSelect
+export type NewLegacyIdentityEvidence = typeof legacyIdentityEvidence.$inferInsert
+export type LegacyMembershipTypeSnapshot = typeof legacyMembershipTypeSnapshots.$inferSelect
+export type NewLegacyMembershipTypeSnapshot = typeof legacyMembershipTypeSnapshots.$inferInsert
+export type LegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferSelect
+export type NewLegacyMembershipTypeSourceRow = typeof legacyMembershipTypeSourceRows.$inferInsert
+export type LegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferSelect
+export type NewLegacyMembershipTypeCandidate = typeof legacyMembershipTypeCandidates.$inferInsert
+export type LegacyCatalogMaterializationReceipt =
+  typeof legacyCatalogMaterializationReceipts.$inferSelect
+export type NewLegacyCatalogMaterializationReceipt =
+  typeof legacyCatalogMaterializationReceipts.$inferInsert
+export type LegacyMemberEvidence = typeof legacyMemberEvidence.$inferSelect
+export type NewLegacyMemberEvidence = typeof legacyMemberEvidence.$inferInsert
+export type LegacyMemberEvidenceResolution = typeof legacyMemberEvidenceResolutions.$inferSelect
+export type NewLegacyMemberEvidenceResolution = typeof legacyMemberEvidenceResolutions.$inferInsert
 
 /**
  * Attachment category — `dni | comprobante | foto | contrato | otro`.

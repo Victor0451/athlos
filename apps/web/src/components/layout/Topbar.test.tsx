@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+
 /**
  * Topbar tests (TASK-010 + PR 8d integration).
  *
@@ -99,7 +101,7 @@ describe('Topbar', () => {
     expect(screen.getByTestId('topbar-role-badge')).toHaveTextContent('ADMIN')
   })
 
-  it('exposes a "Salir" button that calls useAuth().logout on click', async () => {
+  it('exposes the personal-menu trigger for an authenticated operator', async () => {
     authState.user = {
       operator_id: 'op-7',
       role: 'TESORERO',
@@ -112,13 +114,27 @@ describe('Topbar', () => {
     const user = userEvent.setup()
     render(<Topbar />)
 
-    const logoutButton = screen.getByRole('button', { name: /salir/i })
-    expect(logoutButton).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /menú personal/i }))
+    expect(screen.getByRole('link', { name: /mi cuenta/i })).toHaveAttribute('href', '/account')
+  })
 
-    await user.click(logoutButton)
+  it('exposes a labeled mobile-navigation trigger with its expanded state', async () => {
+    authState.user = {
+      operator_id: 'op-7',
+      role: 'TESORERO',
+      username: 'tesorero',
+      permissions: { can_reprint: true, can_anulate: false },
+    }
+    authState.token = 'seeded.token'
+    const { default: userEvent } = await import('@testing-library/user-event')
+    const user = userEvent.setup()
+    render(<Topbar />)
 
-    expect(logoutMock).toHaveBeenCalledTimes(1)
-    expect(authState.user).toBeNull()
+    const trigger = screen.getByRole('button', { name: /abrir navegación/i })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveAttribute('aria-controls', 'mobile-navigation')
+    await user.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('renders inside a banner landmark with the Athlos brand group', () => {

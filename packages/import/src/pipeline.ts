@@ -45,7 +45,7 @@ export interface ImportTableSummary {
 }
 
 /**
- * The 14 legacy tables in mandatory dependency order. Mirrors the
+ * The 15 legacy tables in mandatory dependency order. Mirrors the
  * spec's `paramet → tipocomp → SECUENCI → catálogos → socios →
  * escuela → deportes → locacion → CTACTE → CTACTE1 → CONTABLE →
  * CONTABL1 → CAJA → GASTOS` order, mapped to the
@@ -61,6 +61,7 @@ export interface ImportTableSummary {
  */
 export const LEGACY_IMPORT_ORDER: readonly LegacyTableName[] = [
   'paramet',
+  'tiposoci',
   'socios',
   'ctacte',
   'ctacte1',
@@ -91,9 +92,10 @@ export const LEGACY_IMPORT_ORDER: readonly LegacyTableName[] = [
  */
 export const TABLE_DEPENDENCIES: Readonly<Record<LegacyTableName, readonly LegacyTableName[]>> = {
   paramet: [],
+  tiposoci: [],
   usuario: [],
   ctacte1: ['ctacte'],
-  socios: [],
+  socios: ['tiposoci'],
   ctacte: [],
   asiento: [],
   asientod: ['asiento'],
@@ -210,8 +212,7 @@ export async function runImport(db: Db, opts: RunImportOptions): Promise<ImportB
         summary.recordsSkipped += buffer.length - insertedCount
         totalInserted += insertedCount
         totalSkipped += buffer.length - insertedCount
-      } catch (err) {
-        const batchErr = err instanceof Error ? err.message : String(err)
+      } catch {
         // Fallback: try one-by-one to identify the bad row
         for (const row of buffer) {
           try {
@@ -223,22 +224,25 @@ export async function runImport(db: Db, opts: RunImportOptions): Promise<ImportB
               summary.recordsSkipped += 1
               totalSkipped += 1
             }
-          } catch (innerErr) {
+          } catch {
             summary.recordsFailed += 1
             totalFailed += 1
-            const reason = innerErr instanceof Error ? innerErr.message : String(innerErr)
+            const ordinal = ordinalFromPayload(row.payload)
+            const message = sanitizedRowError(table, ordinal, 'could not persist row')
             if (summary.errorMessage === null) {
-              summary.errorMessage = `${batchErr.slice(0, 60)} | row ${row.sourceTable}:${row.sourceKey}: ${reason}`
+              summary.errorMessage = message
             }
-            if (firstError === null) firstError = reason
-            console.error('[import] failed row:', row.sourceTable, row.sourceKey, reason)
+            if (firstError === null) firstError = message
+            console.error('[import] failed row:', message)
           }
         }
       }
       buffer = []
     }
 
+    let recordOrdinal = 0
     for await (const record of streamTable(table, opts)) {
+      recordOrdinal += 1
       summary.recordsRead += 1
       totalRead += 1
       try {
@@ -246,7 +250,7 @@ export async function runImport(db: Db, opts: RunImportOptions): Promise<ImportB
         if (!legacyKey) {
           summary.recordsFailed += 1
           totalFailed += 1
-          summary.errorMessage = `row missing legacyKey in ${table}`
+          summary.errorMessage = sanitizedRowError(table, recordOrdinal, 'missing legacy key')
           if (firstError === null) firstError = summary.errorMessage
           continue
         }
@@ -262,12 +266,12 @@ export async function runImport(db: Db, opts: RunImportOptions): Promise<ImportB
         if (buffer.length >= BATCH_SIZE) {
           await flush()
         }
-      } catch (err) {
+      } catch {
         summary.recordsFailed += 1
         totalFailed += 1
-        const reason = err instanceof Error ? err.message : String(err)
-        summary.errorMessage = reason
-        if (firstError === null) firstError = reason
+        const message = sanitizedRowError(table, recordOrdinal, 'could not process row')
+        summary.errorMessage = message
+        if (firstError === null) firstError = message
       }
     }
     // Flush remaining rows at end of table
@@ -291,6 +295,16 @@ export async function runImport(db: Db, opts: RunImportOptions): Promise<ImportB
     },
     errorMessage: firstError,
   }
+}
+
+function sanitizedRowError(table: LegacyTableName, recordOrdinal: number, reason: string): string {
+  return `${table} record ${recordOrdinal}: ${reason}`
+}
+
+function ordinalFromPayload(payload: unknown): number {
+  if (typeof payload !== 'object' || payload === null) return 0
+  const ordinal = (payload as Record<string, unknown>)['RECORD_ORDINAL']
+  return typeof ordinal === 'number' ? ordinal : 0
 }
 
 function resolveTableList(
@@ -369,8 +383,8 @@ async function* readTableFromDisk(
       { filePath, table },
     )
   }
-  for (const row of data.rows) {
-    yield normalizeDbfRow(row as Record<string, unknown>)
+  for (const [index, row] of data.rows.entries()) {
+    yield normalizeDbfRow(row as Record<string, unknown>, table, index + 1)
   }
 }
 
@@ -383,7 +397,11 @@ async function* readTableFromDisk(
  * club, AplicacionGorriti). VFP stores columns with the table name
  * as a prefix — e.g. PARAMET.PARCODIGO, SOCIOS.SOCCARNET.
  */
-function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
+function normalizeDbfRow(
+  row: Record<string, unknown>,
+  table: LegacyTableName,
+  recordOrdinal: number,
+): LegacyRecord {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(row)) {
     const trimmedK = k.trim().toUpperCase()
@@ -402,6 +420,7 @@ function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
       out['USUCLAVE'],
       // Real legacy DBF columns from Gorriti (AplicacionGorriti)
       out['PARCODIGO'],
+      out['TSOCODIGO'],
       out['SOCCARNET'],
       out['SOCNUMERO'],
       out['CONNROASIE'], // CTACTE/CTACTE1 (the actual PK — CCTCUENTA can repeat)
@@ -417,6 +436,7 @@ function normalizeDbfRow(row: Record<string, unknown>): LegacyRecord {
       composeGastosKey(out),
     ]) ?? ''
   out['LEGACY_KEY'] = legacyKey
+  if (table === 'tiposoci') out['RECORD_ORDINAL'] = recordOrdinal
   return out as LegacyRecord
 }
 

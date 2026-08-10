@@ -26,3 +26,21 @@ export { transformEscuela } from './transforms/escuela.ts'
 export { transformDeportes } from './transforms/deportes.ts'
 export { transformLocacion } from './transforms/locacion.ts'
 export { transformCaja } from './transforms/caja.ts'
+export {
+  projectLegacyMemberEvidence,
+  projectLegacyMembershipCandidates,
+  type ClosurePhaseReceipt,
+  type SqlTransactionSession,
+  type SqlTransactionSource,
+} from './legacy-membership-evidence.ts'
+export {
+  applyLegacyMemberEvidenceResolutions,
+  resolutionApplicationFingerprint,
+  type ResolutionApplicationReceipt,
+} from './legacy-member-evidence-resolution-application.ts'
+export {
+  catalogInputHash,
+  materializeLegacyMembershipCatalog,
+  type SqlTransactionSession as CatalogSqlTransactionSession,
+  type SqlTransactionSource as CatalogSqlTransactionSource,
+} from './legacy-catalog-materializer.ts'

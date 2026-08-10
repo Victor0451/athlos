@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/use-auth'
 import Sidebar from './layout/Sidebar'
 import Topbar from './layout/Topbar'
+import MobileDrawer from './layout/MobileDrawer'
 
 /**
  * AppShell — wraps every page rendered under the `(authed)` route
@@ -32,6 +33,8 @@ import Topbar from './layout/Topbar'
 export default function AppShell({ children }: { children: ReactNode }) {
   const { isAuthenticated, refresh } = useAuth()
   const router = useRouter()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const drawerTriggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (isAuthenticated) return
@@ -63,12 +66,21 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen bg-surface-page">
       <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Topbar />
+      <main className="flex-1 flex flex-col overflow-hidden" data-mobile-drawer-background="true">
+        <Topbar
+          drawerOpen={drawerOpen}
+          drawerTriggerRef={drawerTriggerRef}
+          onDrawerOpen={setDrawerOpen}
+        />
         <div className="flex-1 overflow-auto p-6" data-testid="appshell-content">
           {children}
         </div>
       </main>
+      <MobileDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        triggerRef={drawerTriggerRef}
+      />
     </div>
   )
 }

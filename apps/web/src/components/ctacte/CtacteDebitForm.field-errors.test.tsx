@@ -42,12 +42,7 @@ function apiErrorWith(details: unknown) {
 
 function renderForm() {
   return render(
-    <CtacteDebitForm
-      open
-      socioId={SOCIO_ID}
-      onSuccess={onSuccessMock}
-      onClose={onCloseMock}
-    />,
+    <CtacteDebitForm open socioId={SOCIO_ID} onSuccess={onSuccessMock} onClose={onCloseMock} />,
   )
 }
 
