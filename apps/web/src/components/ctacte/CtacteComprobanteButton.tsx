@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { apiFetchBlob } from '@/lib/api'
 import { getCtacteComprobanteUrl } from '@/lib/api/ctacte-mutations'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { parseCapDetails, parseFieldErrors } from './applyFieldErrors'
 
 /**
@@ -41,7 +42,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
     setErrors({})
     setFrom('')
     setTo('')
-    idempotencyKey.current = crypto.randomUUID()
+    idempotencyKey.current = generateOpaqueIdempotencyKey()
     setOpen(true)
   }, [])
 
@@ -66,7 +67,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
     try {
       const url = getCtacteComprobanteUrl(socioId, cuenta, from, to)
       const blob = await apiFetchBlob(url, {
-        headers: { 'Idempotency-Key': idempotencyKey.current ?? crypto.randomUUID() },
+        headers: { 'Idempotency-Key': idempotencyKey.current ?? generateOpaqueIdempotencyKey() },
       })
       const blobUrl = URL.createObjectURL(blob)
       window.open(blobUrl, '_blank', 'noopener,noreferrer')
