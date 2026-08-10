@@ -202,7 +202,7 @@ describe('migrate:status', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ pending: [], divergence: [], exitCode: 0 })
   })
 
-  it('treats a single 0044 ledger row as the frontier for all current journal migrations', async () => {
+  it('keeps the forward route-repair migration pending beyond a 0044 frontier', async () => {
     const migrations = await localMigrations()
     const baseline = migrations.find(
       (migration) => migration.name === '0044_socios_member_evidence_resolutions',
@@ -215,12 +215,14 @@ describe('migrate:status', () => {
 
     const result = await runStatus(['--json'])
 
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode).toBe(1)
     expect(JSON.parse(result.stdout)).toEqual({
-      applied: migrations.map((migration) => migration.name),
-      pending: [],
+      applied: migrations
+        .filter((migration) => migration.createdAt.getTime() <= baseline!.createdAt.getTime())
+        .map((migration) => migration.name),
+      pending: ['0048_socios_admin_route_relations_repair'],
       divergence: [],
-      exitCode: 0,
+      exitCode: 1,
     })
   })
 
