@@ -483,7 +483,14 @@ importers:
         version: 5.9.3
 
   packages/integrations/email:
+    dependencies:
+      nodemailer:
+        specifier: ^6.9.16
+        version: 6.10.1
     devDependencies:
+      '@types/nodemailer':
+        specifier: ^6.4.17
+        version: 6.4.24
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

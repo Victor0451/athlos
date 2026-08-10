@@ -13,5 +13,6 @@ export interface Email {
     subject: string
     html: string
     text: string
+    context?: Record<string, string>
   }): Promise<{ messageId: string }>
 }

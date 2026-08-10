@@ -221,6 +221,12 @@ export function buildContainer(config: ContainerConfig): AppContainer {
                 ...DEFAULT_REAL_EMAIL_CONFIG,
                 host: env['SMTP_HOST'] ?? DEFAULT_REAL_EMAIL_CONFIG.host,
                 port: Number(env['SMTP_PORT'] ?? DEFAULT_REAL_EMAIL_CONFIG.port),
+                secure: env['SMTP_PORT'] === '465',
+                auth: {
+                  user: env['SMTP_USER'] ?? DEFAULT_REAL_EMAIL_CONFIG.auth.user,
+                  pass: env['SMTP_PASS'] ?? DEFAULT_REAL_EMAIL_CONFIG.auth.pass,
+                },
+                from: validatedEnv.FROM_ADDRESS,
               },
             }),
       }),
