@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { registerCtacteDebit } from '@/lib/api/ctacte-mutations'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { applyFieldErrors } from './applyFieldErrors'
 
 /**
@@ -62,7 +63,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
   const onSubmit = useCallback(
     async (values: DebitFormValues) => {
       try {
-        idempotencyKeyRef.current ??= crypto.randomUUID()
+        idempotencyKeyRef.current ??= generateOpaqueIdempotencyKey()
         await registerCtacteDebit(socioId, {
           monto: values.monto,
           fecha: values.fecha,
@@ -82,7 +83,10 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
         // only the toast fires.
         const details = (err as { details?: unknown } | null | undefined)?.details
         applyFieldErrors(setError, details)
-        notify('error', 'No se pudo registrar el débito. Intentá de nuevo.')
+        notify(
+          'error',
+          err instanceof Error ? err.message : 'No se pudo registrar el débito. Intentá de nuevo.',
+        )
       }
     },
     [socioId, reset, onSuccess, onClose, setError],
