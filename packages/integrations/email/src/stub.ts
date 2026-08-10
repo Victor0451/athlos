@@ -5,17 +5,30 @@ import type { Email } from './types.ts'
  * tests can assert on the queue.
  */
 export interface StubEmail extends Email {
-  outbox: Array<{ to: string; subject: string; html: string; text: string; sentAt: Date }>
+  outbox: Array<{
+    to: string
+    subject: string
+    html: string
+    text: string
+    context?: Record<string, string>
+    sentAt: Date
+  }>
   reset(): void
 }
 
 export function createStubEmail(): StubEmail {
-  const outbox: Array<{ to: string; subject: string; html: string; text: string; sentAt: Date }> =
-    []
+  const outbox: StubEmail['outbox'] = []
   return {
     outbox,
-    async send({ to, subject, html, text }) {
-      outbox.push({ to, subject, html, text, sentAt: new Date() })
+    async send({ to, subject, html, text, context }) {
+      outbox.push({
+        to,
+        subject,
+        html,
+        text,
+        ...(context ? { context } : {}),
+        sentAt: new Date(),
+      })
       return { messageId: `stub-${outbox.length}` }
     },
     reset() {
