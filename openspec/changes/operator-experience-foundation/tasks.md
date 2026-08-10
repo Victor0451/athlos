@@ -53,6 +53,6 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Accessible Mobile Shell and Final Gates
 
-- [ ] 4.1 **RED U5:** create `components/layout/{MobileDrawer,Topbar,Sidebar}.test.tsx` for role filtering, labeled controls, inert/scroll lock, Tab cycle, dismissal, and focus restoration; observe failure.
-- [ ] 4.2 **GREEN/REFACTOR U5:** create `MobileDrawer.tsx`; update `AppShell.tsx`, `Topbar.tsx`, and `Sidebar.tsx` to share `lib/navigation.ts` and pass U5 checks.
-- [ ] 4.3 Run `pnpm test:run`, `pnpm typecheck`, `pnpm lint`, and `pnpm build`; browser-check `/`, dashboard, account, and drawer. No APIs, preference writes, controls, or relocation.
+- [x] 4.1 **RED U5:** create `components/layout/{MobileDrawer,Topbar,Sidebar}.test.tsx` for role filtering, labeled controls, inert/scroll lock, Tab cycle, dismissal, and focus restoration; observed the absent `MobileDrawer.tsx` import failure.
+- [x] 4.2 **GREEN/REFACTOR U5:** create `MobileDrawer.tsx`; update `AppShell.tsx`, `Topbar.tsx`, and `Sidebar.tsx` to share `lib/navigation.ts` and pass U5 checks.
+- [ ] 4.3 Run `pnpm test:run`, `pnpm typecheck`, `pnpm lint`, and `pnpm build`; browser-check `/`, dashboard, account, and drawer. No APIs, preference writes, controls, or relocation. Partial: focused U5, full web suite, typecheck, lint, formatter, diff check, and build pass; monorepo suite is blocked by missing `ATHLOS_TEST_DATABASE_URL`, and browser tooling is unavailable.

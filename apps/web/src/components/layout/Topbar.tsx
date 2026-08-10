@@ -1,5 +1,6 @@
 'use client'
 
+import { useRef, useState, type RefObject } from 'react'
 import { useAuth } from '@/lib/use-auth'
 import NotificationBell from '@/components/notifications/NotificationBell'
 import PersonalMenu from './PersonalMenu'
@@ -25,8 +26,19 @@ const ROLE_LABEL: Record<'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA', string>
   CONSULTA: 'CONSULTA',
 }
 
-export default function Topbar() {
+interface TopbarProps {
+  drawerOpen?: boolean
+  onDrawerOpen?: (open: boolean) => void
+  drawerTriggerRef?: RefObject<HTMLButtonElement | null>
+}
+
+export default function Topbar({ drawerOpen, onDrawerOpen, drawerTriggerRef }: TopbarProps) {
   const { user } = useAuth()
+  const [uncontrolledDrawerOpen, setUncontrolledDrawerOpen] = useState(false)
+  const internalTriggerRef = useRef<HTMLButtonElement>(null)
+  const isDrawerOpen = drawerOpen ?? uncontrolledDrawerOpen
+  const triggerRef = drawerTriggerRef ?? internalTriggerRef
+  const openDrawer = () => (onDrawerOpen ?? setUncontrolledDrawerOpen)(true)
 
   return (
     <header
@@ -34,6 +46,17 @@ export default function Topbar() {
       className="bg-night-900 text-white h-14 flex items-center justify-between px-4"
     >
       <div className="flex items-center gap-3">
+        <button
+          ref={triggerRef}
+          aria-controls="mobile-navigation"
+          aria-expanded={isDrawerOpen}
+          aria-label="Abrir navegación"
+          className="rounded-md p-2 lg:hidden"
+          onClick={openDrawer}
+          type="button"
+        >
+          Menú
+        </button>
         <span className="font-display text-lg font-semibold tracking-wide">Athlos</span>
         <span className="text-ink-300 text-xs hidden sm:inline">Consola de operaciones</span>
       </div>
