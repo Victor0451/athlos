@@ -14,6 +14,10 @@
     "lint": "eslint src --ext .ts"
   },
   "devDependencies": {
+    "@types/nodemailer": "^6.4.17",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16"
   }
 }

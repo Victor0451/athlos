@@ -233,7 +233,12 @@ describe('route-audit plugin', () => {
     process.env['NODE_ENV'] = 'production'
     try {
       const app = await buildServer({
-        env: { ...baseEnv, NODE_ENV: 'production', LEGACY_DB_PATH: prodDir },
+        env: {
+          ...baseEnv,
+          NODE_ENV: 'production',
+          LEGACY_DB_PATH: prodDir,
+          IMPLEMENTATION_CONTACT_RECIPIENT: 'test-recipient@example.test',
+        },
         quietLogger: true,
       })
       try {
@@ -256,7 +261,12 @@ describe('route-audit plugin', () => {
     process.env['NODE_ENV'] = 'production'
     try {
       const app = await buildServer({
-        env: { ...baseEnv, NODE_ENV: 'production', LEGACY_DB_PATH: prodDir },
+        env: {
+          ...baseEnv,
+          NODE_ENV: 'production',
+          LEGACY_DB_PATH: prodDir,
+          IMPLEMENTATION_CONTACT_RECIPIENT: 'test-recipient@example.test',
+        },
         quietLogger: true,
       })
       try {
