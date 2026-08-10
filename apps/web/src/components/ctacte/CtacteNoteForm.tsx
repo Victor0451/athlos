@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { addCtacteNote } from '@/lib/api/ctacte-mutations'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { applyFieldErrors } from './applyFieldErrors'
 
 /**
@@ -58,24 +59,6 @@ const noteSchema = z.object({
 type NoteFormValues = z.infer<typeof noteSchema>
 
 const NOTE_MAX_LENGTH = 2000
-
-/**
- * Generate an opaque, time-ordered Idempotency-Key. Uses
- * `crypto.randomUUID()` when available (always in modern browsers
- * + Node ≥ 19) with a timestamp prefix so concurrent distinct
- * intents in the same millisecond still get distinct keys.
- *
- * ≤ 128 chars per the route contract:
- * `crypto.randomUUID()` produces 36 chars; a 32-char ISO prefix
- * keeps the full key under 70 chars in practice.
- */
-function generateIdempotencyKey(): string {
-  const uuid =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return `${Date.now().toString(36)}-${uuid}`
-}
 
 /**
  * Cheap, stable content hash for the note body. Used as the
@@ -243,7 +226,7 @@ export function CtacteNoteForm({
       }
 
       // 3. New intent — mint + persist for the next reload.
-      const fresh = generateIdempotencyKey()
+      const fresh = generateOpaqueIdempotencyKey()
       idempotencyKeyRef.current = fresh
       keyForBodyRef.current = trimmedBody
       if (trimmedBody) writeCachedKey(socioId, movementId, trimmedBody, operatorId, fresh)
