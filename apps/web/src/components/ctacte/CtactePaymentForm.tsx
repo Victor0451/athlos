@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { Modal } from '@/components/ui/Modal'
 import { notify } from '@/lib/notifications'
 import { registerCtactePayment } from '@/lib/api/ctacte-mutations'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { applyFieldErrors } from './applyFieldErrors'
 
 /**
@@ -73,7 +74,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
   const onSubmit = useCallback(
     async (values: PaymentFormValues) => {
       try {
-        idempotencyKey.current ??= crypto.randomUUID()
+        idempotencyKey.current ??= generateOpaqueIdempotencyKey()
         await registerCtactePayment(socioId, {
           monto: values.monto,
           fecha: values.fecha,
