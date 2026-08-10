@@ -198,6 +198,7 @@ describe('server bootstrap', () => {
           JWT_REFRESH_SECRET: 'test-secret-please-rotate-32chars-minimum',
           LEGACY_DB_PATH: dir,
           LOG_LEVEL: 'info',
+          IMPLEMENTATION_CONTACT_RECIPIENT: 'test-recipient@example.test',
         },
         quietLogger: false, // exercise the production logger path
       })
