@@ -118,6 +118,25 @@ describe('Topbar', () => {
     expect(screen.getByRole('link', { name: /mi cuenta/i })).toHaveAttribute('href', '/account')
   })
 
+  it('exposes a labeled mobile-navigation trigger with its expanded state', async () => {
+    authState.user = {
+      operator_id: 'op-7',
+      role: 'TESORERO',
+      username: 'tesorero',
+      permissions: { can_reprint: true, can_anulate: false },
+    }
+    authState.token = 'seeded.token'
+    const { default: userEvent } = await import('@testing-library/user-event')
+    const user = userEvent.setup()
+    render(<Topbar />)
+
+    const trigger = screen.getByRole('button', { name: /abrir navegación/i })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveAttribute('aria-controls', 'mobile-navigation')
+    await user.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('renders inside a banner landmark with the Athlos brand group', () => {
     render(<Topbar />)
     const banner = screen.getByRole('banner')
