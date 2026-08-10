@@ -20,7 +20,6 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm fetch
 COPY . .
 
 RUN pnpm install --frozen-lockfile --offline
-RUN pnpm --filter @athlos/db generate
 
 # --- Stage 2: runner ---
 FROM node:22-alpine AS runner
