@@ -51,6 +51,10 @@ vi.mock('@/lib/api/notifications', () => ({
   getNotifications: (...args: unknown[]) => getNotificationsMock(...args),
 }))
 
+vi.mock('@/components/dashboard/ClubStatusDashboard', () => ({
+  ClubStatusDashboard: () => <section aria-label="Estado del club" />,
+}))
+
 const useAuthMock = vi.fn()
 vi.mock('@/lib/use-auth', () => ({
   useAuth: () => useAuthMock(),
