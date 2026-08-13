@@ -47,6 +47,19 @@ jobs:
       - run: pnpm test:run
       - run: pnpm typecheck
       - run: pnpm --filter @athlos/api build
+      - name: Install Chromium
+        run: pnpm --filter @athlos/web exec playwright install --with-deps chromium
+      - name: Playwright viewport harness
+        run: pnpm --filter @athlos/web exec playwright test
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-artifacts
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
 
   drift-check:
     runs-on: ubuntu-latest

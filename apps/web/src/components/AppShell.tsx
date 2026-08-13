@@ -33,8 +33,13 @@ import MobileDrawer from './layout/MobileDrawer'
 export default function AppShell({ children }: { children: ReactNode }) {
   const { isAuthenticated, refresh } = useAuth()
   const router = useRouter()
+  const [hydrated, setHydrated] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const drawerTriggerRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
 
   useEffect(() => {
     if (isAuthenticated) return
@@ -50,7 +55,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated, refresh, router])
 
-  if (!isAuthenticated) {
+  if (!hydrated || !isAuthenticated) {
     return (
       <div
         role="status"

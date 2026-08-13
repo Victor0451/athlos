@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { hydrateRoot } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
 
 /**
  * AppShell tests (TASK-009).
@@ -102,6 +104,63 @@ describe('AppShell', () => {
     expect(screen.getByRole('complementary')).toBeInTheDocument() // Sidebar
     expect(screen.getByText('page content')).toBeInTheDocument()
     expect(replaceMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the server and first client render on the same loading markup', async () => {
+    const children = <div>page content</div>
+    authState.user = null
+    authState.token = null
+
+    const serverMarkup = renderToString(<AppShell>{children}</AppShell>)
+    const container = document.createElement('div')
+    container.innerHTML = serverMarkup
+    document.body.appendChild(container)
+
+    authState.user = {
+      operator_id: 'op-1',
+      role: 'ADMIN',
+      username: 'admin',
+      permissions: { can_reprint: true, can_anulate: true },
+    }
+    authState.token = 'present.token'
+
+    const root = hydrateRoot(container, <AppShell>{children}</AppShell>)
+
+    expect(container.innerHTML).toBe(serverMarkup)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.querySelector('[data-testid="appshell-content"]')).toBeInTheDocument()
+    act(() => root.unmount())
+    container.remove()
+  })
+
+  it('renders authenticated content after the hydration mount completes', async () => {
+    const children = <div>page content</div>
+    authState.user = null
+    authState.token = null
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(<AppShell>{children}</AppShell>)
+    document.body.appendChild(container)
+
+    authState.user = {
+      operator_id: 'op-1',
+      role: 'ADMIN',
+      username: 'admin',
+      permissions: { can_reprint: true, can_anulate: true },
+    }
+    authState.token = 'present.token'
+
+    const root = hydrateRoot(container, <AppShell>{children}</AppShell>)
+
+    expect(screen.getByTestId('appshell-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('appshell-content')).not.toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('appshell-content')).toHaveTextContent('page content')
+    })
+    act(() => root.unmount())
+    container.remove()
   })
 
   it('attempts a silent refresh and renders the shell when refresh succeeds', async () => {
