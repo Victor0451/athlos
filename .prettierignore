@@ -2,6 +2,7 @@
 node_modules
 dist
 build
+apps/web/next-env.d.ts
 pnpm-lock.yaml
 openspec/
 packages/db/drizzle/
