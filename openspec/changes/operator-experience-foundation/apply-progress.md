@@ -7,7 +7,8 @@
 - [x] 2.3–2.4 U3a2 ADMIN attention remains accepted at its 180-line cap.
 - [x] 2.5–2.6 U3b Operations navigation remains accepted at 136 delivery lines.
 - [x] 3.1–3.2 U4 personal boundary is complete.
-- [ ] 4.1–4.3 U5 remain pending.
+- [x] 4.1–4.2 U5 accessible mobile shell is complete.
+- [x] 4.3 final verification is complete: merged-main CI and local lint provide the required final evidence.
 
 ## Retained Prior Work Evidence
 
@@ -45,6 +46,28 @@
 | 3.1 | Component integration | `Topbar.test.tsx`: 1 file / 5 tests passed | `PersonalMenu.test.tsx` failed to resolve the absent personal menu. | N/A — RED-only task | Four role cases plus account, preference, rejected retry, and success cases. | N/A — test task. |
 | 3.2 | Component integration | Reused Topbar baseline | Reused 3.1 failure | 2 files / 11 tests passed | All roles, no ADMIN settings, `getMe`, no preference editor, password retry, and logout redirect. | Kept the existing auth API contract unchanged and made Topbar delegate personal actions. |
 
+## U5 Work Unit Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command and exact result | `pnpm --filter '@athlos/web' exec vitest run 'src/components/AppShell.test.tsx' 'src/components/layout/MobileDrawer.test.tsx' 'src/components/layout/Topbar.test.tsx' 'src/components/layout/Sidebar.test.tsx' --config vitest.config.mts` exited 0: 4 files / 19 tests passed. |
+| Runtime harness command/scenario and exact result | N/A — local authenticated browser automation is unavailable. RTL covered drawer opening focus, Tab/Shift+Tab wrapping, Escape, overlay, navigation dismissal, trigger restoration, inert background, scroll lock, and role-filtered links. |
+| Full web suite | Within local `pnpm test:run`, `@athlos/web` exited 0: 88 files / 745 tests passed. |
+| Local monorepo suite | Local `pnpm test:run` exited 1 at `@athlos/db`: seven integration suites require unset `ATHLOS_TEST_DATABASE_URL`; all preceding web tests passed. |
+| Local quality gates | `pnpm typecheck`, `pnpm lint`, and `pnpm build` each exited 0; targeted Prettier and `git diff --check` also exited 0. |
+| PR #239 head CI | PR head `728d54844d0d703e406e48d6d11e52e1b9537442` passed: full `pnpm test:run` with Postgres, `pnpm typecheck`, API build, Docker build smoke, drift check, and backup Bats gates. The workflow does not expose a `pnpm lint` step. |
+| Merge-commit CI | Main merge commit `d32ef80e5777bee94766bb337c81cf6a562aeafa` run [`31345263242`](https://github.com/Victor0451/athlos/actions/runs/31345263242) completed successfully: repository `pnpm test:run` with Postgres, `pnpm typecheck`, API build, Docker build smoke, drift check, backup Bats, ShellCheck, deploy-workflow contract checks, and actionlint all passed. |
+| Merged-source lint | `pnpm --filter '@athlos/web' lint` exited 0 locally against the exact merged U5 source. The CI workflow has no standalone lint step. |
+| Diff check / cap | Source plus tests: 230 additions and 4 deletions, 234 total changed lines, below the 400-line cap. |
+| Rollback boundary | `apps/web/src/components/AppShell.tsx`, `apps/web/src/components/layout/{MobileDrawer,Topbar}.{tsx,test.tsx}`, and `Topbar.test.tsx`; revert together to remove only the mobile drawer. |
+
+## U5 TDD Cycle Evidence
+
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|
+| 4.1 | Component integration | `Topbar.test.tsx` + `Sidebar.test.tsx`: 2 files / 13 tests passed | `MobileDrawer.test.tsx` failed to resolve absent `MobileDrawer.tsx`. A new Topbar labeled-trigger test then failed because the trigger was absent. | N/A — RED-only task | Drawer test covers non-ADMIN filtering/inert lock and focus cycle plus Escape/overlay/navigation close. | Test-only task. |
+| 4.2 | Component integration | Reused 13-test baseline | Reused 4.1 failures | 4 files / 19 tests passed. | Open focus, Shift+Tab and Tab wrap, three close paths, trigger state, and desktop Sidebar regression all pass. | Shared `visibleNavigation` preserves Sidebar/mobile filtering. |
+
 ## Status
 
-U4 is complete. No commit, push, PR, API contract, preference write, or U5 drawer work was created.
+All tasks (1.1–4.3) are complete. PR #239 merged to `main` as `d32ef80e5777bee94766bb337c81cf6a562aeafa`; no application code was edited in this artifact-only continuation. Merged-main CI run `31345263242` and the merged-source web lint close the final verification gate. Browser automation remains unavailable locally, with focused RTL accessibility evidence retained as the functional proof. No commit, push, or PR was created.
