@@ -46,6 +46,8 @@ import { gastosCtacteAdminRoutes } from './routes/admin/gastos-ctacte.ts'
 import { evidenceClosureRoutes } from './routes/admin/evidence-closure.ts'
 import { sociosEvidenceExceptionRoutes } from './routes/admin/socios-evidence-exceptions.ts'
 import { membershipTypeRoutes } from './routes/admin/membership-types.ts'
+import { implementationContactRoutes } from './routes/implementation-contact.ts'
+import { clubStatusRoutes } from './routes/club-status.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -200,6 +202,10 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
 
   // 10. Auth routes (PR 3a: login; PR 3b: refresh / logout / me / change-password).
   await app.register(authRoutes)
+
+  // Public implementation inquiry: credential-free, route-audit exempt, and independently throttled.
+  await app.register(implementationContactRoutes)
+  await app.register(clubStatusRoutes)
 
   // 10b. Approval routes (PR 3b): public-by-token + internal create-link.
   await app.register(approvalRoutes)

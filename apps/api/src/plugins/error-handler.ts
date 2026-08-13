@@ -75,6 +75,25 @@ const errorHandlerPlugin: FastifyPluginAsync = async (fastify) => {
       })
     }
 
+    // Fastify raises parser and rate-limit failures before the route handler.
+    // Preserve their safe HTTP semantics instead of collapsing them into 500s.
+    const statusCode = (err as { statusCode?: unknown }).statusCode
+    if (statusCode === 413) {
+      return reply.code(413).send({
+        error: 'PAYLOAD_TOO_LARGE',
+        message: 'Request payload is too large',
+        request_id: request.id,
+      })
+    }
+    if (statusCode === 429 || (err as { error?: unknown }).error === 'RATE_LIMIT_EXCEEDED') {
+      return reply.code(429).send({
+        error: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests',
+        retry_after: reply.getHeader('retry-after'),
+        request_id: request.id,
+      })
+    }
+
     // 4. Unknown error: log the redacted shape, return a generic 500.
     //    The original message is NEVER sent to the client — it would
     //    leak stack-trace fragments, file paths, and SQL fragments.

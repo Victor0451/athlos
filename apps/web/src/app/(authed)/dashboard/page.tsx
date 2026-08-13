@@ -5,6 +5,7 @@ import { NotificationSummary } from '@/components/dashboard/NotificationSummary'
 import { OperationsAttention } from '@/components/dashboard/OperationsAttention'
 import { SociosSummary } from '@/components/dashboard/SociosSummary'
 import { WorkspaceCards } from '@/components/dashboard/WorkspaceCards'
+import { ClubStatusDashboard } from '@/components/dashboard/ClubStatusDashboard'
 
 export default function DashboardPage() {
   const { user } = useAuth()
@@ -17,6 +18,7 @@ export default function DashboardPage() {
       </header>
 
       {user ? <WorkspaceCards role={user.role} /> : null}
+      <ClubStatusDashboard />
       <div className="grid gap-4 lg:grid-cols-2">
         <SociosSummary />
         <NotificationSummary />
