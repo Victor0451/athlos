@@ -37,9 +37,13 @@
 
   /* ── Status (limited use) ───────────────────────────────── */
   --success: #0d6e3d;
+  --success-soft: #edf7f1;
   --warning: #b8741a;
+  --warning-soft: #fef7e6;
   --danger: #c1272d;
+  --danger-soft: #fdf2f2;
   --info: #1a4a7a;
+  --info-soft: #eef2fb;
 
   /* ── Spacing (4px base unit) ─────────────────────────────── */
   --space-1: 4px;
