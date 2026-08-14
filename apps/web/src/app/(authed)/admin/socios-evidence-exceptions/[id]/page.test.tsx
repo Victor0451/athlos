@@ -90,7 +90,7 @@ describe('Socios evidence exception detail', () => {
     expect(screen.queryByPlaceholderText(/Buscar por número/)).not.toBeInTheDocument()
     await user.type(screen.getByPlaceholderText(/código, nombre o letra/), 'ad')
     await user.click(await screen.findByText(/Adulto/))
-    await user.type(screen.getByPlaceholderText(/Explicá/), 'Verificado')
+    await user.type(screen.getByPlaceholderText(/Explique/), 'Verificado')
     await user.click(screen.getByRole('button', { name: 'Registrar resolución' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar' }))
     await waitFor(() =>
@@ -119,7 +119,7 @@ describe('Socios evidence exception detail', () => {
     renderPage()
     await user.type(await screen.findByPlaceholderText(/Buscar por número/), '12')
     await user.click(await screen.findByText(/Socio 12/))
-    await user.type(screen.getByPlaceholderText(/Explicá/), 'Verificado')
+    await user.type(screen.getByPlaceholderText(/Explique/), 'Verificado')
     expect(screen.getByText(/candidato determinista/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Registrar resolución' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar' }))
@@ -146,10 +146,10 @@ describe('Socios evidence exception detail', () => {
     const view = renderPage()
     await user.type(await screen.findByPlaceholderText(/código, nombre o letra/), 'ad')
     await user.click(await screen.findByText(/Adulto/))
-    await user.type(screen.getByPlaceholderText(/Explicá/), 'Verificado')
+    await user.type(screen.getByPlaceholderText(/Explique/), 'Verificado')
     await user.click(screen.getByRole('button', { name: 'Registrar resolución' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar' }))
-    expect(await screen.findByText(/Actualizá el detalle/)).toBeInTheDocument()
+    expect(await screen.findByText(/Actualice el detalle/)).toBeInTheDocument()
     view.unmount()
     detail.mockResolvedValue({
       ...base,
