@@ -48,15 +48,19 @@ export default function SettingsPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Administración</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">Configuración</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Datos del operador actual y opciones de cuenta.
+          </p>
         </header>
         <div
           role="alert"
           data-testid="settings-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
         </div>
@@ -67,6 +71,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <header>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Administración</p>
         <h1 className="font-display text-2xl font-bold text-ink-900">Configuración</h1>
         <p className="mt-1 text-sm text-ink-500">Datos del operador actual y opciones de cuenta.</p>
       </header>
@@ -87,13 +92,11 @@ export default function SettingsPage() {
         <div
           role="alert"
           data-testid="settings-error"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">
-            No se pudo cargar el perfil
-          </p>
-          <p className="mt-2 font-body text-sm text-ink-500">
-            Verificá la conectividad con el API o intentá nuevamente más tarde.
+          <p className="font-display font-semibold text-ink-900">No se pudo cargar el perfil</p>
+          <p className="mt-1 text-ink-500">
+            Verifique la conectividad con el API o intente nuevamente más tarde.
           </p>
         </div>
       ) : (
@@ -103,20 +106,20 @@ export default function SettingsPage() {
           <section
             aria-label="Cambiar contraseña"
             data-testid="change-password-placeholder"
-            className="rounded-lg border border-ink-100 bg-surface p-6"
+            className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
           >
             <h2 className="font-display text-base font-semibold text-ink-900">
               Cambiar contraseña
             </h2>
             <p className="mt-1 font-body text-sm text-ink-500">
               El formulario de cambio de contraseña se habilita en una próxima versión. Por ahora,
-              contactá al administrador del sistema para resetear tu clave.
+              contacte al administrador del sistema para restablecer su contraseña.
             </p>
             <button
               type="button"
               disabled
               data-testid="change-password-button"
-              className="mt-4 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-white opacity-50"
+              className="mt-4 min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground opacity-50"
             >
               Cambiar contraseña
             </button>
