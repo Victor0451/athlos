@@ -124,7 +124,8 @@ describe('MovementList', () => {
 
   it('shows a loading skeleton when loading is true', () => {
     renderList({ loading: true })
-    expect(screen.getByText(/cargando/i)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
   })
 
   it('triggers downloadCSV with the movimientos when the button is clicked', async () => {
