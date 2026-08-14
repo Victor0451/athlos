@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, type RefObject } from 'react'
+import { Menu } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
 import NotificationBell from '@/components/notifications/NotificationBell'
 import PersonalMenu from './PersonalMenu'
@@ -55,7 +56,7 @@ export default function Topbar({ drawerOpen, onDrawerOpen, drawerTriggerRef }: T
           onClick={openDrawer}
           type="button"
         >
-          Menú
+          <Menu aria-hidden="true" className="h-5 w-5" />
         </button>
         <span className="font-display text-lg font-semibold tracking-wide">Athlos</span>
         <span className="text-ink-300 text-xs hidden sm:inline">Consola de operaciones</span>
