@@ -61,15 +61,12 @@ export function PadronRow({ row }: PadronRowProps) {
   }
 
   return (
-    <li
-      className="border-t border-ink-100 first:border-t-0"
-      data-testid={`padron-row-${row.socioId}`}
-    >
+    <li data-testid={`padron-row-${row.socioId}`}>
       <button
         type="button"
         onClick={onClick}
         aria-label={`Ver perfil de ${row.apellido}, ${row.nombre}`}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-fast hover:bg-surface-sunken focus:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-fast hover:bg-surface-sunken focus:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       >
         <span className="flex flex-col gap-0.5">
           <span className="font-display text-sm font-semibold text-ink-900">
@@ -88,9 +85,7 @@ export function PadronRow({ row }: PadronRowProps) {
           >
             {estadoLabel(row.estado)}
           </span>
-          <span className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-            N° {row.numeroSocio}
-          </span>
+          <span className="font-mono text-xs text-ink-500">N° {row.numeroSocio}</span>
         </span>
       </button>
     </li>
