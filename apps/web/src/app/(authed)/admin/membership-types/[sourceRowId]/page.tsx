@@ -23,11 +23,12 @@ const lifecycleLabels = {
 }
 const sourceLabels = { validated: 'Evidencia validada', resolved: 'Corrección aplicada' }
 const columns: ColumnDef<MembershipTypeAssociatedMember>[] = [
-  { key: 'member_number', header: 'Número de socio' },
+  { key: 'member_number', header: 'Número de socio', className: 'font-mono text-xs text-ink-500' },
   {
     key: 'credential_ref',
     header: 'Referencia de credencial',
     accessor: (row) => row.credential_ref ?? 'Sin referencia',
+    className: 'font-mono text-xs text-ink-500',
   },
   {
     key: 'lifecycle_state',
@@ -49,14 +50,28 @@ const columns: ColumnDef<MembershipTypeAssociatedMember>[] = [
   },
 ]
 
-function Notice({ title, children }: { title: string; children: React.ReactNode }) {
+function Notice({
+  title,
+  children,
+  variant = 'error',
+}: {
+  title: string
+  children: React.ReactNode
+  variant?: 'error' | 'empty'
+}) {
   return (
     <div
-      role="alert"
-      className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+      role={variant === 'error' ? 'alert' : 'status'}
+      className={
+        variant === 'error'
+          ? 'rounded-lg border border-danger bg-surface p-3 text-sm'
+          : 'rounded-lg border border-ink-100 bg-surface p-4 text-sm text-ink-500 shadow-sm'
+      }
     >
-      <p className="font-display text-lg font-semibold text-ink-900">{title}</p>
-      <p className="mt-2 text-sm text-ink-500">{children}</p>
+      <p className={variant === 'error' ? 'font-display font-semibold text-ink-900' : undefined}>
+        {title}
+      </p>
+      <p className={variant === 'error' ? 'mt-1 text-ink-500' : 'mt-1'}>{children}</p>
     </div>
   )
 }
@@ -92,7 +107,8 @@ export default function MembershipTypeDetailPage() {
           <Link href="/admin/membership-types" className="text-sm text-ink-500 hover:text-ink-900">
             Volver a tipos de afiliación
           </Link>
-          <h1 className="mt-2 font-display text-2xl font-bold text-ink-900">
+          <p className="mt-2 font-mono text-xs uppercase tracking-widest text-accent">Socios</p>
+          <h1 className="mt-1 font-display text-2xl font-bold text-ink-900">
             {result?.membership_type
               ? `${result.membership_type.code} · ${result.membership_type.name}`
               : 'Tipo de afiliación'}
@@ -100,15 +116,19 @@ export default function MembershipTypeDetailPage() {
           {result?.membership_type ? (
             <p className="mt-1 text-sm text-ink-500">
               Letra {result.membership_type.letter} · Procedencia: Aplicado · Referencia de lote:{' '}
-              {result.membership_type.snapshot_batch_id}
+              <span className="font-mono text-xs text-ink-500">
+                {result.membership_type.snapshot_batch_id}
+              </span>
             </p>
-          ) : null}
+          ) : (
+            <p className="mt-1 text-sm text-ink-500">Consulta de asociaciones del tipo vigente.</p>
+          )}
         </div>
         <button
           type="button"
           onClick={() => query.refetch()}
           disabled={!permitted || query.isFetching}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {query.isFetching ? 'Actualizando…' : 'Actualizar'}
         </button>
@@ -119,9 +139,9 @@ export default function MembershipTypeDetailPage() {
           Esta sección requiere administración o gestión de datos.
         </Notice>
       ) : historical ? (
-        <Notice title="Tipo no disponible en el catálogo actual">
-          La referencia consultada es histórica o ya no está vigente. Volvé al catálogo y actualizá
-          la consulta.
+        <Notice title="Tipo no disponible en el catálogo actual" variant="empty">
+          La referencia consultada es histórica o ya no está vigente. Regrese al catálogo y
+          actualice la consulta.
         </Notice>
       ) : (
         <>
@@ -131,16 +151,19 @@ export default function MembershipTypeDetailPage() {
           <form
             aria-label="Buscar socios asociados"
             onSubmit={submitSearch}
-            className="flex gap-2 rounded-lg border border-ink-100 bg-surface p-4"
+            className="flex gap-2 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
           >
             <input
               aria-label="Buscar por número o referencia de credencial"
               value={searchDraft}
               onChange={(event) => setSearchDraft(event.target.value)}
               placeholder="Número o referencia de credencial"
-              className="min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm"
+              className="min-h-11 min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <button type="submit" className="rounded-md bg-ink-900 px-3 py-2 text-sm text-surface">
+            <button
+              type="submit"
+              className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
               Buscar
             </button>
           </form>

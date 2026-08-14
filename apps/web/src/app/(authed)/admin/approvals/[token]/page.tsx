@@ -81,15 +81,19 @@ export default function ApprovalDetailPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Administración</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">Aprobaciones</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Revisión y seguimiento de una decisión operativa.
+          </p>
         </header>
         <div
           role="alert"
           data-testid="approval-detail-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
           <Link
@@ -135,22 +139,28 @@ export default function ApprovalDetailPage() {
           >
             ← Volver al listado
           </Link>
-          <h1 className="mt-2 font-display text-2xl font-bold text-ink-900">
+          <p className="mt-2 font-mono text-xs uppercase tracking-widest text-accent">
+            Administración
+          </p>
+          <h1 className="mt-1 font-display text-2xl font-bold text-ink-900">
             {isGone ? 'Token vencido o ya utilizado' : 'No se pudo cargar el token'}
           </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Revisión y seguimiento de una decisión operativa.
+          </p>
         </header>
         <div
           role="alert"
           data-testid={isGone ? 'approval-detail-gone' : 'approval-detail-error'}
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">
+          <p className="font-display font-semibold text-ink-900">
             {isGone ? 'Token vencido o ya utilizado' : 'No se pudo cargar el token'}
           </p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="mt-1 text-ink-500">
             {isGone
-              ? `El token "${token}" ya fue consumido o expiró. Pedile al solicitante un nuevo enlace.`
-              : 'Verificá la conectividad con el API o intentá nuevamente más tarde.'}
+              ? `El token "${token}" ya fue consumido o expiró. Solicite al solicitante un nuevo enlace.`
+              : 'Verifique la conectividad con el API o intente nuevamente más tarde.'}
           </p>
         </div>
       </div>
@@ -189,21 +199,27 @@ export default function ApprovalDetailPage() {
         >
           ← Volver al listado
         </Link>
-        <h1 className="mt-2 font-display text-2xl font-bold text-ink-900">Aprobaciones</h1>
+        <p className="mt-2 font-mono text-xs uppercase tracking-widest text-accent">
+          Administración
+        </p>
+        <h1 className="mt-1 font-display text-2xl font-bold text-ink-900">Aprobaciones</h1>
+        <p className="mt-1 text-sm text-ink-500">
+          Revisión y seguimiento de una decisión operativa.
+        </p>
       </header>
 
       {feedback ? (
         <div
           role="status"
           data-testid="approval-feedback"
-          className="rounded-lg border border-warning bg-warning/10 p-4"
+          className="rounded-lg border border-warning bg-warning/10 p-4 shadow-sm"
         >
           <p className="font-display text-base font-semibold text-ink-900">
             {feedback.decision === 'approve'
               ? 'Aprobación registrada — la ejecución real queda pendiente'
               : 'Rechazo registrado — la ejecución real queda pendiente'}
           </p>
-          <p className="mt-1 font-body text-sm text-ink-700">
+          <p className="mt-1 text-sm text-ink-700">
             El ejecutor de aprobaciones se habilita en una próxima versión. Por ahora la decisión
             quedó asentada pero la acción subyacente (anulación u orden de pago) aún no se aplicó.
           </p>
@@ -214,11 +230,11 @@ export default function ApprovalDetailPage() {
         <section
           aria-label="Confirmar rechazo"
           data-testid="approval-reject-form"
-          className="rounded-lg border border-danger bg-surface p-4"
+          className="rounded-lg border border-danger bg-surface p-4 shadow-sm"
         >
           <h2 className="font-display text-base font-semibold text-ink-900">Confirmar rechazo</h2>
           <p className="mt-1 font-body text-sm text-ink-500">
-            Indicá el motivo del rechazo. El solicitante recibirá esta justificación.
+            Indique el motivo del rechazo. El solicitante recibirá esta justificación.
           </p>
           <label htmlFor="approval-reject-reason" className="sr-only">
             Motivo del rechazo
@@ -229,7 +245,7 @@ export default function ApprovalDetailPage() {
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             data-testid="approval-reject-reason"
-            className="mt-3 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="mt-3 min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             placeholder="Motivo del rechazo…"
           />
           <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -238,7 +254,7 @@ export default function ApprovalDetailPage() {
               onClick={onConfirmReject}
               disabled={reason.trim().length === 0 || decideMutation.isPending}
               data-testid="approval-reject-confirm"
-              className="rounded-md bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-md bg-danger px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-danger/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               {decideMutation.isPending ? 'Registrando…' : 'Confirmar rechazo'}
             </button>
@@ -247,7 +263,7 @@ export default function ApprovalDetailPage() {
               onClick={onCancelReject}
               disabled={decideMutation.isPending}
               data-testid="approval-reject-cancel"
-              className="rounded-md border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancelar
             </button>
@@ -267,13 +283,13 @@ export default function ApprovalDetailPage() {
         <div
           role="alert"
           data-testid="approval-decide-error"
-          className="rounded-lg border border-danger bg-danger/5 p-4"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-base font-semibold text-ink-900">
+          <p className="font-display font-semibold text-ink-900">
             No se pudo registrar la decisión
           </p>
-          <p className="mt-1 font-body text-sm text-ink-700">
-            Verificá la conectividad con el API o intentá nuevamente más tarde.
+          <p className="mt-1 text-ink-700">
+            Verifique la conectividad con el API o intente nuevamente más tarde.
           </p>
         </div>
       ) : null}
