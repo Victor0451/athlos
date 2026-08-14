@@ -278,11 +278,12 @@ describe('DashboardPage', () => {
     expect(screen.getByText('La cuota vence mañana.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /socios/i })).toHaveAttribute('href', '/socios')
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: /scheduled-import/i })).toHaveAttribute(
+      expect(screen.getByRole('link', { name: 'Revisar scheduled-import' })).toHaveAttribute(
         'href',
         '/admin/scheduler/scheduled-import',
       )
     })
+    expect(screen.getByText('1 ejecución')).toBeInTheDocument()
     expect(screen.queryByLabelText('Readiness')).not.toBeInTheDocument()
     expect(screen.queryByText('DB')).not.toBeInTheDocument()
     expect(screen.queryByText('Schema')).not.toBeInTheDocument()
