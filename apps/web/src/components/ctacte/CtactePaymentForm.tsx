@@ -96,7 +96,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
         // only the toast fires.
         const details = (err as { details?: unknown } | null | undefined)?.details
         applyFieldErrors(setError, details)
-        notify('error', 'No se pudo registrar el pago. Intentá de nuevo.')
+        notify('error', 'No se pudo registrar el pago. Intente de nuevo.')
       }
     },
     [socioId, file, reset, onSuccess, onClose, setError],
@@ -135,7 +135,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-60"
             disabled={isSubmitting}
           >
             Cancelar
@@ -144,7 +144,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
             type="submit"
             form="ctacte-payment-form"
             disabled={isSubmitting}
-            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover disabled:opacity-60"
           >
             {isSubmitting ? 'Registrando…' : 'Registrar pago'}
           </button>
@@ -159,10 +159,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
       >
         {/* Monto */}
         <div className="space-y-1">
-          <label
-            htmlFor="payment-monto"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="payment-monto" className="block text-sm font-medium text-ink-700">
             Monto <span className="text-danger">*</span>
           </label>
           <input
@@ -174,10 +171,10 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
             aria-invalid={Boolean(errors.monto) || undefined}
             aria-describedby={errors.monto ? 'payment-monto-error' : undefined}
             {...register('monto')}
-            className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.monto && (
-            <p id="payment-monto-error" role="alert" className="text-sm text-danger">
+            <p id="payment-monto-error" role="alert" className="text-xs text-danger">
               {errors.monto.message}
             </p>
           )}
@@ -185,10 +182,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
 
         {/* Fecha */}
         <div className="space-y-1">
-          <label
-            htmlFor="payment-fecha"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="payment-fecha" className="block text-sm font-medium text-ink-700">
             Fecha <span className="text-danger">*</span>
           </label>
           <input
@@ -197,10 +191,10 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
             aria-invalid={Boolean(errors.fecha) || undefined}
             aria-describedby={errors.fecha ? 'payment-fecha-error' : undefined}
             {...register('fecha')}
-            className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.fecha && (
-            <p id="payment-fecha-error" role="alert" className="text-sm text-danger">
+            <p id="payment-fecha-error" role="alert" className="text-xs text-danger">
               {errors.fecha.message}
             </p>
           )}
@@ -208,10 +202,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
 
         {/* Concepto */}
         <div className="space-y-1">
-          <label
-            htmlFor="payment-concepto"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="payment-concepto" className="block text-sm font-medium text-ink-700">
             Concepto <span className="text-danger">*</span>
           </label>
           <textarea
@@ -221,10 +212,10 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
             aria-invalid={Boolean(errors.concepto) || undefined}
             aria-describedby={errors.concepto ? 'payment-concepto-error' : 'payment-concepto-hint'}
             {...register('concepto')}
-            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.concepto ? (
-            <p id="payment-concepto-error" role="alert" className="text-sm text-danger">
+            <p id="payment-concepto-error" role="alert" className="text-xs text-danger">
               {errors.concepto.message}
             </p>
           ) : (
@@ -236,7 +227,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
 
         {/* Comprobante — drag-and-drop or file picker */}
         <div className="space-y-1">
-          <span className="block font-display text-sm font-semibold text-ink-700">
+          <span className="block text-sm font-medium text-ink-700">
             Comprobante <span className="font-normal text-ink-500">(opcional)</span>
           </span>
 
@@ -252,7 +243,7 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
           <div
             role="button"
             tabIndex={0}
-            aria-label="Adjuntar comprobante — arrastrá un archivo PDF o imagen, o hacé clic para seleccionar"
+            aria-label="Adjuntar comprobante — arrastre un archivo PDF o imagen, o haga clic para seleccionar"
             onDragOver={(e) => {
               e.preventDefault()
               setIsDragging(true)
@@ -306,9 +297,9 @@ export function CtactePaymentForm({ open, socioId, onSuccess, onClose }: CtacteP
               </div>
             ) : (
               <p className="text-sm text-ink-500">
-                Arrastrá un PDF o imagen aquí, o{' '}
+                Arrastre un PDF o imagen aquí, o{' '}
                 <span className="font-medium text-accent underline">
-                  hacé clic para seleccionar
+                  haga clic para seleccionar
                 </span>
               </p>
             )}
