@@ -286,7 +286,7 @@ export function CtacteNoteForm({
         if (message.includes('CONFLICT') || message.includes('409')) {
           notify(
             'error',
-            'Esta nota se encoló con una clave anterior que ya se usó para otro contenido. Generá una nueva.',
+            'Esta nota se encoló con una clave anterior que ya se usó para otro contenido. Genere una nueva.',
           )
           // Force a new key on the NEXT submit attempt — the user
           // has to acknowledge the conflict and either re-edit the
@@ -301,7 +301,7 @@ export function CtacteNoteForm({
           // the server returns no `details` (e.g., 500 INTERNAL_ERROR)
           // only the toast fires.
           applyFieldErrors(setError, details)
-          notify('error', 'No se pudo agregar la nota. Intentá de nuevo.')
+          notify('error', 'No se pudo agregar la nota. Intente de nuevo.')
         }
       }
     },
@@ -347,7 +347,7 @@ export function CtacteNoteForm({
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-60"
             disabled={isSubmitting}
           >
             Cancelar
@@ -356,7 +356,7 @@ export function CtacteNoteForm({
             type="submit"
             form="ctacte-note-form"
             disabled={isSubmitting}
-            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover disabled:opacity-60"
           >
             {isSubmitting ? 'Guardando…' : 'Guardar nota'}
           </button>
@@ -377,14 +377,14 @@ export function CtacteNoteForm({
             id="note-body"
             rows={5}
             maxLength={NOTE_MAX_LENGTH}
-            placeholder="Escribí una nota sobre este movimiento…"
+            placeholder="Escriba una nota sobre este movimiento…"
             aria-invalid={Boolean(errors.body) || undefined}
             aria-describedby={errors.body ? 'note-body-error' : 'note-body-hint'}
             {...register('body')}
-            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.body ? (
-            <p id="note-body-error" role="alert" className="text-sm text-danger">
+            <p id="note-body-error" role="alert" className="text-xs text-danger">
               {errors.body.message}
             </p>
           ) : (
