@@ -279,7 +279,10 @@ describe('Padrones list page', () => {
     await user.type(screen.getByRole('spinbutton', { name: /ejercicio/i }), '2026')
     await user.click(screen.getByRole('button', { name: /ver padrón/i }))
 
-    expect(await screen.findByText(/cargando/i)).toBeInTheDocument()
+    const loading = await screen.findByTestId('padrones-results-loading')
+    expect(loading).toHaveAttribute('role', 'status')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
+    expect(loading.querySelector('[aria-hidden="true"]')).toHaveClass('animate-pulse')
   })
 
   it('pre-populates the form from ?disciplina=&ejercicio= URL params (deep-link)', async () => {
