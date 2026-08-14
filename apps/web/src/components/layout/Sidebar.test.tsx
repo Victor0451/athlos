@@ -5,8 +5,8 @@ import { render, screen, within } from '@testing-library/react'
  * Sidebar tests (TASK-011).
  *
  * Covers the `web-frontend/spec.md` AppShell Layout scenarios:
- *   - All roles see Dashboard, Socios, Ctacte, Padrones
- *   - ADMIN sees Admin items (Scheduler, Settings); CONSULTA does not
+ *   - All roles see Panel de control, Socios, Cuenta corriente, Padrones
+ *   - ADMIN sees admin items (Tareas programadas, Configuración); CONSULTA does not
  *   - TESORERO and OPERADOR see the same items as CONSULTA (no admin)
  *   - The active item is visually marked (a "current page" link)
  */
@@ -65,13 +65,13 @@ describe('Sidebar', () => {
     expect(screen.getByRole('complementary')).toBeInTheDocument()
   })
 
-  it('always shows Dashboard, Socios, Ctacte, and Padrones for every role', () => {
+  it('always shows the primary destinations for every role', () => {
     seedUser('CONSULTA')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
-    expect(within(nav).getByRole('link', { name: /dashboard/i })).toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: /panel de control/i })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /socios/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /ctacte/i })).toBeInTheDocument()
+    expect(within(nav).getByRole('link', { name: /cuenta corriente/i })).toBeInTheDocument()
     expect(within(nav).getByRole('link', { name: /padrones/i })).toBeInTheDocument()
   })
 
@@ -79,37 +79,37 @@ describe('Sidebar', () => {
     seedUser('ADMIN')
     mockPathname = '/admin/scheduler/daily-summary'
     render(<Sidebar />)
-    const operations = screen.getByRole('region', { name: 'Operations' })
-    const scheduler = within(operations).getByRole('link', { name: /scheduler/i })
+    const operations = screen.getByRole('region', { name: 'Operaciones' })
+    const scheduler = within(operations).getByRole('link', { name: /tareas programadas/i })
 
     expect(scheduler).toHaveAttribute('href', '/admin/scheduler')
     expect(scheduler).toHaveAttribute('aria-current', 'page')
-    expect(within(operations).getByRole('link', { name: /approvals/i })).toBeInTheDocument()
+    expect(within(operations).getByRole('link', { name: /aprobaciones/i })).toBeInTheDocument()
     expect(within(operations).getByRole('link', { name: /gastos/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /configuración/i })).toBeInTheDocument()
   })
 
-  it('hides Scheduler, Approvals, Settings and Gastos for non-ADMIN roles', () => {
+  it('hides admin destinations for non-ADMIN roles', () => {
     seedUser('CONSULTA')
     render(<Sidebar />)
     const nav = screen.getByRole('navigation')
-    expect(within(nav).queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /aprobaciones/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /configuración/i })).not.toBeInTheDocument()
     expect(within(nav).queryByRole('link', { name: /gastos/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Operations' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Operaciones' })).not.toBeInTheDocument()
   })
 
-  it('hides Scheduler, Approvals and Settings for TESORERO and OPERADOR too', () => {
+  it('hides admin destinations for TESORERO and OPERADOR too', () => {
     seedUser('TESORERO')
     render(<Sidebar />)
-    expect(screen.queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /aprobaciones/i })).not.toBeInTheDocument()
 
     authState.user = { ...authState.user!, role: 'OPERADOR' }
     render(<Sidebar />)
-    expect(screen.queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /approvals/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /aprobaciones/i })).not.toBeInTheDocument()
   })
 
   it('shows Socios exceptions only to ADMIN or a granted data steward', () => {
