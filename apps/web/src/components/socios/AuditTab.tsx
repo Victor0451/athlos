@@ -431,7 +431,7 @@ export function AuditTab({ socioId }: AuditTabProps) {
       <div
         role="alert"
         data-testid="audit-tab-error"
-        className="rounded-md border border-danger bg-danger/10 px-4 py-3 font-body text-sm text-danger"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm text-danger"
       >
         No pudimos cargar la auditoría del socio.{' '}
         {query.error instanceof Error ? `(${query.error.message})` : ''}
@@ -470,7 +470,7 @@ export function AuditTab({ socioId }: AuditTabProps) {
             className="absolute -left-[calc(1.5rem+5px)] top-2 inline-flex h-3 w-3 rounded-full border-2 border-surface bg-accent"
             aria-hidden="true"
           />
-          <div className="rounded-lg border border-ink-100 bg-surface-elevated p-4">
+          <div className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
             <div className="mb-2 flex items-start gap-2">
               <ActionIcon action={event.action} />
               <div className="min-w-0 flex-1">

@@ -82,14 +82,21 @@ export default function SociosEvidenceExceptionDetailPage() {
     },
   })
 
-  if (detail.isPending) return <State kind="status" message="Cargando excepción…" />
+  if (detail.isPending)
+    return (
+      <div role="status" aria-live="polite" className="space-y-2">
+        <div aria-hidden="true" className="h-7 w-64 animate-pulse rounded bg-surface-sunken" />
+        <div aria-hidden="true" className="h-24 animate-pulse rounded bg-surface-sunken" />
+        <span className="sr-only">Cargando excepción…</span>
+      </div>
+    )
   if (detail.error instanceof ApiError && detail.error.status === 403)
-    return <State kind="alert" message="No tenés permisos para revisar esta excepción." />
+    return <State kind="alert" message="No tiene permisos para revisar esta excepción." />
   if (detail.isError)
     return (
       <State
         kind="alert"
-        message="No se pudo cargar la excepción. Actualizá e intentá nuevamente."
+        message="No se pudo cargar la excepción. Actualice e intente nuevamente."
       />
     )
   const evidence = detail.data!
@@ -111,7 +118,7 @@ export default function SociosEvidenceExceptionDetailPage() {
       )
     } catch {
       setClosureMessage(
-        'No se pudo preparar la aplicación. Actualizá el detalle e intentá nuevamente.',
+        'No se pudo preparar la aplicación. Actualice el detalle e intente nuevamente.',
       )
     } finally {
       setClosurePending(false)
@@ -141,13 +148,13 @@ export default function SociosEvidenceExceptionDetailPage() {
           : result.status === 'replay'
             ? 'Esta confirmación ya fue procesada; no se programó una ejecución duplicada.'
             : result.status === 'cancelled'
-              ? 'La confirmación fue cancelada; no se programó una ejecución. Prepará una nueva vista previa.'
-              : 'No se programó una ejecución. Actualizá el detalle y prepará una nueva vista previa.',
+              ? 'La confirmación fue cancelada; no se programó una ejecución. Prepare una nueva vista previa.'
+              : 'No se programó una ejecución. Actualice el detalle y prepare una nueva vista previa.',
       )
     } catch {
       setClosurePreview(null)
       setClosureMessage(
-        'No se programó una ejecución. Actualizá el detalle y prepará una nueva vista previa.',
+        'No se programó una ejecución. Actualice el detalle y prepare una nueva vista previa.',
       )
     } finally {
       setClosurePending(false)
@@ -163,9 +170,13 @@ export default function SociosEvidenceExceptionDetailPage() {
         >
           ← Volver a excepciones
         </Link>
-        <h1 className="mt-2 font-display text-2xl font-bold text-ink-900">Revisar excepción</h1>
+        <p className="mt-3 font-mono text-xs uppercase tracking-widest text-accent">Socios</p>
+        <h1 className="font-display text-2xl font-bold text-ink-900">Revisar excepción</h1>
+        <p className="mt-1 text-sm text-ink-500">
+          Revise el caso y registre una resolución segura para el padrón.
+        </p>
       </header>
-      <section className="grid gap-4 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-2">
+      <section className="grid gap-4 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm sm:grid-cols-2">
         <Info label="Excepción" value={KIND[evidence.kind]} />
         <Info
           label="Referencia segura"
@@ -190,7 +201,7 @@ export default function SociosEvidenceExceptionDetailPage() {
           message="La resolución quedó registrada y está pendiente de aplicación ADMIN. No se reprocesó ningún dato."
         />
       ) : evidence.status === 'resolved' ? (
-        <section className="rounded-lg border border-ink-100 bg-surface p-4">
+        <section className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
           <p className="text-sm text-ink-700">
             Esta excepción ya tiene una resolución registrada
             {evidence.current_resolution?.application_status === 'applied'
@@ -221,10 +232,10 @@ export default function SociosEvidenceExceptionDetailPage() {
           ) : null}
         </section>
       ) : (
-        <section className="rounded-lg border border-ink-100 bg-surface p-4">
+        <section className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
           <h2 className="font-display text-lg font-semibold text-ink-900">Registrar resolución</h2>
           <p className="mt-1 text-sm text-ink-500">
-            Seleccioná registros existentes. No se muestran datos de origen ni identificadores
+            Seleccione registros existentes. No se muestran datos de origen ni identificadores
             internos.
           </p>
           {knownMember ? (
@@ -284,7 +295,7 @@ export default function SociosEvidenceExceptionDetailPage() {
             maxLength={1000}
             rows={3}
             className={inputClass}
-            placeholder="Explicá brevemente la verificación realizada."
+            placeholder="Explique brevemente la verificación realizada."
           />
           <button
             type="button"
@@ -296,13 +307,13 @@ export default function SociosEvidenceExceptionDetailPage() {
           </button>
           {stale ? (
             <p role="alert" className="mt-3 text-sm text-danger">
-              La evidencia cambió o ya fue resuelta. Actualizá el detalle antes de intentar
+              La evidencia cambió o ya fue resuelta. Actualice el detalle antes de intentar
               nuevamente.
             </p>
           ) : null}
           {resolution.isError && !stale ? (
             <p role="alert" className="mt-3 text-sm text-danger">
-              No se pudo registrar la resolución. Revisá los datos e intentá nuevamente.
+              No se pudo registrar la resolución. Revise los datos e intente nuevamente.
             </p>
           ) : null}
         </section>
@@ -402,7 +413,11 @@ function State({ kind, message }: { kind: 'status' | 'alert'; message: string })
   return (
     <div
       role={kind}
-      className="rounded-lg border border-ink-100 bg-surface p-6 text-center text-sm text-ink-700"
+      className={
+        kind === 'alert'
+          ? 'rounded-lg border border-danger bg-surface p-3 text-sm'
+          : 'rounded-lg border border-ink-100 bg-surface p-4 text-sm text-ink-500 shadow-sm'
+      }
     >
       {message}
     </div>

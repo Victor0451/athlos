@@ -243,7 +243,7 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
               data-testid="socio-note-new-body"
               rows={3}
               maxLength={NOTE_MAX_LENGTH}
-              placeholder="Escribí una nota sobre este socio…"
+              placeholder="Escriba una nota sobre este socio…"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               disabled={createMutation.isPending}
@@ -291,7 +291,7 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
               data-testid="socio-notes-empty"
               className="rounded-md border border-dashed border-ink-200 px-4 py-8 text-center font-body text-sm text-ink-500"
             >
-              Aún no hay notas para este socio. Usá el formulario de abajo para empezar.
+              Aún no hay notas para este socio. Use el formulario de abajo para empezar.
             </p>
           ) : (
             <ul data-testid="socio-notes-list" className="space-y-3">
@@ -302,7 +302,7 @@ export function SocioNotesCard({ socioId }: SocioNotesCardProps) {
                   <li
                     key={note.id}
                     data-testid={`socio-note-${note.id}`}
-                    className="rounded-lg border border-ink-100 bg-surface-elevated p-4"
+                    className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
                   >
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2">

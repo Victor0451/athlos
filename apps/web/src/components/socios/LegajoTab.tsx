@@ -91,10 +91,7 @@ export function LegajoTab({ socioId }: LegajoTabProps) {
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
       >
         {Array.from({ length: 3 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-48 animate-pulse rounded-lg border border-ink-100 bg-surface-elevated"
-          />
+          <div key={i} className="h-48 animate-pulse rounded bg-surface-sunken" />
         ))}
         <span className="sr-only">Cargando archivos…</span>
       </div>
@@ -106,7 +103,7 @@ export function LegajoTab({ socioId }: LegajoTabProps) {
       <div
         role="alert"
         data-testid="legajo-tab-error"
-        className="rounded-md border border-danger bg-danger/10 px-4 py-3 font-body text-sm text-danger"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm text-danger"
       >
         No pudimos cargar los archivos del socio.{' '}
         {attachmentsQuery.error instanceof Error ? `(${attachmentsQuery.error.message})` : ''}
@@ -131,7 +128,7 @@ export function LegajoTab({ socioId }: LegajoTabProps) {
           <Pin className="mx-auto mb-3 h-8 w-8 text-ink-300" aria-hidden="true" />
           <p className="font-display text-sm font-semibold text-ink-700">Sin archivos</p>
           <p className="mt-1 font-body text-xs text-ink-500">
-            Subí el primer archivo para empezar el legajo del socio.
+            Suba el primer archivo para empezar el legajo del socio.
           </p>
         </div>
       ) : (
