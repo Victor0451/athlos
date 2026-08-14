@@ -266,7 +266,7 @@ describe('DashboardPage', () => {
 
   it('renders the page heading', async () => {
     renderDashboard()
-    expect(screen.getByRole('heading', { name: /dashboard/i, level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Panel de control', level: 1 })).toBeInTheDocument()
   })
 
   it('keeps U2 regions while showing safe operational attention for ADMIN', async () => {
