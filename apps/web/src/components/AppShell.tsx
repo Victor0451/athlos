@@ -63,7 +63,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
         className="flex h-screen items-center justify-center bg-surface text-ink-500"
         data-testid="appshell-loading"
       >
-        <span className="font-display text-sm uppercase tracking-widest">Cargando…</span>
+        <span
+          aria-hidden="true"
+          className="block h-10 w-48 animate-pulse rounded bg-surface-sunken"
+        />
+        <span className="sr-only">Cargando…</span>
       </div>
     )
   }
