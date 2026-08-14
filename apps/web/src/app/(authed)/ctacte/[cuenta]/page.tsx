@@ -106,9 +106,9 @@ export default function CtacteDetailPage() {
         className="space-y-6"
         data-testid="ctacte-detail-loading"
       >
-        <div className="h-7 w-64 animate-pulse rounded bg-surface-sunken" />
-        <div className="h-24 animate-pulse rounded bg-surface-sunken" />
-        <div className="h-64 animate-pulse rounded bg-surface-sunken" />
+        <div className="h-7 w-64 animate-pulse rounded bg-surface-sunken" aria-hidden="true" />
+        <div className="h-24 animate-pulse rounded bg-surface-sunken" aria-hidden="true" />
+        <div className="h-64 animate-pulse rounded bg-surface-sunken" aria-hidden="true" />
         <span className="sr-only">Cargando…</span>
       </div>
     )
@@ -119,16 +119,16 @@ export default function CtacteDetailPage() {
       <div
         role="alert"
         data-testid="ctacte-detail-not-found"
-        className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm"
       >
-        <p className="font-display text-lg font-semibold text-ink-900">Cuenta no encontrada</p>
-        <p className="mt-2 font-body text-sm text-ink-500">
+        <p className="font-display font-semibold text-ink-900">Cuenta no encontrada</p>
+        <p className="mt-1 text-ink-500">
           No pudimos cargar la cuenta corriente. Es posible que el socio no exista o que haya sido
           eliminado.
         </p>
         <Link
           href="/ctacte"
-          className="mt-4 inline-block rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="mt-4 inline-flex min-h-11 items-center rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover"
         >
           Volver al selector
         </Link>
@@ -157,14 +157,14 @@ export default function CtacteDetailPage() {
     <div className="space-y-6">
       <header
         data-testid="ctacte-premium-header"
-        className="rounded-xl border border-ink-150 bg-surface p-5 sm:p-6"
+        className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm sm:p-5"
       >
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
             <Link
               href="/ctacte"
               aria-label="Volver al selector"
-              className="inline-flex shrink-0 items-center justify-center rounded-xl border border-ink-150 bg-surface p-3 text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md border border-ink-200 bg-surface px-3 py-2 text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               <ChevronLeft className="h-5 w-5" aria-hidden="true" />
             </Link>
@@ -175,21 +175,25 @@ export default function CtacteDetailPage() {
               <WalletCards className="h-6 w-6" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-              <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+              <p className="font-mono text-xs uppercase tracking-widest text-accent">
                 Cuenta corriente
               </p>
-              <h1 className="mt-1 font-display text-2xl font-bold uppercase tracking-tight text-ink-900 sm:text-3xl">
-                {headerName}
-              </h1>
+              <h1 className="font-display text-2xl font-bold text-ink-900">{headerName}</h1>
+              <p className="mt-1 text-sm text-ink-500">
+                Consulta de movimientos y saldo de la cuenta corriente.
+              </p>
               {socio ? (
                 <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
                   <span
                     data-testid="ctacte-header-member-number"
-                    className="font-mono text-xs text-ink-500"
+                    className="font-mono text-xs tabular-nums text-ink-500"
                   >
                     N° socio {socio.numero_socio}
                   </span>
-                  <span data-testid="ctacte-header-dni" className="font-mono text-xs text-ink-500">
+                  <span
+                    data-testid="ctacte-header-dni"
+                    className="font-mono text-xs tabular-nums text-ink-500"
+                  >
                     DNI {socio.dni}
                   </span>
                   <Badge
@@ -215,7 +219,7 @@ export default function CtacteDetailPage() {
               type="button"
               onClick={() => setShowPayment(true)}
               data-testid="ctacte-action-payment"
-              className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               Registrar pago
             </button>
@@ -223,7 +227,7 @@ export default function CtacteDetailPage() {
               type="button"
               onClick={() => setShowDebit(true)}
               data-testid="ctacte-action-debit"
-              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               Registrar débito
             </button>
@@ -242,7 +246,7 @@ export default function CtacteDetailPage() {
             Total Debe
           </p>
           <p
-            className="mt-1 font-display text-lg font-semibold text-ink-900 tabular-nums"
+            className="mt-1 font-mono text-lg font-semibold text-ink-900 tabular-nums"
             data-testid="ctacte-summary-debe"
           >
             {ARS.format(totalDebe)}
@@ -253,7 +257,7 @@ export default function CtacteDetailPage() {
             Total Haber
           </p>
           <p
-            className="mt-1 font-display text-lg font-semibold text-ink-900 tabular-nums"
+            className="mt-1 font-mono text-lg font-semibold text-ink-900 tabular-nums"
             data-testid="ctacte-summary-haber"
           >
             {ARS.format(totalHaber)}
@@ -264,7 +268,7 @@ export default function CtacteDetailPage() {
             Saldo
           </p>
           <p
-            className="mt-1 font-display text-lg font-semibold text-ink-900 tabular-nums"
+            className="mt-1 font-mono text-lg font-semibold text-ink-900 tabular-nums"
             data-testid="ctacte-summary-saldo"
           >
             {ARS.format(Number(ctacte.saldo))}
@@ -294,14 +298,14 @@ export default function CtacteDetailPage() {
 
       <nav
         aria-label="Paginación de movimientos"
-        className="flex items-center justify-between"
+        className="flex items-center justify-between rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
         data-testid="ctacte-pagination"
       >
         <button
           type="button"
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
         >
           Anterior
         </button>
@@ -312,7 +316,7 @@ export default function CtacteDetailPage() {
           type="button"
           onClick={() => setPage((p) => p + 1)}
           disabled={page >= totalPages}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
         >
           Siguiente
         </button>
@@ -325,50 +329,53 @@ export default function CtacteDetailPage() {
       >
         <h2 className="font-display text-lg font-semibold text-ink-900">Gastos vinculados</h2>
         {gastosVinculadosQuery.isPending ? (
-          <div className="mt-3 h-12 animate-pulse rounded bg-surface-sunken" />
+          <div role="status" aria-live="polite" className="mt-3">
+            <div className="h-12 animate-pulse rounded bg-surface-sunken" aria-hidden="true" />
+            <span className="sr-only">Cargando…</span>
+          </div>
         ) : (gastosVinculadosQuery.data?.items ?? []).length === 0 ? null : (
-          <table className="mt-3 w-full">
-            <thead className="bg-surface-sunken">
-              <tr>
-                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                  Cuenta
-                </th>
-                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                  Concepto
-                </th>
-                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                  Fecha
-                </th>
-                <th className="px-4 py-3 text-right font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                  Importe
-                </th>
-                <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
-                  Motivo
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {(gastosVinculadosQuery.data?.items ?? []).map((g: GastoLinkForCuenta) => (
-                <tr
-                  key={g.linkId}
-                  data-testid={`gastos-vinculado-row-${g.linkId}`}
-                  className="border-t border-ink-100"
-                >
-                  <td className="px-4 py-3 font-mono text-sm text-ink-900">
-                    {g.gastoCuentaPrincipal}
-                  </td>
-                  <td className="px-4 py-3 font-body text-sm text-ink-700">
-                    {g.gastoConcepto ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 font-body text-sm text-ink-700">{g.gastoFecha}</td>
-                  <td className="px-4 py-3 text-right font-body text-sm tabular-nums text-ink-900">
-                    {g.gastoImporte}
-                  </td>
-                  <td className="px-4 py-3 font-body text-sm text-ink-700">{g.motivo}</td>
+          <div className="mt-3 overflow-x-auto rounded-md border border-ink-100">
+            <table className="w-full">
+              <thead className="bg-surface-sunken">
+                <tr>
+                  <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                    Cuenta
+                  </th>
+                  <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                    Concepto
+                  </th>
+                  <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                    Fecha
+                  </th>
+                  <th className="px-4 py-3 text-right font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                    Importe
+                  </th>
+                  <th className="px-4 py-3 text-left font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                    Motivo
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {(gastosVinculadosQuery.data?.items ?? []).map((g: GastoLinkForCuenta) => (
+                  <tr key={g.linkId} data-testid={`gastos-vinculado-row-${g.linkId}`}>
+                    <td className="px-4 py-3 font-mono text-sm tabular-nums text-ink-900">
+                      {g.gastoCuentaPrincipal}
+                    </td>
+                    <td className="px-4 py-3 font-body text-sm text-ink-700">
+                      {g.gastoConcepto ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-sm tabular-nums text-ink-700">
+                      {g.gastoFecha}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-sm tabular-nums text-ink-900">
+                      {g.gastoImporte}
+                    </td>
+                    <td className="px-4 py-3 font-body text-sm text-ink-700">{g.motivo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 

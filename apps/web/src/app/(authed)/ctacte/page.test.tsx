@@ -241,7 +241,8 @@ describe('Ctacte list page (socio selector)', () => {
     await user.type(input, 'garcia')
     await user.click(screen.getByRole('button', { name: /buscar/i }))
 
-    expect(await screen.findByText(/cargando/i)).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
   })
 
   it('redirects to /ctacte/<id> when the URL has ?cuenta=<id> on mount (deep-link)', async () => {
