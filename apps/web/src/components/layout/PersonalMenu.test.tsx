@@ -77,6 +77,27 @@ describe('personal account surfaces', () => {
     },
   )
 
+  it('closes on Escape and outside click while returning focus to the trigger', async () => {
+    const actor = userEvent.setup()
+    render(
+      <>
+        <PersonalMenu />
+        <button type="button">Fuera</button>
+      </>,
+    )
+    const trigger = screen.getByRole('button', { name: /menú personal/i })
+
+    await actor.click(trigger)
+    await actor.keyboard('{Escape}')
+    expect(screen.queryByRole('link', { name: /mi cuenta/i })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+
+    await actor.click(trigger)
+    await actor.click(screen.getByRole('button', { name: 'Fuera' }))
+    expect(screen.queryByRole('link', { name: /mi cuenta/i })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
   it('loads a read-only account overview and preferences without an editor', async () => {
     renderPage(<AccountPage />)
     expect(await screen.findByText('operador')).toBeInTheDocument()

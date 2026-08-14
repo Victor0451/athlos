@@ -39,13 +39,14 @@ export default function Sidebar() {
                   href={item.href}
                   aria-current={isActive ? 'page' : undefined}
                   className={[
-                    'block rounded-md px-3 py-2 text-sm transition-colors duration-fast',
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-fast',
                     isActive
                       ? 'border-l-2 border-accent bg-night-800 text-white pl-[10px]'
                       : 'border-l-2 border-transparent text-ink-300 hover:text-white hover:bg-night-800',
                   ].join(' ')}
                   data-testid={`sidebar-link-${item.href.replace(/\//g, '-')}`}
                 >
+                  <item.icon aria-hidden="true" className="h-4 w-4 shrink-0" />
                   {item.label}
                 </Link>
               </li>
@@ -53,9 +54,9 @@ export default function Sidebar() {
           })}
         </ul>
         {operations.length ? (
-          <section aria-label="Operations" className="mt-4">
+          <section aria-label="Operaciones" className="mt-4">
             <h2 className="px-3 pb-1 text-[10px] uppercase tracking-widest text-ink-500">
-              Operations
+              Operaciones
             </h2>
             <ul className="space-y-1">
               {operations.map((item) => {
@@ -66,13 +67,14 @@ export default function Sidebar() {
                       href={item.href}
                       aria-current={isActive ? 'page' : undefined}
                       className={[
-                        'block rounded-md px-3 py-2 text-sm transition-colors duration-fast',
+                        'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-fast',
                         isActive
                           ? 'border-l-2 border-accent bg-night-800 text-white pl-[10px]'
                           : 'border-l-2 border-transparent text-ink-300 hover:text-white hover:bg-night-800',
                       ].join(' ')}
                       data-testid={`sidebar-link-${item.href.replace(/\//g, '-')}`}
                     >
+                      <item.icon aria-hidden="true" className="h-4 w-4 shrink-0" />
                       {item.label}
                     </Link>
                   </li>

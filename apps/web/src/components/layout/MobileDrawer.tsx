@@ -3,6 +3,7 @@
 import { useEffect, useRef, type RefObject } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { X } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
 import { visibleNavigation } from '@/lib/navigation'
 
@@ -67,23 +68,40 @@ export default function MobileDrawer({ open, onClose, triggerRef }: MobileDrawer
         id="mobile-navigation"
         role="dialog"
       >
-        <button ref={closeRef} type="button" onClick={onClose}>
-          Cerrar navegación
+        <button
+          ref={closeRef}
+          aria-label="Cerrar navegación"
+          className="rounded-md p-2 text-ink-300 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-night-900"
+          type="button"
+          onClick={onClose}
+        >
+          <X aria-hidden="true" className="h-5 w-5" />
         </button>
         <nav aria-label="Secciones" className="mt-4">
-          {links.map((item) => (
-            <Link
-              key={item.href}
-              aria-current={
-                pathname === item.href || pathname.startsWith(`${item.href}/`) ? 'page' : undefined
-              }
-              data-mobile-drawer-link="true"
-              href={item.href}
-              onClick={onClose}
-            >
-              {item.label}
-            </Link>
-          ))}
+          <ul className="space-y-1">
+            {links.map((item) => {
+              const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
+              return (
+                <li key={item.href}>
+                  <Link
+                    aria-current={isActive ? 'page' : undefined}
+                    className={[
+                      'flex items-center gap-3 rounded-md px-3 py-2 text-sm',
+                      isActive
+                        ? 'border-l-2 border-accent bg-night-800 text-white pl-[10px]'
+                        : 'border-l-2 border-transparent text-ink-300 hover:text-white hover:bg-night-800',
+                    ].join(' ')}
+                    data-mobile-drawer-link="true"
+                    href={item.href}
+                    onClick={onClose}
+                  >
+                    <item.icon aria-hidden="true" className="h-4 w-4 shrink-0" />
+                    {item.label}
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
         </nav>
       </aside>
     </>
