@@ -90,7 +90,7 @@ export default function LoginPage() {
           <h1 className="font-display text-5xl font-bold leading-tight">Athlos</h1>
           <p className="mt-3 text-ink-200 text-lg">Consola de operaciones</p>
           <p className="mt-6 text-ink-500 text-sm max-w-md">
-            Gestión integral de socios, cuenta corriente, padrones,_scheduler y aprobaciones. Acceso
+            Gestión integral de socios, cuenta corriente, padrones, scheduler y aprobaciones. Acceso
             restringido al personal autorizado.
           </p>
         </div>
