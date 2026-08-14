@@ -51,8 +51,8 @@ describe('MobileDrawer', () => {
     await user.click(screen.getByRole('button', { name: /abrir navegación/i }))
 
     expect(screen.getByRole('dialog', { name: /navegación principal/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /dashboard/i })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /scheduler/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /panel de control/i })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
     expect(document.body.style.overflow).toBe('hidden')
     expect(screen.getByTestId('background')).toHaveAttribute('inert')
   })
