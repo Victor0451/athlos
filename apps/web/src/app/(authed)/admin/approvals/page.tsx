@@ -43,15 +43,19 @@ export default function ApprovalsListPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Administración</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">Aprobaciones</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Revisión y seguimiento de decisiones operativas.
+          </p>
         </header>
         <div
           role="alert"
           data-testid="approvals-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
         </div>
@@ -69,9 +73,10 @@ export default function ApprovalsListPage() {
   return (
     <div className="space-y-6">
       <header>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Administración</p>
         <h1 className="font-display text-2xl font-bold text-ink-900">Aprobaciones</h1>
         <p className="mt-1 text-sm text-ink-500">
-          Cola de tokens de aprobación pendientes. Por ahora, ingresá un token conocido para revisar
+          Cola de tokens de aprobación pendientes. Por ahora, ingrese un token conocido para revisar
           su detalle.
         </p>
       </header>
@@ -79,7 +84,7 @@ export default function ApprovalsListPage() {
       <section
         aria-label="Próximamente"
         data-testid="approvals-placeholder"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-6 text-center"
+        className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
         <p className="font-display text-base font-semibold text-ink-900">Próximamente</p>
         <p className="mt-2 font-body text-sm text-ink-500">
@@ -91,14 +96,14 @@ export default function ApprovalsListPage() {
       <section
         aria-label="Abrir token específico"
         data-testid="approvals-deeplink"
-        className="rounded-lg border border-ink-100 bg-surface p-6"
+        className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
         <h2 className="font-display text-base font-semibold text-ink-900">
           Abrir un token específico
         </h2>
         <p className="mt-1 font-body text-sm text-ink-500">
-          Si tenés un enlace de aprobación (de WhatsApp o email), pegá el token acá para abrir el
-          detalle.
+          Si tiene un enlace de aprobación (de WhatsApp o correo electrónico), pegue el token aquí
+          para abrir el detalle.
         </p>
         <form onSubmit={onSubmit} className="mt-4 flex flex-wrap items-center gap-3">
           <label htmlFor="approvals-token-input" className="sr-only">
@@ -114,13 +119,13 @@ export default function ApprovalsListPage() {
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             data-testid="approvals-token-input"
-            className="min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-sm text-ink-900 placeholder:text-ink-500 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="min-h-11 min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-sm text-ink-900 placeholder:text-ink-500 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           />
           <button
             type="submit"
             disabled={tokenInput.trim().length === 0}
             data-testid="approvals-token-submit"
-            className="rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             Abrir
           </button>

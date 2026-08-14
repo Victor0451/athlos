@@ -46,15 +46,17 @@ export default function SchedulerListPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Operaciones</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">Scheduler</h1>
+          <p className="mt-1 text-sm text-ink-500">Estado de los trabajos programados.</p>
         </header>
         <div
           role="alert"
           data-testid="scheduler-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
         </div>
@@ -73,9 +75,10 @@ export default function SchedulerListPage() {
   return (
     <div className="space-y-6">
       <header>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Operaciones</p>
         <h1 className="font-display text-2xl font-bold text-ink-900">Scheduler</h1>
         <p className="mt-1 text-sm text-ink-500">
-          Estado de los trabajos programados. Click en un trabajo para ver el detalle y disparar
+          Estado de los trabajos programados. Seleccione un trabajo para ver el detalle y ejecutar
           corridas manuales.
         </p>
       </header>
@@ -101,22 +104,24 @@ export default function SchedulerListPage() {
         <div
           role="alert"
           data-testid="scheduler-list-error"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">
+          <p className="font-display font-semibold text-ink-900">
             No se pudo cargar el estado del scheduler
           </p>
-          <p className="mt-2 font-body text-sm text-ink-500">
-            Verificá la conectividad con el API o intentá nuevamente más tarde.
+          <p className="mt-1 text-ink-500">
+            Verifique la conectividad con el API o intente nuevamente más tarde.
           </p>
         </div>
       ) : (
         <ul
-          className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+          className="divide-y divide-ink-100 overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-sm"
           data-testid="scheduler-jobs-list"
         >
-          {jobs.map((job) => {
-            return (
+          {jobs.length === 0 ? (
+            <li className="p-4 text-sm text-ink-500">No hay trabajos programados registrados.</li>
+          ) : (
+            jobs.map((job) => (
               <JobCard
                 key={job.name}
                 jobName={job.name}
@@ -125,19 +130,17 @@ export default function SchedulerListPage() {
                 lastRun={job.lastRun}
                 onSelect={onSelect}
               />
-            )
-          })}
+            ))
+          )}
         </ul>
       )}
 
       <section
         aria-label="Próximamente"
         data-testid="scheduler-proximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
+        className="rounded-lg border border-ink-100 bg-surface p-4 text-sm text-ink-500 shadow-sm"
       >
-        <p className="font-body text-sm text-ink-500">
-          Próximamente — filtros por estado, ventana temporal y búsqueda por nombre de trabajo.
-        </p>
+        Próximamente: filtros por estado, ventana temporal y búsqueda por nombre de trabajo.
       </section>
     </div>
   )
