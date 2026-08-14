@@ -101,10 +101,10 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
           else next.submit = entry.message
         }
         setErrors(next)
-        notify('error', 'No se pudo generar el comprobante. Intentá de nuevo.')
+        notify('error', 'No se pudo generar el comprobante. Intente de nuevo.')
       } else {
         setErrors({})
-        notify('error', 'No se pudo generar el comprobante. Intentá de nuevo.')
+        notify('error', 'No se pudo generar el comprobante. Intente de nuevo.')
       }
     } finally {
       setIsGenerating(false)
@@ -116,7 +116,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
       <button
         type="button"
         onClick={handleOpen}
-        className="inline-flex items-center gap-2 rounded-md border border-ink-200 bg-surface px-3 py-1.5 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        className="inline-flex min-h-11 items-center gap-2 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
         data-testid="ctacte-comprobante-btn"
       >
         <Printer className="h-4 w-4" aria-hidden="true" />
@@ -133,7 +133,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
               type="button"
               onClick={handleClose}
               disabled={isGenerating}
-              className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-60"
             >
               Cancelar
             </button>
@@ -141,7 +141,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
               type="button"
               onClick={handleGenerate}
               disabled={isGenerating}
-              className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover disabled:opacity-60"
             >
               {isGenerating ? 'Generando…' : 'Generar PDF'}
             </button>
@@ -150,17 +150,14 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
       >
         <div className="space-y-5">
           <p className="font-body text-sm text-ink-500">
-            Seleccioná el rango de fechas para generar el comprobante de cuenta corriente de{' '}
+            Seleccione el rango de fechas para generar el comprobante de cuenta corriente de{' '}
             <span className="font-medium text-ink-700">{cuenta}</span>.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
             {/* Desde */}
             <div className="space-y-1">
-              <label
-                htmlFor="comprobante-from"
-                className="block font-display text-sm font-semibold text-ink-700"
-              >
+              <label htmlFor="comprobante-from" className="block text-sm font-medium text-ink-700">
                 Desde
               </label>
               <input
@@ -173,10 +170,10 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
                 }}
                 aria-invalid={Boolean(errors.from) || undefined}
                 aria-describedby={errors.from ? 'comprobante-from-error' : undefined}
-                className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+                className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
               />
               {errors.from && (
-                <p id="comprobante-from-error" role="alert" className="text-sm text-danger">
+                <p id="comprobante-from-error" role="alert" className="text-xs text-danger">
                   {errors.from}
                 </p>
               )}
@@ -184,10 +181,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
 
             {/* Hasta */}
             <div className="space-y-1">
-              <label
-                htmlFor="comprobante-to"
-                className="block font-display text-sm font-semibold text-ink-700"
-              >
+              <label htmlFor="comprobante-to" className="block text-sm font-medium text-ink-700">
                 Hasta
               </label>
               <input
@@ -200,10 +194,10 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
                 }}
                 aria-invalid={Boolean(errors.to) || undefined}
                 aria-describedby={errors.to ? 'comprobante-to-error' : undefined}
-                className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+                className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
               />
               {errors.to && (
-                <p id="comprobante-to-error" role="alert" className="text-sm text-danger">
+                <p id="comprobante-to-error" role="alert" className="text-xs text-danger">
                   {errors.to}
                 </p>
               )}
@@ -211,10 +205,7 @@ export function CtacteComprobanteButton({ socioId, cuenta }: CtacteComprobanteBu
           </div>
 
           {errors.submit && (
-            <p
-              role="alert"
-              className="rounded-md border border-danger bg-danger/10 px-3 py-2 font-body text-sm text-danger"
-            >
+            <p role="alert" className="rounded-lg border border-danger bg-surface p-3 text-sm">
               {errors.submit}
             </p>
           )}
