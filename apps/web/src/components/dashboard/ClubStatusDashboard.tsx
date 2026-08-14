@@ -19,6 +19,11 @@ function money(value: string) {
   return `$${value}`
 }
 
+function netClass(value: string) {
+  const amount = Number(value)
+  return amount < 0 ? 'text-danger' : amount > 0 ? 'text-success' : 'text-ink-900'
+}
+
 export function ClubStatusDashboard() {
   const [period, setPeriod] = useState<ClubStatusPeriod>('current-month')
   const [data, setData] = useState<ClubStatus>()
@@ -44,17 +49,20 @@ export function ClubStatusDashboard() {
       className="min-w-0 space-y-4"
       aria-label="Estado del club"
     >
-      <div className="flex flex-col gap-3 border-b border-ink-300 pb-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-ink-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="font-display text-xl font-bold text-ink-900">Estado del club</h2>
-          <p className="text-sm text-ink-500">Resumen institucional autorizado por el servidor.</p>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Indicadores</p>
+          <h2 className="font-display text-2xl font-bold text-ink-900">Estado del club</h2>
+          <p className="mt-1 text-sm text-ink-500">
+            Resumen institucional autorizado por el servidor.
+          </p>
         </div>
         <label className="grid gap-1 text-sm font-medium text-ink-700">
           Período financiero
           <select
             value={period}
             onChange={(event) => setPeriod(event.target.value as ClubStatusPeriod)}
-            className="min-h-11 rounded-md border border-ink-300 bg-surface-elevated px-3 text-ink-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 text-ink-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {periods.map((item) => (
               <option key={item.value} value={item.value}>
@@ -65,7 +73,10 @@ export function ClubStatusDashboard() {
         </label>
       </div>
       {error ? (
-        <div role="alert" className="border border-danger p-3 text-sm text-ink-900">
+        <div
+          role="alert"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm text-ink-900"
+        >
           No se pudo actualizar el estado del club.{' '}
           <button
             type="button"
@@ -77,40 +88,59 @@ export function ClubStatusDashboard() {
         </div>
       ) : null}
       {!data && !error ? (
-        <p role="status" aria-live="polite">
-          Cargando estado del club
-        </p>
+        <span
+          role="status"
+          aria-live="polite"
+          className="block h-10 animate-pulse rounded bg-surface-sunken"
+        >
+          <span className="sr-only">Cargando estado del club</span>
+        </span>
       ) : null}
       {data ? (
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4">
           {data.membership.active !== undefined ? (
-            <article className="rounded-md border border-ink-300 bg-surface-elevated p-4">
-              <p className="text-xs uppercase tracking-widest text-ink-500">Socios</p>
+            <article className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
+              <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-success">
+                Socios
+              </p>
               <p className="mt-1 font-display text-2xl font-bold tabular-nums text-ink-900">
                 {data.membership.active} socios activos
               </p>
             </article>
           ) : null}
           {unavailable.has('membership.active') ? (
-            <p role="status">Membresía no disponible</p>
+            <p
+              role="status"
+              className="rounded border border-warning bg-warning-soft p-3 text-sm text-warning"
+            >
+              Membresía no disponible
+            </p>
           ) : null}
           {data.finance ? (
             <>
-              <article className="rounded-md border border-ink-300 bg-surface-elevated p-4">
-                <p className="text-xs uppercase tracking-widest text-ink-500">Débitos</p>
+              <article className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
+                <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Débitos
+                </p>
                 <p className="mt-1 font-display text-2xl font-bold tabular-nums text-ink-900">
                   {money(data.finance.debits)}
                 </p>
               </article>
-              <article className="rounded-md border border-ink-300 bg-surface-elevated p-4">
-                <p className="text-xs uppercase tracking-widest text-ink-500">Créditos</p>
+              <article className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
+                <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-info">
+                  Créditos
+                </p>
                 <p className="mt-1 font-display text-2xl font-bold tabular-nums text-ink-900">
                   {money(data.finance.credits)}
                 </p>
               </article>
-              <article className="rounded-md border border-ink-300 bg-surface-elevated p-4">
-                <p className="text-xs uppercase tracking-widest text-ink-500">Neto</p>
-                <p className="mt-1 font-display text-2xl font-bold tabular-nums text-ink-900">
+              <article className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm">
+                <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                  Neto
+                </p>
+                <p
+                  className={`mt-1 font-display text-2xl font-bold tabular-nums ${netClass(data.finance.net)}`}
+                >
                   {money(data.finance.net)}
                 </p>
               </article>
@@ -118,7 +148,11 @@ export function ClubStatusDashboard() {
           ) : null}
           {data.unavailable.map((code) =>
             code !== 'membership.active' && unavailableLabel[code] ? (
-              <p key={code} role="status">
+              <p
+                key={code}
+                role="status"
+                className="rounded border border-warning bg-warning-soft p-3 text-sm text-warning"
+              >
                 {unavailableLabel[code]}
               </p>
             ) : null,
@@ -126,7 +160,7 @@ export function ClubStatusDashboard() {
         </div>
       ) : null}
       {data ? (
-        <div className="border-t border-ink-300 pt-3 text-sm text-ink-700">
+        <div className="border-t border-ink-100 pt-3 text-sm text-ink-700">
           <p role="status">Actualizado</p>
           {data.freshness.length ? (
             data.freshness.map((item) => (
