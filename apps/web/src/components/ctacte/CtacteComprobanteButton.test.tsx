@@ -160,7 +160,7 @@ describe('CtacteComprobanteButton', () => {
     await waitFor(() => {
       expect(notifyMock).toHaveBeenCalledWith(
         'error',
-        'No se pudo generar el comprobante. Intentá de nuevo.',
+        'No se pudo generar el comprobante. Intente de nuevo.',
       )
     })
     expect(windowOpenMock).not.toHaveBeenCalled()

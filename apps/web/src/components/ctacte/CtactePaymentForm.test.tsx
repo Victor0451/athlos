@@ -142,7 +142,7 @@ describe('CtactePaymentForm', () => {
     await waitFor(() => {
       expect(notifyMock).toHaveBeenCalledWith(
         'error',
-        'No se pudo registrar el pago. Intentá de nuevo.',
+        'No se pudo registrar el pago. Intente de nuevo.',
       )
     })
     expect(onCloseMock).not.toHaveBeenCalled()
