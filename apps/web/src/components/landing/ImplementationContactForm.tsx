@@ -8,13 +8,13 @@ import {
 
 const required = ['name', 'organization', 'role', 'email', 'primaryProblem'] as const
 const labels: Record<Exclude<keyof ImplementationInquiry, 'website'>, string> = {
-  name: 'Name',
-  organization: 'Organization',
-  role: 'Role',
-  email: 'Email',
-  primaryProblem: 'Primary problem',
-  phone: 'Phone',
-  message: 'Message',
+  name: 'Nombre',
+  organization: 'Organización',
+  role: 'Rol',
+  email: 'Correo electrónico',
+  primaryProblem: 'Problema principal',
+  phone: 'Teléfono',
+  message: 'Mensaje',
 }
 const initial = Object.fromEntries(
   Object.keys(labels).map((key) => [key, '']),
@@ -35,8 +35,12 @@ export function ImplementationContactForm() {
     if (missing.length || invalidEmail) {
       setErrors(
         missing
-          .map((key) => `${labels[key]} is required`)
-          .concat(!missing.includes('email') && invalidEmail ? ['Email must be valid'] : []),
+          .map((key) => `${labels[key]} es obligatorio`)
+          .concat(
+            !missing.includes('email') && invalidEmail
+              ? ['El correo electrónico debe tener un formato válido']
+              : [],
+          ),
       )
       setState('idle')
       return
@@ -59,8 +63,8 @@ export function ImplementationContactForm() {
       }
       if (failure.status === 400) {
         setErrors(
-          failure.details?.details?.map((detail) => detail.message ?? 'Check this field') ?? [
-            'Check the highlighted fields',
+          failure.details?.details?.map((detail) => detail.message ?? 'Revise este campo') ?? [
+            'Revise los campos indicados',
           ],
         )
         setState('idle')
@@ -73,19 +77,20 @@ export function ImplementationContactForm() {
       className="rounded-lg border border-ink-200 bg-surface p-5 sm:p-6"
     >
       <p className="font-mono text-xs uppercase tracking-widest text-accent">
-        Implementation inquiry
+        Consulta de implementación
       </p>
       <h2 className="mt-2 font-display text-2xl font-bold text-ink-900">
-        Start with your operating context
+        Comience por el contexto de su organización
       </h2>
       <p className="mt-2 font-body text-sm text-ink-500">
-        Tell us what your club needs. We will respond through the configured implementation channel.
+        Cuéntenos qué necesita su club. Responderemos a través del canal de implementación
+        configurado.
       </p>
       <form
         noValidate
         onSubmit={submit}
         className="mt-5 grid gap-4 sm:grid-cols-2"
-        aria-label="Implementation inquiry form"
+        aria-label="Formulario de consulta de implementación"
       >
         {Object.entries(labels).map(([key, label]) => (
           <label
@@ -94,7 +99,7 @@ export function ImplementationContactForm() {
           >
             <span className="font-body text-sm font-medium text-ink-700">
               {label}
-              {required.includes(key as (typeof required)[number]) ? ' *' : ' (optional)'}
+              {required.includes(key as (typeof required)[number]) ? ' *' : ' (opcional)'}
             </span>
             {key === 'primaryProblem' || key === 'message' ? (
               <textarea
@@ -126,13 +131,13 @@ export function ImplementationContactForm() {
         ))}
         {state === 'sent' ? (
           <p role="status" className="sm:col-span-2 text-sm text-success">
-            Inquiry sent. We will be in touch.
+            Consulta enviada. Nos pondremos en contacto.
           </p>
         ) : state !== 'idle' && state !== 'submitting' ? (
           <p role="alert" className="sm:col-span-2 text-sm text-danger">
             {state === 'rate-limited'
-              ? 'Too many requests. Please try again later.'
-              : 'Inquiry unavailable. Please try again.'}
+              ? 'Se recibieron demasiadas solicitudes. Intente nuevamente más tarde.'
+              : 'No fue posible enviar la consulta. Intente nuevamente.'}
           </p>
         ) : null}
         <button
@@ -140,12 +145,12 @@ export function ImplementationContactForm() {
           disabled={state === 'submitting'}
           className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
         >
-          {state === 'submitting' ? 'Sending inquiry…' : 'Send inquiry'}
+          {state === 'submitting' ? 'Enviando consulta…' : 'Enviar consulta'}
         </button>
       </form>
       <p className="mt-5 border-t border-ink-200 pt-4 font-body text-xs text-ink-500">
-        Athlos does not persist inquiry content in its application or database. The recipient
-        mailbox retains the inquiry until manually deleted.
+        Athlos no conserva el contenido de la consulta en su aplicación ni en su base de datos. El
+        buzón receptor conserva la consulta hasta que se elimina manualmente.
       </p>
     </section>
   )
