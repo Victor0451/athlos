@@ -10,10 +10,20 @@ export function NotificationSummary() {
   })
 
   return (
-    <section aria-label="Notificaciones" className="rounded-lg bg-surface-elevated p-4 shadow-sm">
-      <h2 className="font-display text-sm font-semibold text-ink-900">Notificaciones</h2>
+    <section
+      aria-label="Notificaciones"
+      className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
+    >
+      <p className="font-mono text-xs uppercase tracking-widest text-accent">Bandeja operativa</p>
+      <h2 className="mt-1 font-display text-lg font-bold text-ink-900">Notificaciones</h2>
       {notifications.isPending ? (
-        <p className="mt-2 text-sm text-ink-500">Cargando notificaciones…</p>
+        <span
+          role="status"
+          aria-live="polite"
+          className="mt-3 block h-8 animate-pulse rounded bg-surface-sunken"
+        >
+          <span className="sr-only">Cargando notificaciones…</span>
+        </span>
       ) : null}
       {notifications.isError ? (
         <p role="alert" aria-label="Notificaciones" className="mt-2 text-sm text-ink-500">
@@ -23,11 +33,18 @@ export function NotificationSummary() {
       {notifications.data?.items.length === 0 ? (
         <p className="mt-2 text-sm text-ink-500">No hay notificaciones pendientes.</p>
       ) : null}
-      {notifications.data?.items.map((notification) => (
-        <p key={notification.id} className="mt-2 text-sm text-ink-700">
-          {notification.body}
-        </p>
-      ))}
+      {notifications.data && notifications.data.items.length > 0 ? (
+        <>
+          <span className="mt-3 inline-block rounded border border-warning bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning">
+            {notifications.data.items.length} pendientes
+          </span>
+          {notifications.data.items.map((notification) => (
+            <p key={notification.id} className="mt-2 text-sm text-ink-700">
+              {notification.body}
+            </p>
+          ))}
+        </>
+      ) : null}
     </section>
   )
 }
