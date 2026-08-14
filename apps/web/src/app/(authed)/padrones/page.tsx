@@ -130,6 +130,7 @@ export default function PadronesListPage() {
   return (
     <div className="space-y-6">
       <header>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Padrones</p>
         <h1 className="font-display text-2xl font-bold text-ink-900">Padrones</h1>
         <p className="mt-1 text-sm text-ink-500">
           Seleccioná una disciplina y un ejercicio para ver el padrón de socios inscritos.
@@ -154,7 +155,7 @@ export default function PadronesListPage() {
             name="disciplina"
             value={disciplinaDraft}
             onChange={(e) => setDisciplinaDraft(e.target.value)}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+            className="mt-1 block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {DISCIPLINA_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -179,12 +180,12 @@ export default function PadronesListPage() {
             placeholder={String(CURRENT_YEAR)}
             value={ejercicioDraft}
             onChange={(e) => setEjercicioDraft(e.target.value)}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+            className="mt-1 block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
         <button
           type="submit"
-          className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           Ver Padrón
         </button>
@@ -200,7 +201,7 @@ export default function PadronesListPage() {
           aria-live="polite"
           aria-label="Cargando"
           data-testid="padrones-results-loading"
-          className="space-y-2"
+          className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
         >
           {Array.from({ length: 5 }).map((_, i) => (
             <div
@@ -215,12 +216,10 @@ export default function PadronesListPage() {
         <div
           role="alert"
           data-testid="padrones-results-error"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">
-            No se pudo cargar el padrón
-          </p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-semibold text-danger">No se pudo cargar el padrón</p>
+          <p className="mt-1 text-ink-500">
             Verificá que la disciplina y el ejercicio sean correctos, o intentá nuevamente más
             tarde.
           </p>
@@ -230,11 +229,9 @@ export default function PadronesListPage() {
           role="status"
           aria-label="Sin resultados"
           data-testid="padrones-results-empty"
-          className="rounded-lg border border-ink-100 bg-surface px-6 py-12 text-center"
+          className="rounded-lg border border-ink-100 bg-surface p-4 text-sm text-ink-500 shadow-sm"
         >
-          <p className="font-body text-sm text-ink-500">
-            Sin resultados para los filtros seleccionados.
-          </p>
+          Sin resultados para los filtros seleccionados.
         </div>
       ) : (
         <>
@@ -245,14 +242,14 @@ export default function PadronesListPage() {
             <button
               type="button"
               onClick={onExportCSV}
-              className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+              className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               data-testid="padrones-export-csv"
             >
               Exportar CSV
             </button>
           </div>
           <ul
-            className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+            className="divide-y divide-ink-100 overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-sm"
             data-testid="padrones-results"
           >
             {items.map((row) => (
@@ -269,7 +266,7 @@ export default function PadronesListPage() {
                 type="button"
                 onClick={() => void setUrlState({ page: Math.max(1, page - 1) })}
                 disabled={page <= 1}
-                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Anterior
               </button>
@@ -280,7 +277,7 @@ export default function PadronesListPage() {
                 type="button"
                 onClick={() => void setUrlState({ page: page + 1 })}
                 disabled={page >= totalPages}
-                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Siguiente
               </button>
@@ -292,12 +289,9 @@ export default function PadronesListPage() {
       <section
         aria-label="Próximamente"
         data-testid="padrones-proximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
+        className="rounded-lg border border-warning bg-warning-soft p-4 text-sm text-warning"
       >
-        <p className="font-body text-sm text-ink-500">
-          Próximamente — crear, editar y dar de baja inscripciones disponibles en una próxima
-          versión.
-        </p>
+        Próximamente — crear, editar y dar de baja inscripciones disponibles en una próxima versión.
       </section>
     </div>
   )

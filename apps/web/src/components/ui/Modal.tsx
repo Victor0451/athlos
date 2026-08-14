@@ -98,7 +98,7 @@ export function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-night-900/60 p-4"
     >
       <div
-        className={`flex max-h-[calc(100vh-2rem)] w-full ${SIZE_CLASS[size]} flex-col overflow-hidden rounded-xl border border-ink-150 bg-surface-elevated shadow-2xl ${panelClassName}`}
+        className={`flex max-h-[calc(100vh-2rem)] w-full ${SIZE_CLASS[size]} flex-col overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-2xl ${panelClassName}`}
       >
         <header className="shrink-0 border-b border-ink-100 px-8 py-5">
           <h2 id={titleId} className="font-display text-lg font-semibold text-ink-900">

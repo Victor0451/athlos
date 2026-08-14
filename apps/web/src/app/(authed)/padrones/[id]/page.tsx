@@ -102,15 +102,13 @@ export default function PadronDetailPage() {
       <div
         role="alert"
         data-testid="padron-detail-malformed"
-        className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm"
       >
-        <p className="font-display text-lg font-semibold text-ink-900">Padrón no encontrado</p>
-        <p className="mt-2 font-body text-sm text-ink-500">
-          El identificador del padrón no es válido.
-        </p>
+        <p className="font-semibold text-danger">Padrón no encontrado</p>
+        <p className="mt-1 text-ink-500">El identificador del padrón no es válido.</p>
         <Link
           href="/padrones"
-          className="mt-4 inline-block rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="mt-4 inline-flex min-h-11 items-center rounded-md border border-ink-200 bg-night-800 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           Volver al listado
         </Link>
@@ -125,10 +123,11 @@ export default function PadronDetailPage() {
         aria-live="polite"
         aria-label="Cargando"
         data-testid="padron-detail-loading"
-        className="space-y-6"
+        className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
-        <div className="h-7 w-64 animate-pulse rounded bg-surface-sunken" />
-        <div className="h-24 animate-pulse rounded bg-surface-sunken" />
+        <div aria-hidden="true" className="h-5 w-24 animate-pulse rounded bg-surface-sunken" />
+        <div aria-hidden="true" className="h-8 w-64 animate-pulse rounded bg-surface-sunken" />
+        <div aria-hidden="true" className="h-4 w-32 animate-pulse rounded bg-surface-sunken" />
         <span className="sr-only">Cargando…</span>
       </div>
     )
@@ -139,10 +138,10 @@ export default function PadronDetailPage() {
       <div
         role="alert"
         data-testid="padron-detail-not-found"
-        className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm"
       >
-        <p className="font-display text-lg font-semibold text-ink-900">Padrón no encontrado</p>
-        <p className="mt-2 font-body text-sm text-ink-500">
+        <p className="font-semibold text-danger">Padrón no encontrado</p>
+        <p className="mt-1 text-ink-500">
           No pudimos cargar el padrón. Es posible que la disciplina o el ejercicio no existan.
         </p>
         <Link
@@ -152,7 +151,7 @@ export default function PadronDetailPage() {
             '&ejercicio=' +
             decoded.ejercicio
           }
-          className="mt-4 inline-block rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="mt-4 inline-flex min-h-11 items-center rounded-md border border-ink-200 bg-night-800 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           Volver al Padrón
         </Link>
@@ -164,9 +163,13 @@ export default function PadronDetailPage() {
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Padrones</p>
           <h1 className="font-display text-2xl font-bold text-ink-900" data-testid="padron-title">
             Padrón {decoded.disciplina} {decoded.ejercicio}
           </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Listado de socios inscriptos en la disciplina.
+          </p>
           <p className="mt-1 font-mono text-xs text-ink-500" data-testid="padron-total">
             {total} {total === 1 ? 'inscripto' : 'inscriptos'}
           </p>
@@ -178,7 +181,7 @@ export default function PadronDetailPage() {
             '&ejercicio=' +
             decoded.ejercicio
           }
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken"
+          className="inline-flex min-h-11 items-center rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           data-testid="padron-back-link"
         >
           Volver al Padrón
@@ -190,7 +193,7 @@ export default function PadronDetailPage() {
           type="button"
           onClick={onExportCSV}
           disabled={items.length === 0}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="padron-detail-export-csv"
         >
           Exportar CSV
@@ -211,7 +214,7 @@ export default function PadronDetailPage() {
       ) : (
         <>
           <ul
-            className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+            className="divide-y divide-ink-100 overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-sm"
             data-testid="padron-detail-results"
           >
             {items.map((row) => (
@@ -228,7 +231,7 @@ export default function PadronDetailPage() {
                 type="button"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Anterior
               </button>
@@ -239,7 +242,7 @@ export default function PadronDetailPage() {
                 type="button"
                 onClick={() => setPage((p) => p + 1)}
                 disabled={page >= totalPages}
-                className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-body text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Siguiente
               </button>
@@ -251,12 +254,9 @@ export default function PadronDetailPage() {
       <section
         aria-label="Próximamente"
         data-testid="padron-detail-proximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
+        className="rounded-lg border border-warning bg-warning-soft p-4 text-sm text-warning"
       >
-        <p className="font-body text-sm text-ink-500">
-          Próximamente — crear, editar y dar de baja inscripciones disponibles en una próxima
-          versión.
-        </p>
+        Próximamente — crear, editar y dar de baja inscripciones disponibles en una próxima versión.
       </section>
     </div>
   )
