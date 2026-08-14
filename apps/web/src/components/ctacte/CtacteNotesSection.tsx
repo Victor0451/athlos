@@ -148,7 +148,7 @@ export function CtacteNotesSection({
 
   async function handleDeleteClick(note: CtacteNoteResponse) {
     if (!canDeleteNote(note)) {
-      notify('error', 'No tenés permiso para borrar esta nota')
+      notify('error', 'No tiene permiso para borrar esta nota')
       return
     }
     try {
@@ -173,7 +173,7 @@ export function CtacteNotesSection({
     <section
       aria-label="Notas del movimiento"
       data-testid="ctacte-notes-section"
-      className="rounded-xl border border-ink-150 bg-surface p-8 shadow-sm"
+      className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
     >
       {/* Collapsible header */}
       <button
@@ -216,21 +216,22 @@ export function CtacteNotesSection({
           data-testid="ctacte-notes-panel"
           role="region"
           aria-labelledby="ctacte-notes-heading"
-          className="mt-6 space-y-6"
+          className="mt-4 space-y-4"
         >
           {isLoading ? (
-            <p
+            <div
               data-testid="ctacte-notes-loading"
               role="status"
-              className="font-body text-sm text-ink-500"
+              className="animate-pulse rounded bg-surface-sunken"
             >
-              Cargando notas…
-            </p>
+              <span className="sr-only">Cargando notas</span>
+              <div className="h-16" aria-hidden="true" />
+            </div>
           ) : error ? (
             <p
               data-testid="ctacte-notes-error"
               role="alert"
-              className="font-body text-sm text-danger"
+              className="rounded-lg border border-danger bg-surface p-3 text-sm"
             >
               {error}
             </p>
@@ -241,14 +242,14 @@ export function CtacteNotesSection({
                   so it is reachable from the row action on
                   /ctacte/[cuenta] (per verify-report R3 findings). */}
               <div className="flex items-center justify-between gap-2">
-                <p className="font-body text-sm text-ink-500">
-                  Registrá una nota sobre este movimiento. Cada nota queda asentada en la auditoría.
+                <p className="text-sm text-ink-500">
+                  Registre una nota sobre este movimiento. Cada nota queda asentada en la auditoría.
                 </p>
                 <button
                   type="button"
                   data-testid="ctacte-note-new-trigger"
                   onClick={() => setShowNoteForm(true)}
-                  className="shrink-0 rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+                  className="min-h-11 shrink-0 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover disabled:opacity-60"
                 >
                   <Plus className="-ml-0.5 mr-1 inline h-4 w-4" aria-hidden="true" />
                   Agregar nota
@@ -259,20 +260,19 @@ export function CtacteNotesSection({
               {notes.length === 0 ? (
                 <p
                   data-testid="ctacte-notes-empty"
-                  className="rounded-md border border-dashed border-ink-200 px-4 py-8 text-center font-body text-sm text-ink-500"
+                  className="px-4 py-4 text-center text-sm text-ink-500"
                 >
-                  Aún no hay notas para este movimiento.
+                  Todavía no hay notas para este movimiento.
                 </p>
               ) : (
-                <ul data-testid="ctacte-notes-list" className="space-y-3">
+                <ul
+                  data-testid="ctacte-notes-list"
+                  className="divide-y divide-ink-100 rounded-lg border border-ink-100 bg-surface"
+                >
                   {notes.map((note) => {
                     const deletable = canDeleteNote(note)
                     return (
-                      <li
-                        key={note.id}
-                        data-testid={`ctacte-note-${note.id}`}
-                        className="rounded-lg border border-ink-100 bg-surface-elevated p-4"
-                      >
+                      <li key={note.id} data-testid={`ctacte-note-${note.id}`} className="p-4">
                         <div className="mb-2 flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2">
                             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft">
@@ -280,15 +280,15 @@ export function CtacteNotesSection({
                             </div>
                             <div className="min-w-0">
                               <div
-                                className="font-display text-[11px] font-semibold uppercase tracking-widest text-ink-500"
                                 data-testid={`ctacte-note-author-${note.id}`}
+                                className="font-mono text-xs text-ink-500"
                               >
                                 <OperatorChip
                                   operatorId={note.author_operator_id}
                                   operators={operatorMap}
                                 />
                               </div>
-                              <div className="font-body text-xs text-ink-500">
+                              <div className="font-mono text-xs text-ink-500">
                                 <span data-testid={`ctacte-note-created-${note.id}`}>
                                   {formatTimestamp(note.created_at)}
                                 </span>
@@ -309,7 +309,7 @@ export function CtacteNotesSection({
                         </div>
 
                         <p
-                          className="font-body text-sm text-ink-700 whitespace-pre-wrap break-words"
+                          className="whitespace-pre-wrap break-words text-sm text-ink-700"
                           data-testid={`ctacte-note-body-${note.id}`}
                         >
                           {note.body}
