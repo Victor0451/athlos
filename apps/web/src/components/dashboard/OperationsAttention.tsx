@@ -42,7 +42,7 @@ export function OperationsAttention({ isAdmin }: { isAdmin: boolean }) {
           {items.map((item) => (
             <li key={item.id}>
               <Link
-                className="text-sm font-medium text-club-700 underline"
+                className="text-sm font-medium text-accent underline"
                 href={`/admin/scheduler/${encodeURIComponent(item.jobName)}`}
               >
                 {item.jobName}
