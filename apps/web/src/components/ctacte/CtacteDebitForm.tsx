@@ -85,7 +85,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
         applyFieldErrors(setError, details)
         notify(
           'error',
-          err instanceof Error ? err.message : 'No se pudo registrar el débito. Intentá de nuevo.',
+          err instanceof Error ? err.message : 'No se pudo registrar el débito. Intente de nuevo.',
         )
       }
     },
@@ -108,7 +108,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-[10px] border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-60"
             disabled={isSubmitting}
           >
             Cancelar
@@ -117,7 +117,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
             type="submit"
             form="ctacte-debit-form"
             disabled={isSubmitting}
-            className="rounded-[10px] bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover disabled:opacity-60"
           >
             {isSubmitting ? 'Registrando…' : 'Registrar débito'}
           </button>
@@ -132,10 +132,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
       >
         {/* Monto */}
         <div className="space-y-1">
-          <label
-            htmlFor="debit-monto"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="debit-monto" className="block text-sm font-medium text-ink-700">
             Monto <span className="text-danger">*</span>
           </label>
           <input
@@ -147,10 +144,10 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
             aria-invalid={Boolean(errors.monto) || undefined}
             aria-describedby={errors.monto ? 'debit-monto-error' : undefined}
             {...register('monto')}
-            className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.monto && (
-            <p id="debit-monto-error" role="alert" className="text-sm text-danger">
+            <p id="debit-monto-error" role="alert" className="text-xs text-danger">
               {errors.monto.message}
             </p>
           )}
@@ -158,10 +155,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
 
         {/* Fecha */}
         <div className="space-y-1">
-          <label
-            htmlFor="debit-fecha"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="debit-fecha" className="block text-sm font-medium text-ink-700">
             Fecha <span className="text-danger">*</span>
           </label>
           <input
@@ -170,10 +164,10 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
             aria-invalid={Boolean(errors.fecha) || undefined}
             aria-describedby={errors.fecha ? 'debit-fecha-error' : undefined}
             {...register('fecha')}
-            className="block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.fecha && (
-            <p id="debit-fecha-error" role="alert" className="text-sm text-danger">
+            <p id="debit-fecha-error" role="alert" className="text-xs text-danger">
               {errors.fecha.message}
             </p>
           )}
@@ -181,10 +175,7 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
 
         {/* Motivo */}
         <div className="space-y-1">
-          <label
-            htmlFor="debit-motivo"
-            className="block font-display text-sm font-semibold text-ink-700"
-          >
+          <label htmlFor="debit-motivo" className="block text-sm font-medium text-ink-700">
             Motivo <span className="text-danger">*</span>
           </label>
           <textarea
@@ -193,10 +184,10 @@ export function CtacteDebitForm({ open, socioId, onSuccess, onClose }: CtacteDeb
             aria-invalid={Boolean(errors.motivo) || undefined}
             aria-describedby={errors.motivo ? 'debit-motivo-error' : undefined}
             {...register('motivo')}
-            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-900 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
+            className="block w-full resize-y rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:cursor-not-allowed disabled:bg-surface-sunken"
           />
           {errors.motivo && (
-            <p id="debit-motivo-error" role="alert" className="text-sm text-danger">
+            <p id="debit-motivo-error" role="alert" className="text-xs text-danger">
               {errors.motivo.message}
             </p>
           )}
