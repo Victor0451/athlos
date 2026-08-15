@@ -57,15 +57,17 @@ export default function GastosListPage() {
     return (
       <div className="space-y-6">
         <header>
-          <h1 className="font-display text-2xl font-bold text-ink-900">Tesorería · Gastos</h1>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
+          <h1 className="font-display text-2xl font-bold text-ink-900">Gastos</h1>
+          <p className="mt-1 text-sm text-ink-500">Gestión del libro mayor de gastos.</p>
         </header>
         <div
           role="alert"
           data-testid="gastos-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
           <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
         </div>
@@ -80,9 +82,10 @@ export default function GastosListPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="font-display text-2xl font-bold text-ink-900">Tesorería · Gastos</h1>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
+        <h1 className="font-display text-2xl font-bold text-ink-900">Gastos</h1>
         <p className="mt-1 text-sm text-ink-500">
-          Listado paginado del libro mayor de gastos. Click en una fila para ver el detalle y los
+          Listado paginado del libro mayor de gastos. Seleccione una fila para ver el detalle y los
           movimientos de cuenta corriente vinculados.
         </p>
       </header>
@@ -90,7 +93,7 @@ export default function GastosListPage() {
       <section
         aria-label="Filtros"
         data-testid="gastos-filters"
-        className="grid grid-cols-1 gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-4"
+        className="grid grid-cols-1 gap-3 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm sm:grid-cols-4"
       >
         <label className="block">
           <span className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
@@ -167,20 +170,20 @@ export default function GastosListPage() {
         <div
           role="alert"
           data-testid="gastos-list-error"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
           <p className="font-display text-lg font-semibold text-ink-900">
             No se pudo cargar el listado de gastos
           </p>
           <p className="mt-2 font-body text-sm text-ink-500">
-            Verificá la conectividad con el API o intentá nuevamente más tarde.
+            Verifique la conectividad con el API o intente nuevamente más tarde.
           </p>
         </div>
       ) : items.length === 0 ? (
         <div
           role="status"
           data-testid="gastos-list-empty"
-          className="rounded-lg border border-ink-100 bg-surface p-6 text-center"
+          className="rounded-lg border border-ink-100 bg-surface p-4 text-center shadow-sm"
         >
           <p className="font-body text-sm text-ink-500">
             Sin resultados para los filtros seleccionados.
@@ -189,7 +192,7 @@ export default function GastosListPage() {
       ) : (
         <>
           <div
-            className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+            className="overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-sm"
             data-testid="gastos-list"
           >
             <table className="w-full">

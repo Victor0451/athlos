@@ -36,7 +36,7 @@ export function WorkspaceCards({ role }: Pick<CurrentUser, 'role'>) {
           <Link
             key={workspace.href}
             href={workspace.href}
-            className="group rounded-lg border border-ink-100 bg-surface p-4 shadow-sm transition-colors duration-fast hover:border-ink-200 hover:bg-surface-elevated focus-visible:ring-2 focus-visible:ring-accent"
+            className="group rounded-lg border border-ink-100 bg-surface p-4 shadow-sm transition-colors duration-fast hover:border-ink-200 hover:bg-surface-sunken focus-visible:ring-2 focus-visible:ring-accent"
           >
             <div className="flex items-start justify-between gap-3">
               <span className="rounded-md bg-accent-soft p-2 text-accent">
