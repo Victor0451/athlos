@@ -59,9 +59,8 @@ export default function SociosEvidenceExceptionsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink-900">
-            Socios · Excepciones de evidencia
-          </h1>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Socios</p>
+          <h1 className="font-display text-2xl font-bold text-ink-900">Excepciones de evidencia</h1>
           <p className="mt-1 text-sm text-ink-500">
             Casos de padrón que requieren revisión administrativa.
           </p>
@@ -78,7 +77,7 @@ export default function SociosEvidenceExceptionsPage() {
 
       <section
         aria-label="Filtros"
-        className="grid grid-cols-1 gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-2"
+        className="grid grid-cols-1 gap-3 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm sm:grid-cols-2"
       >
         <label className="block text-sm text-ink-700">
           Tipo
@@ -108,44 +107,37 @@ export default function SociosEvidenceExceptionsPage() {
       </section>
 
       {query.isPending ? (
-        <div
-          role="status"
-          className="rounded-lg border border-ink-100 bg-surface p-6 text-center text-sm text-ink-500"
-        >
-          Cargando excepciones…
+        <div role="status" aria-live="polite" className="space-y-2">
+          <div aria-hidden="true" className="h-12 animate-pulse rounded bg-surface-sunken" />
+          <div aria-hidden="true" className="h-12 animate-pulse rounded bg-surface-sunken" />
+          <span className="sr-only">Cargando excepciones…</span>
         </div>
       ) : noPermission ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
-        >
+        <div role="alert" className="rounded-lg border border-danger bg-surface p-3 text-sm">
           <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
           <p className="mt-2 text-sm text-ink-500">
             Esta sección requiere permisos de administración o gestión de datos.
           </p>
         </div>
       ) : query.isError ? (
-        <div
-          role="alert"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
-        >
+        <div role="alert" className="rounded-lg border border-danger bg-surface p-3 text-sm">
           <p className="font-display text-lg font-semibold text-ink-900">
             No se pudo cargar el listado
           </p>
           <p className="mt-2 text-sm text-ink-500">
-            Verificá la conectividad con el API e intentá nuevamente.
+            Verifique la conectividad con el API e intente nuevamente.
           </p>
         </div>
       ) : items.length === 0 ? (
         <div
           role="status"
-          className="rounded-lg border border-ink-100 bg-surface p-6 text-center text-sm text-ink-500"
+          className="rounded-lg border border-ink-100 bg-surface p-4 text-center text-sm text-ink-500 shadow-sm"
         >
           No hay excepciones para los filtros seleccionados.
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-ink-100 bg-surface">
+          <div className="overflow-x-auto rounded-lg border border-ink-100 bg-surface shadow-sm">
             <table className="w-full">
               <thead className="bg-surface-sunken">
                 <tr>
