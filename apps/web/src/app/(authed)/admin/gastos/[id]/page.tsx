@@ -88,15 +88,17 @@ export default function GastoDetailPage() {
     return (
       <div className="space-y-6">
         <header>
-          <h1 className="font-display text-2xl font-bold text-ink-900">Tesorería · Gasto</h1>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
+          <h1 className="font-display text-2xl font-bold text-ink-900">Gasto</h1>
+          <p className="mt-1 text-sm text-ink-500">Detalle del libro mayor de gastos.</p>
         </header>
         <div
           role="alert"
           data-testid="gasto-detail-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
           <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
         </div>
@@ -126,13 +128,13 @@ export default function GastoDetailPage() {
       <div
         role="alert"
         data-testid="gasto-detail-error"
-        className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+        className="rounded-lg border border-danger bg-surface p-3 text-sm"
       >
         <p className="font-display text-lg font-semibold text-ink-900">
           No se pudo cargar el gasto
         </p>
         <p className="mt-2 font-body text-sm text-ink-500">
-          Verificá la conectividad con el API o intentá nuevamente más tarde.
+          Verifique la conectividad con el API o intente nuevamente más tarde.
         </p>
       </div>
     )
@@ -150,12 +152,16 @@ export default function GastoDetailPage() {
             ← Volver al listado
           </Link>
         </p>
+        <p className="mt-3 font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
         <h1
-          className="mt-1 font-display text-2xl font-bold text-ink-900"
+          className="font-display text-2xl font-bold text-ink-900"
           data-testid="gasto-detail-heading"
         >
           Gasto {gasto.cuentaPrincipal}
         </h1>
+        <p className="mt-1 text-sm text-ink-500">
+          Detalle del gasto y movimientos de cuenta corriente vinculados.
+        </p>
       </header>
 
       <section
@@ -201,7 +207,7 @@ export default function GastoDetailPage() {
             className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center font-body text-sm text-ink-500"
             data-testid="links-empty"
           >
-            Sin vínculos. Confirmá un candidato heurístico o agregá uno manualmente.
+            Sin vínculos. Confirme un candidato heurístico o agregue uno manualmente.
           </p>
         ) : (
           <div
@@ -291,7 +297,7 @@ export default function GastoDetailPage() {
       <section
         aria-label="Candidatos heurísticos"
         data-testid="candidates-section"
-        className="rounded-lg border border-ink-100 bg-surface p-4"
+        className="rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
         <h2 className="font-display text-lg font-semibold text-ink-900">Candidatos heurísticos</h2>
         <p className="mt-1 font-body text-xs text-ink-500">
@@ -303,11 +309,14 @@ export default function GastoDetailPage() {
             Sin candidatos pendientes.
           </p>
         ) : (
-          <ul className="mt-3 space-y-2" data-testid="candidates-list">
+          <ul
+            className="mt-3 divide-y divide-ink-100 overflow-hidden rounded-lg border border-ink-100"
+            data-testid="candidates-list"
+          >
             {candidates.map((c) => (
               <li
                 key={c.ctacteId}
-                className="flex items-center justify-between rounded-md border border-ink-100 bg-surface-elevated p-3"
+                className="flex items-center justify-between bg-surface p-3"
                 data-testid={`candidate-${c.ctacteId}`}
               >
                 <div>
@@ -347,10 +356,10 @@ export default function GastoDetailPage() {
         <div
           role="alert"
           data-testid="create-link-error"
-          className="rounded-lg border border-danger/30 bg-danger/5 p-3"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
           <p className="font-body text-sm text-danger">
-            No se pudo crear el vínculo. Verificá el monto y que no exista un vínculo activo para
+            No se pudo crear el vínculo. Verifique el monto y que no exista un vínculo activo para
             este par.
           </p>
         </div>

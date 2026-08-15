@@ -317,7 +317,8 @@ describe('Ctacte detail page', () => {
   it('shows a loading skeleton while the query is pending', () => {
     getCtacteMock.mockReturnValue(new Promise(() => {}))
     renderPage()
-    expect(screen.getByText(/cargando/i)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
   })
 
   it('renders a "Cuenta no encontrada" error state when the API rejects', async () => {

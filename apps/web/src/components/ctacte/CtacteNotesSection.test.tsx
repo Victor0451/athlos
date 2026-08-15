@@ -181,6 +181,31 @@ describe('CtacteNotesSection', () => {
     })
   })
 
+  it('uses the institutional console surface for notes', async () => {
+    const user = userEvent.setup()
+    renderSection()
+    expect(screen.getByTestId('ctacte-notes-section')).toHaveClass(
+      'rounded-lg',
+      'border-ink-100',
+      'bg-surface',
+      'p-4',
+      'shadow-sm',
+    )
+    await user.click(screen.getByTestId('ctacte-notes-toggle'))
+    expect(screen.getByTestId('ctacte-notes-list')).toHaveClass(
+      'divide-y',
+      'divide-ink-100',
+      'rounded-lg',
+      'border-ink-100',
+    )
+    expect(screen.getByTestId('ctacte-note-note-1')).toHaveClass('p-4')
+    expect(screen.getByTestId('ctacte-note-author-note-1')).toHaveClass(
+      'font-mono',
+      'text-xs',
+      'text-ink-500',
+    )
+  })
+
   it('shows a loading state rather than an empty note list', async () => {
     const user = userEvent.setup()
     renderSection([], { isLoading: true })
@@ -188,6 +213,14 @@ describe('CtacteNotesSection', () => {
     await waitFor(() => {
       expect(screen.getByTestId('ctacte-notes-loading')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('ctacte-notes-loading')).toHaveClass(
+      'animate-pulse',
+      'rounded',
+      'bg-surface-sunken',
+    )
+    expect(screen.getByTestId('ctacte-notes-loading').querySelector('.sr-only')).toHaveTextContent(
+      'Cargando notas',
+    )
   })
 
   it('shows the notes request error rather than masking it as empty data', async () => {
@@ -197,6 +230,13 @@ describe('CtacteNotesSection', () => {
     await waitFor(() => {
       expect(screen.getByTestId('ctacte-notes-error')).toHaveTextContent(/no pudimos cargar/i)
     })
+    expect(screen.getByTestId('ctacte-notes-error')).toHaveClass(
+      'rounded-lg',
+      'border-danger',
+      'bg-surface',
+      'p-3',
+      'text-sm',
+    )
   })
 
   it('shows empty state when no notes exist', async () => {
@@ -206,6 +246,7 @@ describe('CtacteNotesSection', () => {
     await waitFor(() => {
       expect(screen.getByTestId('ctacte-notes-empty')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('ctacte-notes-empty')).toHaveClass('text-sm', 'text-ink-500')
   })
 })
 

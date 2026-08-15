@@ -72,7 +72,7 @@ export function AttachmentCard({ attachment, onPreview, onDelete }: AttachmentCa
         }
       }}
       aria-label={`Adjunto ${attachment.filename}`}
-      className="group relative flex cursor-pointer flex-col gap-3 rounded-lg border border-ink-100 bg-surface-elevated p-4 transition-colors duration-fast hover:border-accent/50 hover:bg-surface"
+      className="group relative flex cursor-pointer flex-col gap-3 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm transition-colors duration-fast hover:border-accent/50 hover:bg-surface-sunken"
     >
       {/* Thumbnail / icon region */}
       <div className="relative flex h-32 items-center justify-center overflow-hidden rounded-md bg-surface-sunken">

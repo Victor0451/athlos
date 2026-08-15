@@ -66,6 +66,35 @@ describe('CtacteNoteForm', () => {
     expect(screen.getByRole('textbox')).toBeInTheDocument()
   })
 
+  it('uses the institutional console controls', () => {
+    renderForm()
+    expect(screen.getByRole('textbox')).toHaveClass(
+      'rounded-md',
+      'border-ink-200',
+      'bg-surface',
+      'text-sm',
+      'text-ink-700',
+      'placeholder:text-ink-300',
+      'focus:border-accent',
+      'focus:ring-2',
+      'focus:ring-accent',
+    )
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveClass(
+      'min-h-11',
+      'rounded-md',
+      'border-ink-200',
+      'bg-surface',
+      'hover:bg-surface-sunken',
+    )
+    expect(screen.getByRole('button', { name: 'Guardar nota' })).toHaveClass(
+      'min-h-11',
+      'rounded-md',
+      'bg-accent',
+      'text-accent-foreground',
+      'hover:bg-accent-hover',
+    )
+  })
+
   it('calls addCtacteNote with correct args on successful submit', async () => {
     renderForm()
     await act(async () => {
@@ -108,6 +137,7 @@ describe('CtacteNoteForm', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/vacía/i)
     })
+    expect(screen.getByRole('alert')).toHaveClass('text-xs', 'text-danger')
     expect(addCtacteNoteMock).not.toHaveBeenCalled()
   })
 

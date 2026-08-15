@@ -72,16 +72,17 @@ export default function CtacteListPage() {
   return (
     <div className="space-y-6">
       <header>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Cuenta corriente</p>
         <h1 className="font-display text-2xl font-bold text-ink-900">Cuentas corrientes</h1>
         <p className="mt-1 text-sm text-ink-500">
-          Buscá un socio por DNI, nombre o apellido para ver su cuenta corriente.
+          Busque un socio por DNI, nombre o apellido para consultar su cuenta corriente.
         </p>
       </header>
 
       <form
         role="search"
         onSubmit={onSearchSubmit}
-        className="flex flex-col gap-3 sm:flex-row sm:items-end"
+        className="flex flex-col gap-3 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm sm:flex-row sm:items-end"
         data-testid="ctacte-search-form"
       >
         <div className="flex-1">
@@ -98,12 +99,12 @@ export default function CtacteListPage() {
             placeholder="DNI, nombre o apellido"
             value={searchDraft}
             onChange={(e) => setSearchDraft(e.target.value)}
-            className="mt-1 block w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-body text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
+            className="mt-1 block min-h-11 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
         <button
           type="submit"
-          className="rounded-md bg-night-900 px-4 py-2 font-display text-sm font-semibold text-white transition-colors duration-fast hover:bg-night-800"
+          className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover"
         >
           Buscar
         </button>
@@ -111,13 +112,12 @@ export default function CtacteListPage() {
 
       {submittedSearch.length === 0 ? (
         <p className="font-body text-sm text-ink-500" data-testid="ctacte-empty-initial">
-          Ingresá un DNI, nombre o apellido y presioná Buscar.
+          Ingrese un DNI, nombre o apellido y presione Buscar.
         </p>
       ) : searchQuery.isPending ? (
         <div
           role="status"
           aria-live="polite"
-          aria-label="Cargando"
           data-testid="ctacte-results-loading"
           className="space-y-2"
         >
@@ -135,7 +135,7 @@ export default function CtacteListPage() {
           role="status"
           aria-label="Sin resultados"
           data-testid="ctacte-results-empty"
-          className="rounded-lg border border-ink-100 bg-surface px-6 py-12 text-center"
+          className="rounded-lg border border-ink-100 bg-surface p-4 text-center shadow-sm"
         >
           <p className="font-body text-sm text-ink-500">
             Sin resultados para los filtros seleccionados.
@@ -143,24 +143,24 @@ export default function CtacteListPage() {
         </div>
       ) : (
         <ul
-          className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+          className="divide-y divide-ink-100 overflow-hidden rounded-lg border border-ink-100 bg-surface"
           data-testid="ctacte-results"
         >
           {items.map((row) => (
-            <li key={row.id} className="border-t border-ink-100 first:border-t-0">
+            <li key={row.id}>
               <button
                 type="button"
                 onClick={() => onRowClick(row)}
                 data-testid={`ctacte-result-${row.id}`}
-                className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors duration-fast hover:bg-surface-sunken focus:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors duration-fast hover:bg-surface-sunken focus:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 <span className="flex flex-col gap-0.5">
                   <span className="font-display text-sm font-semibold text-ink-900">
                     {row.apellido}, {row.nombre}
                   </span>
-                  <span className="font-mono text-xs text-ink-500">DNI {row.dni}</span>
+                  <span className="font-mono text-xs tabular-nums text-ink-500">DNI {row.dni}</span>
                 </span>
-                <span className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
+                <span className="font-mono text-xs tabular-nums text-ink-500">
                   N° {row.numero_socio}
                 </span>
               </button>
@@ -172,7 +172,7 @@ export default function CtacteListPage() {
       <section
         aria-label="Próximamente"
         data-testid="ctacte-proximamente"
-        className="rounded-lg border border-dashed border-ink-200 bg-surface-sunken p-4 text-center"
+        className="rounded-lg border border-ink-100 bg-surface p-4 text-center shadow-sm"
       >
         <p className="font-body text-sm text-ink-500">
           Próximamente — creación, edición y anulación de movimientos disponibles en una próxima

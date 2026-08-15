@@ -50,15 +50,17 @@ export default function SchedulerDetailPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Operaciones</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">Scheduler</h1>
+          <p className="mt-1 text-sm text-ink-500">Estado y control de un trabajo programado.</p>
         </header>
         <div
           role="alert"
           data-testid="scheduler-detail-no-permission"
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+          <p className="mt-1 text-ink-500">
             Esta sección es exclusiva para operadores con rol ADMIN.
           </p>
           <Link
@@ -98,22 +100,24 @@ export default function SchedulerDetailPage() {
     return (
       <div className="space-y-6">
         <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Operaciones</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">
             {isNotFound ? 'Trabajo no encontrado' : 'Error'}
           </h1>
+          <p className="mt-1 text-sm text-ink-500">Estado y control de un trabajo programado.</p>
         </header>
         <div
           role="alert"
           data-testid={isNotFound ? 'scheduler-detail-not-found' : 'scheduler-detail-error'}
-          className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
+          className="rounded-lg border border-danger bg-surface p-3 text-sm"
         >
-          <p className="font-display text-lg font-semibold text-ink-900">
+          <p className="font-display font-semibold text-ink-900">
             {isNotFound ? 'Trabajo no encontrado' : 'No se pudo cargar el trabajo'}
           </p>
-          <p className="mt-2 font-body text-sm text-ink-500">
+          <p className="mt-1 text-ink-500">
             {isNotFound
               ? `No existe un trabajo registrado con el nombre "${name}".`
-              : 'Verificá la conectividad con el API o intentá nuevamente más tarde.'}
+              : 'Verifique la conectividad con el API o intente nuevamente más tarde.'}
           </p>
           <Link
             href="/admin/scheduler"
@@ -147,13 +151,16 @@ export default function SchedulerDetailPage() {
         >
           ← Volver al listado
         </Link>
-        <div className="mt-2 flex items-center gap-3">
+        <p className="mt-2 font-mono text-xs uppercase tracking-widest text-accent">Operaciones</p>
+        <div className="mt-1 flex items-center gap-3">
           <h1 className="font-display text-2xl font-bold text-ink-900">{job.name}</h1>
           <StatusBadge status={statusKind} />
         </div>
-        <p className="mt-1 font-mono text-xs text-ink-500">
-          {job.cronExpr}
-          {job.timezone ? ` · ${job.timezone}` : null} · {job.cadenceMinutes} min
+        <p className="mt-1 text-sm text-ink-500">
+          <span className="font-mono text-xs text-ink-500">
+            {job.cronExpr}
+            {job.timezone ? ` · ${job.timezone}` : null} · {job.cadenceMinutes} min
+          </span>
         </p>
       </header>
 

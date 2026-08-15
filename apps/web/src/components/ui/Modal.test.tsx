@@ -96,6 +96,8 @@ describe('Modal', () => {
     expect(panel).toHaveClass('overflow-hidden')
     expect(panel).toHaveClass('flex')
     expect(panel).toHaveClass('flex-col')
+    expect(panel).toHaveClass('border-ink-100')
+    expect(panel).toHaveClass('bg-surface')
   })
 
   it('applies the size variant to the panel max-width', () => {

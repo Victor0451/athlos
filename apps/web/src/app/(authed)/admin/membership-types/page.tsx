@@ -20,25 +20,24 @@ const urlStateSchema = {
 }
 
 const columns: ColumnDef<MembershipTypeCatalogItem>[] = [
-  { key: 'code', header: 'Código' },
+  { key: 'code', header: 'Código', className: 'font-mono text-xs text-ink-500' },
   { key: 'name', header: 'Nombre' },
-  { key: 'letter', header: 'Letra' },
+  { key: 'letter', header: 'Letra', className: 'font-mono text-xs text-ink-500' },
   { key: 'catalog_state', header: 'Procedencia', accessor: () => 'Aplicado' },
-  { key: 'validated_count', header: 'Validados' },
-  { key: 'applied_resolution_count', header: 'Correcciones aplicadas' },
-  { key: 'member_count', header: 'Socios distintos' },
+  { key: 'validated_count', header: 'Validados', className: 'font-mono text-xs text-ink-500' },
+  {
+    key: 'applied_resolution_count',
+    header: 'Correcciones aplicadas',
+    className: 'font-mono text-xs text-ink-500',
+  },
+  { key: 'member_count', header: 'Socios distintos', className: 'font-mono text-xs text-ink-500' },
 ]
 
 function noPermission() {
   return (
-    <div
-      role="alert"
-      className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
-    >
-      <p className="font-display text-lg font-semibold text-ink-900">Sin permisos</p>
-      <p className="mt-2 text-sm text-ink-500">
-        Esta sección requiere administración o gestión de datos.
-      </p>
+    <div role="alert" className="rounded-lg border border-danger bg-surface p-3 text-sm">
+      <p className="font-display font-semibold text-ink-900">Sin permisos</p>
+      <p className="mt-1 text-ink-500">Esta sección requiere administración o gestión de datos.</p>
     </div>
   )
 }
@@ -67,6 +66,7 @@ export default function MembershipTypesPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Socios</p>
           <h1 className="font-display text-2xl font-bold text-ink-900">
             Socios · Tipos de afiliación
           </h1>
@@ -78,7 +78,7 @@ export default function MembershipTypesPage() {
           type="button"
           onClick={() => query.refetch()}
           disabled={!permitted || query.isFetching}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 transition-colors duration-fast hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {query.isFetching ? 'Actualizando…' : 'Actualizar'}
         </button>
@@ -91,16 +91,19 @@ export default function MembershipTypesPage() {
           <form
             aria-label="Buscar tipos de afiliación"
             onSubmit={submitSearch}
-            className="flex gap-2 rounded-lg border border-ink-100 bg-surface p-4"
+            className="flex gap-2 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
           >
             <input
               aria-label="Buscar por código, nombre o letra"
               value={searchDraft}
               onChange={(event) => setSearchDraft(event.target.value)}
               placeholder="Código, nombre o letra"
-              className="min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm"
+              className="min-h-11 min-w-0 flex-1 rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-700 placeholder:text-ink-300 focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <button type="submit" className="rounded-md bg-ink-900 px-3 py-2 text-sm text-surface">
+            <button
+              type="submit"
+              className="min-h-11 rounded-md bg-accent px-4 py-2 font-display text-sm font-semibold text-accent-foreground transition-colors duration-fast hover:bg-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
               Buscar
             </button>
           </form>
@@ -108,26 +111,18 @@ export default function MembershipTypesPage() {
           {query.isPending ? (
             <DataTable columns={columns} data={[]} loading rowKey={(item) => item.source_row_id} />
           ) : query.isError ? (
-            <div
-              role="alert"
-              className="rounded-lg border border-ink-100 bg-surface-elevated p-6 text-center"
-            >
-              <p className="font-display text-lg font-semibold text-ink-900">
+            <div role="alert" className="rounded-lg border border-danger bg-surface p-3 text-sm">
+              <p className="font-display font-semibold text-ink-900">
                 No se pudo cargar el catálogo
               </p>
-              <p className="mt-2 text-sm text-ink-500">Intentá actualizar nuevamente.</p>
+              <p className="mt-1 text-ink-500">Intente actualizar nuevamente.</p>
             </div>
           ) : noReadyCatalog ? (
             <div
               role="status"
-              className="rounded-lg border border-ink-100 bg-surface p-6 text-center"
+              className="rounded-lg border border-ink-100 bg-surface p-4 text-sm text-ink-500 shadow-sm"
             >
-              <p className="font-display text-lg font-semibold text-ink-900">
-                Catálogo aún no disponible
-              </p>
-              <p className="mt-2 text-sm text-ink-500">
-                No hay un catálogo actual listo para consultar.
-              </p>
+              Catálogo aún no disponible. No hay un catálogo actual listo para consultar.
             </div>
           ) : (
             <>
@@ -145,7 +140,7 @@ export default function MembershipTypesPage() {
                 onRowClick={(item) => router.push(`/admin/membership-types/${item.source_row_id}`)}
               />
               {result?.snapshot.snapshot_batch_id ? (
-                <p className="text-xs text-ink-500">
+                <p className="font-mono text-xs text-ink-500">
                   Referencia de lote: {result.snapshot.snapshot_batch_id}
                 </p>
               ) : null}

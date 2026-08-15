@@ -75,9 +75,8 @@ export function MovementList({
       <div
         role="status"
         aria-live="polite"
-        aria-label="Cargando"
         data-testid="movement-list-loading"
-        className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+        className="overflow-hidden rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
       >
         <table className="w-full">
           <thead className="bg-surface-sunken">
@@ -108,19 +107,19 @@ export function MovementList({
               </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-ink-100">
             {Array.from({ length: 5 }).map((_, i) => (
               <tr key={i} aria-hidden="true">
-                <td className="border-t border-ink-100 px-4 py-3">
+                <td className="px-4 py-3">
                   <span className="block h-3 w-20 animate-pulse rounded bg-surface-sunken" />
                 </td>
-                <td className="border-t border-ink-100 px-4 py-3">
+                <td className="px-4 py-3">
                   <span className="block h-3 w-40 animate-pulse rounded bg-surface-sunken" />
                 </td>
-                <td className="border-t border-ink-100 px-4 py-3">
+                <td className="px-4 py-3">
                   <span className="ml-auto block h-3 w-24 animate-pulse rounded bg-surface-sunken" />
                 </td>
-                <td className="border-t border-ink-100 px-4 py-3">
+                <td className="px-4 py-3">
                   <span className="ml-auto block h-3 w-24 animate-pulse rounded bg-surface-sunken" />
                 </td>
               </tr>
@@ -136,21 +135,24 @@ export function MovementList({
     <section
       aria-label="Movimientos de cuenta corriente"
       data-testid="movement-list"
-      className="overflow-hidden rounded-lg border border-ink-100 bg-surface"
+      className="overflow-hidden rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
     >
       <header className="flex flex-col gap-3 border-b border-ink-100 bg-surface-sunken px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
           <span className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
             Cuenta
           </span>
-          <span className="font-mono text-xs text-ink-700" data-testid="movement-list-cuenta">
+          <span
+            className="font-mono text-xs tabular-nums text-ink-700"
+            data-testid="movement-list-cuenta"
+          >
             {socioId}
           </span>
           <span className="font-display text-[10px] font-semibold uppercase tracking-widest text-ink-500">
             Saldo
           </span>
           <span
-            className="font-display text-base font-semibold text-ink-900"
+            className="font-mono text-base font-semibold tabular-nums text-ink-900"
             data-testid="movement-list-saldo"
           >
             {ARS.format(Number(saldo))}
@@ -160,7 +162,7 @@ export function MovementList({
           type="button"
           onClick={handleExport}
           disabled={movimientos.length === 0}
-          className="rounded-md border border-ink-200 bg-surface px-3 py-1 font-display text-xs font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-11 rounded-md border border-ink-200 bg-surface px-4 py-2 font-display text-sm font-semibold text-ink-700 transition-colors duration-fast hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-50"
           data-testid="movement-list-export"
         >
           Exportar CSV
@@ -209,18 +211,14 @@ export function MovementList({
               ) : null}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-ink-100">
             {movimientos.map((m) => (
               <tr
                 key={m.id}
                 data-testid={`movement-row-${m.id}`}
-                className={
-                  m.anulado
-                    ? 'border-t border-ink-100 bg-surface-sunken text-ink-500 line-through'
-                    : 'border-t border-ink-100'
-                }
+                className={m.anulado ? 'bg-surface-sunken text-ink-500 line-through' : undefined}
               >
-                <td className="px-4 py-3 font-body text-sm tabular-nums text-ink-700">
+                <td className="px-4 py-3 font-mono text-sm tabular-nums text-ink-700">
                   {formatDate(m.fecha)}
                 </td>
                 <td className="px-4 py-3 font-body text-sm text-ink-700">
@@ -234,10 +232,10 @@ export function MovementList({
                     </span>
                   ) : null}
                 </td>
-                <td className="px-4 py-3 text-right font-body text-sm tabular-nums text-ink-700">
+                <td className="px-4 py-3 text-right font-mono text-sm tabular-nums text-ink-700">
                   {Number(m.debe) > 0 ? ARS.format(Number(m.debe)) : '—'}
                 </td>
-                <td className="px-4 py-3 text-right font-body text-sm tabular-nums text-ink-700">
+                <td className="px-4 py-3 text-right font-mono text-sm tabular-nums text-ink-700">
                   {Number(m.haber) > 0 ? ARS.format(Number(m.haber)) : '—'}
                 </td>
                 {onNotaClick ? (
@@ -247,7 +245,7 @@ export function MovementList({
                       aria-label={`Agregar nota al movimiento ${m.id}`}
                       data-testid={`movement-row-${m.id}-nota`}
                       onClick={() => onNotaClick(m.id)}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-400 transition-colors duration-fast hover:bg-surface-sunken hover:text-ink-600"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-ink-400 transition-colors duration-fast hover:bg-surface-sunken hover:text-ink-600"
                     >
                       <MessageSquare className="h-4 w-4" aria-hidden="true" />
                     </button>

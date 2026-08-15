@@ -163,6 +163,22 @@ describe('AppShell', () => {
     container.remove()
   })
 
+  it('renders a skeleton with screen-reader loading copy while unauthenticated', () => {
+    refreshMock.mockReturnValue(new Promise(() => {}))
+    render(
+      <AppShell>
+        <div>page content</div>
+      </AppShell>,
+    )
+
+    expect(screen.getByTestId('appshell-loading')).toHaveAttribute('role', 'status')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
+    expect(
+      screen.getByTestId('appshell-loading').querySelector('[aria-hidden="true"]'),
+    ).toHaveClass('animate-pulse')
+    expect(screen.queryByText('Cargando…')).not.toHaveClass('font-display')
+  })
+
   it('attempts a silent refresh and renders the shell when refresh succeeds', async () => {
     // token is null in memory, but refresh returns a new one. We mirror
     // the real auth.ts behavior in the mock by writing the token to

@@ -210,7 +210,10 @@ describe('Padron detail page', () => {
   it('shows a loading skeleton while the query is pending', () => {
     getPadronesMock.mockReturnValue(new Promise(() => {}))
     renderPage()
-    expect(screen.getByText(/cargando/i)).toBeInTheDocument()
+    const loading = screen.getByTestId('padron-detail-loading')
+    expect(loading).toHaveAttribute('role', 'status')
+    expect(screen.getByText('Cargando…')).toHaveClass('sr-only')
+    expect(loading.querySelector('[aria-hidden="true"]')).toHaveClass('animate-pulse')
   })
 
   it('shows a "Padrón no encontrado" error state when the backend rejects', async () => {
