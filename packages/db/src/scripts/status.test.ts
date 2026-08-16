@@ -220,7 +220,7 @@ describe('migrate:status', () => {
       applied: migrations
         .filter((migration) => migration.createdAt.getTime() <= baseline!.createdAt.getTime())
         .map((migration) => migration.name),
-      pending: ['0048_socios_admin_route_relations_repair'],
+      pending: ['0048_socios_admin_route_relations_repair', '0049_dues_pricing_obligations'],
       divergence: [],
       exitCode: 1,
     })
