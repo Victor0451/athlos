@@ -288,6 +288,13 @@
       "when": 1786320000000,
       "tag": "0048_socios_admin_route_relations_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0049_dues_pricing_obligations",
+      "breakpoints": true
     }
   ]
 }
