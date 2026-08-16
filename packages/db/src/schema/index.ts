@@ -155,6 +155,9 @@ export type {
   GastosCtacteLinkMotivo,
 } from './tesoreria'
 
+// native dues pricing and immutable obligations ─────────────────
+export * from './dues'
+
 // deportes ─────────────────────────────────────────────────────
 export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'
 export type {
