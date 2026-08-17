@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuditAction, type AuditRecord } from '@athlos/audit'
 import { ErrorCode } from '@athlos/errors'
 import { AssessmentService, PricingService, type AuditContext } from './service.ts'
+import { BenefitService } from './dues-benefits.ts'
 
 const context: AuditContext = {
   actorId: '00000000-0000-4000-8000-000000000001',
@@ -88,5 +89,15 @@ describe('dues services', () => {
     await expect(
       service.create({ ...context, role: 'TESORERO', kind: 'BASE', amountCents: 1, effectiveFrom: price.effectiveFrom, rule: price.rule }),
     ).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+  })
+
+  it('audits benefit creation and revocation while enforcing ADMIN mutation authority', async () => {
+    const audit = auditLog()
+    const benefit = { id: 'benefit-1', kind: 'FIXED_DISCOUNT', priority: 10, combinability: 'COMBINABLE', exclusiveGroup: null, percentageBasis: null }
+    const service = new BenefitService(db(), { repository: { createBenefitRule: vi.fn().mockResolvedValue(benefit), revokeBenefitRule: vi.fn().mockResolvedValue(benefit), listEffectiveBenefitRules: vi.fn() }, audit: audit.emit })
+    await service.create({ ...context, kind: 'FIXED_DISCOUNT', socioId: 'member-1', amountCents: 500, currency: 'ARS', effectiveFrom: '2026-01-01', priority: 10, combinability: 'COMBINABLE', reason: 'Approved' })
+    await service.revoke({ ...context, benefitRuleId: benefit.id, revokeReason: 'Replaced' })
+    expect(audit.records.map((record) => record.action)).toEqual([AuditAction.DUES_BENEFIT_CREATED, AuditAction.DUES_BENEFIT_REVOKED])
+    await expect(service.create({ ...context, role: 'TESORERO', kind: 'FIXED_DISCOUNT', socioId: 'member-1', amountCents: 500, currency: 'ARS', effectiveFrom: '2026-01-01', priority: 10, combinability: 'COMBINABLE', reason: 'Denied' })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
   })
 })

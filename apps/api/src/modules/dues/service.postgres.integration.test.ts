@@ -53,8 +53,11 @@ beforeAll(async () => {
   db = createDb({ connectionString: url, poolMax: 1 })
   operatorId = randomUUID()
   await db.pool.query(`CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`)
-  const migration = await readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle/0049_dues_pricing_obligations.sql'), 'utf8')
-  await db.pool.query(migration)
+  // prettier-ignore
+  const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql'].map((file) => readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8')))
+  await db.pool.query(migrations.join('\n'))
+  // prettier-ignore
+  await db.pool.query('ALTER TABLE tesoreria.dues_obligation_components DROP CONSTRAINT IF EXISTS dues_obligation_components_benefit_check')
   await db.pool.query(`CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), operator_id uuid, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, old_value jsonb, new_value jsonb, source_ip text, metadata jsonb, idempotency_key text, created_at timestamptz NOT NULL DEFAULT now()); CREATE UNIQUE INDEX IF NOT EXISTS service_audit_key ON public.audit_events (idempotency_key) WHERE idempotency_key IS NOT NULL; CREATE TABLE IF NOT EXISTS tesoreria.ctacte (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`)
   await db.pool.query(`INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'A')`, [operatorId, `dues-service-${operatorId}`])
   await db.pool.query(`INSERT INTO deportes.ejercicios (id, anio, descripcion, fecha_inicio, fecha_fin) VALUES ($1, 2500, 'Fixture', DATE '2400-01-01', DATE '2900-01-01')`, [exerciseId])
@@ -121,5 +124,33 @@ describe('dues services', () => {
     await expect(failedPersistence.generate(persistenceInput)).rejects.toThrow('persistence failed')
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_generation_receipts WHERE caller_key = $1`, [persistenceInput.callerKey])).rows[0].count).toBe(0)
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1 AND period_start = $2`, [socioId, p.start])).rows[0].count).toBe(0)
+  })
+
+  // prettier-ignore
+  it('applies configured benefits once and preserves the historical snapshot after revocation', async () => {
+    const p = period(), socioId = await member()
+    await price(p, 'BASE', null, 10_000)
+    // prettier-ignore
+    const fixed = await repository.createBenefitRule(db.db, { kind: 'FIXED_DISCOUNT', socioId, amountCents: 2_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, priority: 10, combinability: 'COMBINABLE', reason: 'Approved fixed benefit', createdBy: operatorId, authorizationEvidence: { ticket: 'BEN-1' } })
+    // prettier-ignore
+    const percentage = await repository.createBenefitRule(db.db, { kind: 'PERCENT_DISCOUNT', socioId, percentage: 50, percentageBasis: 'REMAINING', effectiveFrom: p.start, effectiveTo: p.end, priority: 20, combinability: 'COMBINABLE', reason: 'Approved percentage benefit', createdBy: operatorId, authorizationEvidence: { ticket: 'BEN-2' } })
+    const service = new AssessmentService(db.db)
+    const input = { ...context(), period: p }
+    const first = await service.generate(input)
+    await repository.revokeBenefitRule(db.db, { benefitRuleId: fixed.id, revokedBy: operatorId, revokeReason: 'Replaced' })
+    await repository.revokeBenefitRule(db.db, { benefitRuleId: percentage.id, revokedBy: operatorId, revokeReason: 'Replaced' })
+    // prettier-ignore
+    const replay = await service.generate({ ...input, callerKey: randomUUID(), requestFingerprint: randomUUID().replaceAll('-', '').padEnd(64, '0').slice(0, 64) })
+    const obligation = await db.pool.query(`SELECT id, amount, snapshot FROM tesoreria.dues_obligations WHERE socio_id = $1 AND period_start = $2`, [socioId, p.start])
+    // prettier-ignore
+    const components = await db.pool.query(`SELECT kind, amount FROM tesoreria.dues_obligation_components WHERE obligation_id = $1 ORDER BY component_key`, [obligation.rows[0].id])
+    const audits = await db.pool.query(`SELECT action FROM public.audit_events WHERE action = $1 AND entity_id = ANY($2::text[])`, [AuditAction.DUES_BENEFIT_APPLIED, [fixed.id, percentage.id]])
+    expect(replay.obligationIds).toEqual(first.obligationIds)
+    // prettier-ignore
+    expect(obligation.rows[0]).toMatchObject({ amount: '40.00', snapshot: { benefits: [{ id: fixed.id, priority: 10, appliedAmountCents: 2_000 }, { id: percentage.id, percentageBasis: 'REMAINING', appliedAmountCents: 4_000 }] } })
+    expect(components.rows).toHaveLength(3)
+    // prettier-ignore
+    expect(components.rows).toEqual(expect.arrayContaining([{ kind: 'BASE', amount: '100.00' }, { kind: 'BENEFIT', amount: '-20.00' }, { kind: 'BENEFIT', amount: '-40.00' }]))
+    expect(audits.rows).toHaveLength(2)
   })
 })
