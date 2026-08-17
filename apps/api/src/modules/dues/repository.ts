@@ -22,6 +22,17 @@ export type PriceRevocationInput = {
   revokedBy: string
   revokeReason: string
 }
+// prettier-ignore
+export type BenefitKind = 'FIXED_DISCOUNT' | 'PERCENT_DISCOUNT' | 'SCHOLARSHIP'
+export type BenefitCombinability = 'COMBINABLE' | 'EXCLUSIVE'
+export type BenefitPercentageBasis = 'GROSS' | 'REMAINING'
+// prettier-ignore
+export type BenefitInput = { kind: BenefitKind; socioId?: string | null; familyGroupId?: string | null; amountCents?: number | null; percentage?: number | null; currency?: string | null; effectiveFrom: string; effectiveTo?: string | null; priority: number; combinability: BenefitCombinability; exclusiveGroup?: string | null; percentageBasis?: BenefitPercentageBasis | null; reason: string; createdBy: string; authorizationEvidence: Json }
+export type BenefitRevocationInput = {
+  benefitRuleId: string
+  revokedBy: string
+  revokeReason: string
+}
 type PriceMutationRow = {
   id: string
   kind: PriceKind
@@ -40,6 +51,15 @@ type PriceMutationRow = {
 }
 const priceFields = sql`id, kind, disciplina_id AS "disciplinaId", amount::text, btrim(currency) AS currency, effective_from AS "effectiveFrom", effective_to AS "effectiveTo", rule, created_by AS "createdBy", authorization_evidence AS "authorizationEvidence", created_at AS "createdAt", revoked_at AS "revokedAt", revoked_by AS "revokedBy", revoke_reason AS "revokeReason"`
 const toCreatedPrice = (row: PriceMutationRow) => ({ ...row, amountCents: cents(row.amount) })
+// prettier-ignore
+type BenefitRow = { id: string; kind: BenefitKind; socioId: string | null; familyGroupId: string | null; amount: string | null; percentage: string | null; currency: string | null; effectiveFrom: string; effectiveTo: string | null; priority: number; combinability: BenefitCombinability; exclusiveGroup: string | null; percentageBasis: BenefitPercentageBasis | null; reason: string; authorizationEvidence: Json; createdBy: string; createdAt: Date; revokedAt: Date | null; revokedBy: string | null; revokeReason: string | null }
+// prettier-ignore
+const benefitFields = sql`id, kind, socio_id AS "socioId", family_group_id AS "familyGroupId", amount::text, percentage::text, btrim(currency) AS currency, effective_from AS "effectiveFrom", effective_to AS "effectiveTo", priority, combinability, exclusive_group AS "exclusiveGroup", percentage_basis AS "percentageBasis", reason, authorization_evidence AS "authorizationEvidence", created_by AS "createdBy", created_at AS "createdAt", revoked_at AS "revokedAt", revoked_by AS "revokedBy", revoke_reason AS "revokeReason"`
+const toBenefitRule = (row: BenefitRow) => ({
+  ...row,
+  amountCents: row.amount === null ? null : cents(row.amount),
+  percentage: row.percentage === null ? null : Number(row.percentage),
+})
 function dbCode(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code?: unknown }).code)
@@ -65,6 +85,14 @@ function mapPriceMutationError(error: unknown): never {
     default:
       throw error
   }
+}
+// prettier-ignore
+function mapBenefitError(error: unknown): never {
+  if (error instanceof BusinessError) throw error
+  if (dbCode(error) === '23P01') throw BusinessError(ErrorCode.CONFLICT, 'Exclusive benefit interval conflicts with an active rule')
+  if (dbCode(error) === '23503') throw BusinessError(ErrorCode.NOT_FOUND, 'Referenced benefit member or operator was not found')
+  if (dbCode(error) === '23514' || dbCode(error) === '22P02') throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Benefit rule violates benefit constraints')
+  throw error
 }
 export async function createPrice(db: DuesDb, input: PriceInput) {
   try {
@@ -98,6 +126,34 @@ export async function revokePrice(db: DuesDb, input: PriceRevocationInput) {
   } catch (error) {
     return mapPriceMutationError(error)
   }
+}
+
+// prettier-ignore
+export async function createBenefitRule(db: DuesDb, input: BenefitInput) {
+  try {
+    const row = rows<BenefitRow>(await db.execute(sql`INSERT INTO tesoreria.dues_benefit_rules (kind, socio_id, family_group_id, amount, percentage, currency, effective_from, effective_to, priority, combinability, exclusive_group, percentage_basis, reason, created_by, authorization_evidence) VALUES (${input.kind}, ${input.socioId ?? null}, ${input.familyGroupId ?? null}, ${input.amountCents == null ? null : money(input.amountCents)}, ${input.percentage ?? null}, ${input.currency ?? null}, ${input.effectiveFrom}, ${input.effectiveTo ?? null}, ${input.priority}, ${input.combinability}, ${input.exclusiveGroup ?? null}, ${input.percentageBasis ?? null}, ${input.reason}, ${input.createdBy}, ${JSON.stringify(input.authorizationEvidence)}::jsonb) RETURNING ${benefitFields}`))[0]
+    if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'benefit rule insert returned no row')
+    return toBenefitRule(row)
+  } catch (error) { return mapBenefitError(error) }
+}
+// prettier-ignore
+export async function revokeBenefitRule(db: DuesDb, input: BenefitRevocationInput) {
+  try {
+    let row = rows<BenefitRow>(await db.execute(sql`UPDATE tesoreria.dues_benefit_rules SET revoked_at = now(), revoked_by = ${input.revokedBy}, revoke_reason = ${input.revokeReason} WHERE id = ${input.benefitRuleId} AND revoked_at IS NULL RETURNING ${benefitFields}`))[0]
+    if (!row) row = rows<BenefitRow>(await db.execute(sql`SELECT ${benefitFields} FROM tesoreria.dues_benefit_rules WHERE id = ${input.benefitRuleId}`))[0]
+    if (!row) throw BusinessError(ErrorCode.NOT_FOUND, 'Benefit rule not found')
+    return toBenefitRule(row)
+  } catch (error) { return mapBenefitError(error) }
+}
+// prettier-ignore
+export async function listEffectiveBenefitRules(db: DuesDb, period: Period) {
+  const result = await db.execute(sql`SELECT ${benefitFields} FROM tesoreria.dues_benefit_rules WHERE revoked_at IS NULL AND effective_from <= ${period.start} AND (effective_to IS NULL OR effective_to > ${period.start}) ORDER BY priority, effective_from, id`)
+  return rows<BenefitRow>(result).map(toBenefitRule)
+}
+// prettier-ignore
+export async function resolveBenefitRuleCandidates(db: DuesDb, input: { socioId: string; familyGroupId?: string | null; period: Period }) {
+  const result = await db.execute(sql`SELECT ${benefitFields} FROM tesoreria.dues_benefit_rules WHERE revoked_at IS NULL AND effective_from <= ${input.period.start} AND (effective_to IS NULL OR effective_to > ${input.period.start}) AND (socio_id = ${input.socioId} OR family_group_id = ${input.familyGroupId ?? null}) ORDER BY priority, effective_from, id`)
+  return rows<BenefitRow>(result).map(toBenefitRule)
 }
 
 // prettier-ignore
