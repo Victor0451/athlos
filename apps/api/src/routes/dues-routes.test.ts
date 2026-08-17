@@ -30,6 +30,12 @@ function services(): DuesRouteOptions {
       }),
     },
     listEffectivePrices: vi.fn().mockResolvedValue({ base: [price], sports: [] }),
+    // prettier-ignore
+    benefitService: {
+      create: vi.fn().mockResolvedValue({ id: price.id, kind: 'FIXED_DISCOUNT', socioId: actorId, familyGroupId: null, amountCents: 500, percentage: null, currency: 'ARS', effectiveFrom: '2026-01-01', effectiveTo: null, priority: 10, combinability: 'COMBINABLE', exclusiveGroup: null, percentageBasis: null }),
+      revoke: vi.fn().mockResolvedValue({ id: price.id, kind: 'FIXED_DISCOUNT', socioId: actorId, familyGroupId: null, amountCents: 500, percentage: null, currency: 'ARS', effectiveFrom: '2026-01-01', effectiveTo: null, priority: 10, combinability: 'COMBINABLE', exclusiveGroup: null, percentageBasis: null }),
+      list: vi.fn().mockResolvedValue([]),
+    },
   }
 }
 const apps: FastifyInstance[] = []
@@ -163,6 +169,19 @@ describe('dues assessment routes', () => {
         period: { start: '2026-01-01', end: '2026-02-01' },
       }),
     )
+  })
+
+  // prettier-ignore
+  it('allows ADMIN benefit mutations and finance reads without exposing target evidence', async () => {
+    const options = services(), app = await buildApp(true, options)
+    const create = await app.inject({ method: 'POST', url: '/api/v1/dues/benefits', headers: auth('ADMIN'), payload: { kind: 'FIXED_DISCOUNT', socio_id: actorId, amount_cents: 500, currency: 'ARS', effective_from: '2026-01-01', priority: 10, combinability: 'COMBINABLE', reason: 'Approved' } })
+    const list = await app.inject({ method: 'GET', url: '/api/v1/dues/benefits?period=2026-01', headers: auth('TESORERO') })
+    const revoke = await app.inject({ method: 'POST', url: `/api/v1/dues/benefits/${price.id}/revoke`, headers: auth('ADMIN'), payload: { revoke_reason: 'Replaced' } })
+    expect(create.statusCode).toBe(201)
+    expect(list.statusCode).toBe(200)
+    expect(revoke.statusCode).toBe(200)
+    expect(create.body).not.toContain('socio_id')
+    expect(options.benefitService?.create).toHaveBeenCalledWith(expect.objectContaining({ priority: 10, combinability: 'COMBINABLE', socioId: actorId }))
   })
 
   it.each([
