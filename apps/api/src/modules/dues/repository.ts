@@ -144,6 +144,7 @@ export async function listApplicableBenefits(db: DuesDb, socioId: string, period
   const result = await db.execute(sql`SELECT ${benefitListFields}, CASE WHEN b.socio_id IS NOT NULL THEN 'MEMBER' ELSE 'FAMILY' END AS scope FROM tesoreria.dues_benefits b LEFT JOIN tesoreria.dues_family_members fm ON fm.family_group_id = b.family_group_id AND fm.socio_id = ${socioId} WHERE b.revoked_at IS NULL AND b.effective_from <= ${period.start} AND (b.effective_to IS NULL OR b.effective_to > ${period.start}) AND (b.socio_id = ${socioId} OR fm.socio_id IS NOT NULL) ORDER BY CASE WHEN b.socio_id = ${socioId} THEN 0 ELSE 1 END, b.effective_from, b.id`)
   return rows<BenefitMutationRow & { scope: 'MEMBER' | 'FAMILY' }>(result).map(toBenefit)
 }
+export const listEffectiveBenefits = listApplicableBenefits
 // prettier-ignore
 export type ReceiptInput = { operatorId: string; callerKey: string; requestFingerprint: string; periodStart: string; periodEnd: string; authorizationEvidence: Json }
 export type ReceiptClaim =
