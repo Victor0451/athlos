@@ -33,6 +33,26 @@ export type BenefitRevocationInput = {
   revokedBy: string
   revokeReason: string
 }
+export type FamilyGroupInput = {
+  id?: string
+  reason: string
+  createdBy: string
+  authorizationEvidence: Json
+}
+export type FamilyMembershipInput = {
+  familyGroupId: string
+  socioId: string
+  effectiveFrom: string
+  effectiveTo?: string | null
+  reason: string
+  createdBy: string
+  authorizationEvidence: Json
+}
+export type FamilyMembershipRevocationInput = {
+  membershipId: string
+  revokedBy: string
+  revokeReason: string
+}
 type PriceMutationRow = {
   id: string
   kind: PriceKind
@@ -92,6 +112,25 @@ function mapBenefitError(error: unknown): never {
   if (dbCode(error) === '23P01') throw BusinessError(ErrorCode.CONFLICT, 'Exclusive benefit interval conflicts with an active rule')
   if (dbCode(error) === '23503') throw BusinessError(ErrorCode.NOT_FOUND, 'Referenced benefit member or operator was not found')
   if (dbCode(error) === '23514' || dbCode(error) === '22P02') throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Benefit rule violates benefit constraints')
+  throw error
+}
+function mapFamilyError(error: unknown): never {
+  if (error instanceof BusinessError) throw error
+  if (dbCode(error) === '23P01' || dbCode(error) === '23505')
+    throw BusinessError(
+      ErrorCode.CONFLICT,
+      'Family membership interval conflicts with an active membership',
+    )
+  if (dbCode(error) === '23503')
+    throw BusinessError(
+      ErrorCode.NOT_FOUND,
+      'Referenced family group, member, or operator was not found',
+    )
+  if (dbCode(error) === '23514' || dbCode(error) === '22P02')
+    throw BusinessError(
+      ErrorCode.VALIDATION_ERROR,
+      'Family eligibility record violates family group constraints',
+    )
   throw error
 }
 export async function createPrice(db: DuesDb, input: PriceInput) {
@@ -157,6 +196,71 @@ export async function resolveBenefitRuleCandidates(db: DuesDb, input: { socioId:
 }
 
 // prettier-ignore
+type FamilyGroupRow = { id: string; reason: string; createdBy: string; authorizationEvidence: Json; createdAt: Date }
+// prettier-ignore
+type FamilyMembershipRow = { id: string; familyGroupId: string; socioId: string; effectiveFrom: string; effectiveTo: string | null; reason: string; createdBy: string; authorizationEvidence: Json; createdAt: Date; revokedAt: Date | null; revokedBy: string | null; revokeReason: string | null }
+const familyGroupFields = sql`id, reason, created_by AS "createdBy", authorization_evidence AS "authorizationEvidence", created_at AS "createdAt"`
+const familyMembershipFields = sql`id, family_group_id AS "familyGroupId", socio_id AS "socioId", effective_from AS "effectiveFrom", effective_to AS "effectiveTo", reason, created_by AS "createdBy", authorization_evidence AS "authorizationEvidence", created_at AS "createdAt", revoked_at AS "revokedAt", revoked_by AS "revokedBy", revoke_reason AS "revokeReason"`
+
+export async function createFamilyGroup(db: DuesDb, input: FamilyGroupInput) {
+  try {
+    const row = rows<FamilyGroupRow>(
+      await db.execute(
+        input.id
+          ? sql`INSERT INTO tesoreria.dues_family_groups (id, reason, created_by, authorization_evidence) VALUES (${input.id}, ${input.reason}, ${input.createdBy}, ${JSON.stringify(input.authorizationEvidence)}::jsonb) RETURNING ${familyGroupFields}`
+          : sql`INSERT INTO tesoreria.dues_family_groups (reason, created_by, authorization_evidence) VALUES (${input.reason}, ${input.createdBy}, ${JSON.stringify(input.authorizationEvidence)}::jsonb) RETURNING ${familyGroupFields}`,
+      ),
+    )[0]
+    if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'family group insert returned no row')
+    return row
+  } catch (error) {
+    return mapFamilyError(error)
+  }
+}
+
+export async function createFamilyMembership(db: DuesDb, input: FamilyMembershipInput) {
+  try {
+    const row = rows<FamilyMembershipRow>(
+      await db.execute(
+        sql`INSERT INTO tesoreria.dues_family_memberships (family_group_id, socio_id, effective_from, effective_to, reason, created_by, authorization_evidence) VALUES (${input.familyGroupId}, ${input.socioId}, ${input.effectiveFrom}, ${input.effectiveTo ?? null}, ${input.reason}, ${input.createdBy}, ${JSON.stringify(input.authorizationEvidence)}::jsonb) RETURNING ${familyMembershipFields}`,
+      ),
+    )[0]
+    if (!row)
+      throw BusinessError(ErrorCode.INTERNAL_ERROR, 'family membership insert returned no row')
+    return row
+  } catch (error) {
+    return mapFamilyError(error)
+  }
+}
+
+export async function revokeFamilyMembership(db: DuesDb, input: FamilyMembershipRevocationInput) {
+  try {
+    let row = rows<FamilyMembershipRow>(
+      await db.execute(
+        sql`UPDATE tesoreria.dues_family_memberships SET revoked_at = now(), revoked_by = ${input.revokedBy}, revoke_reason = ${input.revokeReason} WHERE id = ${input.membershipId} AND revoked_at IS NULL RETURNING ${familyMembershipFields}`,
+      ),
+    )[0]
+    if (!row)
+      row = rows<FamilyMembershipRow>(
+        await db.execute(
+          sql`SELECT ${familyMembershipFields} FROM tesoreria.dues_family_memberships WHERE id = ${input.membershipId}`,
+        ),
+      )[0]
+    if (!row) throw BusinessError(ErrorCode.NOT_FOUND, 'Family membership not found')
+    return row
+  } catch (error) {
+    return mapFamilyError(error)
+  }
+}
+
+export async function listFamilyMemberships(db: DuesDb, familyGroupId: string) {
+  const result = await db.execute(
+    sql`SELECT ${familyMembershipFields} FROM tesoreria.dues_family_memberships WHERE family_group_id = ${familyGroupId} ORDER BY effective_from, id`,
+  )
+  return rows<FamilyMembershipRow>(result)
+}
+
+// prettier-ignore
 export type ReceiptInput = { operatorId: string; callerKey: string; requestFingerprint: string; periodStart: string; periodEnd: string; authorizationEvidence: Json }
 export type ReceiptClaim =
   | { status: 'claimed'; receipt: Receipt }
@@ -217,10 +321,10 @@ export type EligibleEnrollment = { id: string; disciplinaId: string; estado: str
 // prettier-ignore
 export type EligibleMember = { socioId: string; baseEligible: true; sports: EligibleEnrollment[]; familyGroupId?: string | null }
 // prettier-ignore
-type EnrollmentRow = { socioId: string; enrollmentId: string | null; disciplinaId: string | null; estado: string | null; fechaAlta: string | null; fechaBaja: string | null }
+type EnrollmentRow = { socioId: string; familyGroupId: string | null; enrollmentId: string | null; disciplinaId: string | null; estado: string | null; fechaAlta: string | null; fechaBaja: string | null }
 export async function listEligibleMembers(db: DuesDb, period: Period): Promise<EligibleMember[]> {
   const result = await db.execute(
-    sql`SELECT s.id AS "socioId", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", i.estado, i.fecha_alta AS "fechaAlta", i.fecha_baja AS "fechaBaja" FROM socios.socios s LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${period.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${period.start}) WHERE s.estado = 'activo' ORDER BY s.id, i.id`,
+    sql`SELECT s.id AS "socioId", family.family_group_id AS "familyGroupId", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", i.estado, i.fecha_alta AS "fechaAlta", i.fecha_baja AS "fechaBaja" FROM socios.socios s LEFT JOIN LATERAL (SELECT m.family_group_id FROM tesoreria.dues_family_memberships m WHERE m.socio_id = s.id AND m.revoked_at IS NULL AND m.effective_from <= ${period.start} AND (m.effective_to IS NULL OR m.effective_to > ${period.start}) LIMIT 1) family ON true LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${period.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${period.start}) WHERE s.estado = 'activo' ORDER BY s.id, i.id`,
   )
   const members = new Map<string, EligibleMember>()
   for (const row of rows<EnrollmentRow>(result)) {
@@ -228,6 +332,7 @@ export async function listEligibleMembers(db: DuesDb, period: Period): Promise<E
       socioId: row.socioId,
       baseEligible: true,
       sports: [],
+      familyGroupId: row.familyGroupId,
     }
     if (row.enrollmentId && row.fechaAlta) {
       const eligibleFrom = row.fechaAlta > period.start ? row.fechaAlta : period.start
