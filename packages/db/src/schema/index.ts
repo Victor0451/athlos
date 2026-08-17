@@ -157,6 +157,7 @@ export type {
 
 // native dues pricing and immutable obligations ─────────────────
 export * from './dues'
+export * from './dues-benefits'
 
 // deportes ─────────────────────────────────────────────────────
 export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'
