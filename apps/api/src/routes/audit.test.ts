@@ -212,6 +212,7 @@ describe('GET /api/v1/audit', () => {
         auditItem('JOB_FAILED', { privateNote: 'do-not-return' }),
         auditItem('DUES_PRICE_CREATED', null),
         auditItem('DUES_PRICE_REVOKED', 'malformed'),
+        auditItem('DUES_BENEFIT_APPLIED', { privateNote: 'do-not-return' }),
       ]),
     )
 
@@ -233,5 +234,7 @@ describe('GET /api/v1/audit', () => {
     })
     expect(items[2].dues_evidence).toBeNull()
     expect(items[3].dues_evidence).toBeNull()
+    // prettier-ignore
+    expect(items[4]).toMatchObject({ action: 'DUES_BENEFIT_APPLIED', oldValue: null, newValue: null, dues_evidence: null })
   })
 })

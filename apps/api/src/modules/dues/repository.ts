@@ -215,7 +215,7 @@ export function lockPeriod(db: DuesDb, periodStart: string): Promise<unknown> {
 // prettier-ignore
 export type EligibleEnrollment = { id: string; disciplinaId: string; estado: string; fechaAlta: string; fechaBaja: string | null; eligibleFrom: string; eligibleTo: string }
 // prettier-ignore
-export type EligibleMember = { socioId: string; baseEligible: true; sports: EligibleEnrollment[] }
+export type EligibleMember = { socioId: string; baseEligible: true; sports: EligibleEnrollment[]; familyGroupId?: string | null }
 // prettier-ignore
 type EnrollmentRow = { socioId: string; enrollmentId: string | null; disciplinaId: string | null; estado: string | null; fechaAlta: string | null; fechaBaja: string | null }
 export async function listEligibleMembers(db: DuesDb, period: Period): Promise<EligibleMember[]> {
