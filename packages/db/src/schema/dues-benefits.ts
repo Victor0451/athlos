@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import { check, char, date, index, integer, jsonb, numeric, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { operators } from './operators.ts'
 import { socios } from './socios.ts'
+import { duesFamilyGroups } from './dues-family-groups.ts'
 import { tesoreriaSchema } from './tesoreria.ts'
 
 // prettier-ignore
@@ -15,7 +16,7 @@ export const duesBenefitPercentageBasis = tesoreriaSchema.enum('dues_benefit_per
 // prettier-ignore
 export const duesBenefitRules = tesoreriaSchema.table('dues_benefit_rules', {
   id: uuid('id').primaryKey().defaultRandom(), kind: duesBenefitKind('kind').notNull(),
-  socioId: uuid('socio_id').references(() => socios.id, { onDelete: 'restrict' }), familyGroupId: uuid('family_group_id'),
+  socioId: uuid('socio_id').references(() => socios.id, { onDelete: 'restrict' }), familyGroupId: uuid('family_group_id').references(() => duesFamilyGroups.id, { onDelete: 'restrict' }),
   amount: numeric('amount', { precision: 14, scale: 2 }), percentage: numeric('percentage', { precision: 5, scale: 2 }), currency: char('currency', { length: 3 }),
   effectiveFrom: date('effective_from').notNull(), effectiveTo: date('effective_to'), priority: integer('priority').notNull(),
   combinability: duesBenefitCombinability('combinability').notNull(), exclusiveGroup: text('exclusive_group'), percentageBasis: duesBenefitPercentageBasis('percentage_basis'),
