@@ -7,6 +7,7 @@ import type { AppContainer } from '../container.ts'
 import * as repository from '../modules/dues/repository.ts'
 import { AssessmentService, PricingService, type AuditContext } from '../modules/dues/service.ts'
 import { BenefitService } from '../modules/dues/dues-benefits.ts'
+import { FamilyGroupService } from '../modules/dues/dues-family-groups.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
@@ -76,12 +77,32 @@ const benefitBodySchema = z.object({
 })
 // prettier-ignore
 const benefitQuerySchema = z.object({ period: periodSchema })
+const familyGroupBodySchema = z
+  .object({ id: z.string().uuid().optional(), reason: z.string().trim().min(1).max(500) })
+  .strict()
+const familyMembershipBodySchema = z
+  .object({
+    socio_id: z.string().uuid(),
+    effective_from: dateSchema,
+    effective_to: dateSchema.nullable().optional(),
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.effective_to && value.effective_to <= value.effective_from)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['effective_to'],
+        message: 'effective_to must be after effective_from',
+      })
+  })
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
   assessmentService?: Pick<AssessmentService, 'generate'>
   listEffectivePrices?: typeof repository.listEffectivePrices
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
+  familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
 }
 
 type PriceLike = {
@@ -129,6 +150,34 @@ function toPriceDTO(row: PriceLike) {
 function toBenefitDTO(row: { id: string; kind: string; socioId: string | null; amountCents: number | null; percentage: number | null; currency: string | null; effectiveFrom: string; effectiveTo: string | null; priority: number; combinability: string; exclusiveGroup: string | null; percentageBasis: string | null; revokedAt?: Date | string | null }) {
   return { id: row.id, kind: row.kind, target_type: row.socioId ? 'MEMBER' : 'FAMILY', amount_cents: row.amountCents, percentage: row.percentage, currency: row.currency, effective_from: row.effectiveFrom, effective_to: row.effectiveTo, priority: row.priority, combinability: row.combinability, exclusive_group: row.exclusiveGroup, percentage_basis: row.percentageBasis, revoked_at: row.revokedAt instanceof Date ? row.revokedAt.toISOString() : (row.revokedAt ?? null) }
 }
+function toFamilyGroupDTO(row: { id: string; reason: string; createdAt?: Date | string }) {
+  return {
+    id: row.id,
+    reason: row.reason,
+    created_at:
+      row.createdAt instanceof Date ? row.createdAt.toISOString() : (row.createdAt ?? null),
+  }
+}
+function toFamilyMembershipDTO(row: {
+  id: string
+  familyGroupId: string
+  socioId: string
+  effectiveFrom: string
+  effectiveTo: string | null
+  reason: string
+  revokedAt?: Date | string | null
+}) {
+  return {
+    id: row.id,
+    family_group_id: row.familyGroupId,
+    socio_id: row.socioId,
+    effective_from: row.effectiveFrom,
+    effective_to: row.effectiveTo,
+    reason: row.reason,
+    revoked_at:
+      row.revokedAt instanceof Date ? row.revokedAt.toISOString() : (row.revokedAt ?? null),
+  }
+}
 
 function enabled(container: AppContainer): void {
   if (!container.env.DUES_ASSESSMENT_ENABLED)
@@ -171,6 +220,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const assessmentService = options.assessmentService ?? new AssessmentService(container.db)
   const listEffectivePrices = options.listEffectivePrices ?? repository.listEffectivePrices
   const benefitService = options.benefitService ?? new BenefitService(container.db)
+  const familyGroupService = options.familyGroupService ?? new FamilyGroupService(container.db)
 
   // prettier-ignore
   fastify.post('/api/v1/dues/benefits', ADMIN_GATE, async (request, reply) => {
@@ -193,6 +243,50 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     const result = await benefitService.list({ role: request.operator!.role, period: periodBounds(query.period) })
     return reply.code(200).send({ items: result.map(toBenefitDTO) })
   })
+
+  fastify.post('/api/v1/dues/family-groups', ADMIN_GATE, async (request, reply) => {
+    enabled(container)
+    const body = throwIfInvalid(familyGroupBodySchema, request.body ?? {}, 'body')
+    const result = await familyGroupService.create({
+      ...context(request, callerKey(request), body),
+      ...(body.id ? { id: body.id } : {}),
+      reason: body.reason,
+    })
+    return reply.code(201).send(toFamilyGroupDTO(result))
+  })
+  fastify.post<{ Params: { id: string } }>(
+    '/api/v1/dues/family-groups/:id/memberships',
+    ADMIN_GATE,
+    async (request, reply) => {
+      enabled(container)
+      const params = throwIfInvalid(idParamSchema, request.params, 'params')
+      const body = throwIfInvalid(familyMembershipBodySchema, request.body ?? {}, 'body')
+      const result = await familyGroupService.addMembership({
+        ...context(request, callerKey(request), body),
+        familyGroupId: params.id,
+        socioId: body.socio_id,
+        effectiveFrom: body.effective_from,
+        effectiveTo: body.effective_to ?? null,
+        reason: body.reason,
+      })
+      return reply.code(201).send(toFamilyMembershipDTO(result))
+    },
+  )
+  fastify.post<{ Params: { id: string } }>(
+    '/api/v1/dues/family-memberships/:id/revoke',
+    ADMIN_GATE,
+    async (request, reply) => {
+      enabled(container)
+      const params = throwIfInvalid(idParamSchema, request.params, 'params')
+      const body = throwIfInvalid(revokeBodySchema, request.body ?? {}, 'body')
+      const result = await familyGroupService.revokeMembership({
+        ...context(request, callerKey(request), body),
+        membershipId: params.id,
+        revokeReason: body.revoke_reason,
+      })
+      return reply.code(200).send(toFamilyMembershipDTO(result))
+    },
+  )
 
   fastify.post('/api/v1/dues/prices', ADMIN_GATE, async (request, reply) => {
     enabled(container)

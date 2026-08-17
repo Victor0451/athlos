@@ -173,14 +173,19 @@ describe('GET /api/v1/audit', () => {
     )
   })
 
-  const auditItem = (action: string, metadata: unknown) => ({
+  const auditItem = (
+    action: string,
+    metadata: unknown,
+    oldValue: unknown = null,
+    newValue: unknown = null,
+  ) => ({
     id: 'audit-1',
     operatorId: null,
     action,
     entityType: 'job',
     entityId: 'job-1',
-    oldValue: null,
-    newValue: null,
+    oldValue,
+    newValue,
     sourceIp: null,
     metadata,
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -213,6 +218,18 @@ describe('GET /api/v1/audit', () => {
         auditItem('DUES_PRICE_CREATED', null),
         auditItem('DUES_PRICE_REVOKED', 'malformed'),
         auditItem('DUES_BENEFIT_APPLIED', { privateNote: 'do-not-return' }),
+        ...[
+          'DUES_FAMILY_GROUP_CREATED',
+          'DUES_FAMILY_MEMBERSHIP_CREATED',
+          'DUES_FAMILY_MEMBERSHIP_REVOKED',
+        ].map((action) =>
+          auditItem(
+            action,
+            { privateNote: 'do-not-return' },
+            { familyGroupId: 'family-secret', socioId: 'socio-secret' },
+            { familyGroupId: 'family-secret', socioId: 'socio-secret' },
+          ),
+        ),
       ]),
     )
 
@@ -236,5 +253,9 @@ describe('GET /api/v1/audit', () => {
     expect(items[3].dues_evidence).toBeNull()
     // prettier-ignore
     expect(items[4]).toMatchObject({ action: 'DUES_BENEFIT_APPLIED', oldValue: null, newValue: null, dues_evidence: null })
+    for (const item of items.slice(5)) {
+      expect(item).toMatchObject({ oldValue: null, newValue: null, dues_evidence: null })
+    }
+    expect(res.body).not.toContain('socio-secret')
   })
 })
