@@ -5,12 +5,14 @@ import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   claimReceipt,
+  createPrice,
   finalizeReceipt,
   findObligation,
   insertObligation,
   listEffectivePrices,
   listEligibleMembers,
   lockPeriod,
+  revokePrice,
   type ObligationInput,
 } from './repository.ts'
 
@@ -45,6 +47,8 @@ async function price(db: ReturnType<typeof createDb>, p: { start: string; end: s
 const component = { kind: 'BASE' as const, componentKey: 'base', amountCents: 10_000, calculationInputs: { rule: 'FULL_MONTH' }, eligibilitySnapshot: { eligible: true }, priceSnapshot: { version: 'fixture' } }
 // prettier-ignore
 const obligation = (socioId: string, receiptId: string, p: { start: string; end: string }): ObligationInput => ({ socioId, periodStart: p.start, periodEnd: p.end, amountCents: 10_000, generationReceiptId: receiptId, actorId: operatorId, snapshot: { calculatorVersion: 'test-v1', inputs: { source: 'fixture' } }, authorizationEvidence: { role: 'ADMIN' }, components: [component] })
+// prettier-ignore
+const priceInput = (p: { start: string; end: string }, kind: 'BASE' | 'SPORT', disciplinaId: string | null = null) => ({ kind, disciplinaId, amountCents: 10_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, rule: 'FULL_MONTH' as const, createdBy: operatorId, authorizationEvidence: { source: 'test' } })
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
@@ -228,5 +232,90 @@ describe('dues repository', () => {
     ).rejects.toMatchObject({ code: '55000' })
     const after = await winner.pool.query(`SELECT count(*)::int AS count FROM tesoreria.ctacte`)
     expect(after.rows[0].count).toBe(before.rows[0].count)
+  })
+
+  it('creates authorized BASE and SPORT price versions with evidence', async () => {
+    const p = randomPeriod()
+    const disciplinaId = await discipline(winner)
+    await expect(createPrice(winner.db, priceInput(p, 'BASE'))).resolves.toMatchObject({
+      kind: 'BASE',
+      disciplinaId: null,
+      amountCents: 10_000,
+      currency: 'ARS',
+      effectiveFrom: p.start,
+      effectiveTo: p.end,
+      createdBy: operatorId,
+      authorizationEvidence: { source: 'test' },
+    })
+    await expect(
+      createPrice(winner.db, priceInput(p, 'SPORT', disciplinaId)),
+    ).resolves.toMatchObject({
+      kind: 'SPORT',
+      disciplinaId,
+      amountCents: 10_000,
+    })
+  })
+
+  it('rejects overlapping active ranges globally for BASE and per discipline for SPORT', async () => {
+    const p = randomPeriod()
+    const first = await discipline(winner)
+    const second = await discipline(winner)
+    await createPrice(winner.db, priceInput(p, 'BASE'))
+    await expect(createPrice(winner.db, priceInput(p, 'BASE'))).rejects.toMatchObject({
+      code: 'CONFLICT',
+    })
+    await createPrice(winner.db, priceInput(p, 'SPORT', first))
+    await expect(createPrice(winner.db, priceInput(p, 'SPORT', first))).rejects.toMatchObject({
+      code: 'CONFLICT',
+    })
+    await expect(createPrice(winner.db, priceInput(p, 'SPORT', second))).resolves.toMatchObject({
+      disciplinaId: second,
+    })
+  })
+
+  it('revokes atomically, is idempotent, and frees the interval for replacement', async () => {
+    const p = randomPeriod()
+    const created = await createPrice(winner.db, priceInput(p, 'BASE'))
+    const revocation = {
+      priceVersionId: created.id,
+      revokedBy: operatorId,
+      revokeReason: 'Superseded',
+    }
+    const revoked = await revokePrice(winner.db, revocation)
+    expect(revoked).toMatchObject({
+      id: created.id,
+      revokedBy: operatorId,
+      revokeReason: 'Superseded',
+    })
+    expect(revoked.revokedAt).toBeTruthy()
+    await expect(revokePrice(winner.db, revocation)).resolves.toMatchObject({
+      id: created.id,
+      revokedBy: operatorId,
+      revokeReason: 'Superseded',
+      revokedAt: revoked.revokedAt,
+    })
+    await expect(createPrice(winner.db, priceInput(p, 'BASE'))).resolves.toMatchObject({
+      kind: 'BASE',
+      effectiveFrom: p.start,
+    })
+  })
+
+  it('reports an explicit not-found error when revoking an unknown price', async () => {
+    const p = randomPeriod()
+    const created = await createPrice(winner.db, priceInput(p, 'BASE'))
+    await expect(
+      revokePrice(winner.db, {
+        priceVersionId: created.id,
+        revokedBy: operatorId,
+        revokeReason: ' ',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+    await expect(
+      revokePrice(winner.db, {
+        priceVersionId: randomUUID(),
+        revokedBy: operatorId,
+        revokeReason: 'Missing',
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })

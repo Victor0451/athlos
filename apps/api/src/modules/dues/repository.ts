@@ -13,6 +13,92 @@ const cents = (amount: string) => {
   const [whole, fraction = ''] = amount.split('.')
   return Number(whole) * 100 + Number((fraction + '00').slice(0, 2))
 }
+type PriceKind = 'BASE' | 'SPORT'
+type PriceRule = 'FULL_MONTH' | 'DAILY_PRORATED' | 'NEXT_PERIOD'
+// prettier-ignore
+export type PriceInput = { kind: PriceKind; disciplinaId?: string | null; amountCents: number; currency?: string; effectiveFrom: string; effectiveTo?: string | null; rule: PriceRule; createdBy: string; authorizationEvidence: Json }
+export type PriceRevocationInput = {
+  priceVersionId: string
+  revokedBy: string
+  revokeReason: string
+}
+type PriceMutationRow = {
+  id: string
+  kind: PriceKind
+  disciplinaId: string | null
+  amount: string
+  currency: string
+  effectiveFrom: string
+  effectiveTo: string | null
+  rule: PriceRule
+  createdBy: string
+  authorizationEvidence: Json
+  createdAt: Date
+  revokedAt: Date | null
+  revokedBy: string | null
+  revokeReason: string | null
+}
+const priceFields = sql`id, kind, disciplina_id AS "disciplinaId", amount::text, btrim(currency) AS currency, effective_from AS "effectiveFrom", effective_to AS "effectiveTo", rule, created_by AS "createdBy", authorization_evidence AS "authorizationEvidence", created_at AS "createdAt", revoked_at AS "revokedAt", revoked_by AS "revokedBy", revoke_reason AS "revokeReason"`
+const toCreatedPrice = (row: PriceMutationRow) => ({ ...row, amountCents: cents(row.amount) })
+function dbCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
+}
+function mapPriceMutationError(error: unknown): never {
+  if (error instanceof BusinessError) throw error
+  switch (dbCode(error)) {
+    case '23P01':
+    case '23505':
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Price effective interval conflicts with an active version',
+      )
+    case '23503':
+      throw BusinessError(
+        ErrorCode.NOT_FOUND,
+        'Referenced price operator or discipline was not found',
+      )
+    case '23514':
+    case '22P02':
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Price version violates pricing rules')
+    default:
+      throw error
+  }
+}
+export async function createPrice(db: DuesDb, input: PriceInput) {
+  try {
+    const row = rows<PriceMutationRow>(
+      await db.execute(
+        sql`INSERT INTO tesoreria.dues_price_versions (kind, disciplina_id, amount, currency, effective_from, effective_to, rule, created_by, authorization_evidence) VALUES (${input.kind}, ${input.disciplinaId ?? null}, ${money(input.amountCents)}, ${input.currency ?? 'ARS'}, ${input.effectiveFrom}, ${input.effectiveTo ?? null}, ${input.rule}, ${input.createdBy}, ${JSON.stringify(input.authorizationEvidence)}::jsonb) RETURNING ${priceFields}`,
+      ),
+    )[0]
+    if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'price insert returned no row')
+    return toCreatedPrice(row)
+  } catch (error) {
+    return mapPriceMutationError(error)
+  }
+}
+export async function revokePrice(db: DuesDb, input: PriceRevocationInput) {
+  try {
+    let row = rows<PriceMutationRow>(
+      await db.execute(
+        sql`UPDATE tesoreria.dues_price_versions SET revoked_at = now(), revoked_by = ${input.revokedBy}, revoke_reason = ${input.revokeReason} WHERE id = ${input.priceVersionId} AND revoked_at IS NULL RETURNING ${priceFields}`,
+      ),
+    )[0]
+    if (!row) {
+      row = rows<PriceMutationRow>(
+        await db.execute(
+          sql`SELECT ${priceFields} FROM tesoreria.dues_price_versions WHERE id = ${input.priceVersionId}`,
+        ),
+      )[0]
+    }
+    if (!row) throw BusinessError(ErrorCode.NOT_FOUND, 'Price version not found')
+    return toCreatedPrice(row)
+  } catch (error) {
+    return mapPriceMutationError(error)
+  }
+}
 
 // prettier-ignore
 export type ReceiptInput = { operatorId: string; callerKey: string; requestFingerprint: string; periodStart: string; periodEnd: string; authorizationEvidence: Json }
