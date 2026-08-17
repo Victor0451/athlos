@@ -34,6 +34,7 @@ export interface AuditPage {
     oldValue: unknown
     newValue: unknown
     sourceIp: string | null
+    metadata: unknown
     createdAt: Date
   }>
   total: number
@@ -87,6 +88,7 @@ export async function queryAudit(
       oldValue: auditEvents.oldValue,
       newValue: auditEvents.newValue,
       sourceIp: auditEvents.sourceIp,
+      metadata: auditEvents.metadata,
       createdAt: auditEvents.createdAt,
     })
     .from(auditEvents)
