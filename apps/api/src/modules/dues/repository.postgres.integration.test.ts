@@ -15,6 +15,8 @@ import {
   revokePrice,
   type ObligationInput,
 } from './repository.ts'
+// prettier-ignore
+import { createBenefitRule, listEffectiveBenefitRules, revokeBenefitRule, resolveBenefitRuleCandidates, type BenefitInput } from './repository.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let winner: ReturnType<typeof createDb>
@@ -49,6 +51,8 @@ const component = { kind: 'BASE' as const, componentKey: 'base', amountCents: 10
 const obligation = (socioId: string, receiptId: string, p: { start: string; end: string }): ObligationInput => ({ socioId, periodStart: p.start, periodEnd: p.end, amountCents: 10_000, generationReceiptId: receiptId, actorId: operatorId, snapshot: { calculatorVersion: 'test-v1', inputs: { source: 'fixture' } }, authorizationEvidence: { role: 'ADMIN' }, components: [component] })
 // prettier-ignore
 const priceInput = (p: { start: string; end: string }, kind: 'BASE' | 'SPORT', disciplinaId: string | null = null) => ({ kind, disciplinaId, amountCents: 10_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, rule: 'FULL_MONTH' as const, createdBy: operatorId, authorizationEvidence: { source: 'test' } })
+// prettier-ignore
+const benefitInput = (p: { start: string; end: string }, overrides: Partial<BenefitInput> = {}): BenefitInput => ({ kind: 'FIXED_DISCOUNT', socioId: randomUUID(), amountCents: 1_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, priority: 20, combinability: 'COMBINABLE', reason: 'Approved rule', createdBy: operatorId, authorizationEvidence: { ticket: 'BEN-1' }, ...overrides })
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
@@ -58,14 +62,12 @@ beforeAll(async () => {
   await winner.pool.query(
     `CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`,
   )
-  const migration = await readFile(
-    join(
-      import.meta.dirname,
-      '../../../../../packages/db/drizzle/0049_dues_pricing_obligations.sql',
+  const migration = await Promise.all(
+    ['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql'].map((file) =>
+      readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8'),
     ),
-    'utf8',
   )
-  await winner.pool.query(migration)
+  await winner.pool.query(migration.join('\n'))
   await winner.pool.query(
     `INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'A')`,
     [operatorId, `dues-repository-${operatorId}`],
@@ -318,4 +320,7 @@ describe('dues repository', () => {
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  // prettier-ignore
+  it('persists configurable rules, resolves member/family candidates by priority, and replaces after revoke', async () => { const p = randomPeriod(); const socioId = await member(winner); const familyGroupId = randomUUID(); const family = await createBenefitRule(winner.db, benefitInput(p, { familyGroupId, socioId: null, priority: 10 })); const memberRule = await createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' })); expect(memberRule).toMatchObject({ socioId, amountCents: 1000, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues', authorizationEvidence: { ticket: 'BEN-1' } }); await expect(listEffectiveBenefitRules(winner.db, p)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: family.id }), expect.objectContaining({ id: memberRule.id })])); await expect(resolveBenefitRuleCandidates(winner.db, { socioId, familyGroupId, period: p })).resolves.toMatchObject([{ id: family.id }, { id: memberRule.id }]); const revoked = await revokeBenefitRule(winner.db, { benefitRuleId: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); expect(revoked).toMatchObject({ id: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); await expect(createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 5, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' }))).resolves.toMatchObject({ socioId, priority: 5 }) })
 })
