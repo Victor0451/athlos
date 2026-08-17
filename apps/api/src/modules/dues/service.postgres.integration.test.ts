@@ -97,6 +97,8 @@ describe('dues services', () => {
     expect(audits.rows).toHaveLength(1)
     expect(snapshot).toMatchObject({ calculatorVersion: 'dues-calculator-v1', rounding: 'nearest-cent-half-up', period: p, benefits: [], actorId: operatorId, role: 'ADMIN', permissions: ['dues:write'], sourceIp: '127.0.0.1', callerKey: input.callerKey, requestFingerprint: input.requestFingerprint, receiptFingerprint: input.requestFingerprint })
     expect(snapshot.enrollmentEvidence).toHaveLength(1)
+    expect(snapshot.time).toMatch(/T/)
+    expect(snapshot.rule).toHaveLength(2)
     expect(snapshot.inputs.base.price.versionId).toBeDefined()
     expect(snapshot.inputs.sports[0].price.versionId).toBeDefined()
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.ctacte`)).rows[0].count).toBe(beforeCtacte)
