@@ -111,8 +111,12 @@ export const AuditAction = {
   CTACTE_COMPROBANTE_PRINTED: 'CTACTE_COMPROBANTE_PRINTED',
   INSCRIPCION_CREATED: 'INSCRIPCION_CREATED',
   INSCRIPCION_STATUS_CHANGED: 'INSCRIPCION_STATUS_CHANGED',
+  DUES_PRICE_CREATED: 'DUES_PRICE_CREATED',
+  DUES_PRICE_REVOKED: 'DUES_PRICE_REVOKED',
+  DUES_PERIOD_GENERATED: 'DUES_PERIOD_GENERATED',
 } as const
 
+export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction]
 export type SocioAttachmentAuditAction = (typeof AuditAction)[keyof typeof AuditAction]
 
 export type EmitAuditResult = { inserted: true; id: string } | { inserted: false; deduped: true }
