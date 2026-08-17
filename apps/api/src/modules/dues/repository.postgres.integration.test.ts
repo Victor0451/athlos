@@ -5,14 +5,17 @@ import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   claimReceipt,
+  createBenefit,
   createPrice,
   finalizeReceipt,
   findObligation,
   insertObligation,
   listEffectivePrices,
+  listApplicableBenefits,
   listEligibleMembers,
   lockPeriod,
   revokePrice,
+  revokeBenefit,
   type ObligationInput,
 } from './repository.ts'
 
@@ -66,6 +69,12 @@ beforeAll(async () => {
     'utf8',
   )
   await winner.pool.query(migration)
+  await winner.pool.query(
+    await readFile(
+      join(import.meta.dirname, '../../../../../packages/db/drizzle/0050_dues_benefits.sql'),
+      'utf8',
+    ),
+  )
   await winner.pool.query(
     `INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'A')`,
     [operatorId, `dues-repository-${operatorId}`],
@@ -317,5 +326,19 @@ describe('dues repository', () => {
         revokeReason: 'Missing',
       }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  // prettier-ignore
+  it('resolves member and family benefits, excludes expired rules, and replaces revoked rules', async () => {
+    const p = randomPeriod(), socioId = await member(winner), groupId = randomUUID()
+    await winner.pool.query(`INSERT INTO tesoreria.dues_family_groups (id, created_by, authorization_evidence) VALUES ($1,$2,'{}')`, [groupId, operatorId])
+    await winner.pool.query(`INSERT INTO tesoreria.dues_family_members (family_group_id, socio_id, created_by) VALUES ($1,$2,$3)`, [groupId, socioId, operatorId])
+    const memberBenefit = await createBenefit(winner.db, { kind: 'FIXED_DISCOUNT', socioId, amountCents: 2_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, reason: 'member', createdBy: operatorId, authorizationEvidence: { ticket: 'm' } })
+    const familyBenefit = await createBenefit(winner.db, { kind: 'SCHOLARSHIP', familyGroupId: groupId, percentage: 50, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, reason: 'family', createdBy: operatorId, authorizationEvidence: { ticket: 'f' } })
+    const expired = await createBenefit(winner.db, { kind: 'FIXED_DISCOUNT', socioId, amountCents: 1_000, currency: 'ARS', effectiveFrom: '2020-01-01', effectiveTo: '2020-02-01', reason: 'expired', createdBy: operatorId, authorizationEvidence: {} })
+    expect(await listApplicableBenefits(winner.db, socioId, p)).toMatchObject([{ id: memberBenefit.id, scope: 'MEMBER' }, { id: familyBenefit.id, scope: 'FAMILY', percentage: 50 }])
+    await revokeBenefit(winner.db, { benefitId: memberBenefit.id, revokedBy: operatorId, revokeReason: 'replacement' })
+    expect(await createBenefit(winner.db, { kind: 'FIXED_DISCOUNT', socioId, amountCents: 3_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, reason: 'replacement', createdBy: operatorId, authorizationEvidence: {} })).toMatchObject({ kind: 'FIXED_DISCOUNT' })
+    expect((await listApplicableBenefits(winner.db, socioId, p)).some((item) => item.id === expired.id)).toBe(false)
   })
 })

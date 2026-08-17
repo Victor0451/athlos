@@ -16,8 +16,8 @@ let disciplineId: string
 const rejects = (query: Promise<unknown>, code: string) =>
   expect(query).rejects.toMatchObject({ code })
 
-function migrationSql() {
-  return readFile(join(root, 'drizzle/0049_dues_pricing_obligations.sql'), 'utf8').then((text) =>
+function migrationSql(file = '0049_dues_pricing_obligations.sql') {
+  return readFile(join(root, `drizzle/${file}`), 'utf8').then((text) =>
     text
       .replace('CREATE SCHEMA IF NOT EXISTS tesoreria', `CREATE SCHEMA IF NOT EXISTS ${q}`)
       .replaceAll('tesoreria.', `${q}.`)
@@ -43,6 +43,7 @@ beforeAll(async () => {
   // prettier-ignore
   await pool.query(`CREATE SCHEMA ${q}; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE TABLE ${q}.operators (id uuid PRIMARY KEY); CREATE TABLE ${q}.socios (id uuid PRIMARY KEY); CREATE TABLE ${q}.disciplinas (id uuid PRIMARY KEY); CREATE TABLE ${q}.inscripciones (id uuid PRIMARY KEY); INSERT INTO ${q}.operators VALUES ('${operatorId}'); INSERT INTO ${q}.socios VALUES ('${socioId}'); INSERT INTO ${q}.disciplinas VALUES ('${disciplineId}')`)
   await pool.query(await migrationSql())
+  await pool.query(await migrationSql('0050_dues_benefits.sql'))
 })
 afterAll(async () => {
   if (pool) {
@@ -64,11 +65,24 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0049_dues_pricing_obligations',
+      tag: '0050_dues_benefits',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
     )
+  })
+
+  it('exports benefit kinds and prevents invalid or overlapping active rules', async () => {
+    // prettier-ignore
+    const insert = (values: unknown[]) => pool.query(`INSERT INTO ${q}.dues_benefits (kind, socio_id, amount, percentage, currency, effective_from, effective_to, reason, created_by, authorization_evidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}')`, values)
+    // prettier-ignore
+    await rejects(insert(['FIXED_DISCOUNT', socioId, null, 50, 'ARS', '2026-01-01', '2026-02-01', 'invalid', operatorId]), '23514')
+    // prettier-ignore
+    await insert(['FIXED_DISCOUNT', socioId, 10, null, 'ARS', '2026-01-01', '2026-02-01', 'approved', operatorId])
+    // prettier-ignore
+    await rejects(insert(['PERCENT_DISCOUNT', socioId, null, 10, 'ARS', '2026-01-15', '2026-03-01', 'overlap', operatorId]), '23P01')
+    // prettier-ignore
+    await rejects(insert(['PERCENT_DISCOUNT', socioId, null, 101, 'ARS', '2026-03-01', '2026-04-01', 'invalid', operatorId]), '23514')
   })
 
   it('rejects invalid money/kind combinations and overlapping base or sport intervals', async () => {
