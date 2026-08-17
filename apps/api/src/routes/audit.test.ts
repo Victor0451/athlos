@@ -172,4 +172,66 @@ describe('GET /api/v1/audit', () => {
       expect.objectContaining({ operatorId }),
     )
   })
+
+  const auditItem = (action: string, metadata: unknown) => ({
+    id: 'audit-1',
+    operatorId: null,
+    action,
+    entityType: 'job',
+    entityId: 'job-1',
+    oldValue: null,
+    newValue: null,
+    sourceIp: null,
+    metadata,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  })
+  const auditPage = (items: unknown[]) =>
+    ({ items, total: items.length, page: 1, limit: 100, pages: 1 }) as never
+  const auditGet = (app: FastifyInstance) =>
+    app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: { authorization: `Bearer ${makeAdminToken()}` },
+    })
+
+  it('returns allowlisted dues evidence without arbitrary metadata', async () => {
+    const app = await buildApp()
+    const actorId = '00000000-0000-4000-8000-000000000001'
+    vi.mocked(queryAudit).mockResolvedValueOnce(
+      auditPage([
+        auditItem('DUES_PERIOD_GENERATED', {
+          actorId,
+          role: 'ADMIN',
+          permissions: ['dues:write'],
+          authorizationEvidence: { role: 'ADMIN', permissions: ['dues:write'] },
+          callerKey: 'monthly-2026-01',
+          requestFingerprint: 'a'.repeat(64),
+          time: '2026-01-01T00:00:00.000Z',
+          privateNote: 'do-not-return',
+        }),
+        auditItem('JOB_FAILED', { privateNote: 'do-not-return' }),
+        auditItem('DUES_PRICE_CREATED', null),
+        auditItem('DUES_PRICE_REVOKED', 'malformed'),
+      ]),
+    )
+
+    const res = await auditGet(app)
+
+    expect(res.statusCode).toBe(200)
+    const item = JSON.parse(res.body).items[0]
+    expect(item.dues_evidence).toEqual({
+      actor: { id: actorId, role: 'ADMIN', permissions: ['dues:write'] },
+      authorization_evidence: { role: 'ADMIN', permissions: ['dues:write'] },
+      idempotency: { caller_key: 'monthly-2026-01', request_fingerprint: 'a'.repeat(64) },
+      time: '2026-01-01T00:00:00.000Z',
+    })
+    const items = JSON.parse(res.body).items
+    expect(item).not.toHaveProperty('metadata')
+    expect(items[1]).toEqual({
+      ...auditItem('JOB_FAILED', undefined),
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(items[2].dues_evidence).toBeNull()
+    expect(items[3].dues_evidence).toBeNull()
+  })
 })
