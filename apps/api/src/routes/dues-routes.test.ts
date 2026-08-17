@@ -190,4 +190,7 @@ describe('dues assessment routes', () => {
     expect(response.json()).toMatchObject({ error: code })
     expect(response.body).not.toContain('authorizationEvidence')
   })
+
+  // prettier-ignore
+  it('authorizes benefit administration and returns only privacy-safe benefit fields', async () => { const benefit = { id: '00000000-0000-4000-8000-000000000030', kind: 'SCHOLARSHIP', scope: 'MEMBER', percentage: 50, amountCents: null, currency: 'ARS', effectiveFrom: '2026-01-01', effectiveTo: null, reason: 'private', authorizationEvidence: { secret: 'hidden' } }; const benefitService = { create: vi.fn().mockResolvedValue(benefit), revoke: vi.fn().mockResolvedValue(benefit), list: vi.fn().mockResolvedValue([benefit]) }; const app = await buildApp(true, { ...services(), benefitService } as never); const create = await app.inject({ method: 'POST', url: '/api/v1/dues/benefits', headers: auth('ADMIN'), payload: { kind: 'SCHOLARSHIP', socio_id: actorId, percentage: 50, effective_from: '2026-01-01', reason: 'private' } }); const list = await app.inject({ method: 'GET', url: `/api/v1/dues/benefits?socio_id=${actorId}&period=2026-01`, headers: auth('TESORERO') }); expect(create.statusCode).toBe(201); expect(list.statusCode).toBe(200); expect(create.body).not.toContain('authorizationEvidence'); expect(create.body).not.toContain('reason'); expect(benefitService.create).toHaveBeenCalledWith(expect.objectContaining({ actorId, kind: 'SCHOLARSHIP', percentage: 50 })); expect(benefitService.list).toHaveBeenCalledWith(expect.objectContaining({ socioId: actorId })) })
 })

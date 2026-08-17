@@ -6,6 +6,7 @@ import { createIdempotencyFingerprint, validateIdempotencyKey } from '../lib/ide
 import type { AppContainer } from '../container.ts'
 import * as repository from '../modules/dues/repository.ts'
 import { AssessmentService, PricingService, type AuditContext } from '../modules/dues/service.ts'
+import { BenefitService } from '../modules/dues/dues-benefits.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
@@ -48,11 +49,21 @@ const priceBodySchema = z
         message: 'SPORT prices require a discipline',
       })
   })
+// prettier-ignore
+const benefitBodySchema = z.object({
+  kind: z.enum(['FIXED_DISCOUNT', 'PERCENT_DISCOUNT', 'SCHOLARSHIP']), socio_id: z.string().uuid().nullable().optional(), family_group_id: z.string().uuid().nullable().optional(), amount_cents: z.number().int().positive().nullable().optional(), percentage: z.number().positive().max(100).nullable().optional(), currency: z.string().regex(/^[A-Z]{3}$/).default('ARS'), effective_from: dateSchema, effective_to: dateSchema.nullable().optional(), reason: z.string().trim().min(1).max(500),
+}).strict().superRefine((value, ctx) => {
+  if ((value.socio_id ? 1 : 0) + (value.family_group_id ? 1 : 0) !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['socio_id'], message: 'Exactly one benefit target is required' })
+  if (value.kind === 'FIXED_DISCOUNT' ? value.amount_cents == null || value.percentage != null : value.amount_cents != null || value.percentage == null) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['amount_cents'], message: 'Benefit value does not match its kind' })
+})
+// prettier-ignore
+const benefitQuerySchema = z.object({ period: periodSchema, socio_id: z.string().uuid() })
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
   assessmentService?: Pick<AssessmentService, 'generate'>
   listEffectivePrices?: typeof repository.listEffectivePrices
+  benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
 }
 
 type PriceLike = {
@@ -95,6 +106,10 @@ function toPriceDTO(row: PriceLike) {
     revoked_at: revokedAt instanceof Date ? revokedAt.toISOString() : (revokedAt ?? null),
   }
 }
+// prettier-ignore
+function toBenefitDTO(row: { id: string; kind: string; scope: string; amountCents: number | null; percentage: number | null; currency: string; effectiveFrom: string; effectiveTo: string | null; revokedAt?: Date | string | null }) {
+  return { id: row.id, kind: row.kind, scope: row.scope, amount_cents: row.amountCents, percentage: row.percentage, currency: row.currency, effective_from: row.effectiveFrom, effective_to: row.effectiveTo, revoked_at: row.revokedAt instanceof Date ? row.revokedAt.toISOString() : (row.revokedAt ?? null) }
+}
 
 function enabled(container: AppContainer): void {
   if (!container.env.DUES_ASSESSMENT_ENABLED)
@@ -136,6 +151,28 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const pricingService = options.pricingService ?? new PricingService(container.db)
   const assessmentService = options.assessmentService ?? new AssessmentService(container.db)
   const listEffectivePrices = options.listEffectivePrices ?? repository.listEffectivePrices
+  const benefitService = options.benefitService ?? new BenefitService(container.db)
+
+  // prettier-ignore
+  fastify.post('/api/v1/dues/benefits', ADMIN_GATE, async (request, reply) => {
+    enabled(container)
+    const body = throwIfInvalid(benefitBodySchema, request.body ?? {}, 'body')
+    const result = await benefitService.create({ ...context(request, callerKey(request), body), kind: body.kind, socioId: body.socio_id ?? null, familyGroupId: body.family_group_id ?? null, amountCents: body.amount_cents ?? null, percentage: body.percentage ?? null, currency: body.currency ?? 'ARS', effectiveFrom: body.effective_from, effectiveTo: body.effective_to ?? null, reason: body.reason })
+    return reply.code(201).send(toBenefitDTO(result))
+  })
+  // prettier-ignore
+  fastify.post<{ Params: { id: string } }>('/api/v1/dues/benefits/:id/revoke', ADMIN_GATE, async (request, reply) => {
+    enabled(container)
+    const params = throwIfInvalid(idParamSchema, request.params, 'params'), body = throwIfInvalid(revokeBodySchema, request.body ?? {}, 'body')
+    const result = await benefitService.revoke({ ...context(request, callerKey(request), body), benefitId: params.id, revokeReason: body.revoke_reason })
+    return reply.code(200).send(toBenefitDTO(result))
+  })
+  // prettier-ignore
+  fastify.get('/api/v1/dues/benefits', FINANCE_GATE, async (request, reply) => {
+    enabled(container)
+    const query = throwIfInvalid(benefitQuerySchema, request.query, 'query')
+    return reply.code(200).send({ items: (await benefitService.list({ role: request.operator!.role, socioId: query.socio_id, period: periodBounds(query.period) })).map(toBenefitDTO) })
+  })
 
   fastify.post('/api/v1/dues/prices', ADMIN_GATE, async (request, reply) => {
     enabled(container)

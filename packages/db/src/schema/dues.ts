@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 // prettier-ignore
-import { check, char, date, index, integer, jsonb, numeric, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { check, char, date, index, integer, jsonb, numeric, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { operators } from './operators.ts'
 import { disciplinas, inscripciones } from './deportes.ts'
 import { socios } from './socios.ts'
@@ -14,6 +14,51 @@ export const duesAssessmentRule = tesoreriaSchema.enum('dues_assessment_rule', [
 export const duesObligationKind = tesoreriaSchema.enum('dues_obligation_kind', ['MONTHLY_DUES', 'COMPENSATION'])
 // prettier-ignore
 export const duesComponentKind = tesoreriaSchema.enum('dues_component_kind', ['BASE', 'SPORT', 'BENEFIT', 'ADJUSTMENT'])
+// prettier-ignore
+export const duesBenefitKind = tesoreriaSchema.enum('dues_benefit_kind', ['FIXED_DISCOUNT', 'PERCENT_DISCOUNT', 'SCHOLARSHIP'])
+
+export const duesFamilyGroups = tesoreriaSchema.table('dues_family_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => operators.id, { onDelete: 'restrict' }),
+  authorizationEvidence: jsonb('authorization_evidence').notNull().default({}),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+// prettier-ignore
+export const duesFamilyMembers = tesoreriaSchema.table('dues_family_members', {
+  familyGroupId: uuid('family_group_id').notNull().references(() => duesFamilyGroups.id, { onDelete: 'restrict' }),
+  socioId: uuid('socio_id').notNull().references(() => socios.id, { onDelete: 'restrict' }),
+  createdBy: uuid('created_by').notNull().references(() => operators.id, { onDelete: 'restrict' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({ pk: primaryKey({ columns: [table.familyGroupId, table.socioId] }) }))
+
+// prettier-ignore
+export const duesBenefits = tesoreriaSchema.table('dues_benefits', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: duesBenefitKind('kind').notNull(),
+  socioId: uuid('socio_id').references(() => socios.id, { onDelete: 'restrict' }),
+  familyGroupId: uuid('family_group_id').references(() => duesFamilyGroups.id, { onDelete: 'restrict' }),
+  amount: numeric('amount', { precision: 14, scale: 2 }),
+  percentage: numeric('percentage', { precision: 5, scale: 2 }),
+  currency: char('currency', { length: 3 }).notNull().default('ARS'),
+  effectiveFrom: date('effective_from').notNull(),
+  effectiveTo: date('effective_to'),
+  reason: text('reason').notNull(),
+  authorizationEvidence: jsonb('authorization_evidence').notNull().default({}),
+  createdBy: uuid('created_by').notNull().references(() => operators.id, { onDelete: 'restrict' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revokedBy: uuid('revoked_by').references(() => operators.id, { onDelete: 'restrict' }),
+  revokeReason: text('revoke_reason'),
+}, (table) => ({
+  targetCheck: check('dues_benefits_target_check', sql`((${table.socioId} IS NOT NULL)::int + (${table.familyGroupId} IS NOT NULL)::int) = 1`),
+  valueCheck: check('dues_benefits_value_check', sql`((kind = 'FIXED_DISCOUNT' AND amount > 0 AND percentage IS NULL) OR (kind IN ('PERCENT_DISCOUNT', 'SCHOLARSHIP') AND amount IS NULL AND percentage > 0 AND percentage <= 100))`),
+  intervalCheck: check('dues_benefits_interval_check', sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} > ${table.effectiveFrom}`),
+  currencyCheck: check('dues_benefits_currency_check', sql`${table.currency} ~ '^[A-Z]{3}$'`),
+  revokeCheck: check('dues_benefits_revoke_check', sql`(${table.revokedAt} IS NULL AND ${table.revokedBy} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedBy} IS NOT NULL AND btrim(${table.revokeReason}) <> '')`),
+  lookupIdx: index('dues_benefits_lookup_idx').on(table.effectiveFrom, table.kind),
+}))
 
 export const duesPriceVersions = tesoreriaSchema.table(
   'dues_price_versions',
@@ -130,6 +175,7 @@ export const duesObligationComponents = tesoreriaSchema.table(
     priceVersionId: uuid('price_version_id').references(() => duesPriceVersions.id, {
       onDelete: 'restrict',
     }),
+    benefitId: uuid('benefit_id').references(() => duesBenefits.id, { onDelete: 'restrict' }),
     disciplinaId: uuid('disciplina_id').references(() => disciplinas.id, { onDelete: 'restrict' }),
     enrollmentId: uuid('enrollment_id').references(() => inscripciones.id, {
       onDelete: 'restrict',

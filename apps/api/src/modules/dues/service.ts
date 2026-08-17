@@ -3,6 +3,7 @@ import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 // prettier-ignore
 import { calculateAssessment, type AssessmentInput, type AssessmentResult as CalculationResult, type SportInput } from './calculator.ts'
+import { applyBenefits, type ApplicableBenefit, type BenefitComponent } from './benefits.ts'
 import * as repository from './repository.ts'
 
 type Json = Record<string, unknown>
@@ -27,7 +28,7 @@ export type GenerationResult = { period: repository.Period; obligationIds: strin
 // prettier-ignore
 export type PricingRepository = Pick<typeof repository, 'createPrice' | 'revokePrice'>
 // prettier-ignore
-export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation'>
+export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation'> & Partial<Pick<typeof repository, 'listApplicableBenefits'>>
 type Dependencies<T> = { repository?: T; audit?: AuditEmitter; now?: Clock }
 
 const CALCULATOR_VERSION = 'dues-calculator-v1'
@@ -97,21 +98,21 @@ function assessmentSource(member: Member, prices: EffectivePrices, period: repos
   return { input: { period, currency, ...(base ? { base: { eligible: member.baseEligible, price: calculatorPrice(base) } } : {}), sports: sports.map(({ input }) => input) }, ...(base ? { base } : {}), sports }
 }
 // prettier-ignore
-function snapshot(context: AuditContext, member: Member, source: AssessmentSource, calculation: CalculationResult, receiptFingerprint: string, generatedAt: string) {
+function snapshot(context: AuditContext, member: Member, source: AssessmentSource, calculation: CalculationResult, benefits: ApplicableBenefit[], receiptFingerprint: string, generatedAt: string) {
   return {
     calculatorVersion: CALCULATOR_VERSION, rounding: ROUNDING, period: source.input.period, inputs: source.input,
-    enrollmentEvidence: member.sports, benefits: [], rule: calculation.components.map(({ componentKey, rule }) => ({ componentKey, rule })),
+    enrollmentEvidence: member.sports, benefits: benefits.map(({ id, kind, scope, amountCents, percentage, currency, effectiveFrom, effectiveTo, reason, authorizationEvidence }) => ({ id, kind, scope, amountCents, percentage, currency, effectiveFrom, effectiveTo, reason, authorizationEvidence })), rule: calculation.components.map(({ componentKey, rule }) => ({ componentKey, rule })),
     actor: { id: context.actorId, role: context.role, permissions: context.permissions }, actorId: context.actorId, role: context.role, permissions: context.permissions,
     time: generatedAt, sourceIp: context.sourceIp, callerKey: context.callerKey, requestFingerprint: context.requestFingerprint, receiptFingerprint,
   }
 }
 // prettier-ignore
-function obligationComponents(member: Member, source: AssessmentSource, calculation: CalculationResult) {
-  return calculation.components.map((component) => {
+function obligationComponents(member: Member, source: AssessmentSource, calculation: CalculationResult, benefits: BenefitComponent[]) {
+  return [...calculation.components.map((component) => {
     const sport = source.sports.find(({ input }) => input.componentKey === component.componentKey)
     const price = component.kind === 'BASE' ? source.base : sport?.price
     return { ...component, disciplinaId: sport?.enrollment.disciplinaId ?? null, enrollmentId: sport?.enrollment.id ?? null, calculationInputs: { ...component, assessment: source.input }, eligibilitySnapshot: sport?.enrollment ?? { baseEligible: member.baseEligible }, priceSnapshot: price ?? {} }
-  })
+  }), ...benefits]
 }
 
 // prettier-ignore
@@ -139,11 +140,14 @@ export class AssessmentService {
       for (const member of members) {
         const source = assessmentSource(member, prices, input.period, currency)
         const calculation = calculateAssessment(source.input)
-        if (calculation.totalCents === 0) continue
         const prior = await this.repository.findObligation(tx, member.socioId, input.period.start)
         if (prior) { existing = true; obligationIds.push(prior.obligation.id); continue }
-        const obligationSnapshot = snapshot(input, member, source, calculation, claim.receipt.requestFingerprint, generatedAt)
-        const inserted = await this.repository.insertObligation(tx, { periodStart: input.period.start, periodEnd: input.period.end, socioId: member.socioId, amountCents: calculation.totalCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: obligationSnapshot, authorizationEvidence: input.authorizationEvidence, components: obligationComponents(member, source, calculation) })
+        const applicable = calculation.totalCents && this.repository.listApplicableBenefits ? await this.repository.listApplicableBenefits(tx, member.socioId, input.period) : []
+        const benefitResult = applyBenefits(calculation.totalCents, applicable, currency)
+        if (benefitResult.totalCents === 0) continue
+        const obligationSnapshot = snapshot(input, member, source, calculation, benefitResult.benefits, claim.receipt.requestFingerprint, generatedAt)
+        const inserted = await this.repository.insertObligation(tx, { periodStart: input.period.start, periodEnd: input.period.end, socioId: member.socioId, amountCents: benefitResult.totalCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: obligationSnapshot, authorizationEvidence: input.authorizationEvidence, components: obligationComponents(member, source, calculation, benefitResult.components) })
+        for (const benefit of applicable.filter(({ id }) => benefitResult.components.some((component) => component.benefitId === id))) await auditAction(this.audit, tx, AuditAction.DUES_BENEFIT_APPLIED, input, { entityType: 'dues_benefit', entityId: benefit.id, oldValue: null, newValue: { obligationId: inserted.obligation.id, kind: benefit.kind, scope: benefit.scope }, payload: { benefitId: benefit.id, obligationId: inserted.obligation.id } }, generatedAt)
         created = true; obligationIds.push(inserted.obligation.id); snapshots.push(obligationSnapshot)
       }
       const result = { period: input.period, obligationIds }

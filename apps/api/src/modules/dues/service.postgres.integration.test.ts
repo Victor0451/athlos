@@ -53,8 +53,8 @@ beforeAll(async () => {
   db = createDb({ connectionString: url, poolMax: 1 })
   operatorId = randomUUID()
   await db.pool.query(`CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`)
-  const migration = await readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle/0049_dues_pricing_obligations.sql'), 'utf8')
-  await db.pool.query(migration)
+  const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefits.sql'].map((file) => readFile(join(import.meta.dirname, `../../../../../packages/db/drizzle/${file}`), 'utf8')))
+  await db.pool.query(migrations.join('\n'))
   await db.pool.query(`CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), operator_id uuid, action text NOT NULL, entity_type text NOT NULL, entity_id text NOT NULL, old_value jsonb, new_value jsonb, source_ip text, metadata jsonb, idempotency_key text, created_at timestamptz NOT NULL DEFAULT now()); CREATE UNIQUE INDEX IF NOT EXISTS service_audit_key ON public.audit_events (idempotency_key) WHERE idempotency_key IS NOT NULL; CREATE TABLE IF NOT EXISTS tesoreria.ctacte (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`)
   await db.pool.query(`INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'A')`, [operatorId, `dues-service-${operatorId}`])
   await db.pool.query(`INSERT INTO deportes.ejercicios (id, anio, descripcion, fecha_inicio, fecha_fin) VALUES ($1, 2500, 'Fixture', DATE '2400-01-01', DATE '2900-01-01')`, [exerciseId])
@@ -102,6 +102,23 @@ describe('dues services', () => {
     expect(snapshot.inputs.base.price.versionId).toBeDefined()
     expect(snapshot.inputs.sports[0].price.versionId).toBeDefined()
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.ctacte`)).rows[0].count).toBe(beforeCtacte)
+  })
+
+  it('applies and snapshots a benefit without allowing negative debt or rewriting history', async () => {
+    const p = period(), socioId = await member()
+    await price(p, 'BASE', null, 10_000)
+    const benefit = await repository.createBenefit(db.db, { kind: 'PERCENT_DISCOUNT', socioId, percentage: 50, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, reason: 'scholarship', createdBy: operatorId, authorizationEvidence: { ticket: 'benefit-1' } })
+    const input = { ...context(), period: p }
+    await new AssessmentService(db.db).generate(input)
+    const obligation = await db.pool.query(`SELECT id, amount, snapshot FROM tesoreria.dues_obligations WHERE socio_id = $1 AND period_start = $2`, [socioId, p.start])
+    const before = { rows: obligation.rows.map(({ amount, snapshot }) => ({ amount, snapshot })) }
+    const components = await db.pool.query(`SELECT kind, amount FROM tesoreria.dues_obligation_components WHERE obligation_id = $1 ORDER BY component_key`, [obligation.rows[0]!.id])
+    expect(before.rows[0]).toMatchObject({ amount: '50.00', snapshot: { benefits: [{ id: benefit.id, kind: 'PERCENT_DISCOUNT', percentage: 50 }] } })
+    expect(components.rows.map((row) => [row.kind, row.amount])).toEqual([['BASE', '100.00'], ['BENEFIT', '-50.00']])
+    await repository.revokeBenefit(db.db, { benefitId: benefit.id, revokedBy: operatorId, revokeReason: 'replaced' })
+    const retried = await new AssessmentService(db.db).generate({ ...context(), period: p })
+    expect(retried.obligationIds).toContain(obligation.rows[0]!.id)
+    await expect(db.pool.query(`SELECT amount, snapshot FROM tesoreria.dues_obligations WHERE id = $1`, [obligation.rows[0]!.id])).resolves.toMatchObject({ rows: [{ amount: '50.00', snapshot: before.rows[0]!.snapshot }] })
   })
 
   it('rolls back receipt and obligation when audit or persistence fails', async () => {
