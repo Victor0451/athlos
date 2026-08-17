@@ -57,6 +57,77 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
+const DUES_AUDIT_ACTIONS = new Set([
+  'DUES_PRICE_CREATED',
+  'DUES_PRICE_REVOKED',
+  'DUES_PERIOD_GENERATED',
+])
+type AuditItem = Awaited<ReturnType<typeof queryAudit>>['items'][number]
+type JsonObject = Record<string, unknown>
+
+function jsonObject(value: unknown): JsonObject | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonObject)
+    : null
+}
+
+function safeRole(value: unknown): string | null {
+  return typeof value === 'string' && /^(ADMIN|TESORERO|OPERADOR|CONSULTA)$/.test(value)
+    ? value
+    : null
+}
+
+function safePermissions(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value.slice(0, 32)
+    : null
+}
+
+function safeText(value: unknown, maxLength: number): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null
+}
+
+function duesEvidence(metadata: unknown) {
+  const data = jsonObject(metadata)
+  const authorization = jsonObject(data?.authorizationEvidence)
+  const text = (key: string, maxLength = 128) => safeText(data?.[key], maxLength)
+  const actorId = text('actorId')
+  const role = safeRole(data?.role)
+  const permissions = safePermissions(data?.permissions)
+  const authorizationRole = safeRole(authorization?.role)
+  const authorizationPermissions = safePermissions(authorization?.permissions)
+  const callerKey = text('callerKey')
+  const requestFingerprint = text('requestFingerprint', 64)
+  const time = text('time', 64)
+  if (
+    !actorId ||
+    !role ||
+    !permissions ||
+    !authorizationRole ||
+    !authorizationPermissions ||
+    authorizationRole !== role ||
+    callerKey === null ||
+    !requestFingerprint ||
+    !/^[a-f0-9]{64}$/i.test(requestFingerprint) ||
+    !time ||
+    Number.isNaN(Date.parse(time))
+  )
+    return null
+  return {
+    actor: { id: actorId, role, permissions },
+    authorization_evidence: { role: authorizationRole, permissions: authorizationPermissions },
+    idempotency: { caller_key: callerKey, request_fingerprint: requestFingerprint },
+    time,
+  }
+}
+
+function toAuditDTO(item: AuditItem) {
+  const { metadata, ...dto } = item
+  return DUES_AUDIT_ACTIONS.has(item.action)
+    ? { ...dto, dues_evidence: duesEvidence(metadata) }
+    : dto
+}
+
 export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container = fastify.container as AppContainer
 
@@ -77,7 +148,7 @@ export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     } as Parameters<typeof queryAudit>[1])
 
     return reply.code(200).send({
-      items: result.items,
+      items: result.items.map(toAuditDTO),
       total: result.total,
       page: result.page,
       limit: result.limit,
