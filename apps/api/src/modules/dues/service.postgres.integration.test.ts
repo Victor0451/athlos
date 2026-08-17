@@ -54,7 +54,7 @@ beforeAll(async () => {
   operatorId = randomUUID()
   await db.pool.query(`CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`)
   // prettier-ignore
-  const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql'].map((file) => readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8')))
+  const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql', '0051_dues_family_groups.sql'].map((file) => readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8')))
   await db.pool.query(migrations.join('\n'))
   // prettier-ignore
   await db.pool.query('ALTER TABLE tesoreria.dues_obligation_components DROP CONSTRAINT IF EXISTS dues_obligation_components_benefit_check')
@@ -152,5 +152,21 @@ describe('dues services', () => {
     // prettier-ignore
     expect(components.rows).toEqual(expect.arrayContaining([{ kind: 'BASE', amount: '100.00' }, { kind: 'BENEFIT', amount: '-20.00' }, { kind: 'BENEFIT', amount: '-40.00' }]))
     expect(audits.rows).toHaveLength(2)
+  })
+
+  it('applies a family-targeted benefit only through an effective membership', async () => {
+    const p = period()
+    const socioId = await member()
+    const familyGroupId = randomUUID()
+    await db.pool.query(`INSERT INTO tesoreria.dues_family_groups (id, reason, created_by, authorization_evidence) VALUES ($1, 'Approved eligibility group', $2, '{}')`, [familyGroupId, operatorId])
+    await db.pool.query(`INSERT INTO tesoreria.dues_family_memberships (family_group_id, socio_id, effective_from, effective_to, reason, created_by, authorization_evidence) VALUES ($1, $2, $3, $4, 'Approved eligibility membership', $5, '{}')`, [familyGroupId, socioId, p.start, p.end, operatorId])
+    await price(p, 'BASE', null, 10_000)
+    const benefit = await repository.createBenefitRule(db.db, { kind: 'FIXED_DISCOUNT', socioId: null, familyGroupId, amountCents: 2_000, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, priority: 10, combinability: 'COMBINABLE', reason: 'Approved family benefit', createdBy: operatorId, authorizationEvidence: { ticket: 'FAM-2' } })
+    expect((await repository.listEligibleMembers(db.db, p)).find((item) => item.socioId === socioId)).toMatchObject({ familyGroupId })
+    await expect(repository.resolveBenefitRuleCandidates(db.db, { socioId, familyGroupId, period: p })).resolves.toMatchObject([{ id: benefit.id }])
+    await new AssessmentService(db.db, { repository: { ...repository, resolveBenefitRuleCandidates: repository.resolveBenefitRuleCandidates } }).generate({ ...context(), period: p })
+    const obligation = await db.pool.query(`SELECT amount, snapshot FROM tesoreria.dues_obligations WHERE socio_id = $1 AND period_start = $2`, [socioId, p.start])
+    expect(obligation.rows).toHaveLength(1)
+    expect(obligation.rows[0]).toMatchObject({ amount: '80.00', snapshot: { benefits: [expect.objectContaining({ id: benefit.id, familyGroupId })] } })
   })
 })

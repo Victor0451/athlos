@@ -5,6 +5,7 @@ import { BusinessError, ErrorCode } from '@athlos/errors'
 import { calculateAssessment, type AssessmentInput, type AssessmentResult as CalculationResult, type SportInput } from './calculator.ts'
 import { applyBenefits, type AppliedBenefit, type BenefitComponent } from './benefits.ts'
 import * as repository from './repository.ts'
+import { resolveBenefitRuleCandidates as resolveBenefitRuleCandidatesDefault } from './repository.ts'
 
 type Json = Record<string, unknown>
 type Role = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
@@ -122,7 +123,7 @@ export class AssessmentService {
   private readonly audit: AuditEmitter
   private readonly now: Clock
   constructor(private readonly db: Db, dependencies: Dependencies<AssessmentRepository> = {}) {
-    this.repository = dependencies.repository ?? repository
+    this.repository = dependencies.repository ?? { ...repository, resolveBenefitRuleCandidates: repository.resolveBenefitRuleCandidates }
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
   }
@@ -145,7 +146,8 @@ export class AssessmentService {
         const prior = await this.repository.findObligation(tx, member.socioId, input.period.start)
         if (prior) { existing = true; obligationIds.push(prior.obligation.id); continue }
         // prettier-ignore
-        const applicable = this.repository.resolveBenefitRuleCandidates ? await this.repository.resolveBenefitRuleCandidates(tx, { socioId: member.socioId, ...(member.familyGroupId !== undefined ? { familyGroupId: member.familyGroupId } : {}), period: input.period }) : []
+        const resolveBenefitRuleCandidates = this.repository.resolveBenefitRuleCandidates ?? resolveBenefitRuleCandidatesDefault
+        const applicable = await resolveBenefitRuleCandidates(tx, { socioId: member.socioId, ...(member.familyGroupId !== undefined ? { familyGroupId: member.familyGroupId } : {}), period: input.period })
         const benefitResult = applyBenefits(calculation.totalCents, applicable, currency)
         if (benefitResult.totalCents === 0) continue
         const obligationSnapshot = snapshot(input, member, source, calculation, benefitResult.applied, claim.receipt.requestFingerprint, generatedAt)
