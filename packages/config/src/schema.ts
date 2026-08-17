@@ -41,6 +41,10 @@ export const envSchema = z.object({
   RECONCILIATION_CRON: z.string().optional(),
   PROMOTION_CRON: z.string().default('0 */6 * * *'),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  DUES_ASSESSMENT_ENABLED: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .default('false'),
   // File-storage env (PR 8c.1 — athlos-socio-legajo). Optional so
   // existing deployments don't fail the env-validator; defaults
   // match the spec's locked values.
