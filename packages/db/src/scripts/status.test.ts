@@ -224,6 +224,7 @@ describe('migrate:status', () => {
         '0048_socios_admin_route_relations_repair',
         '0049_dues_pricing_obligations',
         '0050_dues_benefit_rules',
+        '0051_dues_family_groups',
       ],
       divergence: [],
       exitCode: 1,
