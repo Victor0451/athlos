@@ -34,7 +34,11 @@ export interface AuditRecord {
   oldValue: unknown
   newValue: unknown
   sourceIp: string | null
-  payload: unknown
+  /**
+   * Legacy idempotency input. New callers should persist audit evidence in
+   * oldValue, newValue, and metadata instead; this field is not stored.
+   */
+  payload?: unknown
   /**
    * Free-form JSON object persisted into `audit_events.metadata`.
    *
@@ -120,6 +124,10 @@ export const AuditAction = {
   DUES_FAMILY_GROUP_CREATED: 'DUES_FAMILY_GROUP_CREATED',
   DUES_FAMILY_MEMBERSHIP_CREATED: 'DUES_FAMILY_MEMBERSHIP_CREATED',
   DUES_FAMILY_MEMBERSHIP_REVOKED: 'DUES_FAMILY_MEMBERSHIP_REVOKED',
+  DUES_SETTLEMENT_CREATED: 'DUES_SETTLEMENT_CREATED',
+  DUES_SETTLEMENT_REVERSED: 'DUES_SETTLEMENT_REVERSED',
+  DUES_ALLOCATION_CREATED: 'DUES_ALLOCATION_CREATED',
+  DUES_ALLOCATION_COMPENSATED: 'DUES_ALLOCATION_COMPENSATED',
 } as const
 
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction]
