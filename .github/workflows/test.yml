@@ -47,12 +47,25 @@ jobs:
       - run: pnpm test:run
       - run: pnpm typecheck
       - run: pnpm --filter @athlos/api build
-      - name: Install Chromium
-        run: pnpm --filter @athlos/web exec playwright install --with-deps chromium
+
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --user 1001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Playwright viewport harness
         run: pnpm --filter @athlos/web exec playwright test
       - name: Upload Playwright failure artifacts
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-failure-artifacts
@@ -100,6 +113,7 @@ jobs:
 
   backup-bats:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: drift-check
     services:
       postgres:
@@ -140,7 +154,19 @@ jobs:
             sleep 1
           done
       - name: Install bats and shellcheck
-        run: sudo apt-get update && sudo apt-get install -y bats shellcheck postgresql-client cryptsetup rsync
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          timeout 5m sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            update
+          timeout 5m sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install -y bats shellcheck postgresql-client cryptsetup rsync
       - name: shellcheck (must be clean)
         run: |
           shellcheck \
@@ -201,13 +227,13 @@ jobs:
       - name: Build image
         run: docker build -t athlos-api:smoke .
 
-      - name: "Smoke test: node version"
+      - name: 'Smoke test: node version'
         run: docker run --rm athlos-api:smoke node --version
 
-      - name: "Smoke test: entrypoint present"
+      - name: 'Smoke test: entrypoint present'
         run: docker run --rm --entrypoint /bin/ls athlos-api:smoke /usr/local/bin/docker-entrypoint.sh
 
-      - name: "Smoke test: non-root user"
+      - name: 'Smoke test: non-root user'
         run: docker run --rm --entrypoint /usr/bin/id athlos-api:smoke
 
   labeler:
