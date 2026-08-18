@@ -36,6 +36,28 @@ function services(): DuesRouteOptions {
       revoke: vi.fn().mockResolvedValue({ id: price.id, kind: 'FIXED_DISCOUNT', socioId: actorId, familyGroupId: null, amountCents: 500, percentage: null, currency: 'ARS', effectiveFrom: '2026-01-01', effectiveTo: null, priority: 10, combinability: 'COMBINABLE', exclusiveGroup: null, percentageBasis: null }),
       list: vi.fn().mockResolvedValue([]),
     },
+    familyGroupService: {
+      create: vi
+        .fn()
+        .mockResolvedValue({ id: '00000000-0000-4000-8000-000000000030', reason: 'Approved' }),
+      addMembership: vi.fn().mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000031',
+        familyGroupId: '00000000-0000-4000-8000-000000000030',
+        socioId: actorId,
+        effectiveFrom: '2026-01-01',
+        effectiveTo: null,
+        reason: 'Approved',
+      }),
+      revokeMembership: vi.fn().mockResolvedValue({
+        id: '00000000-0000-4000-8000-000000000031',
+        familyGroupId: '00000000-0000-4000-8000-000000000030',
+        socioId: actorId,
+        effectiveFrom: '2026-01-01',
+        effectiveTo: null,
+        reason: 'Approved',
+        revokedAt: new Date('2026-01-10'),
+      }),
+    },
   }
 }
 const apps: FastifyInstance[] = []
@@ -208,5 +230,37 @@ describe('dues assessment routes', () => {
     expect(response.statusCode).toBe(status)
     expect(response.json()).toMatchObject({ error: code })
     expect(response.body).not.toContain('authorizationEvidence')
+  })
+
+  it('allows only ADMIN family eligibility commands and returns no authorization evidence', async () => {
+    const options = services(),
+      app = await buildApp(true, options)
+    const post = (url: string, payload: object, role: 'ADMIN' | 'TESORERO' = 'ADMIN') =>
+      app.inject({ method: 'POST', url, headers: auth(role), payload })
+    const [group, membership, revoke, denied] = await Promise.all([
+      post('/api/v1/dues/family-groups', {
+        id: '00000000-0000-4000-8000-000000000030',
+        reason: 'Approved',
+      }),
+      post('/api/v1/dues/family-groups/00000000-0000-4000-8000-000000000030/memberships', {
+        socio_id: actorId,
+        effective_from: '2026-01-01',
+        reason: 'Approved',
+      }),
+      post('/api/v1/dues/family-memberships/00000000-0000-4000-8000-000000000031/revoke', {
+        revoke_reason: 'Replaced',
+      }),
+      post('/api/v1/dues/family-groups', { reason: 'Denied' }, 'TESORERO'),
+    ])
+    expect([group.statusCode, membership.statusCode, revoke.statusCode, denied.statusCode]).toEqual(
+      [201, 201, 200, 403],
+    )
+    expect(`${group.body}${membership.body}${revoke.body}`).not.toContain('authorizationEvidence')
+    expect(options.familyGroupService?.addMembership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        socioId: actorId,
+        familyGroupId: '00000000-0000-4000-8000-000000000030',
+      }),
+    )
   })
 })

@@ -64,6 +64,9 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_BENEFIT_CREATED',
   'DUES_BENEFIT_REVOKED',
   'DUES_BENEFIT_APPLIED',
+  'DUES_FAMILY_GROUP_CREATED',
+  'DUES_FAMILY_MEMBERSHIP_CREATED',
+  'DUES_FAMILY_MEMBERSHIP_REVOKED',
 ])
 type AuditItem = Awaited<ReturnType<typeof queryAudit>>['items'][number]
 type JsonObject = Record<string, unknown>
@@ -127,8 +130,10 @@ function duesEvidence(metadata: unknown) {
 function toAuditDTO(item: AuditItem) {
   const { metadata, ...dto } = item
   if (!DUES_AUDIT_ACTIONS.has(item.action)) return dto
+  const privacySensitive =
+    item.action.startsWith('DUES_BENEFIT_') || item.action.startsWith('DUES_FAMILY_')
   // prettier-ignore
-  return { ...dto, ...(item.action.startsWith('DUES_BENEFIT_') ? { oldValue: null, newValue: null } : {}), dues_evidence: duesEvidence(metadata) }
+  return { ...dto, ...(privacySensitive ? { oldValue: null, newValue: null } : {}), dues_evidence: duesEvidence(metadata) }
 }
 
 export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
