@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { duesComponentKind, duesObligationKind, duesPriceKind } from './dues.ts'
 // prettier-ignore
 import { duesBenefitCombinability, duesBenefitKind, duesBenefitPercentageBasis } from './dues-benefits.ts'
+import { duesFamilyGroups, duesFamilyMemberships } from './dues-family-groups.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 const schema = `dues_${randomUUID().replaceAll('-', '')}`
@@ -18,13 +19,36 @@ let disciplineId: string
 const rejects = (query: Promise<unknown>, code: string) =>
   expect(query).rejects.toMatchObject({ code })
 
+const membershipInsert = `INSERT INTO ${q}.dues_family_memberships (family_group_id, socio_id, effective_from, effective_to, reason, created_by, authorization_evidence) VALUES ($1, $2, $3, $4, 'Approved eligibility membership', $5, '{}') RETURNING id`
+
+async function insertSocio() {
+  const id = randomUUID()
+  await pool.query(`INSERT INTO ${q}.socios (id) VALUES ($1)`, [id])
+  return id
+}
+
+async function insertFamilyGroup() {
+  const id = randomUUID()
+  await pool.query(
+    `INSERT INTO ${q}.dues_family_groups (id, reason, created_by, authorization_evidence) VALUES ($1, 'Approved eligibility group', $2, '{}')`,
+    [id, operatorId],
+  )
+  return id
+}
+
+function insertMembership(groupId: string, memberId: string, from: string, to: string | null) {
+  return pool.query(membershipInsert, [groupId, memberId, from, to, operatorId])
+}
+
 function migrationSql() {
   return Promise.all(
-    ['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql'].map((file) =>
-      readFile(join(root, 'drizzle', file), 'utf8'),
-    ),
-  ).then(([pricing, benefits]) =>
-    `${pricing}\n${benefits}`
+    [
+      '0049_dues_pricing_obligations.sql',
+      '0050_dues_benefit_rules.sql',
+      '0051_dues_family_groups.sql',
+    ].map((file) => readFile(join(root, 'drizzle', file), 'utf8')),
+  ).then(([pricing, benefits, familyGroups]) =>
+    `${pricing}\n${benefits}\n${familyGroups}`
       .replace('CREATE SCHEMA IF NOT EXISTS tesoreria', `CREATE SCHEMA IF NOT EXISTS ${q}`)
       .replaceAll('tesoreria.', `${q}.`)
       .replaceAll('deportes.', `${q}.`)
@@ -66,6 +90,8 @@ describe('dues pricing and obligation schema', () => {
     expect(duesBenefitKind.enumValues).toEqual(['FIXED_DISCOUNT', 'PERCENT_DISCOUNT', 'SCHOLARSHIP'])
     expect(duesBenefitCombinability.enumValues).toEqual(['COMBINABLE', 'EXCLUSIVE'])
     expect(duesBenefitPercentageBasis.enumValues).toEqual(['GROSS', 'REMAINING'])
+    expect(duesFamilyGroups).toBeDefined()
+    expect(duesFamilyMemberships).toBeDefined()
     const files = (await readdir(join(root, 'drizzle')))
       .filter((f) => /^\d{4}_.+\.sql$/.test(f))
       .sort()
@@ -74,11 +100,99 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0050_dues_benefit_rules',
+      tag: '0051_dues_family_groups',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
     )
+  })
+
+  it('allows dated memberships but rejects overlapping active groups for one socio', async () => {
+    const groupA = await insertFamilyGroup()
+    const groupB = await insertFamilyGroup()
+    await insertMembership(groupA, socioId, '2026-01-01', '2026-04-01')
+    await expect(
+      insertMembership(groupB, socioId, '2026-03-01', '2026-05-01'),
+    ).rejects.toMatchObject({ code: '23P01' })
+    await expect(insertMembership(groupB, socioId, '2026-04-01', null)).resolves.toBeTruthy()
+  })
+
+  it('rejects overlapping open-ended active memberships', async () => {
+    const memberId = await insertSocio()
+    const groupA = await insertFamilyGroup()
+    const groupB = await insertFamilyGroup()
+    await insertMembership(groupA, memberId, '2026-06-01', null)
+    await expect(insertMembership(groupB, memberId, '2027-01-01', null)).rejects.toMatchObject({
+      code: '23P01',
+    })
+  })
+
+  it('permits adjacent half-open membership boundaries', async () => {
+    const memberId = await insertSocio()
+    const groupA = await insertFamilyGroup()
+    const groupB = await insertFamilyGroup()
+    await insertMembership(groupA, memberId, '2026-01-01', '2026-04-01')
+    await expect(
+      insertMembership(groupB, memberId, '2026-04-01', '2026-07-01'),
+    ).resolves.toBeTruthy()
+  })
+
+  it('allows a new active interval after the prior membership is revoked', async () => {
+    const memberId = await insertSocio()
+    const groupA = await insertFamilyGroup()
+    const groupB = await insertFamilyGroup()
+    const first = await insertMembership(groupA, memberId, '2026-01-01', '2026-12-31')
+    await pool.query(
+      `UPDATE ${q}.dues_family_memberships SET revoked_at = now(), revoked_by = $1, revoke_reason = 'Eligibility corrected' WHERE id = $2`,
+      [operatorId, first.rows[0].id],
+    )
+    await expect(
+      insertMembership(groupB, memberId, '2026-06-01', '2027-01-01'),
+    ).resolves.toBeTruthy()
+  })
+
+  it('rejects concurrent overlapping active membership inserts', async () => {
+    const memberId = await insertSocio()
+    const groupA = await insertFamilyGroup()
+    const groupB = await insertFamilyGroup()
+    const firstClient = await pool.connect()
+    const secondClient = await pool.connect()
+    try {
+      await firstClient.query('BEGIN')
+      await secondClient.query('BEGIN')
+      await firstClient.query(membershipInsert, [
+        groupA,
+        memberId,
+        '2027-01-01',
+        '2027-06-01',
+        operatorId,
+      ])
+      const rejected = expect(
+        secondClient.query(membershipInsert, [
+          groupB,
+          memberId,
+          '2027-03-01',
+          '2027-09-01',
+          operatorId,
+        ]),
+      ).rejects.toMatchObject({ code: '23P01' })
+      await new Promise((resolve) => setImmediate(resolve))
+      await firstClient.query('COMMIT')
+      await rejected
+      await secondClient.query('ROLLBACK')
+    } finally {
+      firstClient.release()
+      secondClient.release()
+    }
+  })
+
+  it('rejects benefit rules that target a nonexistent family group', async () => {
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.dues_benefit_rules (kind, socio_id, family_group_id, amount, currency, effective_from, effective_to, priority, combinability, reason, created_by, authorization_evidence) VALUES ('FIXED_DISCOUNT', NULL, $1, 10.00, 'ARS', DATE '2026-01-01', DATE '2026-04-01', 1, 'COMBINABLE', 'Approved family benefit', $2, '{}')`,
+        [randomUUID(), operatorId],
+      ),
+    ).rejects.toMatchObject({ code: '23503' })
   })
 
   it('rejects invalid money/kind combinations and overlapping base or sport intervals', async () => {
@@ -94,7 +208,7 @@ describe('dues pricing and obligation schema', () => {
   })
 
   // prettier-ignore
-  it('enforces benefit variants, explicit targets, priority policy, and exclusive overlap', async () => { const insert = (kind: string, socio: string | null, family: string | null, amount: string | null, percentage: string | null, basis: string | null, combinability = 'COMBINABLE', group: string | null = null) => pool.query(`INSERT INTO ${q}.dues_benefit_rules (kind, socio_id, family_group_id, amount, percentage, currency, effective_from, effective_to, priority, combinability, exclusive_group, percentage_basis, reason, created_by, authorization_evidence) VALUES ($1,$2,$3,$4,$5,$6,DATE '2026-01-01',DATE '2026-04-01',10,$7,$8,$9,'approved',$10,'{"source":"test"}')`, [kind, socio, family, amount, percentage, amount ? 'ARS' : null, combinability, group, basis, operatorId]); await insert('FIXED_DISCOUNT', socioId, null, '10.00', null, null); await insert('PERCENT_DISCOUNT', null, randomUUID(), null, '25.00', 'REMAINING'); await insert('SCHOLARSHIP', socioId, randomUUID(), null, '50.00', 'GROSS'); await rejects(insert('FIXED_DISCOUNT', null, null, '10.00', null, null), '23514'); await rejects(insert('FIXED_DISCOUNT', socioId, null, null, '10.00', 'GROSS'), '23514'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '10.00', null), '23514'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '101.00', 'GROSS'), '23514'); await insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null); await insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null, 'EXCLUSIVE', 'same'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '10.00', 'GROSS', 'EXCLUSIVE', 'same'), '23P01'); await rejects(insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null, 'EXCLUSIVE'), '23514') })
+  it('enforces benefit variants, explicit targets, priority policy, and exclusive overlap', async () => { const familyGroupId = await insertFamilyGroup(); const scholarshipGroupId = await insertFamilyGroup(); const insert = (kind: string, socio: string | null, family: string | null, amount: string | null, percentage: string | null, basis: string | null, combinability = 'COMBINABLE', group: string | null = null) => pool.query(`INSERT INTO ${q}.dues_benefit_rules (kind, socio_id, family_group_id, amount, percentage, currency, effective_from, effective_to, priority, combinability, exclusive_group, percentage_basis, reason, created_by, authorization_evidence) VALUES ($1,$2,$3,$4,$5,$6,DATE '2026-01-01',DATE '2026-04-01',10,$7,$8,$9,'approved',$10,'{"source":"test"}')`, [kind, socio, family, amount, percentage, amount ? 'ARS' : null, combinability, group, basis, operatorId]); await insert('FIXED_DISCOUNT', socioId, null, '10.00', null, null); await insert('PERCENT_DISCOUNT', null, familyGroupId, null, '25.00', 'REMAINING'); await insert('SCHOLARSHIP', socioId, scholarshipGroupId, null, '50.00', 'GROSS'); await rejects(insert('FIXED_DISCOUNT', null, null, '10.00', null, null), '23514'); await rejects(insert('FIXED_DISCOUNT', socioId, null, null, '10.00', 'GROSS'), '23514'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '10.00', null), '23514'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '101.00', 'GROSS'), '23514'); await insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null); await insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null, 'EXCLUSIVE', 'same'); await rejects(insert('PERCENT_DISCOUNT', socioId, null, null, '10.00', 'GROSS', 'EXCLUSIVE', 'same'), '23P01'); await rejects(insert('FIXED_DISCOUNT', socioId, null, '5.00', null, null, 'EXCLUSIVE'), '23514') })
 
   it('enforces receipt, monthly obligation, and component natural uniqueness', async () => {
     const key = randomUUID()

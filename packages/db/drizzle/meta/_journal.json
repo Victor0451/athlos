@@ -302,6 +302,13 @@
       "when": 1786900001000,
       "tag": "0050_dues_benefit_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786900002000,
+      "tag": "0051_dues_family_groups",
+      "breakpoints": true
     }
   ]
 }
