@@ -159,6 +159,7 @@ export type {
 export * from './dues'
 export * from './dues-benefits'
 export * from './dues-family-groups'
+export * from './dues-settlements'
 
 // deportes ─────────────────────────────────────────────────────
 export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'

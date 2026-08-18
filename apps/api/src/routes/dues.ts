@@ -8,6 +8,8 @@ import * as repository from '../modules/dues/repository.ts'
 import { AssessmentService, PricingService, type AuditContext } from '../modules/dues/service.ts'
 import { BenefitService } from '../modules/dues/dues-benefits.ts'
 import { FamilyGroupService } from '../modules/dues/dues-family-groups.ts'
+import { SettlementService } from '../modules/dues/settlements.ts'
+import { MAX_MONEY_CENTS } from '../modules/dues/allocations.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
@@ -97,12 +99,21 @@ const familyMembershipBodySchema = z
       })
   })
 
+// prettier-ignore
+const allocationBodySchema=z.object({obligation_id:z.string().uuid(),amount_cents:z.number().int().positive().max(MAX_MONEY_CENTS)}).strict()
+// prettier-ignore
+const settlementBodySchema=z.object({socio_id:z.string().uuid(),kind:z.enum(['MONETARY','NON_CASH']),amount_cents:z.number().int().positive().max(MAX_MONEY_CENTS),currency:z.string().regex(/^[A-Z]{3}$/).default('ARS'),evidence:z.record(z.string(),z.unknown()).default({}),reason:z.string().trim().min(1).max(500).optional(),allocations:z.array(allocationBodySchema).min(1)}).strict()
+// prettier-ignore
+const settlementReverseBodySchema=z.object({allocation_id:z.string().uuid(),reason:z.string().trim().min(1).max(500)}).strict()
+
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
   assessmentService?: Pick<AssessmentService, 'generate'>
   listEffectivePrices?: typeof repository.listEffectivePrices
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
+  settlementService?: Pick<SettlementService, 'create'> &
+    Partial<Pick<SettlementService, 'reverse' | 'debt'>>
 }
 
 type PriceLike = {
@@ -221,6 +232,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const listEffectivePrices = options.listEffectivePrices ?? repository.listEffectivePrices
   const benefitService = options.benefitService ?? new BenefitService(container.db)
   const familyGroupService = options.familyGroupService ?? new FamilyGroupService(container.db)
+  const settlementService = options.settlementService ?? new SettlementService(container.db)
 
   // prettier-ignore
   fastify.post('/api/v1/dues/benefits', ADMIN_GATE, async (request, reply) => {
@@ -337,6 +349,15 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     })
     return reply.code(200).send({ period: body.period, obligation_ids: result.obligationIds })
   })
+
+  if (container.env.DUES_ASSESSMENT_ENABLED) {
+    // prettier-ignore
+    fastify.post('/api/v1/dues/settlements',FINANCE_GATE,async(request,reply)=>{enabled(container);const body=throwIfInvalid(settlementBodySchema,request.body ?? {},'body'),key=callerKey(request,true),result=await settlementService.create({...context(request,key,body),socioId:body.socio_id,kind:body.kind,amountCents:body.amount_cents,currency:body.currency ?? 'ARS',evidence:body.evidence ?? {},...(body.reason ? {reason:body.reason} : {}),allocations:body.allocations.map(({obligation_id,amount_cents})=>({obligationId:obligation_id,amountCents:amount_cents}))});return reply.code(201).send({settlement_id:result.settlementId,kind:result.kind,amount_cents:result.amountCents,currency:result.currency,allocations:result.allocations.map(({id,obligationId,amountCents})=>({id,obligation_id:obligationId,amount_cents:amountCents}))})})
+    // prettier-ignore
+    fastify.post<{Params:{id:string}}>('/api/v1/dues/settlements/:id/reverse',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,request.params,'params'),body=throwIfInvalid(settlementReverseBodySchema,request.body ?? {},'body'),key=callerKey(request,true),result=await settlementService.reverse!({...context(request,key,body),settlementId:params.id,allocationId:body.allocation_id,reason:body.reason});return reply.code(201).send({settlement_id:result.settlementId,kind:result.kind,amount_cents:result.amountCents,currency:result.currency,allocations:result.allocations.map(({id,obligationId,amountCents})=>({id,obligation_id:obligationId,amount_cents:amountCents}))})})
+    // prettier-ignore
+    fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id});return reply.code(200).send({socio_id:result.socioId,total_debt_cents:result.totalCents,obligations:result.obligations.map(({id,periodStart,periodEnd,amountCents,outstandingCents})=>({id,period_start:periodStart,period_end:periodEnd,amount_cents:amountCents,outstanding_cents:outstandingCents}))})})
+  }
 
   done()
 }

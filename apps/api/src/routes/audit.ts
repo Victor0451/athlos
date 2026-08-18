@@ -67,6 +67,16 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_FAMILY_GROUP_CREATED',
   'DUES_FAMILY_MEMBERSHIP_CREATED',
   'DUES_FAMILY_MEMBERSHIP_REVOKED',
+  'DUES_SETTLEMENT_CREATED',
+  'DUES_SETTLEMENT_REVERSED',
+  'DUES_ALLOCATION_CREATED',
+  'DUES_ALLOCATION_COMPENSATED',
+])
+const DUES_FINANCIAL_ACTIONS = new Set([
+  'DUES_SETTLEMENT_CREATED',
+  'DUES_SETTLEMENT_REVERSED',
+  'DUES_ALLOCATION_CREATED',
+  'DUES_ALLOCATION_COMPENSATED',
 ])
 type AuditItem = Awaited<ReturnType<typeof queryAudit>>['items'][number]
 type JsonObject = Record<string, unknown>
@@ -91,6 +101,37 @@ function safePermissions(value: unknown): string[] | null {
 
 function safeText(value: unknown, maxLength: number): string | null {
   return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null
+}
+
+function financialSnapshot(value: unknown) {
+  const data = jsonObject(value)
+  if (!data) return null
+  const result: JsonObject = {}
+  const ids: Record<string, string> = {
+    settlementId: 'settlement_id',
+    reversalOfSettlementId: 'reversal_of_settlement_id',
+    allocationId: 'allocation_id',
+    compensatesAllocationId: 'compensates_allocation_id',
+    obligationId: 'obligation_id',
+  }
+  for (const [source, target] of Object.entries(ids)) {
+    const id = safeText(data[source], 128)
+    if (id) result[target] = id
+  }
+  if (data.kind === 'MONETARY' || data.kind === 'NON_CASH') result.kind = data.kind
+  if (
+    typeof data.amountCents === 'number' &&
+    Number.isSafeInteger(data.amountCents) &&
+    data.amountCents > 0
+  )
+    result.amount_cents = data.amountCents
+  if (typeof data.currency === 'string' && /^[A-Z]{3}$/.test(data.currency))
+    result.currency = data.currency
+  return Object.keys(result).length > 0 ? result : null
+}
+
+function duesReason(metadata: unknown) {
+  return safeText(jsonObject(metadata)?.reason, 500)
 }
 
 function duesEvidence(metadata: unknown) {
@@ -132,8 +173,17 @@ function toAuditDTO(item: AuditItem) {
   if (!DUES_AUDIT_ACTIONS.has(item.action)) return dto
   const privacySensitive =
     item.action.startsWith('DUES_BENEFIT_') || item.action.startsWith('DUES_FAMILY_')
-  // prettier-ignore
-  return { ...dto, ...(privacySensitive ? { oldValue: null, newValue: null } : {}), dues_evidence: duesEvidence(metadata) }
+  const reason = duesReason(metadata)
+  return {
+    ...dto,
+    ...(privacySensitive
+      ? { oldValue: null, newValue: null }
+      : DUES_FINANCIAL_ACTIONS.has(item.action)
+        ? { oldValue: financialSnapshot(item.oldValue), newValue: financialSnapshot(item.newValue) }
+        : {}),
+    dues_evidence: duesEvidence(metadata),
+    ...(reason ? { dues_reason: reason } : {}),
+  }
 }
 
 export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
