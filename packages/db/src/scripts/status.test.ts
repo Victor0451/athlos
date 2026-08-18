@@ -225,6 +225,7 @@ describe('migrate:status', () => {
         '0049_dues_pricing_obligations',
         '0050_dues_benefit_rules',
         '0051_dues_family_groups',
+        '0052_dues_settlements',
       ],
       divergence: [],
       exitCode: 1,
