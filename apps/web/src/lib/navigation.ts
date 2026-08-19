@@ -42,6 +42,13 @@ export const navigation: NavigationItem[] = [
     roles: ['ADMIN'],
   },
   {
+    href: '/tesoreria',
+    label: 'Cash desk',
+    icon: Wallet,
+    section: 'Operations',
+    roles: ['ADMIN', 'TESORERO'],
+  },
+  {
     href: '/admin/gastos',
     label: 'Gastos',
     icon: Receipt,
@@ -63,10 +70,14 @@ export const navigation: NavigationItem[] = [
   },
 ]
 
-export function visibleNavigation(user: CurrentUser | null) {
+export function visibleNavigation(
+  user: CurrentUser | null,
+  features: { cashEnabled?: boolean } = {},
+) {
   return navigation.filter(
     (item) =>
       (!item.roles || (user && item.roles.includes(user.role))) &&
-      (!item.permission || user?.role === 'ADMIN' || user?.permissions[item.permission] === true),
+      (!item.permission || user?.role === 'ADMIN' || user?.permissions[item.permission] === true) &&
+      (item.href !== '/tesoreria' || features.cashEnabled !== false),
   )
 }
