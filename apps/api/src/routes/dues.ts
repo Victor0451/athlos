@@ -10,6 +10,8 @@ import { BenefitService } from '../modules/dues/dues-benefits.ts'
 import { FamilyGroupService } from '../modules/dues/dues-family-groups.ts'
 import { SettlementService } from '../modules/dues/settlements.ts'
 import { MAX_MONEY_CENTS } from '../modules/dues/allocations.ts'
+import { AgreementService, type Agreement } from '../modules/dues/agreements.ts'
+import { CommunityWorkService } from '../modules/dues/community-work.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
@@ -105,6 +107,39 @@ const allocationBodySchema=z.object({obligation_id:z.string().uuid(),amount_cent
 const settlementBodySchema=z.object({socio_id:z.string().uuid(),kind:z.enum(['MONETARY','NON_CASH']),amount_cents:z.number().int().positive().max(MAX_MONEY_CENTS),currency:z.string().regex(/^[A-Z]{3}$/).default('ARS'),evidence:z.record(z.string(),z.unknown()).default({}),reason:z.string().trim().min(1).max(500).optional(),allocations:z.array(allocationBodySchema).min(1)}).strict()
 // prettier-ignore
 const settlementReverseBodySchema=z.object({allocation_id:z.string().uuid(),reason:z.string().trim().min(1).max(500)}).strict()
+// prettier-ignore
+const installmentTermsSchema = z.object({ amountCents: z.number().int().positive().max(MAX_MONEY_CENTS), dueDate: dateSchema }).strict()
+const termsSchema = z
+  .object({
+    amountCents: z.number().int().positive().max(MAX_MONEY_CENTS),
+    installments: z.array(installmentTermsSchema).min(1).max(60),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const sum = value.installments.reduce(
+      (total, installment) => total + installment.amountCents,
+      0,
+    )
+    if (sum !== value.amountCents)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['installments'],
+        message: 'Installment amounts must sum to amountCents',
+      })
+    for (let index = 1; index < value.installments.length; index += 1)
+      if (value.installments[index]!.dueDate <= value.installments[index - 1]!.dueDate)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['installments', index, 'dueDate'],
+          message: 'Installment dates must strictly increase',
+        })
+  })
+// prettier-ignore
+const agreementBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), kind: z.enum(['SIMPLE', 'INSTALLMENT']), terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
+// prettier-ignore
+const rescheduleBodySchema = z.object({ terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
+// prettier-ignore
+const communityWorkBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), amount_cents: z.number().int().positive().max(MAX_MONEY_CENTS), evidence: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0, 'evidence is required'), reason: z.string().trim().min(1).max(500) }).strict()
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
@@ -114,6 +149,8 @@ export interface DuesRouteOptions {
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
   settlementService?: Pick<SettlementService, 'create'> &
     Partial<Pick<SettlementService, 'reverse' | 'debt'>>
+  agreementService?: Pick<AgreementService, 'create' | 'reschedule'>
+  communityWorkService?: Pick<CommunityWorkService, 'create'>
 }
 
 type PriceLike = {
@@ -194,6 +231,10 @@ function enabled(container: AppContainer): void {
   if (!container.env.DUES_ASSESSMENT_ENABLED)
     throw BusinessError(ErrorCode.NOT_FOUND, 'Resource not found')
 }
+// prettier-ignore
+function agreementsEnabled(container: AppContainer): void { if (!container.env.DUES_AGREEMENTS_ENABLED) throw BusinessError(ErrorCode.NOT_FOUND, 'Resource not found') }
+// prettier-ignore
+function toAgreementDTO(row: Agreement) { return { id: row.id, socio_id: row.socioId, obligation_id: row.obligationId, kind: row.kind, status: row.status, revision_number: row.revisionNumber, terms: row.terms, agreement_date: row.agreementDate, revision_of_agreement_id: row.revisionOfAgreementId } }
 
 function callerKey(request: FastifyRequest, required = false): string {
   const header = request.headers['idempotency-key']
@@ -233,6 +274,9 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const benefitService = options.benefitService ?? new BenefitService(container.db)
   const familyGroupService = options.familyGroupService ?? new FamilyGroupService(container.db)
   const settlementService = options.settlementService ?? new SettlementService(container.db)
+  const agreementService = options.agreementService ?? new AgreementService(container.db)
+  const communityWorkService =
+    options.communityWorkService ?? new CommunityWorkService(container.db)
 
   // prettier-ignore
   fastify.post('/api/v1/dues/benefits', ADMIN_GATE, async (request, reply) => {
@@ -357,6 +401,15 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     fastify.post<{Params:{id:string}}>('/api/v1/dues/settlements/:id/reverse',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,request.params,'params'),body=throwIfInvalid(settlementReverseBodySchema,request.body ?? {},'body'),key=callerKey(request,true),result=await settlementService.reverse!({...context(request,key,body),settlementId:params.id,allocationId:body.allocation_id,reason:body.reason});return reply.code(201).send({settlement_id:result.settlementId,kind:result.kind,amount_cents:result.amountCents,currency:result.currency,allocations:result.allocations.map(({id,obligationId,amountCents})=>({id,obligation_id:obligationId,amount_cents:amountCents}))})})
     // prettier-ignore
     fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id});return reply.code(200).send({socio_id:result.socioId,total_debt_cents:result.totalCents,obligations:result.obligations.map(({id,periodStart,periodEnd,amountCents,outstandingCents})=>({id,period_start:periodStart,period_end:periodEnd,amount_cents:amountCents,outstanding_cents:outstandingCents}))})})
+  }
+
+  if (container.env.DUES_AGREEMENTS_ENABLED) {
+    // prettier-ignore
+    fastify.post('/api/v1/dues/agreements', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(agreementBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, kind: body.kind, terms: body.terms, reason: body.reason }); return reply.code(201).send(toAgreementDTO(result)) })
+    // prettier-ignore
+    fastify.post<{ Params: { id: string } }>('/api/v1/dues/agreements/:id/reschedule', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(idParamSchema, request.params, 'params'), body = throwIfInvalid(rescheduleBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.reschedule({ ...context(request, key, body), agreementId: params.id, terms: body.terms, reason: body.reason }); return reply.code(200).send(toAgreementDTO(result)) })
+    // prettier-ignore
+    fastify.post('/api/v1/dues/community-work', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(communityWorkBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await communityWorkService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, amountCents: body.amount_cents, evidence: body.evidence, reason: body.reason }); return reply.code(201).send({ id: result.id, settlement_id: result.settlementId, allocation_id: result.allocationId, obligation_id: result.obligationId, amount_cents: result.amountCents }) })
   }
 
   done()

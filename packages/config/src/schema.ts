@@ -45,6 +45,10 @@ export const envSchema = z.object({
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .default('false'),
+  DUES_AGREEMENTS_ENABLED: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .default('false'),
   // File-storage env (PR 8c.1 — athlos-socio-legajo). Optional so
   // existing deployments don't fail the env-validator; defaults
   // match the spec's locked values.

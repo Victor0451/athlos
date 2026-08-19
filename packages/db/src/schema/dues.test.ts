@@ -8,6 +8,12 @@ import { duesComponentKind, duesObligationKind, duesPriceKind } from './dues.ts'
 import { duesBenefitCombinability, duesBenefitKind, duesBenefitPercentageBasis } from './dues-benefits.ts'
 import { duesFamilyGroups, duesFamilyMemberships } from './dues-family-groups.ts'
 import { duesAllocationKind, duesSettlementKind } from './dues-settlements.ts'
+import {
+  duesAgreementKind,
+  duesAgreementStatus,
+  duesAgreements,
+  duesCommunityWork,
+} from './dues-agreements.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 const schema = `dues_${randomUUID().replaceAll('-', '')}`
@@ -48,9 +54,10 @@ function migrationSql() {
       '0050_dues_benefit_rules.sql',
       '0051_dues_family_groups.sql',
       '0052_dues_settlements.sql',
+      '0053_dues_agreements_community_work.sql',
     ].map((file) => readFile(join(root, 'drizzle', file), 'utf8')),
-  ).then(([pricing, benefits, familyGroups, settlements]) =>
-    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}`
+  ).then(([pricing, benefits, familyGroups, settlements, agreements]) =>
+    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}\n${agreements}`
       .replace('CREATE SCHEMA IF NOT EXISTS tesoreria', `CREATE SCHEMA IF NOT EXISTS ${q}`)
       .replaceAll('tesoreria.', `${q}.`)
       .replaceAll('deportes.', `${q}.`)
@@ -96,6 +103,16 @@ describe('dues pricing and obligation schema', () => {
     expect(duesFamilyMemberships).toBeDefined()
     expect(duesSettlementKind.enumValues).toEqual(['MONETARY', 'NON_CASH'])
     expect(duesAllocationKind.enumValues).toEqual(['ALLOCATION', 'COMPENSATION'])
+    expect(duesAgreementKind.enumValues).toEqual(['SIMPLE', 'INSTALLMENT'])
+    expect(duesAgreementStatus.enumValues).toEqual([
+      'ACTIVE',
+      'FULFILLED',
+      'CANCELLED',
+      'SUPERSEDED',
+    ])
+    expect(duesAgreements).toBeDefined()
+    expect(duesCommunityWork).toBeDefined()
+    expect(duesAgreements.requestFingerprint.columnType).toBe('PgChar')
     const files = (await readdir(join(root, 'drizzle')))
       .filter((f) => /^\d{4}_.+\.sql$/.test(f))
       .sort()
@@ -104,7 +121,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0052_dues_settlements',
+      tag: '0053_dues_agreements_community_work',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
@@ -246,7 +263,7 @@ describe('dues pricing and obligation schema', () => {
 
   it('rejects updates and deletes for obligations and components', async () => {
     await pool.query(
-      `TRUNCATE ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
+      `TRUNCATE ${q}.dues_agreements, ${q}.dues_community_work, ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
     )
     const obligationId = await seedObligation()
     await rejects(
@@ -274,7 +291,7 @@ describe('dues pricing and obligation schema', () => {
 
   it('rejects invalid direct compensation references and over-allocation', async () => {
     await pool.query(
-      `TRUNCATE ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
+      `TRUNCATE ${q}.dues_agreements, ${q}.dues_community_work, ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
     )
     const obligationId = await seedObligation()
     const otherMemberId = await insertSocio()
@@ -319,7 +336,7 @@ describe('dues pricing and obligation schema', () => {
 
   it('nets compensation rows so restored debt can be reallocated without permitting over-allocation', async () => {
     await pool.query(
-      `TRUNCATE ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
+      `TRUNCATE ${q}.dues_agreements, ${q}.dues_community_work, ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
     )
     const obligationId = await seedObligation()
     const settlement = async (amount: string, suffix: string) =>
@@ -360,7 +377,7 @@ describe('dues pricing and obligation schema', () => {
 
   it('rejects updates and deletes for settlement history', async () => {
     await pool.query(
-      `TRUNCATE ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
+      `TRUNCATE ${q}.dues_agreements, ${q}.dues_community_work, ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
     )
     const settlement = await pool.query(
       `INSERT INTO ${q}.dues_settlements (socio_id, kind, amount, operator_id, caller_key, request_fingerprint) VALUES ($1, 'MONETARY', 10.00, $2, gen_random_uuid()::text, repeat('e', 64)) RETURNING id`,
