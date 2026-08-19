@@ -403,4 +403,71 @@ describe('GET /api/v1/audit', () => {
     expect(response.body).not.toContain('must-not-leak')
     expect(response.body).not.toContain('secret')
   })
+
+  it('projects cash audit actions with safe totals and no authorization internals', async () => {
+    const app = await buildApp()
+    vi.mocked(queryAudit).mockResolvedValueOnce(
+      auditPage([
+        auditItem(
+          'DUES_CASH_SHIFT_CLOSED',
+          {
+            actorId: '00000000-0000-4000-8000-000000000001',
+            role: 'TESORERO',
+            permissions: ['treasury:close'],
+            authorizationEvidence: { role: 'TESORERO', permissions: ['treasury:close'] },
+            callerKey: 'close-1',
+            requestFingerprint: 'a'.repeat(64),
+            time: '2026-08-19T10:00:00.000Z',
+            expected: { CASH: 100 },
+            counted: { CASH: 90 },
+            discrepancy: { CASH: -10 },
+            authorizationSecret: 'must-not-return',
+          },
+          null,
+          { expected: { CASH: 100 }, counted: { CASH: 90 }, discrepancy: { CASH: -10 } },
+        ),
+      ]),
+    )
+    const response = await auditGet(app)
+    expect(response.statusCode).toBe(200)
+    const item = JSON.parse(response.body).items[0]
+    expect(item.action).toBe('DUES_CASH_SHIFT_CLOSED')
+    expect(item.dues_evidence.idempotency.caller_key).toBe('close-1')
+    expect(item.newValue).toBeNull()
+    expect(item.cash_evidence).toEqual({
+      discrepancy: { CASH: -10 },
+      counted: { CASH: 90 },
+      expected: { CASH: 100 },
+    })
+    expect(response.body).not.toContain('authorizationSecret')
+  })
+
+  it('projects only allowlisted compensation relationships and reason', async () => {
+    const app = await buildApp()
+    vi.mocked(queryAudit).mockResolvedValueOnce(
+      auditPage([
+        auditItem('DUES_CASH_EXPENSE_COMPENSATED', {
+          actorId: '00000000-0000-4000-8000-000000000001',
+          role: 'ADMIN',
+          permissions: ['treasury:write'],
+          authorizationEvidence: { role: 'ADMIN', permissions: ['treasury:write'] },
+          callerKey: 'comp-1',
+          requestFingerprint: 'b'.repeat(64),
+          time: '2026-08-19T10:00:00.000Z',
+          originalGastoId: '00000000-0000-4000-8000-000000000010',
+          compensatingGastoId: '00000000-0000-4000-8000-000000000011',
+          reason: 'Corrected closed-period expense',
+          rawMetadata: 'must-not-return',
+        }),
+      ]),
+    )
+    const response = await auditGet(app)
+    const item = JSON.parse(response.body).items[0]
+    expect(item.cash_evidence).toEqual({
+      original_gasto_id: '00000000-0000-4000-8000-000000000010',
+      compensating_gasto_id: '00000000-0000-4000-8000-000000000011',
+      reason: 'Corrected closed-period expense',
+    })
+    expect(response.body).not.toContain('rawMetadata')
+  })
 })

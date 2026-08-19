@@ -74,6 +74,11 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_AGREEMENT_CREATED',
   'DUES_AGREEMENT_REVISED',
   'DUES_COMMUNITY_WORK_CREATED',
+  'DUES_CASH_SHIFT_OPENED',
+  'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SHIFT_CLOSED',
+  'DUES_CASH_EXPENSE_INCLUDED',
+  'DUES_CASH_EXPENSE_COMPENSATED',
 ])
 const DUES_FINANCIAL_ACTIONS = new Set([
   'DUES_SETTLEMENT_CREATED',
@@ -83,6 +88,13 @@ const DUES_FINANCIAL_ACTIONS = new Set([
 ])
 type AuditItem = Awaited<ReturnType<typeof queryAudit>>['items'][number]
 type JsonObject = Record<string, unknown>
+const CASH_AUDIT_ACTIONS = new Set([
+  'DUES_CASH_SHIFT_OPENED',
+  'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SHIFT_CLOSED',
+  'DUES_CASH_EXPENSE_INCLUDED',
+  'DUES_CASH_EXPENSE_COMPENSATED',
+])
 
 function jsonObject(value: unknown): JsonObject | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -171,6 +183,41 @@ function duesEvidence(metadata: unknown) {
   }
 }
 
+function cashEvidence(metadata: unknown) {
+  const data = jsonObject(metadata)
+  if (!data) return null
+  const result: JsonObject = {}
+  for (const key of ['shiftId', 'deskId', 'businessDate', 'sourceType', 'tender', 'direction']) {
+    const value = safeText(data[key], 128)
+    if (value) result[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = value
+  }
+  for (const [source, target] of [
+    ['originalGastoId', 'original_gasto_id'],
+    ['compensatingGastoId', 'compensating_gasto_id'],
+  ] as Array<[string, string]>) {
+    const value = data[source]
+    if (typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value)) result[target] = value
+  }
+  for (const key of ['expected', 'counted', 'discrepancy']) {
+    const value = jsonObject(data[key])
+    if (!value) continue
+    const safe = Object.fromEntries(
+      Object.entries(value).flatMap(([tender, amount]) =>
+        typeof amount === 'number' &&
+        Number.isSafeInteger(amount) &&
+        Math.abs(amount) <= Number.MAX_SAFE_INTEGER
+          ? [[tender, amount]]
+          : [],
+      ),
+    )
+    result[key] = safe
+  }
+  const reason = safeText(data.reason, 500)
+  if (reason) result.reason = reason
+  if (data.forceClose === true) result.force_close = true
+  return Object.keys(result).length > 0 ? result : null
+}
+
 function toAuditDTO(item: AuditItem) {
   const { metadata, ...dto } = item
   if (!DUES_AUDIT_ACTIONS.has(item.action)) return dto
@@ -180,12 +227,13 @@ function toAuditDTO(item: AuditItem) {
   const reason = duesReason(metadata)
   return {
     ...dto,
-    ...(privacySensitive
+    ...(privacySensitive || CASH_AUDIT_ACTIONS.has(item.action)
       ? { oldValue: null, newValue: null }
       : DUES_FINANCIAL_ACTIONS.has(item.action)
         ? { oldValue: financialSnapshot(item.oldValue), newValue: financialSnapshot(item.newValue) }
         : {}),
     dues_evidence: duesEvidence(metadata),
+    ...(CASH_AUDIT_ACTIONS.has(item.action) ? { cash_evidence: cashEvidence(metadata) } : {}),
     ...(reason ? { dues_reason: reason } : {}),
   }
 }

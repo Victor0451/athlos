@@ -1,9 +1,11 @@
 import type { FastifyPluginCallback } from 'fastify'
+import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { gastoMutationReceipts, type Db } from '@athlos/db'
 import { idSchema } from '@athlos/validation'
-import { throwIfInvalid } from '@athlos/errors'
+import { BusinessError, ErrorCode, throwIfInvalid } from '@athlos/errors'
 import { requireRole } from '@athlos/auth'
-import { emitAudit } from '@athlos/audit'
+import { AuditAction, emitAudit } from '@athlos/audit'
 import type { AppContainer } from '../../container.ts'
 import {
   anularGasto,
@@ -16,6 +18,8 @@ import {
   updateGasto,
   type Gasto,
 } from '../../modules/gastos/repository.ts'
+import { recordExpenseCompensationInTransaction } from '../../modules/dues/cash-desk.ts'
+import { createIdempotencyFingerprint, validateIdempotencyKey } from '../../lib/idempotency.ts'
 
 /**
  * Admin gastos CRUD routes — `/api/v1/gastos/*` (N16).
@@ -56,26 +60,12 @@ const listQuerySchema = z.object({
 
 const idParamSchema = z.object({ id: idSchema })
 
-const createGastoBodySchema = z.object({
-  tipo: z.coerce.number().int(),
-  tipo_cuenta: z.coerce.number().int(),
-  cuenta_principal: z.string().min(1),
-  cuenta_auxiliar: z.coerce.number().int().nullable().optional(),
-  secuencia: z.coerce.number().int().nonnegative().default(0),
-  comprobante: z.string().default(''),
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  concepto: z.string().nullable().optional(),
-  importe: z.string().regex(/^\d+(\.\d{1,2})?$/),
-  iva: z
-    .string()
-    .regex(/^\d+(\.\d{1,2})?$/)
-    .default('0.00'),
-  ingreso_bruto: z.string().nullable().optional(),
-  socio_id: z.string().uuid().nullable().optional(),
-  legacy_id: z.string().nullable().optional(),
-})
+// prettier-ignore
+const createGastoFields=z.object({tipo:z.coerce.number().int(),tipo_cuenta:z.coerce.number().int(),cuenta_principal:z.string().min(1),cuenta_auxiliar:z.coerce.number().int().nullable().optional(),secuencia:z.coerce.number().int().nonnegative().default(0),comprobante:z.string().default(''),fecha:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),concepto:z.string().nullable().optional(),importe:z.string().regex(/^\d+(\.\d{1,2})?$/),iva:z.string().regex(/^\d+(\.\d{1,2})?$/).default('0.00'),ingreso_bruto:z.string().nullable().optional(),socio_id:z.string().uuid().nullable().optional(),legacy_id:z.string().nullable().optional(),compensates_gasto_id:z.string().uuid().optional(),compensation_reason:z.string().trim().min(1).max(500).optional()})
+// prettier-ignore
+const createGastoBodySchema=createGastoFields.superRefine((value,ctx)=>{if(value.compensates_gasto_id&&!value.compensation_reason)ctx.addIssue({code:z.ZodIssueCode.custom,path:['compensation_reason'],message:'A compensation reason is required'})})
 
-const updateGastoBodySchema = createGastoBodySchema.partial()
+const updateGastoBodySchema = createGastoFields.partial()
 
 const anularBodySchema = z.object({
   motivo: z.string().min(1).max(500),
@@ -136,6 +126,64 @@ function toGastoDTO(row: Gasto, extras: Partial<GastoDTO> = {}): GastoDTO {
 function operatorId(req: { operator?: { sub: string } | null }): string {
   return req.operator?.sub ?? 'unknown'
 }
+
+function mutationKey(req: { headers: Record<string, unknown> }): string {
+  const value = req.headers['idempotency-key']
+  if (typeof value !== 'string' || !validateIdempotencyKey(value)) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Idempotency-Key header is required')
+  }
+  return value
+}
+
+function mutationFingerprint(url: string, body: unknown): string {
+  return createIdempotencyFingerprint('gasto-mutation', url, body)
+}
+
+async function findMutationReceipt(
+  db: Db,
+  operator: string,
+  callerKey: string,
+  fingerprint: string,
+) {
+  const [receipt] = await db
+    .select()
+    .from(gastoMutationReceipts)
+    .where(
+      and(
+        eq(gastoMutationReceipts.operatorId, operator),
+        eq(gastoMutationReceipts.callerKey, callerKey),
+      ),
+    )
+    .limit(1)
+  if (!receipt) return null
+  if (receipt.requestFingerprint !== fingerprint) {
+    throw BusinessError(
+      ErrorCode.CONFLICT,
+      'Idempotency key was already used for a different gasto mutation',
+    )
+  }
+  return receipt.result as GastoDTO
+}
+
+async function saveMutationReceipt(
+  db: Db,
+  operator: string,
+  callerKey: string,
+  fingerprint: string,
+  result: GastoDTO | { ok: true },
+) {
+  await db.insert(gastoMutationReceipts).values({
+    operatorId: operator,
+    callerKey,
+    requestFingerprint: fingerprint,
+    result,
+  })
+}
+
+// prettier-ignore
+export async function assertGastoMutable(db:Db,id:string):Promise<void>{const result=await db.execute(sql`SELECT e.id FROM tesoreria.dues_cash_shift_expenses e WHERE e.gasto_id=${id} LIMIT 1`);if((result as unknown as {rows?:unknown[]}).rows?.length)throw BusinessError(ErrorCode.CONFLICT,'Gasto is immutable after cash inclusion')}
+// prettier-ignore
+export async function assertGastoClosed(db:Db,id:string):Promise<void>{const result=await db.execute(sql`SELECT c.id FROM tesoreria.dues_cash_shift_expenses e JOIN tesoreria.dues_cash_closes c ON c.shift_id=e.shift_id WHERE e.gasto_id=${id} LIMIT 1`);if(!(result as unknown as {rows?:unknown[]}).rows?.length)throw BusinessError(ErrorCode.CONFLICT,'Compensation requires an expense from a closed cash shift')}
 
 export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container: AppContainer = fastify.container
@@ -198,34 +246,95 @@ export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) =
   fastify.post('/api/v1/gastos', ADMIN_GATE, async (request, reply) => {
     const body = throwIfInvalid(createGastoBodySchema, request.body ?? {}, 'body')
     const opId = operatorId(request)
+    const callerKey = mutationKey(request)
+    const fingerprint = mutationFingerprint(request.url, body)
     try {
-      const created = await createGasto(container.db, {
-        tipo: body.tipo,
-        tipoCuenta: body.tipo_cuenta,
-        cuentaPrincipal: body.cuenta_principal,
-        cuentaAuxiliar: body.cuenta_auxiliar ?? null,
-        secuencia: body.secuencia ?? 0,
-        comprobante: body.comprobante ?? '',
-        fecha: body.fecha,
-        concepto: body.concepto ?? null,
-        importe: body.importe,
-        iva: body.iva ?? '0.00',
-        ingresoBruto: body.ingreso_bruto ?? null,
-        socioId: body.socio_id ?? null,
-        legacyId: body.legacy_id ?? null,
+      const result = await container.db.transaction(async (tx) => {
+        const replay = await findMutationReceipt(tx, opId, callerKey, fingerprint)
+        if (replay) return { replay: true, result: replay }
+        if (body.compensates_gasto_id) await assertGastoClosed(tx, body.compensates_gasto_id)
+        const created = await createGasto(tx, {
+          tipo: body.tipo,
+          tipoCuenta: body.tipo_cuenta,
+          cuentaPrincipal: body.cuenta_principal,
+          cuentaAuxiliar: body.cuenta_auxiliar ?? null,
+          secuencia: body.secuencia ?? 0,
+          comprobante: body.comprobante ?? '',
+          fecha: body.fecha,
+          concepto: body.concepto ?? null,
+          importe: body.importe,
+          iva: body.iva ?? '0.00',
+          ingresoBruto: body.ingreso_bruto ?? null,
+          socioId: body.socio_id ?? null,
+          legacyId: body.legacy_id ?? null,
+        })
+        await emitAudit(tx, {
+          operatorId: opId,
+          action: 'GASTO_CREATE',
+          entityType: 'gasto',
+          entityId: created.id,
+          oldValue: null,
+          newValue: { ...body },
+          sourceIp: request.ip ?? null,
+          callerKey,
+          metadata: { requestFingerprint: fingerprint },
+        })
+        if (body.compensates_gasto_id) {
+          const compensation = await recordExpenseCompensationInTransaction(tx, {
+            originalGastoId: body.compensates_gasto_id,
+            compensatingGastoId: created.id,
+            operatorId: opId,
+            callerKey,
+            requestFingerprint: fingerprint,
+            reason: body.compensation_reason!,
+          })
+          await emitAudit(tx, {
+            operatorId: opId,
+            action: AuditAction.DUES_CASH_EXPENSE_COMPENSATED,
+            entityType: 'gasto_compensation',
+            entityId: compensation.id,
+            oldValue: null,
+            newValue: {
+              originalGastoId: compensation.originalGastoId,
+              compensatingGastoId: compensation.compensatingGastoId,
+              reason: compensation.reason,
+            },
+            sourceIp: request.ip ?? null,
+            callerKey,
+            metadata: {
+              actorId: opId,
+              role: request.operator?.role,
+              permissions: Object.entries(request.operator?.permissions ?? {})
+                .filter(([, granted]) => granted)
+                .map(([name]) => name),
+              authorizationEvidence: {
+                role: request.operator?.role,
+                permissions: Object.entries(request.operator?.permissions ?? {})
+                  .filter(([, granted]) => granted)
+                  .map(([name]) => name),
+              },
+              callerKey,
+              requestFingerprint: fingerprint,
+              time: new Date().toISOString(),
+              originalGastoId: compensation.originalGastoId,
+              compensatingGastoId: compensation.compensatingGastoId,
+              reason: compensation.reason,
+            },
+          })
+        }
+        const dto = toGastoDTO(created)
+        await saveMutationReceipt(tx, opId, callerKey, fingerprint, dto)
+        return { replay: false, result: dto }
       })
-      await emitAudit(container.db, {
-        operatorId: opId,
-        action: 'GASTO_CREATE',
-        entityType: 'gasto',
-        entityId: created.id,
-        oldValue: null,
-        newValue: { ...body },
-        sourceIp: request.ip ?? null,
-        payload: undefined,
-      })
-      return reply.code(201).send(toGastoDTO(created))
+      return reply.code(result.replay ? 200 : 201).send(result.result)
     } catch (e: unknown) {
+      if ((e as { code?: string })?.code === '55000') {
+        throw BusinessError(ErrorCode.CONFLICT, 'Gasto is immutable after cash inclusion')
+      }
+      if ((e as { code?: string })?.code === '23505') {
+        const replay = await findMutationReceipt(container.db, opId, callerKey, fingerprint)
+        if (replay) return reply.code(200).send(replay)
+      }
       if ((e as { code?: string })?.code === '23505') {
         return reply.code(409).send({ error: 'GASTO_DUPLICATE' })
       }
@@ -241,6 +350,8 @@ export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) =
       const { id } = throwIfInvalid(idParamSchema, request.params, 'params')
       const body = throwIfInvalid(updateGastoBodySchema, request.body ?? {}, 'body')
       const opId = operatorId(request)
+      const callerKey = mutationKey(request)
+      const fingerprint = mutationFingerprint(request.url, body)
       const update: Record<string, unknown> = {}
       if (body.tipo !== undefined) update['tipo'] = body.tipo
       if (body.tipo_cuenta !== undefined) update['tipoCuenta'] = body.tipo_cuenta
@@ -256,20 +367,37 @@ export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) =
       if (body.socio_id !== undefined) update['socioId'] = body.socio_id
       if (body.legacy_id !== undefined) update['legacyId'] = body.legacy_id
       try {
-        const updated = await updateGasto(container.db, id, update as never)
-        if (!updated) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
-        await emitAudit(container.db, {
-          operatorId: opId,
-          action: 'GASTO_UPDATE',
-          entityType: 'gasto',
-          entityId: id,
-          oldValue: null,
-          newValue: { ...body },
-          sourceIp: request.ip ?? null,
-          payload: undefined,
+        const result = await container.db.transaction(async (tx) => {
+          const replay = await findMutationReceipt(tx, opId, callerKey, fingerprint)
+          if (replay) return { replay: true, result: replay }
+          await assertGastoMutable(tx, id)
+          const updated = await updateGasto(tx, id, update as never)
+          if (!updated) return { missing: true as const }
+          await emitAudit(tx, {
+            operatorId: opId,
+            action: 'GASTO_UPDATE',
+            entityType: 'gasto',
+            entityId: id,
+            oldValue: null,
+            newValue: { ...body },
+            sourceIp: request.ip ?? null,
+            callerKey,
+            metadata: { requestFingerprint: fingerprint },
+          })
+          const dto = toGastoDTO(updated)
+          await saveMutationReceipt(tx, opId, callerKey, fingerprint, dto)
+          return { replay: false, result: dto }
         })
-        return reply.code(200).send(toGastoDTO(updated))
+        if ('missing' in result) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
+        return reply.code(result.replay ? 200 : 200).send(result.result)
       } catch (e: unknown) {
+        if ((e as { code?: string })?.code === '55000') {
+          throw BusinessError(ErrorCode.CONFLICT, 'Gasto is immutable after cash inclusion')
+        }
+        if ((e as { code?: string })?.code === '23505') {
+          const replay = await findMutationReceipt(container.db, opId, callerKey, fingerprint)
+          if (replay) return reply.code(200).send(replay)
+        }
         if ((e as { code?: string })?.code === '23505') {
           return reply.code(409).send({ error: 'GASTO_DUPLICATE' })
         }
@@ -285,19 +413,42 @@ export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) =
     async (request, reply) => {
       const { id } = throwIfInvalid(idParamSchema, request.params, 'params')
       const opId = operatorId(request)
-      const removed = await deleteGasto(container.db, id)
-      if (!removed) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
-      await emitAudit(container.db, {
-        operatorId: opId,
-        action: 'GASTO_DELETE',
-        entityType: 'gasto',
-        entityId: id,
-        oldValue: null,
-        newValue: { deleted: true },
-        sourceIp: request.ip ?? null,
-        payload: undefined,
-      })
-      return reply.code(200).send({ ok: true })
+      const callerKey = mutationKey(request)
+      const fingerprint = mutationFingerprint(request.url, {})
+      try {
+        const result = await container.db.transaction(async (tx) => {
+          const replay = await findMutationReceipt(tx, opId, callerKey, fingerprint)
+          if (replay) return replay
+          await assertGastoMutable(tx, id)
+          const removed = await deleteGasto(tx, id)
+          if (!removed) return null
+          await emitAudit(tx, {
+            operatorId: opId,
+            action: 'GASTO_DELETE',
+            entityType: 'gasto',
+            entityId: id,
+            oldValue: null,
+            newValue: { deleted: true },
+            sourceIp: request.ip ?? null,
+            callerKey,
+            metadata: { requestFingerprint: fingerprint },
+          })
+          const response = { ok: true as const }
+          await saveMutationReceipt(tx, opId, callerKey, fingerprint, response)
+          return response
+        })
+        if (!result) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
+        return reply.code(200).send(result)
+      } catch (e: unknown) {
+        if ((e as { code?: string })?.code === '55000') {
+          throw BusinessError(ErrorCode.CONFLICT, 'Gasto is immutable after cash inclusion')
+        }
+        if ((e as { code?: string })?.code === '23505') {
+          const replay = await findMutationReceipt(container.db, opId, callerKey, fingerprint)
+          if (replay) return reply.code(200).send(replay)
+        }
+        throw e
+      }
     },
   )
 
@@ -309,19 +460,42 @@ export const gastosAdminRoutes: FastifyPluginCallback = (fastify, _opts, done) =
       const { id } = throwIfInvalid(idParamSchema, request.params, 'params')
       const body = throwIfInvalid(anularBodySchema, request.body ?? {}, 'body')
       const opId = operatorId(request)
-      const anulado = await anularGasto(container.db, id, body.motivo)
-      if (!anulado) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
-      await emitAudit(container.db, {
-        operatorId: opId,
-        action: 'GASTO_ANULAR',
-        entityType: 'gasto',
-        entityId: id,
-        oldValue: null,
-        newValue: { motivo: body.motivo },
-        sourceIp: request.ip ?? null,
-        payload: undefined,
-      })
-      return reply.code(200).send(toGastoDTO(anulado))
+      const callerKey = mutationKey(request)
+      const fingerprint = mutationFingerprint(request.url, body)
+      try {
+        const result = await container.db.transaction(async (tx) => {
+          const replay = await findMutationReceipt(tx, opId, callerKey, fingerprint)
+          if (replay) return replay
+          await assertGastoMutable(tx, id)
+          const anulado = await anularGasto(tx, id, body.motivo)
+          if (!anulado) return null
+          await emitAudit(tx, {
+            operatorId: opId,
+            action: 'GASTO_ANULAR',
+            entityType: 'gasto',
+            entityId: id,
+            oldValue: null,
+            newValue: { motivo: body.motivo },
+            sourceIp: request.ip ?? null,
+            callerKey,
+            metadata: { requestFingerprint: fingerprint },
+          })
+          const response = toGastoDTO(anulado)
+          await saveMutationReceipt(tx, opId, callerKey, fingerprint, response)
+          return response
+        })
+        if (!result) return reply.code(404).send({ error: 'GASTO_NOT_FOUND' })
+        return reply.code(200).send(result)
+      } catch (e: unknown) {
+        if ((e as { code?: string })?.code === '55000') {
+          throw BusinessError(ErrorCode.CONFLICT, 'Gasto is immutable after cash inclusion')
+        }
+        if ((e as { code?: string })?.code === '23505') {
+          const replay = await findMutationReceipt(container.db, opId, callerKey, fingerprint)
+          if (replay) return reply.code(200).send(replay)
+        }
+        throw e
+      }
     },
   )
 
