@@ -316,6 +316,13 @@
       "when": 1786900003000,
       "tag": "0052_dues_settlements",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786900004000,
+      "tag": "0053_dues_agreements_community_work",
+      "breakpoints": true
     }
   ]
 }

@@ -353,4 +353,54 @@ describe('GET /api/v1/audit', () => {
     expect(JSON.stringify(items[6])).not.toContain('rawEvidence')
     expect(res.body).not.toContain('socio-secret')
   })
+
+  it('redacts agreement and community-work audit values while retaining safe evidence', async () => {
+    const app = await buildApp()
+    const actorId = '00000000-0000-0000-0000-000000000001'
+    const metadata = {
+      actorId,
+      role: 'ADMIN',
+      permissions: ['dues:agreements'],
+      authorizationEvidence: { role: 'ADMIN', permissions: ['dues:agreements'] },
+      callerKey: 'agreement-1',
+      requestFingerprint: 'f'.repeat(64),
+      time: '2026-08-18T00:00:00.000Z',
+      reason: 'Approved plan',
+      privateEvidence: 'must-not-leak',
+    }
+    vi.mocked(queryAudit).mockResolvedValueOnce(
+      auditPage([
+        auditItem(
+          'DUES_AGREEMENT_CREATED',
+          metadata,
+          { terms: { amountCents: 1000 } },
+          { terms: { amountCents: 1000 } },
+        ),
+        auditItem(
+          'DUES_AGREEMENT_REVISED',
+          metadata,
+          { obligationId: 'obligation-1' },
+          { obligationId: 'obligation-1' },
+        ),
+        auditItem(
+          'DUES_COMMUNITY_WORK_CREATED',
+          metadata,
+          { evidence: { private: 'secret' } },
+          { evidence: { private: 'secret' } },
+        ),
+      ]),
+    )
+
+    const response = await auditGet(app)
+    expect(response.statusCode).toBe(200)
+    const items = JSON.parse(response.body).items
+    expect(items).toHaveLength(3)
+    for (const item of items) {
+      expect(item).toMatchObject({ oldValue: null, newValue: null, dues_reason: 'Approved plan' })
+      expect(item.dues_evidence).toMatchObject({ actor: { id: actorId, role: 'ADMIN' } })
+      expect(item).not.toHaveProperty('metadata')
+    }
+    expect(response.body).not.toContain('must-not-leak')
+    expect(response.body).not.toContain('secret')
+  })
 })

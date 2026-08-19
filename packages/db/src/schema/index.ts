@@ -160,6 +160,7 @@ export * from './dues'
 export * from './dues-benefits'
 export * from './dues-family-groups'
 export * from './dues-settlements'
+export * from './dues-agreements'
 
 // deportes ─────────────────────────────────────────────────────
 export { deportesSchema, disciplinas, ejercicios, inscripciones } from './deportes'
