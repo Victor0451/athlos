@@ -323,6 +323,34 @@
       "when": 1786900004000,
       "tag": "0053_dues_agreements_community_work",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786900005000,
+      "tag": "0054_dues_cash_closes",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786900006000,
+      "tag": "0055_cash_policy_atomicity",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786900007000,
+      "tag": "0056_cash_recovery_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1786900008000,
+      "tag": "0057_cash_lifecycle_boundaries",
+      "breakpoints": true
     }
   ]
 }

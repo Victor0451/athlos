@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { X } from 'lucide-react'
 import { useAuth } from '@/lib/use-auth'
 import { visibleNavigation } from '@/lib/navigation'
+import { useFeatureConfig } from '@/lib/features'
 
 interface MobileDrawerProps {
   open: boolean
@@ -16,8 +17,9 @@ interface MobileDrawerProps {
 export default function MobileDrawer({ open, onClose, triggerRef }: MobileDrawerProps) {
   const { user } = useAuth()
   const pathname = usePathname()
+  const { cashEnabled } = useFeatureConfig()
   const closeRef = useRef<HTMLButtonElement>(null)
-  const links = visibleNavigation(user)
+  const links = visibleNavigation(user, { cashEnabled })
 
   useEffect(() => {
     if (!open) return

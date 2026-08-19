@@ -42,6 +42,7 @@ function makeTestContainer(db: Db) {
       AUDIT_RETENTION_DAYS: 90,
       DUES_ASSESSMENT_ENABLED: false,
       DUES_AGREEMENTS_ENABLED: false,
+      DUES_CASH_ENABLED: false,
       STORAGE_LOCAL_ROOT: '/app/storage',
       STORAGE_MAX_FILE_SIZE_BYTES: 10 * 1024 * 1024,
     },

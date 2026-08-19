@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/use-auth'
 import Sidebar from './layout/Sidebar'
 import Topbar from './layout/Topbar'
 import MobileDrawer from './layout/MobileDrawer'
+import { FeatureConfigProvider } from '@/lib/features'
 
 /**
  * AppShell — wraps every page rendered under the `(authed)` route
@@ -30,7 +31,13 @@ import MobileDrawer from './layout/MobileDrawer'
  * fallback path for tab-restore scenarios.
  */
 
-export default function AppShell({ children }: { children: ReactNode }) {
+export default function AppShell({
+  children,
+  cashEnabled = true,
+}: {
+  children: ReactNode
+  cashEnabled?: boolean
+}) {
   const { isAuthenticated, refresh } = useAuth()
   const router = useRouter()
   const [hydrated, setHydrated] = useState(false)
@@ -73,23 +80,25 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen bg-surface-page">
-      <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden" data-mobile-drawer-background="true">
-        <Topbar
-          drawerOpen={drawerOpen}
-          drawerTriggerRef={drawerTriggerRef}
-          onDrawerOpen={setDrawerOpen}
+    <FeatureConfigProvider cashEnabled={cashEnabled}>
+      <div className="flex h-screen bg-surface-page">
+        <Sidebar />
+        <main className="flex-1 flex flex-col overflow-hidden" data-mobile-drawer-background="true">
+          <Topbar
+            drawerOpen={drawerOpen}
+            drawerTriggerRef={drawerTriggerRef}
+            onDrawerOpen={setDrawerOpen}
+          />
+          <div className="flex-1 overflow-auto p-6" data-testid="appshell-content">
+            {children}
+          </div>
+        </main>
+        <MobileDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          triggerRef={drawerTriggerRef}
         />
-        <div className="flex-1 overflow-auto p-6" data-testid="appshell-content">
-          {children}
-        </div>
-      </main>
-      <MobileDrawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        triggerRef={drawerTriggerRef}
-      />
-    </div>
+      </div>
+    </FeatureConfigProvider>
   )
 }
