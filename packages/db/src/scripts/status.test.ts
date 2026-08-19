@@ -226,6 +226,7 @@ describe('migrate:status', () => {
         '0050_dues_benefit_rules',
         '0051_dues_family_groups',
         '0052_dues_settlements',
+        '0053_dues_agreements_community_work',
       ],
       divergence: [],
       exitCode: 1,

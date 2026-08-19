@@ -6,6 +6,8 @@ import { AuditAction } from '@athlos/audit'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { insertObligation, claimReceipt, type ObligationInput } from './repository.ts'
 import { SettlementService } from './settlements.ts'
+import { AgreementService } from './agreements.ts'
+import { CommunityWorkService } from './community-work.ts'
 import type { AuditContext } from './service.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
@@ -67,6 +69,16 @@ const obligation = async (
   }
   return (await insertObligation(db.db, input)).obligation.id
 }
+const terms = (amountCents: number, installments = 3, firstDate = '2099-01-01') => ({
+  amountCents,
+  installments: Array.from({ length: installments }, (_, index) => ({
+    amountCents:
+      index === installments - 1
+        ? amountCents - Math.floor(amountCents / installments) * index
+        : Math.floor(amountCents / installments),
+    dueDate: `${firstDate.slice(0, 8)}${String(Number(firstDate.slice(-2)) + index).padStart(2, '0')}`,
+  })),
+})
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
@@ -79,11 +91,15 @@ beforeAll(async () => {
     `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A') ON CONFLICT DO NOTHING`,
     [operatorId, `settlement-${operatorId}`],
   )
+  await db.pool.query(
+    'DROP TABLE IF EXISTS tesoreria.dues_community_work, tesoreria.dues_agreements CASCADE',
+  )
   const files = [
     '0049_dues_pricing_obligations.sql',
     '0050_dues_benefit_rules.sql',
     '0051_dues_family_groups.sql',
     '0052_dues_settlements.sql',
+    '0053_dues_agreements_community_work.sql',
   ]
   await db.pool.query(
     (
@@ -180,6 +196,235 @@ it('maps concurrent different-key duplicate reversals to one success and one con
       )
     ).rows[0].count,
   ).toBe(2)
+})
+
+// prettier-ignore
+it('keeps original agreement debt terms immutable and records work outside cash income', async () => {
+  const socioId = await member(), target = await obligation(socioId, 6_000, period(2500, 8)), beforeCash = (await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count
+  const originalTerms = terms(6_000), revisionTerms = terms(6_000, 4), agreements = new AgreementService(db.db), createContext = context(`agreement-create-${randomUUID()}`), original = await agreements.create({ ...createContext, socioId, obligationId: target, kind: 'INSTALLMENT', terms: originalTerms, reason: 'Approved plan' }), replay = await agreements.create({ ...createContext, socioId, obligationId: target, kind: 'INSTALLMENT', terms: originalTerms, reason: 'Approved plan' })
+  expect(replay.id).toBe(original.id)
+  await expect(agreements.create({ ...createContext, requestFingerprint: 'b'.repeat(64), socioId, obligationId: target, kind: 'INSTALLMENT', terms: originalTerms, reason: 'Approved plan' })).rejects.toMatchObject({ code: 'CONFLICT' })
+  const revisionContext = context(`agreement-revise-${randomUUID()}`), revision = await agreements.reschedule({ ...revisionContext, agreementId: original.id, terms: revisionTerms, reason: 'Approved reschedule' })
+  expect(revision.revisionOfAgreementId).toBe(original.id)
+  expect(revision.obligationId).toBe(target)
+  expect((await db.pool.query('SELECT terms,status,obligation_id,revision_number FROM tesoreria.dues_agreements WHERE id=$1', [original.id])).rows[0]).toMatchObject({ terms: originalTerms, status: 'SUPERSEDED', obligation_id: target, revision_number: 1 })
+  expect(revision).toMatchObject({ revisionNumber: 2 })
+  await expect(agreements.reschedule({ ...revisionContext, requestFingerprint: 'c'.repeat(64), agreementId: original.id, terms: revisionTerms, reason: 'Approved reschedule' })).rejects.toMatchObject({ code: 'CONFLICT' })
+  await expect(db.pool.query('UPDATE tesoreria.dues_agreements SET terms=$1 WHERE id=$2', [{ installments: 99 }, original.id])).rejects.toMatchObject({ code: '55000' })
+  await expect(db.pool.query('UPDATE tesoreria.dues_agreements SET status=$1 WHERE id=$2', ['SUPERSEDED', revision.id])).rejects.toMatchObject({ code: '23514' })
+  const work = await new CommunityWorkService(db.db).create({ ...context(`work-${randomUUID()}`), socioId, obligationId: target, amountCents: 6_000, evidence: { approvalId: 'fixture' }, reason: 'Approved work' })
+  expect(work.amountCents).toBe(6_000)
+  await expect(new SettlementService(db.db).debt({ role: 'TESORERO', socioId })).resolves.toMatchObject({ totalCents: 0, obligations: [] })
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count).toBe(beforeCash)
+})
+
+it('validates agreement ownership, outstanding debt, and preserves obligation history', async () => {
+  const socioId = await member()
+  const otherSocioId = await member()
+  const target = await obligation(socioId, 10_000, period(2500, 9))
+  const otherTarget = await obligation(otherSocioId, 10_000, period(2500, 10))
+  const service = new AgreementService(db.db)
+  await expect(
+    service.create({
+      ...context(`agreement-owner-${randomUUID()}`),
+      socioId,
+      obligationId: otherTarget,
+      kind: 'INSTALLMENT',
+      terms: terms(1_000, 1),
+      reason: 'Wrong owner',
+    }),
+  ).rejects.toMatchObject({ code: 'CONFLICT' })
+  await expect(
+    service.create({
+      ...context(`agreement-balance-${randomUUID()}`),
+      socioId,
+      obligationId: target,
+      kind: 'INSTALLMENT',
+      terms: terms(10_001, 1),
+      reason: 'Too large',
+    }),
+  ).rejects.toMatchObject({ code: 'CONFLICT' })
+  const agreement = await service.create({
+    ...context(`agreement-valid-${randomUUID()}`),
+    socioId,
+    obligationId: target,
+    kind: 'INSTALLMENT',
+    terms: terms(10_000, 2),
+    reason: 'Approved plan',
+  })
+  const beforeAllocations = (
+    await db.pool.query(
+      'SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1',
+      [target],
+    )
+  ).rows[0].count
+  const revision = await service.reschedule({
+    ...context(`agreement-revision-${randomUUID()}`),
+    agreementId: agreement.id,
+    terms: terms(10_000, 2),
+    reason: 'Approved revision',
+  })
+  expect(revision.obligationId).toBe(target)
+  expect(
+    (
+      await db.pool.query(
+        'SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1',
+        [target],
+      )
+    ).rows[0].count,
+  ).toBe(beforeAllocations)
+  expect(
+    (
+      await db.pool.query(
+        'SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE id=$1',
+        [target],
+      )
+    ).rows[0].count,
+  ).toBe(1)
+})
+
+it('serializes concurrent rescheduling and deterministically rejects the loser', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 12_000, period(2500, 11))
+  const service = new AgreementService(db.db)
+  const original = await service.create({
+    ...context(`agreement-race-create-${randomUUID()}`),
+    socioId,
+    obligationId: target,
+    kind: 'INSTALLMENT',
+    terms: terms(12_000, 3),
+    reason: 'Approved plan',
+  })
+  const outcomes = await Promise.allSettled([
+    service.reschedule({
+      ...context(`agreement-race-a-${randomUUID()}`),
+      agreementId: original.id,
+      terms: terms(12_000, 3),
+      reason: 'First revision',
+    }),
+    service.reschedule({
+      ...context(`agreement-race-b-${randomUUID()}`),
+      agreementId: original.id,
+      terms: terms(12_000, 3),
+      reason: 'Second revision',
+    }),
+  ])
+  expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+  expect(outcomes.filter((outcome) => outcome.status === 'rejected')[0]).toMatchObject({
+    reason: { code: 'CONFLICT', statusCode: 409 },
+  })
+  expect(
+    (
+      await db.pool.query(
+        'SELECT status,count(*)::int AS count FROM tesoreria.dues_agreements WHERE obligation_id=$1 GROUP BY status ORDER BY status',
+        [target],
+      )
+    ).rows,
+  ).toEqual(
+    expect.arrayContaining([
+      { status: 'ACTIVE', count: 1 },
+      { status: 'SUPERSEDED', count: 1 },
+    ]),
+  )
+})
+
+it('serializes create and reschedule on one obligation without deadlocks', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 12_000, period(2500, 12))
+  const service = new AgreementService(db.db)
+  const original = await service.create({
+    ...context(`agreement-create-reschedule-${randomUUID()}`),
+    socioId,
+    obligationId: target,
+    kind: 'INSTALLMENT',
+    terms: terms(12_000, 3),
+    reason: 'Approved plan',
+  })
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: 12 }, (_, index) =>
+      index === 0
+        ? service.reschedule({
+            ...context(`agreement-create-reschedule-revision-${randomUUID()}`),
+            agreementId: original.id,
+            terms: terms(12_000, 3),
+            reason: 'Approved revision',
+          })
+        : service.create({
+            ...context(`agreement-create-reschedule-create-${randomUUID()}`),
+            socioId,
+            obligationId: target,
+            kind: 'INSTALLMENT',
+            terms: terms(1_000, 1),
+            reason: 'Competing plan',
+          }),
+    ),
+  )
+  expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+  const rejected = outcomes.filter((outcome) => outcome.status === 'rejected')
+  expect(rejected).toHaveLength(11)
+  expect(
+    rejected.every(
+      ({ reason }) =>
+        reason?.code === 'CONFLICT' && reason?.message !== 'Agreement changed concurrently',
+    ),
+  ).toBe(true)
+  expect(
+    (
+      await db.pool.query(
+        'SELECT count(*)::int AS count FROM tesoreria.dues_agreements WHERE obligation_id=$1 AND status=$2',
+        [target, 'ACTIVE'],
+      )
+    ).rows[0].count,
+  ).toBe(1)
+})
+
+it('rejects a matching CANCELLED successor when deferred supersession is forced', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 12_000, period(2501, 1))
+  const original = await new AgreementService(db.db).create({
+    ...context(`agreement-cancelled-successor-parent-${randomUUID()}`),
+    socioId,
+    obligationId: target,
+    kind: 'INSTALLMENT',
+    terms: terms(12_000, 3),
+    reason: 'Approved plan',
+  })
+  const client = await db.pool.connect()
+  let failure: unknown
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `INSERT INTO tesoreria.dues_agreements
+        (id,socio_id,obligation_id,kind,status,revision_number,terms,reason,revision_of_agreement_id,revision_reason,operator_id,authorization_evidence,caller_key,request_fingerprint,agreement_date)
+       SELECT $1,socio_id,obligation_id,kind,'CANCELLED',revision_number + 1,terms,reason,id,'Cancelled successor fixture',$2,'{}'::jsonb,$3,$4,agreement_date
+       FROM tesoreria.dues_agreements
+       WHERE id=$5`,
+      [
+        randomUUID(),
+        operatorId,
+        `agreement-cancelled-successor-${randomUUID()}`,
+        'c'.repeat(64),
+        original.id,
+      ],
+    )
+    await client.query(`UPDATE tesoreria.dues_agreements SET status='SUPERSEDED' WHERE id=$1`, [
+      original.id,
+    ])
+    await client.query('SET CONSTRAINTS tesoreria.dues_agreements_supersession_atomic IMMEDIATE')
+    await client.query('COMMIT')
+  } catch (error) {
+    failure = error
+    await client.query('ROLLBACK')
+  } finally {
+    client.release()
+  }
+  expect(failure).toMatchObject({
+    code: '23514',
+    constraint: 'dues_agreements_supersession_check',
+  })
+  await expect(
+    db.pool.query('SELECT status FROM tesoreria.dues_agreements WHERE id=$1', [original.id]),
+  ).resolves.toMatchObject({ rows: [{ status: 'ACTIVE' }] })
 })
 
 it('persists redacted financial audit snapshots and reversal reasons', async () => {
