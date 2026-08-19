@@ -71,6 +71,9 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_SETTLEMENT_REVERSED',
   'DUES_ALLOCATION_CREATED',
   'DUES_ALLOCATION_COMPENSATED',
+  'DUES_AGREEMENT_CREATED',
+  'DUES_AGREEMENT_REVISED',
+  'DUES_COMMUNITY_WORK_CREATED',
 ])
 const DUES_FINANCIAL_ACTIONS = new Set([
   'DUES_SETTLEMENT_CREATED',
@@ -171,8 +174,9 @@ function duesEvidence(metadata: unknown) {
 function toAuditDTO(item: AuditItem) {
   const { metadata, ...dto } = item
   if (!DUES_AUDIT_ACTIONS.has(item.action)) return dto
+  // prettier-ignore
   const privacySensitive =
-    item.action.startsWith('DUES_BENEFIT_') || item.action.startsWith('DUES_FAMILY_')
+    item.action.startsWith('DUES_BENEFIT_') || item.action.startsWith('DUES_FAMILY_') || item.action.startsWith('DUES_AGREEMENT_') || item.action === 'DUES_COMMUNITY_WORK_CREATED'
   const reason = duesReason(metadata)
   return {
     ...dto,
