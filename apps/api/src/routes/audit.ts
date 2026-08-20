@@ -71,6 +71,7 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_SETTLEMENT_REVERSED',
   'DUES_ALLOCATION_CREATED',
   'DUES_ALLOCATION_COMPENSATED',
+  'DUES_CTACTE_PROJECTED',
   'DUES_AGREEMENT_CREATED',
   'DUES_AGREEMENT_REVISED',
   'DUES_COMMUNITY_WORK_CREATED',
@@ -79,6 +80,7 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_CASH_SHIFT_CLOSED',
   'DUES_CASH_EXPENSE_INCLUDED',
   'DUES_CASH_EXPENSE_COMPENSATED',
+  'DUES_CTACTE_PROJECTED',
 ])
 const DUES_FINANCIAL_ACTIONS = new Set([
   'DUES_SETTLEMENT_CREATED',
@@ -128,12 +130,18 @@ function financialSnapshot(value: unknown) {
     allocationId: 'allocation_id',
     compensatesAllocationId: 'compensates_allocation_id',
     obligationId: 'obligation_id',
+    nativeId: 'native_id',
+    ctacteId: 'ctacte_id',
   }
   for (const [source, target] of Object.entries(ids)) {
     const id = safeText(data[source], 128)
     if (id) result[target] = id
   }
   if (data.kind === 'MONETARY' || data.kind === 'NON_CASH') result.kind = data.kind
+  if (data.nativeType === 'OBLIGATION' || data.nativeType === 'SETTLEMENT')
+    result.native_type = data.nativeType
+  if (data.movementType === 'DEBITO' || data.movementType === 'CREDITO')
+    result.movement_type = data.movementType
   if (
     typeof data.amountCents === 'number' &&
     Number.isSafeInteger(data.amountCents) &&
