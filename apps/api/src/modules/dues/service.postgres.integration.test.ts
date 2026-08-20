@@ -9,6 +9,8 @@ import * as repository from './repository.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let db: ReturnType<typeof createDb>
+let admin: ReturnType<typeof createDb> | undefined
+let isolatedDatabaseName: string | undefined
 let operatorId: string
 const exerciseId = randomUUID()
 // prettier-ignore
@@ -50,7 +52,14 @@ async function price(p: { start: string; end: string }, kind: 'BASE' | 'SPORT', 
 // prettier-ignore
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
-  db = createDb({ connectionString: url, poolMax: 1 })
+  isolatedDatabaseName = `athlos_dues_service_${randomUUID().replaceAll('-', '')}`
+  const adminUrl = new URL(url)
+  adminUrl.pathname = '/postgres'
+  const isolatedUrl = new URL(url)
+  isolatedUrl.pathname = `/${isolatedDatabaseName}`
+  admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
+  await admin.pool.query(`CREATE DATABASE "${isolatedDatabaseName}"`)
+  db = createDb({ connectionString: isolatedUrl.toString(), poolMax: 8 })
   operatorId = randomUUID()
   await db.pool.query(`CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`)
   // prettier-ignore
@@ -62,10 +71,26 @@ beforeAll(async () => {
   await db.pool.query(`INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'A')`, [operatorId, `dues-service-${operatorId}`])
   await db.pool.query(`INSERT INTO deportes.ejercicios (id, anio, descripcion, fecha_inicio, fecha_fin) VALUES ($1, 2500, 'Fixture', DATE '2400-01-01', DATE '2900-01-01')`, [exerciseId])
 })
-afterAll(async () => db?.pool.end())
+afterAll(async () => {
+  await db?.pool.end()
+  if (!admin || !isolatedDatabaseName) return
+  try {
+    await admin.pool.query(`DROP DATABASE IF EXISTS "${isolatedDatabaseName}"`)
+  } finally {
+    await admin.pool.end()
+  }
+})
 
 // prettier-ignore
 describe('dues services', () => {
+  it('runs the assessment fixture in a disposable database', async () => {
+    const currentDatabase = (await db.pool.query<{ name: string }>('SELECT current_database() AS name'))
+      .rows[0]?.name
+    const configuredDatabase = new URL(url!).pathname.slice(1)
+
+    expect(currentDatabase).not.toBe(configuredDatabase)
+  })
+
   it('audits authorized price actions and maps active overlap conflicts', async () => {
     const p = period()
     const service = new PricingService(db.db)

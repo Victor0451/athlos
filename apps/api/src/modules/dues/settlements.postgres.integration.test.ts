@@ -8,10 +8,13 @@ import { insertObligation, claimReceipt, type ObligationInput } from './reposito
 import { SettlementService } from './settlements.ts'
 import { AgreementService } from './agreements.ts'
 import { CommunityWorkService } from './community-work.ts'
+import { CtacteProjectionService } from './ctacte-projection.ts'
 import type { AuditContext } from './service.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let db: ReturnType<typeof createDb>
+let admin: ReturnType<typeof createDb> | undefined
+let isolatedDatabaseName: string | undefined
 let operatorId: string
 const period = (year: number, month: number) => ({
   start: `${year}-${String(month).padStart(2, '0')}-01`,
@@ -82,7 +85,14 @@ const terms = (amountCents: number, installments = 3, firstDate = '2099-01-01') 
 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
-  db = createDb({ connectionString: url, poolMax: 8 })
+  isolatedDatabaseName = `athlos_dues_settlement_${randomUUID().replaceAll('-', '')}`
+  const adminUrl = new URL(url)
+  adminUrl.pathname = '/postgres'
+  const isolatedUrl = new URL(url)
+  isolatedUrl.pathname = `/${isolatedDatabaseName}`
+  admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
+  await admin.pool.query(`CREATE DATABASE "${isolatedDatabaseName}"`)
+  db = createDb({ connectionString: isolatedUrl.toString(), poolMax: 8 })
   operatorId = randomUUID()
   await db.pool.query(
     `CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY,username text UNIQUE NOT NULL,password_hash text NOT NULL,role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY,numero_socio text NOT NULL,nombre text NOT NULL,apellido text NOT NULL,dni text NOT NULL,fecha_alta date NOT NULL,estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY,codigo text UNIQUE NOT NULL,nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY,anio integer NOT NULL,descripcion text NOT NULL,fecha_inicio date NOT NULL,fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY,socio_id uuid NOT NULL REFERENCES socios.socios,disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas,ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios,estado text NOT NULL,fecha_alta date NOT NULL,fecha_baja date)`,
@@ -111,10 +121,27 @@ beforeAll(async () => {
     ).join('\n'),
   )
   await db.pool.query(
-    `CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),operator_id uuid,action text NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,old_value jsonb,new_value jsonb,source_ip text,metadata jsonb,idempotency_key text,created_at timestamptz NOT NULL DEFAULT now()); CREATE UNIQUE INDEX IF NOT EXISTS settlement_audit_key ON public.audit_events (idempotency_key) WHERE idempotency_key IS NOT NULL; CREATE TABLE IF NOT EXISTS tesoreria.caja_movimiento (id uuid PRIMARY KEY DEFAULT gen_random_uuid())`,
+    `CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),operator_id uuid,action text NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,old_value jsonb,new_value jsonb,source_ip text,metadata jsonb,idempotency_key text,created_at timestamptz NOT NULL DEFAULT now()); CREATE UNIQUE INDEX IF NOT EXISTS settlement_audit_key ON public.audit_events (idempotency_key) WHERE idempotency_key IS NOT NULL; CREATE TABLE IF NOT EXISTS tesoreria.caja_movimiento (id uuid PRIMARY KEY DEFAULT gen_random_uuid()); CREATE TABLE IF NOT EXISTS tesoreria.ctacte (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),socio_id uuid NOT NULL,fecha date NOT NULL,tipo text NOT NULL,concepto text NOT NULL,debe numeric(14,2) NOT NULL DEFAULT 0,haber numeric(14,2) NOT NULL DEFAULT 0,legacy_id text UNIQUE,idempotency_key text UNIQUE,idempotency_operator_id uuid); ALTER TABLE tesoreria.ctacte ADD COLUMN IF NOT EXISTS legacy_id text; CREATE UNIQUE INDEX IF NOT EXISTS projection_ctacte_legacy_id_unique ON tesoreria.ctacte (legacy_id) WHERE legacy_id IS NOT NULL`,
   )
 })
-afterAll(async () => db?.pool.end())
+afterAll(async () => {
+  await db?.pool.end()
+  if (!admin || !isolatedDatabaseName) return
+  try {
+    await admin.pool.query(`DROP DATABASE IF EXISTS "${isolatedDatabaseName}"`)
+  } finally {
+    await admin.pool.end()
+  }
+})
+
+it('runs the projection fixture in a disposable database', async () => {
+  const currentDatabase = (
+    await db.pool.query<{ name: string }>('SELECT current_database() AS name')
+  ).rows[0]?.name
+  const configuredDatabase = new URL(url!).pathname.slice(1)
+
+  expect(currentDatabase).not.toBe(configuredDatabase)
+})
 
 // prettier-ignore
 it('allocates only the explicitly selected obligation and reports aging',async()=>{const socioId=await member(),first=await obligation(socioId,10_000,period(2500,1)),second=await obligation(socioId,20_000,period(2500,2)),service=new SettlementService(db.db); await service.create({...context(),socioId,kind:'MONETARY',amountCents:5_000,currency:'ARS',evidence:{},allocations:[{obligationId:second,amountCents:5_000}]}); await expect(service.debt({role:'TESORERO',socioId})).resolves.toMatchObject({totalCents:25_000,obligations:[{id:first,outstandingCents:10_000},{id:second,outstandingCents:15_000}]})})
@@ -425,6 +452,56 @@ it('rejects a matching CANCELLED successor when deferred supersession is forced'
   await expect(
     db.pool.query('SELECT status FROM tesoreria.dues_agreements WHERE id=$1', [original.id]),
   ).resolves.toMatchObject({ rows: [{ status: 'ACTIVE' }] })
+})
+
+it('projects one native obligation under concurrent retries with legacy debit mapping', async () => {
+  const socioId = await member(),
+    target = await obligation(socioId, 12_500, period(2502, 1)),
+    service = new CtacteProjectionService(db.db),
+    requestFingerprint = randomUUID().replaceAll('-', '').padEnd(64, '0').slice(0, 64)
+  const outcomes = await Promise.all([
+    service.project({
+      ...context(`projection-a-${randomUUID()}`),
+      requestFingerprint,
+      sourceType: 'OBLIGATION',
+      sourceId: target,
+    }),
+    service.project({
+      ...context(`projection-b-${randomUUID()}`),
+      requestFingerprint,
+      sourceType: 'OBLIGATION',
+      sourceId: target,
+    }),
+  ])
+  expect(outcomes.map(({ status }) => status).sort()).toEqual(['PROJECTED', 'REPLAYED'])
+  await expect(
+    db.pool.query(
+      'SELECT tipo,debe,haber,count(*)::int AS count FROM tesoreria.ctacte WHERE legacy_id=$1 GROUP BY tipo,debe,haber',
+      [`dues:ctacte:OBLIGATION:${target}`],
+    ),
+  ).resolves.toMatchObject({ rows: [{ tipo: 'DEBITO', debe: '125.00', haber: '0.00', count: 1 }] })
+})
+
+it('projects a positive monetary settlement as a legacy CREDITO', async () => {
+  const socioId = await member(),
+    sourceId = randomUUID(),
+    requestFingerprint = randomUUID().replaceAll('-', '').padEnd(64, '0').slice(0, 64)
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,evidence,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',125.00,'ARS','{}',$3,'{}',$4,$5)`,
+    [sourceId, socioId, operatorId, `credit-${sourceId}`, requestFingerprint],
+  )
+  const result = await new CtacteProjectionService(db.db).project({
+    ...context(`project-credit-${sourceId}`),
+    requestFingerprint,
+    sourceType: 'SETTLEMENT',
+    sourceId,
+  })
+  expect(result).toMatchObject({ status: 'PROJECTED', movementType: 'CREDITO' })
+  await expect(
+    db.pool.query('SELECT tipo,debe,haber FROM tesoreria.ctacte WHERE legacy_id=$1', [
+      `dues:ctacte:SETTLEMENT:${sourceId}`,
+    ]),
+  ).resolves.toMatchObject({ rows: [{ tipo: 'CREDITO', debe: '0.00', haber: '125.00' }] })
 })
 
 it('persists redacted financial audit snapshots and reversal reasons', async () => {
