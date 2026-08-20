@@ -14,6 +14,29 @@ function makePool(createExtension: () => Promise<unknown>, extension = { rowCoun
 }
 
 describe('ensurePgcrypto', () => {
+  it('keeps the advisory lock lifecycle on one pool client', async () => {
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rowCount: 1 })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    }
+    const pool = {
+      query: vi.fn(),
+      connect: vi.fn().mockResolvedValue(client),
+    }
+
+    await expect(ensurePgcrypto(pool)).resolves.toBeUndefined()
+
+    expect(pool.connect).toHaveBeenCalledOnce()
+    expect(client.query).toHaveBeenCalledTimes(4)
+    expect(client.release).toHaveBeenCalledOnce()
+    expect(pool.query).not.toHaveBeenCalled()
+  })
+
   it('accepts a concurrent creation only after pgcrypto is present', async () => {
     const pool = makePool(() => Promise.reject({ code: '23505' }))
 
