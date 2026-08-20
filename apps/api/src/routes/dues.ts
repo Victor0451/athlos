@@ -12,6 +12,7 @@ import { SettlementService } from '../modules/dues/settlements.ts'
 import { MAX_MONEY_CENTS } from '../modules/dues/allocations.ts'
 import { AgreementService, type Agreement } from '../modules/dues/agreements.ts'
 import { CommunityWorkService } from '../modules/dues/community-work.ts'
+import { CtacteProjectionService } from '../modules/dues/ctacte-projection.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
@@ -140,6 +141,8 @@ const agreementBodySchema = z.object({ socio_id: z.string().uuid(), obligation_i
 const rescheduleBodySchema = z.object({ terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
 // prettier-ignore
 const communityWorkBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), amount_cents: z.number().int().positive().max(MAX_MONEY_CENTS), evidence: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0, 'evidence is required'), reason: z.string().trim().min(1).max(500) }).strict()
+// prettier-ignore
+const projectionBodySchema = z.object({ source_type: z.enum(['OBLIGATION', 'SETTLEMENT']), source_id: z.string().uuid() }).strict()
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
@@ -151,6 +154,7 @@ export interface DuesRouteOptions {
     Partial<Pick<SettlementService, 'reverse' | 'debt'>>
   agreementService?: Pick<AgreementService, 'create' | 'reschedule'>
   communityWorkService?: Pick<CommunityWorkService, 'create'>
+  ctacteProjectionService?: Pick<CtacteProjectionService, 'project'>
 }
 
 type PriceLike = {
@@ -249,7 +253,12 @@ function callerKey(request: FastifyRequest, required = false): string {
   return key ?? request.id
 }
 
-function context(request: FastifyRequest, key: string, payload: unknown): AuditContext {
+function context(
+  request: FastifyRequest,
+  key: string,
+  payload: unknown,
+  command = 'dues-assessment',
+): AuditContext {
   const operator = request.operator
   if (!operator) throw BusinessError(ErrorCode.TOKEN_INVALID, 'Authentication required')
   const permissions = Object.entries(operator.permissions)
@@ -261,7 +270,7 @@ function context(request: FastifyRequest, key: string, payload: unknown): AuditC
     permissions,
     sourceIp: request.ip ?? null,
     callerKey: key,
-    requestFingerprint: createIdempotencyFingerprint('dues-assessment', request.url, payload),
+    requestFingerprint: createIdempotencyFingerprint(command, request.url, payload),
     authorizationEvidence: { role: operator.role, permissions },
   }
 }
@@ -277,6 +286,8 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const agreementService = options.agreementService ?? new AgreementService(container.db)
   const communityWorkService =
     options.communityWorkService ?? new CommunityWorkService(container.db)
+  const ctacteProjectionService =
+    options.ctacteProjectionService ?? new CtacteProjectionService(container.db)
 
   // prettier-ignore
   fastify.post('/api/v1/dues/benefits', ADMIN_GATE, async (request, reply) => {
@@ -411,6 +422,9 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     // prettier-ignore
     fastify.post('/api/v1/dues/community-work', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(communityWorkBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await communityWorkService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, amountCents: body.amount_cents, evidence: body.evidence, reason: body.reason }); return reply.code(201).send({ id: result.id, settlement_id: result.settlementId, allocation_id: result.allocationId, obligation_id: result.obligationId, amount_cents: result.amountCents }) })
   }
+
+  // prettier-ignore
+  if (container.env.DUES_CTACTE_PROJECTION_ENABLED) { fastify.post('/api/v1/dues/ctacte/projections', FINANCE_GATE, async (request, reply) => { const body = throwIfInvalid(projectionBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await ctacteProjectionService.project({ ...context(request, key, body, 'dues-ctacte'), sourceType: body.source_type, sourceId: body.source_id }); return reply.code(200).send({ source_type: result.sourceType, source_id: result.sourceId, status: result.status, ctacte_id: result.ctacteId, missing: result.missing, divergent: result.divergent, retry_count: result.retryCount, ...(result.reason ? { reason: result.reason } : {}) }) }) }
 
   done()
 }

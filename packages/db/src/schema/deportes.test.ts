@@ -66,7 +66,9 @@ async function createPublicOperators(): Promise<void> {
     `SELECT to_regclass('public.operators') AS relation`,
   )
   if (relation.rows[0]?.relation) return
-  await pool.query(`CREATE TABLE public.operators (id uuid PRIMARY KEY)`)
+  await pool.query(
+    `CREATE TABLE public.operators (id uuid PRIMARY KEY, username text NOT NULL UNIQUE, password_hash text NOT NULL, role char(1) NOT NULL)`,
+  )
   createdPublicOperators = true
 }
 
@@ -223,7 +225,10 @@ describe('0036 padrones inscription lifecycle', () => {
     ).rejects.toMatchObject({ code: '23503' })
 
     const operatorId = randomUUID()
-    await pool.query(`INSERT INTO public.operators (id) VALUES ($1)`, [operatorId])
+    await pool.query(
+      `INSERT INTO public.operators (id, username, password_hash, role) VALUES ($1, $2, 'fixture', 'O')`,
+      [operatorId, `deportes-${operatorId}`],
+    )
     await expect(
       insertReceipt(operatorId, 'inscripcion-missing', randomUUID()),
     ).rejects.toMatchObject({ code: '23503' })
