@@ -1,0 +1,34 @@
+import { expect, it, vi } from 'vitest'
+import { ErrorCode } from '@athlos/errors'
+import { CtacteProjectionService, type ProjectionRepository } from './ctacte-projection.ts'
+import type { AuditContext } from './service.ts'
+
+// prettier-ignore
+const context: AuditContext = { actorId: '00000000-0000-4000-8000-000000000001', role: 'ADMIN', permissions: ['dues:ctacte'], sourceIp: '127.0.0.1', callerKey: 'projection-1', requestFingerprint: 'a'.repeat(64), authorizationEvidence: { role: 'ADMIN', permissions: ['dues:ctacte'] } }
+// prettier-ignore
+const native = { sourceType: 'OBLIGATION' as const, sourceId: '00000000-0000-4000-8000-000000000010', socioId: '00000000-0000-4000-8000-000000000011', amountCents: 12_500, currency: 'ARS', fecha: '2026-01-01', movementType: 'DEBITO' as const }
+// prettier-ignore
+const row = { id: 'ctacte-1', socioId: native.socioId, fecha: native.fecha, tipo: native.movementType, concepto: `Dues obligation ${native.sourceId}`, debe: '125.00', haber: '0.00', idempotencyKey: context.requestFingerprint }
+// prettier-ignore
+const db = () => ({ transaction: vi.fn(async (work: (tx: unknown) => unknown) => work({})) }) as never
+
+// prettier-ignore
+it('maps native identity deterministically and projects one legacy row across retries',async()=>{const audit=vi.fn().mockResolvedValue({inserted:true,id:'audit-1'}),repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue(native),findProjection:vi.fn().mockResolvedValueOnce(null).mockResolvedValue(row),insertProjection:vi.fn().mockResolvedValue({created:true,row})},service=new CtacteProjectionService(db(),{repository,audit}),input={...context,...native},first=await service.project(input),replay=await service.project(input); expect(first).toMatchObject({status:'PROJECTED',ctacteId:'ctacte-1',missing:false}); expect(replay).toMatchObject({status:'REPLAYED',ctacteId:'ctacte-1',divergent:false}); expect(repository.insertProjection).toHaveBeenCalledTimes(1); expect(audit).toHaveBeenCalledTimes(1); expect(audit).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({action:'DUES_CTACTE_PROJECTED'})); expect(JSON.stringify(audit.mock.calls[0])).not.toContain('socioId')})
+
+// prettier-ignore
+it('rejects unauthorized projection, reports deterministic conflicts, and bounds retry to one attempt',async()=>{const repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue(native),findProjection:vi.fn().mockResolvedValue({...row,id:'ctacte-other',debe:'1.00'}),insertProjection:vi.fn()},service=new CtacteProjectionService(db(),{repository}); await expect(service.project({...context,...native,role:'OPERADOR'})).rejects.toMatchObject({code:ErrorCode.INSUFFICIENT_PERMISSIONS}); await expect(service.project({...context,...native,callerKey:'projection-2'})).resolves.toMatchObject({status:'DIVERGENT',divergent:true,missing:false}); const retry=vi.fn().mockRejectedValueOnce({code:'40001'}).mockResolvedValue({created:true,row:{...row,id:'ctacte-retry'}}),retryRepository:ProjectionRepository={findNative:vi.fn().mockResolvedValue(native),findProjection:vi.fn().mockResolvedValue(null),insertProjection:retry}; await expect(new CtacteProjectionService(db(),{repository:retryRepository,audit:vi.fn().mockResolvedValue({inserted:true,id:'audit-retry'})}).project({...context,...native,callerKey:'projection-retry'})).resolves.toMatchObject({status:'PROJECTED',retryCount:1}); expect(retry).toHaveBeenCalledTimes(2)})
+
+// prettier-ignore
+it('makes unsupported legacy currency visible without creating a side effect',async()=>{const repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue({...native,currency:'USD'}),findProjection:vi.fn(),insertProjection:vi.fn()}; await expect(new CtacteProjectionService(db(),{repository}).project({...context,...native,callerKey:'projection-usd'})).resolves.toMatchObject({status:'SKIPPED',missing:true,divergent:false}); expect(repository.findProjection).not.toHaveBeenCalled(); expect(repository.insertProjection).not.toHaveBeenCalled()})
+
+// prettier-ignore
+it('maps a reversed settlement to a compensating legacy debit without changing ownership',async()=>{const insert=vi.fn().mockResolvedValue({created:true,row:{id:'ctacte-reversal',socioId:native.socioId,fecha:native.fecha,tipo:'DEBITO',concepto:'Dues settlement settlement-1',debe:'125.00',haber:'0.00',idempotencyKey:context.requestFingerprint}}),repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue({...native,sourceType:'SETTLEMENT',sourceId:'settlement-1',movementType:'DEBITO'}),findProjection:vi.fn().mockResolvedValue(null),insertProjection:insert}; await new CtacteProjectionService(db(),{repository,audit:vi.fn().mockResolvedValue({inserted:true,id:'audit-1'})}).project({...context,sourceType:'SETTLEMENT',sourceId:'settlement-1'}); expect(insert).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({tipo:'DEBITO',socioId:native.socioId,monto:'125.00'}))})
+
+// prettier-ignore
+it('rejects a same-identity fingerprint conflict before write, retry, or success audit',async()=>{const transaction=vi.fn(async(work:(tx:unknown)=>unknown)=>work({})),insert=vi.fn(),audit=vi.fn(),repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue(native),findProjection:vi.fn().mockResolvedValue({...row,idempotencyKey:'b'.repeat(64)}),insertProjection:insert},service=new CtacteProjectionService({transaction} as never,{repository,audit}); await expect(service.project({...context,...native,requestFingerprint:'a'.repeat(64)})).rejects.toMatchObject({code:ErrorCode.CONFLICT,statusCode:409}); expect(transaction).toHaveBeenCalledTimes(1); expect(insert).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled()})
+
+// prettier-ignore
+it('maps a positive settlement to a legacy CREDITO with no debit amount',async()=>{const insert=vi.fn().mockResolvedValue({created:true,row:{...row,id:'ctacte-credit',tipo:'CREDITO',concepto:'Dues settlement payment-1',debe:'0.00',haber:'125.00'}}),repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue({...native,sourceType:'SETTLEMENT',sourceId:'payment-1',movementType:'CREDITO'}),findProjection:vi.fn().mockResolvedValue(null),insertProjection:insert}; await new CtacteProjectionService(db(),{repository,audit:vi.fn().mockResolvedValue({inserted:true,id:'audit-credit'})}).project({...context,sourceType:'SETTLEMENT',sourceId:'payment-1'}); expect(insert).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({tipo:'CREDITO',monto:'125.00'}))})
+
+// prettier-ignore
+it('exposes native source absence without attempting a legacy write',async()=>{const insert=vi.fn(),repository:ProjectionRepository={findNative:vi.fn().mockResolvedValue(null),findProjection:vi.fn(),insertProjection:insert}; await expect(new CtacteProjectionService(db(),{repository}).project({...context,...native,sourceId:'missing-native'})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND,statusCode:404}); expect(insert).not.toHaveBeenCalled()})

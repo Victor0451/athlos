@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/use-auth'
 import { visibleNavigation } from '@/lib/navigation'
+import { useFeatureConfig } from '@/lib/features'
 
 /**
  * Sidebar — the dark navigation rail on the left of every authed page.
@@ -19,7 +20,8 @@ import { visibleNavigation } from '@/lib/navigation'
 export default function Sidebar() {
   const { user } = useAuth()
   const pathname = usePathname()
-  const visible = visibleNavigation(user)
+  const { cashEnabled } = useFeatureConfig()
+  const visible = visibleNavigation(user, { cashEnabled })
   const primary = visible.filter((item) => !item.section)
   const operations = visible.filter((item) => item.section === 'Operations')
 

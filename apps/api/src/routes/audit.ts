@@ -57,6 +57,195 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
+const DUES_AUDIT_ACTIONS = new Set([
+  'DUES_PRICE_CREATED',
+  'DUES_PRICE_REVOKED',
+  'DUES_PERIOD_GENERATED',
+  'DUES_BENEFIT_CREATED',
+  'DUES_BENEFIT_REVOKED',
+  'DUES_BENEFIT_APPLIED',
+  'DUES_FAMILY_GROUP_CREATED',
+  'DUES_FAMILY_MEMBERSHIP_CREATED',
+  'DUES_FAMILY_MEMBERSHIP_REVOKED',
+  'DUES_SETTLEMENT_CREATED',
+  'DUES_SETTLEMENT_REVERSED',
+  'DUES_ALLOCATION_CREATED',
+  'DUES_ALLOCATION_COMPENSATED',
+  'DUES_CTACTE_PROJECTED',
+  'DUES_AGREEMENT_CREATED',
+  'DUES_AGREEMENT_REVISED',
+  'DUES_COMMUNITY_WORK_CREATED',
+  'DUES_CASH_SHIFT_OPENED',
+  'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SHIFT_CLOSED',
+  'DUES_CASH_EXPENSE_INCLUDED',
+  'DUES_CASH_EXPENSE_COMPENSATED',
+  'DUES_CTACTE_PROJECTED',
+])
+const DUES_FINANCIAL_ACTIONS = new Set([
+  'DUES_SETTLEMENT_CREATED',
+  'DUES_SETTLEMENT_REVERSED',
+  'DUES_ALLOCATION_CREATED',
+  'DUES_ALLOCATION_COMPENSATED',
+])
+type AuditItem = Awaited<ReturnType<typeof queryAudit>>['items'][number]
+type JsonObject = Record<string, unknown>
+const CASH_AUDIT_ACTIONS = new Set([
+  'DUES_CASH_SHIFT_OPENED',
+  'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SHIFT_CLOSED',
+  'DUES_CASH_EXPENSE_INCLUDED',
+  'DUES_CASH_EXPENSE_COMPENSATED',
+])
+
+function jsonObject(value: unknown): JsonObject | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as JsonObject)
+    : null
+}
+
+function safeRole(value: unknown): string | null {
+  return typeof value === 'string' && /^(ADMIN|TESORERO|OPERADOR|CONSULTA)$/.test(value)
+    ? value
+    : null
+}
+
+function safePermissions(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value.slice(0, 32)
+    : null
+}
+
+function safeText(value: unknown, maxLength: number): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength ? value : null
+}
+
+function financialSnapshot(value: unknown) {
+  const data = jsonObject(value)
+  if (!data) return null
+  const result: JsonObject = {}
+  const ids: Record<string, string> = {
+    settlementId: 'settlement_id',
+    reversalOfSettlementId: 'reversal_of_settlement_id',
+    allocationId: 'allocation_id',
+    compensatesAllocationId: 'compensates_allocation_id',
+    obligationId: 'obligation_id',
+    nativeId: 'native_id',
+    ctacteId: 'ctacte_id',
+  }
+  for (const [source, target] of Object.entries(ids)) {
+    const id = safeText(data[source], 128)
+    if (id) result[target] = id
+  }
+  if (data.kind === 'MONETARY' || data.kind === 'NON_CASH') result.kind = data.kind
+  if (data.nativeType === 'OBLIGATION' || data.nativeType === 'SETTLEMENT')
+    result.native_type = data.nativeType
+  if (data.movementType === 'DEBITO' || data.movementType === 'CREDITO')
+    result.movement_type = data.movementType
+  if (
+    typeof data.amountCents === 'number' &&
+    Number.isSafeInteger(data.amountCents) &&
+    data.amountCents > 0
+  )
+    result.amount_cents = data.amountCents
+  if (typeof data.currency === 'string' && /^[A-Z]{3}$/.test(data.currency))
+    result.currency = data.currency
+  return Object.keys(result).length > 0 ? result : null
+}
+
+function duesReason(metadata: unknown) {
+  return safeText(jsonObject(metadata)?.reason, 500)
+}
+
+function duesEvidence(metadata: unknown) {
+  const data = jsonObject(metadata)
+  const authorization = jsonObject(data?.authorizationEvidence)
+  const text = (key: string, maxLength = 128) => safeText(data?.[key], maxLength)
+  const actorId = text('actorId')
+  const role = safeRole(data?.role)
+  const permissions = safePermissions(data?.permissions)
+  const authorizationRole = safeRole(authorization?.role)
+  const authorizationPermissions = safePermissions(authorization?.permissions)
+  const callerKey = text('callerKey')
+  const requestFingerprint = text('requestFingerprint', 64)
+  const time = text('time', 64)
+  if (
+    !actorId ||
+    !role ||
+    !permissions ||
+    !authorizationRole ||
+    !authorizationPermissions ||
+    authorizationRole !== role ||
+    callerKey === null ||
+    !requestFingerprint ||
+    !/^[a-f0-9]{64}$/i.test(requestFingerprint) ||
+    !time ||
+    Number.isNaN(Date.parse(time))
+  )
+    return null
+  return {
+    actor: { id: actorId, role, permissions },
+    authorization_evidence: { role: authorizationRole, permissions: authorizationPermissions },
+    idempotency: { caller_key: callerKey, request_fingerprint: requestFingerprint },
+    time,
+  }
+}
+
+function cashEvidence(metadata: unknown) {
+  const data = jsonObject(metadata)
+  if (!data) return null
+  const result: JsonObject = {}
+  for (const key of ['shiftId', 'deskId', 'businessDate', 'sourceType', 'tender', 'direction']) {
+    const value = safeText(data[key], 128)
+    if (value) result[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)] = value
+  }
+  for (const [source, target] of [
+    ['originalGastoId', 'original_gasto_id'],
+    ['compensatingGastoId', 'compensating_gasto_id'],
+  ] as Array<[string, string]>) {
+    const value = data[source]
+    if (typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value)) result[target] = value
+  }
+  for (const key of ['expected', 'counted', 'discrepancy']) {
+    const value = jsonObject(data[key])
+    if (!value) continue
+    const safe = Object.fromEntries(
+      Object.entries(value).flatMap(([tender, amount]) =>
+        typeof amount === 'number' &&
+        Number.isSafeInteger(amount) &&
+        Math.abs(amount) <= Number.MAX_SAFE_INTEGER
+          ? [[tender, amount]]
+          : [],
+      ),
+    )
+    result[key] = safe
+  }
+  const reason = safeText(data.reason, 500)
+  if (reason) result.reason = reason
+  if (data.forceClose === true) result.force_close = true
+  return Object.keys(result).length > 0 ? result : null
+}
+
+function toAuditDTO(item: AuditItem) {
+  const { metadata, ...dto } = item
+  if (!DUES_AUDIT_ACTIONS.has(item.action)) return dto
+  // prettier-ignore
+  const privacySensitive =
+    item.action.startsWith('DUES_BENEFIT_') || item.action.startsWith('DUES_FAMILY_') || item.action.startsWith('DUES_AGREEMENT_') || item.action === 'DUES_COMMUNITY_WORK_CREATED'
+  const reason = duesReason(metadata)
+  return {
+    ...dto,
+    ...(privacySensitive || CASH_AUDIT_ACTIONS.has(item.action)
+      ? { oldValue: null, newValue: null }
+      : DUES_FINANCIAL_ACTIONS.has(item.action)
+        ? { oldValue: financialSnapshot(item.oldValue), newValue: financialSnapshot(item.newValue) }
+        : {}),
+    dues_evidence: duesEvidence(metadata),
+    ...(CASH_AUDIT_ACTIONS.has(item.action) ? { cash_evidence: cashEvidence(metadata) } : {}),
+    ...(reason ? { dues_reason: reason } : {}),
+  }
+}
+
 export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container = fastify.container as AppContainer
 
@@ -77,7 +266,7 @@ export const auditRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     } as Parameters<typeof queryAudit>[1])
 
     return reply.code(200).send({
-      items: result.items,
+      items: result.items.map(toAuditDTO),
       total: result.total,
       page: result.page,
       limit: result.limit,

@@ -220,7 +220,18 @@ describe('migrate:status', () => {
       applied: migrations
         .filter((migration) => migration.createdAt.getTime() <= baseline!.createdAt.getTime())
         .map((migration) => migration.name),
-      pending: ['0048_socios_admin_route_relations_repair'],
+      pending: [
+        '0048_socios_admin_route_relations_repair',
+        '0049_dues_pricing_obligations',
+        '0050_dues_benefit_rules',
+        '0051_dues_family_groups',
+        '0052_dues_settlements',
+        '0053_dues_agreements_community_work',
+        '0054_dues_cash_closes',
+        '0055_cash_policy_atomicity',
+        '0056_cash_recovery_policy',
+        '0057_cash_lifecycle_boundaries',
+      ],
       divergence: [],
       exitCode: 1,
     })

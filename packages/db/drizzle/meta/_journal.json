@@ -201,85 +201,155 @@
     {
       "idx": 28,
       "version": "7",
+      "when": 1784725472000,
+      "tag": "0036_padrones_inscription_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
       "when": 1785111672000,
       "tag": "0037_socios_legacy_identity",
       "breakpoints": true
     },
     {
-      "idx": 29,
+      "idx": 30,
       "version": "7",
       "when": 1785167477000,
       "tag": "0038_socios_legacy_membership_evidence",
       "breakpoints": true
     },
     {
-      "idx": 30,
+      "idx": 31,
       "version": "7",
       "when": 1785189922165,
       "tag": "0039_socios_legacy_member_evidence",
       "breakpoints": true
     },
     {
-      "idx": 31,
+      "idx": 32,
       "version": "7",
       "when": 1785300000000,
       "tag": "0040_socios_closure_receipts",
       "breakpoints": true
     },
     {
-      "idx": 32,
+      "idx": 33,
       "version": "7",
       "when": 1785301000000,
       "tag": "0041_socios_evidence_closure_preview",
       "breakpoints": true
     },
     {
-      "idx": 33,
+      "idx": 34,
       "version": "7",
       "when": 1785330000000,
       "tag": "0042_socios_closure_confirmation_keys",
       "breakpoints": true
     },
     {
-      "idx": 34,
+      "idx": 35,
       "version": "7",
       "when": 1785400000000,
       "tag": "0043_socios_closure_phase_receipts",
       "breakpoints": true
     },
     {
-      "idx": 35,
+      "idx": 36,
       "version": "7",
       "when": 1785758400000,
       "tag": "0044_socios_member_evidence_resolutions",
       "breakpoints": true
     },
     {
-      "idx": 36,
+      "idx": 37,
       "version": "7",
       "when": 1785365364000,
       "tag": "0045_socios_member_evidence_resolution_applications",
       "breakpoints": true
     },
     {
-      "idx": 37,
+      "idx": 38,
       "version": "7",
       "when": 1785365801000,
       "tag": "0046_socios_resolution_application_reconciliation",
       "breakpoints": true
     },
     {
-      "idx": 38,
+      "idx": 39,
       "version": "7",
       "when": 1785366299000,
       "tag": "0047_socios_closure_resolution_fingerprint",
       "breakpoints": true
     },
     {
-      "idx": 39,
+      "idx": 40,
       "version": "7",
       "when": 1786320000000,
       "tag": "0048_socios_admin_route_relations_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0049_dues_pricing_obligations",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786900001000,
+      "tag": "0050_dues_benefit_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786900002000,
+      "tag": "0051_dues_family_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1786900003000,
+      "tag": "0052_dues_settlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786900004000,
+      "tag": "0053_dues_agreements_community_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1786900005000,
+      "tag": "0054_dues_cash_closes",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786900006000,
+      "tag": "0055_cash_policy_atomicity",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786900007000,
+      "tag": "0056_cash_recovery_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1786900008000,
+      "tag": "0057_cash_lifecycle_boundaries",
       "breakpoints": true
     }
   ]

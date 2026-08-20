@@ -285,6 +285,48 @@ describe('GET /api/v1/gastos/:id', () => {
 })
 
 describe('POST /api/v1/gastos', () => {
+  it('requires an explicit idempotency key', async () => {
+    const { app } = await bootstrap()
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/gastos',
+        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        payload: GASTO_BASE,
+      })
+      expect(res.statusCode).toBe(400)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('replays the original result and conflicts when the payload changes', async () => {
+    const { app, standin } = await bootstrap()
+    try {
+      const headers = {
+        authorization: `Bearer ${bearer('ADMIN')}`,
+        'idempotency-key': 'gasto-replay',
+      }
+      const first = await app.inject({
+        method: 'POST',
+        url: '/api/v1/gastos',
+        headers,
+        payload: GASTO_BASE,
+      })
+      const replay = await app.inject({
+        method: 'POST',
+        url: '/api/v1/gastos',
+        headers,
+        payload: { ...GASTO_BASE, concepto: 'changed' },
+      })
+      expect(first.statusCode).toBe(201)
+      expect(replay.statusCode).toBe(409)
+      expect(standin.state.gastos).toHaveLength(1)
+    } finally {
+      await app.close()
+    }
+  })
+
   it('returns 403 for a non-admin operator', async () => {
     const { app } = await bootstrap()
     try {
@@ -306,7 +348,7 @@ describe('POST /api/v1/gastos', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: { authorization: `Bearer ${bearer('ADMIN')}`, 'idempotency-key': 'create-1' },
         payload: GASTO_BASE,
       })
       expect(res.statusCode).toBe(201)
@@ -327,14 +369,20 @@ describe('POST /api/v1/gastos', () => {
       const first = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: {
+          authorization: `Bearer ${bearer('ADMIN')}`,
+          'idempotency-key': 'duplicate-first',
+        },
         payload: GASTO_BASE,
       })
       expect(first.statusCode).toBe(201)
       const second = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: {
+          authorization: `Bearer ${bearer('ADMIN')}`,
+          'idempotency-key': 'duplicate-second',
+        },
         payload: GASTO_BASE,
       })
       expect(second.statusCode).toBe(409)
@@ -352,7 +400,7 @@ describe('PATCH /api/v1/gastos/:id', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: { authorization: `Bearer ${bearer('ADMIN')}`, 'idempotency-key': 'update-create' },
         payload: GASTO_BASE,
       })
       expect(created.statusCode).toBe(201)
@@ -360,7 +408,10 @@ describe('PATCH /api/v1/gastos/:id', () => {
       const updated = await app.inject({
         method: 'PATCH',
         url: `/api/v1/gastos/${id}`,
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: {
+          authorization: `Bearer ${bearer('ADMIN')}`,
+          'idempotency-key': 'update-command',
+        },
         payload: { concepto: 'updated', importe: '6000.00' },
       })
       expect(updated.statusCode).toBe(200)
@@ -382,14 +433,17 @@ describe('DELETE /api/v1/gastos/:id', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: { authorization: `Bearer ${bearer('ADMIN')}`, 'idempotency-key': 'delete-create' },
         payload: GASTO_BASE,
       })
       const id = (created.json() as { id: string }).id
       const deleted = await app.inject({
         method: 'DELETE',
         url: `/api/v1/gastos/${id}`,
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: {
+          authorization: `Bearer ${bearer('ADMIN')}`,
+          'idempotency-key': 'delete-command',
+        },
       })
       expect(deleted.statusCode).toBe(200)
       expect(standin.state.gastos).toHaveLength(0)
@@ -408,14 +462,17 @@ describe('PATCH /api/v1/gastos/:id/anular', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/v1/gastos',
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: { authorization: `Bearer ${bearer('ADMIN')}`, 'idempotency-key': 'anular-create' },
         payload: GASTO_BASE,
       })
       const id = (created.json() as { id: string }).id
       const anulado = await app.inject({
         method: 'PATCH',
         url: `/api/v1/gastos/${id}/anular`,
-        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+        headers: {
+          authorization: `Bearer ${bearer('ADMIN')}`,
+          'idempotency-key': 'anular-command',
+        },
         payload: { motivo: 'test motivo' },
       })
       expect(anulado.statusCode).toBe(200)
