@@ -17,9 +17,9 @@ interface MobileDrawerProps {
 export default function MobileDrawer({ open, onClose, triggerRef }: MobileDrawerProps) {
   const { user } = useAuth()
   const pathname = usePathname()
-  const { cashEnabled } = useFeatureConfig()
+  const { cashEnabled, collectionsEnabled } = useFeatureConfig()
   const closeRef = useRef<HTMLButtonElement>(null)
-  const links = visibleNavigation(user, { cashEnabled })
+  const links = visibleNavigation(user, { cashEnabled, collectionsEnabled })
 
   useEffect(() => {
     if (!open) return
