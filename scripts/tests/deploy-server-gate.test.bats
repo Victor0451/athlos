@@ -163,7 +163,8 @@ teardown() {
   run "$gate" deploy-beta "$DIGEST" "$WEB_DIGEST" "$changed_hash" < "$changed_beta"
   [ "$status" -eq 0 ]
   [ "$(cat "$temp/deploy/docker-compose.beta.yml")" = "$(cat "$changed_beta")" ]
-  ! compgen -G "$temp/deploy/.docker-compose.beta.rollback.*" >/dev/null
+  run compgen -G "$temp/deploy/.docker-compose.beta.rollback.*"
+  [ "$status" -ne 0 ]
 }
 
 @test "identical beta artifact retry leaves the canonical file unchanged" {
