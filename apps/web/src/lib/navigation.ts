@@ -28,6 +28,13 @@ export const navigation: NavigationItem[] = [
   { href: '/ctacte', label: 'Cuenta corriente', icon: Wallet },
   { href: '/padrones', label: 'Padrones', icon: ClipboardList },
   {
+    href: '/collections',
+    label: 'Collections',
+    icon: Wallet,
+    section: 'Operations',
+    roles: ['ADMIN', 'TESORERO'],
+  },
+  {
     href: '/admin/scheduler',
     label: 'Tareas programadas',
     icon: CalendarClock,
@@ -72,12 +79,13 @@ export const navigation: NavigationItem[] = [
 
 export function visibleNavigation(
   user: CurrentUser | null,
-  features: { cashEnabled?: boolean } = {},
+  features: { cashEnabled?: boolean; collectionsEnabled?: boolean } = {},
 ) {
   return navigation.filter(
     (item) =>
       (!item.roles || (user && item.roles.includes(user.role))) &&
       (!item.permission || user?.role === 'ADMIN' || user?.permissions[item.permission] === true) &&
-      (item.href !== '/tesoreria' || features.cashEnabled !== false),
+      (item.href !== '/tesoreria' || features.cashEnabled !== false) &&
+      (item.href !== '/collections' || features.collectionsEnabled === true),
   )
 }

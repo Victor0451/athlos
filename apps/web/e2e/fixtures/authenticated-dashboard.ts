@@ -77,6 +77,10 @@ export const test = base.extend<{
 
 export { expect }
 
+export async function mockEmptyDuesPrices(page: Page) {
+  await page.route('**/api/v1/dues/prices?*', (route) => route.fulfill({ json: { items: [] } }))
+}
+
 export async function assertNoPageOverflow(page: Page) {
   const dimensions = await page.evaluate(() => ({
     documentWidth: document.documentElement.scrollWidth,
