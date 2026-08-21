@@ -223,3 +223,20 @@ EOF
   [[ "$output" == *"published: \"4100\""* ]]
   [[ "$output" == *"name: athlos_default"* ]]
 }
+
+@test "beta Compose keeps Web dues cash disabled by default and honors explicit enablement" {
+  cp "$ROOT/docker-compose.beta.yml" "$TMPDIR/docker-compose.beta.yml"
+  touch "$TMPDIR/.env.beta"
+
+  run env -u DUES_CASH_ENABLED ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
+    docker compose -p athlos-beta -f "$TMPDIR/docker-compose.beta.yml" config --format json
+  [ "$status" -eq 0 ]
+  run jq -e '.services.web.environment.DUES_CASH_ENABLED == "false"' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  run env DUES_CASH_ENABLED=true ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
+    docker compose -p athlos-beta -f "$TMPDIR/docker-compose.beta.yml" config --format json
+  [ "$status" -eq 0 ]
+  run jq -e '.services.web.environment.DUES_CASH_ENABLED == "true"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
