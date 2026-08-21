@@ -306,6 +306,11 @@ export class SettlementService {
 
   async debt(input: DebtCommand) {
     authorize(input.role)
-    return (this.repository.getDebt ?? allocations.getDebt)(this.db, input.socioId)
+    try {
+      return await (this.repository.getDebt ?? allocations.getDebt)(this.db, input.socioId)
+    } catch (error) {
+      if (error && typeof error === 'object' && 'statusCode' in error) throw error
+      throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Debt detail is unavailable')
+    }
   }
 }

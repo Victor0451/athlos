@@ -20,8 +20,8 @@ import { useFeatureConfig } from '@/lib/features'
 export default function Sidebar() {
   const { user } = useAuth()
   const pathname = usePathname()
-  const { cashEnabled } = useFeatureConfig()
-  const visible = visibleNavigation(user, { cashEnabled })
+  const { cashEnabled, collectionsEnabled } = useFeatureConfig()
+  const visible = visibleNavigation(user, { cashEnabled, collectionsEnabled })
   const primary = visible.filter((item) => !item.section)
   const operations = visible.filter((item) => item.section === 'Operations')
 
