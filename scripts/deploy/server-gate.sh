@@ -174,6 +174,11 @@ for _ in {1..24}; do
       "$pm2_bin" save >/dev/null 2>&1 || true
     fi
     legacy_web_stopped=0
+    if [[ -n "$rollback_candidate" ]]; then
+      rm -f -- "$rollback_candidate"
+      rollback_candidate=''
+    fi
+    installed=0
     trap - EXIT
     printf 'deploy ok api_image=%s web_image=%s\n' "$api_image" "$web_image"
     exit 0

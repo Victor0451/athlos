@@ -155,6 +155,17 @@ teardown() {
   [ "$(cat "$temp/deploy/docker-compose.beta.yml")" = "$before" ]
 }
 
+@test "successful changed beta deployment removes its rollback candidate" {
+  changed_beta="$temp/changed-beta.yml"
+  cp "$root/docker-compose.beta.yml" "$changed_beta"
+  printf '\n# changed-beta-config\n' >> "$changed_beta"
+  changed_hash="$(sha256sum "$changed_beta" | cut -d' ' -f1)"
+  run "$gate" deploy-beta "$DIGEST" "$WEB_DIGEST" "$changed_hash" < "$changed_beta"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$temp/deploy/docker-compose.beta.yml")" = "$(cat "$changed_beta")" ]
+  ! compgen -G "$temp/deploy/.docker-compose.beta.rollback.*" >/dev/null
+}
+
 @test "identical beta artifact retry leaves the canonical file unchanged" {
   before="$(sha256sum "$temp/deploy/docker-compose.beta.yml")"
   run "$gate" deploy-beta "$DIGEST" "$WEB_DIGEST" "$BETA_HASH" < "$root/docker-compose.beta.yml"
