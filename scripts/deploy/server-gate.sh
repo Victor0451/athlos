@@ -109,7 +109,7 @@ beta_config="$deploy_path/$BETA_CONFIG_NAME"
 rollback_candidate=''
 installed=0
 legacy_web_stopped=0
-# shellcheck disable=SC2329 # EXIT trap invokes this function indirectly.
+# shellcheck disable=SC2317,SC2329 # EXIT trap invokes this function indirectly.
 on_exit() {
   local status=$?
   if [[ "$status" -ne 0 && "$installed" == 1 && -n "$rollback_candidate" ]]; then
