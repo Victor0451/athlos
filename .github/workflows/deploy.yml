@@ -165,10 +165,24 @@ jobs:
           printf 'DEPLOY_SSH_KEY_FILE=%s\n' "$DEPLOY_SSH_KEY_FILE" >> "$GITHUB_ENV"
           printf 'DEPLOY_KNOWN_HOSTS_FILE=%s\n' "$DEPLOY_KNOWN_HOSTS_FILE" >> "$GITHUB_ENV"
 
-      - name: Run restricted read-only preflight
+      - name: Run restricted beta read-only preflight
+        if: ${{ inputs.environment == 'beta' }}
+        env:
+          ATHLOS_BETA_COMPOSE_FILE: ${{ github.workspace }}/docker-compose.beta.yml
+        run: ./scripts/deploy/request.sh ${{ inputs.preflight-operation }}
+
+      - name: Request beta deploy
+        if: ${{ inputs.environment == 'beta' }}
+        env:
+          ATHLOS_BETA_COMPOSE_FILE: ${{ github.workspace }}/docker-compose.beta.yml
+        run: ./scripts/deploy/request.sh ${{ inputs.deploy-operation }}
+
+      - name: Run restricted production read-only preflight
+        if: ${{ inputs.environment == 'production' }}
         run: ./scripts/deploy/request.sh ${{ inputs.preflight-operation }}
 
       - name: Request production deploy
+        if: ${{ inputs.environment == 'production' }}
         run: ./scripts/deploy/request.sh ${{ inputs.deploy-operation }}
 
       - name: Remove restricted SSH material
