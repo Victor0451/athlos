@@ -8,6 +8,10 @@ readonly DEPLOY_HOST_PIN='100.78.95.34'
 readonly DEPLOY_PORT_PIN='2244'
 readonly DEPLOY_USER_PIN='vlongo'
 readonly DEPLOY_PATH_PIN='/srv/apps/athlos'
+REPOSITORY_ROOT=''
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly REPOSITORY_ROOT
+readonly BETA_COMPOSE_PATH="$REPOSITORY_ROOT/docker-compose.beta.yml"
 
 die() {
   printf 'deploy request refused: %s\n' "$1" >&2
@@ -37,8 +41,15 @@ validate_ssh_prerequisites() {
   grep -Fq "[$DEPLOY_HOST_PIN]:$DEPLOY_PORT_PIN " "$DEPLOY_KNOWN_HOSTS_FILE" || die 'DEPLOY_KNOWN_HOSTS_FILE does not pin the deployment host'
 }
 
-request() {
-  local operation="$1"
+validate_beta_artifact() {
+  local artifact_path="${ATHLOS_BETA_COMPOSE_FILE:-$BETA_COMPOSE_PATH}"
+  [[ "$artifact_path" == "$BETA_COMPOSE_PATH" ]] || die 'beta Compose source must be the allowlisted repository path'
+  [[ -f "$artifact_path" && ! -L "$artifact_path" && -r "$artifact_path" ]] || die 'beta Compose source must be a readable regular file'
+  printf '%s\n' "$artifact_path"
+}
+
+ssh_request() {
+  local command="$1" input_file="${2:-/dev/null}"
   ssh \
     -o BatchMode=yes \
     -o StrictHostKeyChecking=yes \
@@ -48,7 +59,26 @@ request() {
     -i "$DEPLOY_SSH_KEY_FILE" \
     -p "$DEPLOY_PORT_PIN" \
     -T "$DEPLOY_USER_PIN@$DEPLOY_HOST_PIN" \
-    "$operation $ATHLOS_API_IMAGE $ATHLOS_WEB_IMAGE"
+    "$command" < "$input_file"
+}
+
+request() {
+  local operation="$1" artifact_path='' snapshot='' hash='' status
+  if [[ "$operation" == *-beta ]]; then
+    artifact_path="$(validate_beta_artifact)"
+    snapshot="$(mktemp "${TMPDIR:-/tmp}/athlos-beta-compose.XXXXXX")"
+    chmod 600 "$snapshot"
+    cp -- "$artifact_path" "$snapshot"
+    hash="$(sha256sum "$snapshot" | cut -d' ' -f1)"
+    if ssh_request "$operation $ATHLOS_API_IMAGE $ATHLOS_WEB_IMAGE $hash" "$snapshot"; then
+      status=0
+    else
+      status=$?
+    fi
+    rm -f -- "$snapshot"
+    return "$status"
+  fi
+  ssh_request "$operation $ATHLOS_API_IMAGE $ATHLOS_WEB_IMAGE"
 }
 
 dry_run=false
@@ -61,6 +91,9 @@ operation="${1:-}"
 [[ $# -eq 1 && ( "$operation" == preflight || "$operation" == deploy || "$operation" == preflight-beta || "$operation" == deploy-beta ) ]] || die 'usage: request.sh [--dry-run] <preflight|deploy|preflight-beta|deploy-beta>'
 validate_image
 validate_coordinates
+if [[ "$operation" == *-beta ]]; then
+  validate_beta_artifact >/dev/null
+fi
 
 if "$dry_run"; then
   printf 'dry-run operation=%s host=%s port=%s user=%s api_image=%s web_image=%s ssh_key=<redacted> tailscale=<redacted>\n' \

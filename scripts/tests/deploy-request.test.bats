@@ -18,6 +18,7 @@ setup() {
   cat > "$FAKE_BIN/ssh" <<'EOF'
 #!/usr/bin/env bash
 printf '<%s>\n' "$@" > "$SSH_CAPTURE"
+cat > "$SSH_STDIN_CAPTURE"
 if [[ "${SSH_STALE_KEY:-}" == 1 && "${*: -1}" == preflight* ]]; then
   printf 'Permission denied (publickey).\n' >&2
   exit 1
@@ -34,7 +35,8 @@ teardown() {
 run_request() {
   run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" ATHLOS_API_IMAGE="$DIGEST" \
     ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
-    DEPLOY_SSH_KEY_FILE="$KEY" DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" "$@"
+    SSH_STDIN_CAPTURE="$TMPDIR/ssh.stdin" DEPLOY_SSH_KEY_FILE="$KEY" \
+    DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" "$REQUEST" "$@"
 }
 
 @test "preflight invokes exactly the pinned restricted SSH argv" {
@@ -152,7 +154,49 @@ EOF
 @test "beta deployment uses the restricted beta operation" {
   run_request deploy-beta
   [ "$status" -eq 0 ]
-  [[ "$(cat "$CAPTURE")" == *"<deploy-beta $DIGEST $WEB_DIGEST>"* ]]
+  hash="$(sha256sum "$ROOT/docker-compose.beta.yml" | cut -d' ' -f1)"
+  [[ "$(cat "$CAPTURE")" == *"<deploy-beta $DIGEST $WEB_DIGEST $hash>"* ]]
+  [ "$(cat "$TMPDIR/ssh.stdin")" = "$(cat "$ROOT/docker-compose.beta.yml")" ]
+}
+
+@test "production requests keep the old command and send no config input" {
+  run_request deploy
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$CAPTURE")" == *"<deploy $DIGEST $WEB_DIGEST>"* ]]
+  [ ! -s "$TMPDIR/ssh.stdin" ]
+}
+
+@test "beta rejects a missing, unreadable, or non-allowlisted source" {
+  run env PATH="$FAKE_BIN:$PATH" SSH_CAPTURE="$CAPTURE" SSH_STDIN_CAPTURE="$TMPDIR/ssh.stdin" \
+    ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" DEPLOY_SSH_KEY_FILE="$KEY" \
+    DEPLOY_KNOWN_HOSTS_FILE="$KNOWN_HOSTS" ATHLOS_BETA_COMPOSE_FILE="$TMPDIR/missing.yml" \
+    "$REQUEST" preflight-beta
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allowlisted repository path"* ]]
+  [ ! -e "$CAPTURE" ]
+
+  mv "$ROOT/docker-compose.beta.yml" "$TMPDIR/docker-compose.beta.yml"
+  trap 'mv "$TMPDIR/docker-compose.beta.yml" "$ROOT/docker-compose.beta.yml"' EXIT
+  run_request preflight-beta
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allowlisted repository path"* || "$output" == *"readable"* ]]
+  trap - EXIT
+  mv "$TMPDIR/docker-compose.beta.yml" "$ROOT/docker-compose.beta.yml"
+
+  chmod 000 "$ROOT/docker-compose.beta.yml"
+  run_request preflight-beta
+  chmod 644 "$ROOT/docker-compose.beta.yml"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"readable regular file"* ]]
+}
+
+@test "beta source is snapshotted before hash and stdin transfer" {
+  run_request preflight-beta
+  [ "$status" -eq 0 ]
+  hash="$(sha256sum "$ROOT/docker-compose.beta.yml" | cut -d' ' -f1)"
+  [ "${#hash}" -eq 64 ]
+  [[ "$hash" != *[A-F]* ]]
+  [ "$(sha256sum "$TMPDIR/ssh.stdin" | cut -d' ' -f1)" = "$hash" ]
 }
 
 @test "Compose substitutes both images with immutable digests" {
