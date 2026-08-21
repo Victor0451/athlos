@@ -5,6 +5,7 @@ services:
     environment:
       API_INTERNAL_URL: http://api:3001
       NATIVE_COLLECTIONS_WEB_ENABLED: ${NATIVE_COLLECTIONS_WEB_ENABLED:-false}
+      DUES_CASH_ENABLED: ${DUES_CASH_ENABLED:-false}
     ports:
       - "3100:3000"
     depends_on:
