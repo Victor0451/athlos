@@ -34,9 +34,11 @@ import { FeatureConfigProvider } from '@/lib/features'
 export default function AppShell({
   children,
   cashEnabled = true,
+  collectionsEnabled = false,
 }: {
   children: ReactNode
   cashEnabled?: boolean
+  collectionsEnabled?: boolean
 }) {
   const { isAuthenticated, refresh } = useAuth()
   const router = useRouter()
@@ -80,7 +82,7 @@ export default function AppShell({
   }
 
   return (
-    <FeatureConfigProvider cashEnabled={cashEnabled}>
+    <FeatureConfigProvider cashEnabled={cashEnabled} collectionsEnabled={collectionsEnabled}>
       <div className="flex h-screen bg-surface-page">
         <Sidebar />
         <main className="flex-1 flex flex-col overflow-hidden" data-mobile-drawer-background="true">

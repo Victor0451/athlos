@@ -93,19 +93,33 @@ it('returns 409 for a duplicate reversal conflict', async () => {
   expect(response.json().error).toBe(ErrorCode.CONFLICT)
 })
 
+// prettier-ignore
+it('returns 409 when an explicit allocation is stale',async()=>{const settlementService={create:vi.fn().mockRejectedValue(BusinessError(ErrorCode.CONFLICT,'Allocation exceeds the available obligation balance'))},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'MONETARY',amount_cents:2_000,allocations:[{obligation_id:actorId,amount_cents:2_000}]}});expect(response.statusCode).toBe(409);expect(response.json()).toMatchObject({error:ErrorCode.CONFLICT})})
+// prettier-ignore
+it('rejects a blank reversal reason before calling the service',async()=>{const settlementService={create:vi.fn(),reverse:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:`/api/v1/dues/settlements/${actorId}/reverse`,headers:auth('TESORERO'),payload:{allocation_id:actorId,reason:'   '}});expect(response.statusCode).toBe(400);expect(settlementService.reverse).not.toHaveBeenCalled()})
+
 it('returns the debt route contract for an authorized finance role', async () => {
   const settlementService = {
     create: vi.fn(),
     debt: vi.fn().mockResolvedValue({
+      status: 'ready',
       socioId: actorId,
+      currency: 'ARS',
       totalCents: 2_500,
       obligations: [
         {
           id: 'obligation-1',
           periodStart: '2026-01-01',
           periodEnd: '2026-02-01',
-          amountCents: 2_500,
+          originalCents: 2_500,
           outstandingCents: 2_500,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [
+            { id: 'component-1', kind: 'BASE', componentKey: 'base', amountCents: 2_500 },
+          ],
+          benefits: [],
+          allocations: [],
         },
       ],
     }),
@@ -119,15 +133,58 @@ it('returns the debt route contract for an authorized finance role', async () =>
   expect(response.statusCode).toBe(200)
   expect(response.json()).toEqual({
     socio_id: actorId,
+    status: 'ready',
+    currency: 'ARS',
     total_debt_cents: 2_500,
     obligations: [
       {
         id: 'obligation-1',
         period_start: '2026-01-01',
         period_end: '2026-02-01',
-        amount_cents: 2_500,
+        original_amount_cents: 2_500,
         outstanding_cents: 2_500,
+        currency: 'ARS',
+        status: 'OPEN',
+        components: [
+          { id: 'component-1', kind: 'BASE', component_key: 'base', amount_cents: 2_500 },
+        ],
+        benefits: [],
+        allocations: [],
       },
     ],
   })
+})
+
+it('denies unauthorized debt reads and returns not-found without member evidence', async () => {
+  const settlementService = { create: vi.fn(), debt: vi.fn() }
+  const fastify = await app(settlementService)
+  const denied = await fastify.inject({
+    method: 'GET',
+    url: `/api/v1/dues/debt/${actorId}`,
+    headers: auth('OPERADOR'),
+  })
+  expect(denied.statusCode).toBe(403)
+  expect(settlementService.debt).not.toHaveBeenCalled()
+
+  vi.mocked(settlementService.debt).mockResolvedValueOnce({
+    status: 'not_found',
+    socioId: actorId,
+    currency: null,
+    totalCents: 0,
+    obligations: [],
+  })
+  const notFound = await fastify.inject({
+    method: 'GET',
+    url: `/api/v1/dues/debt/${actorId}`,
+    headers: auth('TESORERO'),
+  })
+  expect(notFound.statusCode).toBe(404)
+  expect(notFound.json()).toEqual({
+    status: 'not_found',
+    socio_id: actorId,
+    currency: null,
+    total_debt_cents: 0,
+    obligations: [],
+  })
+  expect(notFound.body).not.toMatch(/audit|authorization|evidence/i)
 })
