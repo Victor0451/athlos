@@ -84,6 +84,28 @@ assert_after() {
   assert_after "request.sh.*preflight-operation" "request.sh.*deploy-operation"
 }
 
+@test "beta wiring sends only the checked-out canonical compose artifact" {
+  run cat "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  assert_after "actions/checkout@v4" "ATHLOS_BETA_COMPOSE_FILE:.*docker-compose.beta.yml"
+  [[ "$output" == *'if: ${{ inputs.environment == '\''beta'\'' }}'* ]]
+  [[ "$output" == *'ATHLOS_BETA_COMPOSE_FILE: ${{ github.workspace }}/docker-compose.beta.yml'* ]]
+  [[ "$output" != *'.env.beta'* ]]
+  [[ "$output" != *'scp '* && "$output" != *'rsync '* && "$output" != *'git pull'* ]]
+}
+
+@test "production request steps have no beta artifact input" {
+  run cat "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'if: ${{ inputs.environment == '\''production'\'' }}'* ]]
+  run grep -A3 "Run restricted production read-only preflight" "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ATHLOS_BETA_COMPOSE_FILE"* ]]
+  run grep -A3 "Request production deploy" "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ATHLOS_BETA_COMPOSE_FILE"* ]]
+}
+
 @test "both restricted requests inherit the canonical immutable fixed target contract" {
   assert_after "ATHLOS_API_IMAGE: \${{ needs.publish.outputs.api-image-reference }}" "request.sh.*preflight-operation"
   assert_after "ATHLOS_WEB_IMAGE: \${{ needs.publish.outputs.web-image-reference }}" "request.sh.*deploy-operation"

@@ -562,6 +562,43 @@ The beta stack shares the host but not runtime state. It remains dormant until t
   - `DEPLOY_USER=vlongo`
   - `DEPLOY_PATH=/srv/apps/athlos`
 
+### Beta Compose synchronization protocol
+
+`docker-compose.beta.yml` in the checked-out repository is the sole canonical
+non-secret beta deployment configuration. The beta client allowlists exactly
+`$GITHUB_WORKSPACE/docker-compose.beta.yml`, snapshots those bytes, computes a
+lowercase SHA-256, and sends the snapshot on SSH stdin with the hash in the
+forced-command arguments. It never sends `.env.beta`, environment values, or an
+arbitrary path; no SCP, SFTP, rsync, or server Git pull is part of this flow.
+
+Roll out server-first, without changing the installed gate in this repository:
+
+1. The server administrator backs up the root-owned gate and installs the
+   reviewed `server-gate.sh` as `/usr/local/sbin/athlos-deploy-gate`, mode `0755`.
+2. Keep the existing forced-command `authorized_keys` entry and verify the
+   old production `preflight`/`deploy` protocol still succeeds before enabling
+   any beta workflow run. Production accepts no stdin or config argument.
+3. Confirm the destination `/srv/apps/athlos/docker-compose.beta.yml` is a
+   regular non-symlink file, then run the repository checks and an approved
+   beta preflight. Preflight validates the artifact, hash, Compose, and beta
+   invariants without installing it.
+4. Only after that evidence is reviewed may the protected beta deploy request
+   install the artifact atomically and run the beta readiness checks.
+
+The gate bounds the beta payload at 1 MiB, requires exact EOF and matching
+lowercase SHA-256, uses restrictive temporary files on the destination
+filesystem, and rejects malformed commands, symlink destinations, invalid
+Compose, and invalid beta ports/network/storage policy. An identical artifact
+retry is idempotent.
+
+The beta transaction rollback boundary is the destination Compose file only:
+the prior file is preserved before installation and restored after any
+post-install pull, startup, image-identity, or readiness failure. This does
+not roll back container images, database state, or application data. Evidence
+must include the checked-out artifact hash, gate preflight output, the exact
+operation/hash contract, unchanged destination after preflight, and—after a
+failed deploy—a read-only comparison proving restoration.
+
 ### Connectivity boundary
 
 - `publish` emits canonical `ghcr.io/victor0451/athlos-{api,web}@sha256:<digest>` references for both restricted requests.
@@ -594,7 +631,8 @@ PR2 does not define automatic image rollback or application readiness verificati
 
 - Install `scripts/deploy/server-gate.sh` as root-owned mode `0755` at `/usr/local/sbin/athlos-deploy-gate`.
 - `authorized_keys` entry for the dedicated deploy key uses `command="/usr/local/sbin/athlos-deploy-gate"` + `from="100.64.0.0/10"` (Tailnet addresses only) + `restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`.
-- Wrapper script accepts only the server-owned `preflight <api-image> <web-image>` and `deploy <api-image> <web-image>` operations; it rejects other commands.
+- The gate accepts the backward-compatible production `preflight|deploy <api-image> <web-image>` commands with empty stdin, plus beta `preflight-beta|deploy-beta <api-image> <web-image> <lowercase-sha256>` with the exact Compose artifact on stdin.
+- The root-installed gate authority remains out-of-band; repository changes do not install, replace, or mutate it automatically.
 - Tailnet ACLs must separately allow only `tag:ci` to reach `100.78.95.34:2244`; the SSH source restriction is defense in depth, not an ACL replacement.
 - Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
 
