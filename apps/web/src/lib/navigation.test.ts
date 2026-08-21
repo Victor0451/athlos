@@ -13,3 +13,9 @@ describe('cash navigation feature gate', () => {
     ).toBe(true)
   })
 })
+
+describe('Collections navigation feature gate', () => {
+  it('hides Collections by default', () => {
+    expect(visibleNavigation(user).some((item) => item.href === '/collections')).toBe(false)
+  })
+})
