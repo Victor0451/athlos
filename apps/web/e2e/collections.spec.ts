@@ -6,7 +6,7 @@ import {
   test,
 } from './fixtures/authenticated-dashboard'
 
-const collectionsEnabled = process.env.DUES_ASSESSMENT_ENABLED === 'true'
+const collectionsEnabled = process.env.NATIVE_COLLECTIONS_WEB_ENABLED === 'true'
 
 test('unauthenticated user is redirected from Socios', async ({ page }) => {
   await page.goto('/socios')
@@ -29,7 +29,7 @@ test('disabled Collections direct access is denied by default', async ({
 test('enabled ADMIN can navigate Collections and recover keyboard focus', async ({
   authenticatedPage: page,
 }) => {
-  test.skip(!collectionsEnabled, 'Run with DUES_ASSESSMENT_ENABLED=true.')
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
 
   await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/collections')
@@ -55,7 +55,7 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
 test('enabled TESORERO can generate without pricing controls or projection requests', async ({
   authenticatedPage: page,
 }) => {
-  test.skip(!collectionsEnabled, 'Run with DUES_ASSESSMENT_ENABLED=true.')
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
   const projectionRequests: string[] = []
   page.on('request', (request) => {
     if (/ctacte|projection|reconciliation/i.test(request.url()))
@@ -78,7 +78,7 @@ test('enabled TESORERO can generate without pricing controls or projection reque
 test('enabled unauthorized operator receives a direct route denial', async ({
   authenticatedPage: page,
 }) => {
-  test.skip(!collectionsEnabled, 'Run with DUES_ASSESSMENT_ENABLED=true.')
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
 
   await page.addInitScript(() => {
     const value = window.localStorage.getItem('athlos.auth')
@@ -100,7 +100,7 @@ const debtFixture={status:'ready',socio_id:debtSocio.id,currency:'ARS',total_deb
 test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
   authenticatedPage: page,
 }) => {
-  test.skip(!collectionsEnabled, 'Run with DUES_ASSESSMENT_ENABLED=true.')
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
   await mockEmptyDuesPrices(page)
   await page.route('**/api/v1/socios?*', (route) =>
     route.fulfill({ json: { items: [debtSocio], page: 1, limit: 20, total: 1, has_more: false } }),
@@ -120,7 +120,7 @@ test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
 test('enabled ADMIN records an allocation and appends a keyboard reversal on mobile', async ({
   authenticatedPage: page,
 }) => {
-  test.skip(!collectionsEnabled, 'Run with DUES_ASSESSMENT_ENABLED=true.')
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
   let attempts = 0
   await mockEmptyDuesPrices(page)
   await page.route('**/api/v1/socios?*', (route) =>

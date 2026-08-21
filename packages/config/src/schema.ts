@@ -41,6 +41,10 @@ export const envSchema = z.object({
   RECONCILIATION_CRON: z.string().optional(),
   PROMOTION_CRON: z.string().default('0 */6 * * *'),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  NATIVE_COLLECTIONS_WEB_ENABLED: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .default('false'),
   DUES_ASSESSMENT_ENABLED: z
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
