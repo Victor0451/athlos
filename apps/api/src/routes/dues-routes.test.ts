@@ -193,6 +193,22 @@ describe('dues assessment routes', () => {
     )
   })
 
+  it('keeps pricing creation ADMIN-only', async () => {
+    const deniedApp = await buildApp(true)
+    const denied = await deniedApp.inject({
+      method: 'POST',
+      url: '/api/v1/dues/prices',
+      headers: auth('TESORERO'),
+      payload: {
+        kind: 'BASE',
+        amount_cents: 12500,
+        effective_from: '2026-01-01',
+        rule: 'FULL_MONTH',
+      },
+    })
+    expect(denied.statusCode).toBe(403)
+  })
+
   // prettier-ignore
   it('allows ADMIN benefit mutations and finance reads without exposing target evidence', async () => {
     const options = services(), app = await buildApp(true, options)

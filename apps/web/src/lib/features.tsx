@@ -4,16 +4,21 @@ import { createContext, useContext, type ReactNode } from 'react'
 
 export interface FeatureConfig {
   cashEnabled: boolean
+  collectionsEnabled: boolean
 }
 
-const FeatureConfigContext = createContext<FeatureConfig>({ cashEnabled: true })
+const FeatureConfigContext = createContext<FeatureConfig>({
+  cashEnabled: true,
+  collectionsEnabled: false,
+})
 
 export function FeatureConfigProvider({
-  cashEnabled,
+  cashEnabled = true,
+  collectionsEnabled = false,
   children,
-}: FeatureConfig & { children: ReactNode }) {
+}: Partial<FeatureConfig> & { children: ReactNode }) {
   return (
-    <FeatureConfigContext.Provider value={{ cashEnabled }}>
+    <FeatureConfigContext.Provider value={{ cashEnabled, collectionsEnabled }}>
       {children}
     </FeatureConfigContext.Provider>
   )

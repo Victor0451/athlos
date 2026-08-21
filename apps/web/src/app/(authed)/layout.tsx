@@ -16,5 +16,12 @@ import AppShell from '@/components/AppShell'
  * `AppShell` will keep a fallback path for tab-restore scenarios.
  */
 export default function AuthedLayout({ children }: { children: ReactNode }) {
-  return <AppShell cashEnabled={process.env.DUES_CASH_ENABLED === 'true'}>{children}</AppShell>
+  return (
+    <AppShell
+      cashEnabled={process.env.DUES_CASH_ENABLED === 'true'}
+      collectionsEnabled={process.env.DUES_ASSESSMENT_ENABLED === 'true'}
+    >
+      {children}
+    </AppShell>
+  )
 }

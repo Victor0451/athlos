@@ -184,6 +184,9 @@ it('serializes different-key allocations for one obligation', async () => {
   })
 })
 
+// prettier-ignore
+it('persists exactly the unique allocations selected across multiple obligations',async()=>{const socioId=await member(),first=await obligation(socioId,10_000,period(2501,1)),second=await obligation(socioId,12_000,period(2501,2)),service=new SettlementService(db.db),created=await service.create({...context(),socioId,kind:'MONETARY',amountCents:5_000,currency:'ARS',evidence:{},allocations:[{obligationId:first,amountCents:2_000},{obligationId:second,amountCents:3_000}]});expect(created.allocations.map(({obligationId,amountCents})=>({obligationId,amountCents}))).toEqual([{obligationId:first,amountCents:2_000},{obligationId:second,amountCents:3_000}]);const rows=(await db.pool.query('SELECT obligation_id,amount::text FROM tesoreria.dues_allocations WHERE settlement_id=$1',[created.settlementId])).rows;expect(rows).toHaveLength(2);expect(rows).toEqual(expect.arrayContaining([{obligation_id:first,amount:'20.00'},{obligation_id:second,amount:'30.00'}]))})
+
 it('maps concurrent different-key duplicate reversals to one success and one conflict', async () => {
   const socioId = await member()
   const target = await obligation(socioId, 8_000, period(2500, 6))
@@ -241,7 +244,7 @@ it('keeps original agreement debt terms immutable and records work outside cash 
   await expect(db.pool.query('UPDATE tesoreria.dues_agreements SET status=$1 WHERE id=$2', ['SUPERSEDED', revision.id])).rejects.toMatchObject({ code: '23514' })
   const work = await new CommunityWorkService(db.db).create({ ...context(`work-${randomUUID()}`), socioId, obligationId: target, amountCents: 6_000, evidence: { approvalId: 'fixture' }, reason: 'Approved work' })
   expect(work.amountCents).toBe(6_000)
-  await expect(new SettlementService(db.db).debt({ role: 'TESORERO', socioId })).resolves.toMatchObject({ totalCents: 0, obligations: [] })
+  await expect(new SettlementService(db.db).debt({ role: 'TESORERO', socioId })).resolves.toMatchObject({ status: 'ready', totalCents: 0, obligations: [{ id: target, outstandingCents: 0, status: 'PAID', allocations: [{ kind: 'ALLOCATION', amountCents: 6_000, settlementKind: 'NON_CASH' }] }] })
   expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count).toBe(beforeCash)
 })
 
