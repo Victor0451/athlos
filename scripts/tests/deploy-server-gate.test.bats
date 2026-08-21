@@ -172,6 +172,8 @@ teardown() {
   run "$gate" deploy-beta "$DIGEST" "$WEB_DIGEST" "$BETA_HASH" < "$root/docker-compose.beta.yml"
   [ "$status" -eq 0 ]
   [ "$(sha256sum "$temp/deploy/docker-compose.beta.yml")" = "$before" ]
+  run compgen -G "$temp/deploy/.docker-compose.beta.incoming.*"
+  [ "$status" -ne 0 ]
 }
 
 @test "requires forced-command context outside test mode" {

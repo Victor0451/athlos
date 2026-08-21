@@ -179,6 +179,10 @@ for _ in {1..24}; do
       rollback_candidate=''
     fi
     installed=0
+    if [[ -n "$beta_candidate" ]]; then
+      rm -f -- "$beta_candidate"
+      beta_candidate=''
+    fi
     trap - EXIT
     printf 'deploy ok api_image=%s web_image=%s\n' "$api_image" "$web_image"
     exit 0
