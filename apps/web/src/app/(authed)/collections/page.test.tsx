@@ -17,10 +17,10 @@ vi.mock('@/lib/api/dues', () => ({
 }))
 const { default: CollectionsPage } = await import('./page')
 
-const renderPage = (enabled: boolean, role: string) => {
+const renderPage = (enabled: boolean | undefined, role: string) => {
   authState.user = { role }
   return render(
-    <FeatureConfigProvider collectionsEnabled={enabled}>
+    <FeatureConfigProvider {...(enabled === undefined ? {} : { collectionsEnabled: enabled })}>
       <CollectionsPage />
     </FeatureConfigProvider>,
   )
@@ -39,6 +39,11 @@ describe('Collections navigation and direct access', () => {
     expect(visibleNavigation(admin, { collectionsEnabled: false })).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ href: '/collections' })]),
     )
+  })
+
+  it('denies direct access by default', () => {
+    renderPage(undefined, 'ADMIN')
+    expect(screen.getByText('Collections is currently disabled.')).toBeInTheDocument()
   })
 
   it('denies direct access when disabled or unauthorized', () => {

@@ -40,6 +40,7 @@ export const mockEnv = () => ({
   RECONCILIATION_CRON: '0 * * * *',
   PROMOTION_CRON: '0 */6 * * *',
   AUDIT_RETENTION_DAYS: 90,
+  NATIVE_COLLECTIONS_WEB_ENABLED: false,
   DUES_ASSESSMENT_ENABLED: false,
   DUES_AGREEMENTS_ENABLED: false,
   DUES_CASH_ENABLED: false,
