@@ -81,6 +81,12 @@ export async function mockEmptyDuesPrices(page: Page) {
   await page.route('**/api/v1/dues/prices?*', (route) => route.fulfill({ json: { items: [] } }))
 }
 
+export async function mockEmptyDisciplines(page: Page) {
+  await page.route('**/api/v1/padrones/disciplinas*', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  )
+}
+
 export async function assertNoPageOverflow(page: Page) {
   const dimensions = await page.evaluate(() => ({
     documentWidth: document.documentElement.scrollWidth,

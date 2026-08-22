@@ -2,6 +2,7 @@ import {
   assertInteractiveNames,
   assertNoPageOverflow,
   expect,
+  mockEmptyDisciplines,
   mockEmptyDuesPrices,
   test,
 } from './fixtures/authenticated-dashboard'
@@ -31,11 +32,15 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
 }) => {
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
 
+  await mockEmptyDuesPrices(page)
+  await mockEmptyDisciplines(page)
   await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/collections')
 
-  await expect(page.getByRole('heading', { name: 'Collections', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Pricing', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Cobranza', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Configuración de cuotas', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Monthly generation', exact: true })).toBeVisible()
   await expect(page.getByRole('main').getByText(/ctacte|reconciliation/i)).toHaveCount(0)
   await assertNoPageOverflow(page)
@@ -68,10 +73,12 @@ test('enabled TESORERO can generate without pricing controls or projection reque
     state.currentUser.role = 'TESORERO'
     window.localStorage.setItem('athlos.auth', JSON.stringify(state))
   })
+  await mockEmptyDuesPrices(page)
+  await mockEmptyDisciplines(page)
   await page.goto('/collections')
 
   await expect(page.getByRole('heading', { name: 'Monthly generation', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Save price' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Guardar cuota' })).toHaveCount(0)
   expect(projectionRequests).toEqual([])
 })
 
@@ -89,8 +96,8 @@ test('enabled unauthorized operator receives a direct route denial', async ({
   })
   await page.goto('/collections')
 
-  await expect(page.getByText('You do not have permission to use Collections.')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Collections', exact: true })).toHaveCount(0)
+  await expect(page.getByText('No tenés permiso para usar la cobranza.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Cobranza', exact: true })).toHaveCount(0)
 })
 
 // prettier-ignore
@@ -102,6 +109,7 @@ test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
 }) => {
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
   await mockEmptyDuesPrices(page)
+  await mockEmptyDisciplines(page)
   await page.route('**/api/v1/socios?*', (route) =>
     route.fulfill({ json: { items: [debtSocio], page: 1, limit: 20, total: 1, has_more: false } }),
   )
@@ -123,6 +131,7 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
   let attempts = 0
   await mockEmptyDuesPrices(page)
+  await mockEmptyDisciplines(page)
   await page.route('**/api/v1/socios?*', (route) =>
     route.fulfill({ json: { items: [debtSocio], page: 1, limit: 20, total: 1, has_more: false } }),
   )
@@ -168,8 +177,6 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
   await page.getByRole('button', { name: /confirm reversal/i }).click()
   await expect(page.getByRole('status').filter({ hasText: /compensation/i })).toBeVisible()
   expect(attempts).toBe(1)
-  await expect(page.getByRole('main', { name: 'Collections' })).not.toHaveText(
-    /cash|reconciliation/i,
-  )
+  await expect(page.getByRole('main', { name: 'Cobranza' })).not.toHaveText(/cash|reconciliation/i)
   await assertNoPageOverflow(page)
 })

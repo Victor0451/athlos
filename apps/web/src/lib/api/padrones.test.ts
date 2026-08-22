@@ -38,7 +38,7 @@ vi.mock('@/lib/api', () => ({
 const { apiFetch } = await import('@/lib/api')
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>
 
-const { getPadrones } = await import('./padrones')
+const { getDisciplinas, getPadrones } = await import('./padrones')
 
 const SAMPLE_DISCIPLINA_CODIGO = 'NATACION'
 const SAMPLE_EJERCICIO = 2026
@@ -70,6 +70,20 @@ const SAMPLE_PADRON_RESPONSE = {
 describe('padrones API', () => {
   beforeEach(() => {
     apiFetchMock.mockReset()
+  })
+
+  describe('getDisciplinas()', () => {
+    it('loads discipline ids and human-readable names from the padrones source', async () => {
+      const response = {
+        items: [{ id: 'd-1', codigo: 'NATACION', nombre: 'Natación' }],
+      }
+      apiFetchMock.mockResolvedValueOnce(response)
+
+      await expect(getDisciplinas()).resolves.toEqual(response)
+      expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/padrones/disciplinas', {
+        query: {},
+      })
+    })
   })
 
   describe('getPadrones()', () => {

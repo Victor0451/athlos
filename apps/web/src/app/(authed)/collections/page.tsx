@@ -10,7 +10,11 @@ import {
   GenerationPanel,
   type GenerationPanelStatus,
 } from '@/components/collections/GenerationPanel'
-import { PricingPanel, type PricingPanelState } from '@/components/collections/PricingPanel'
+import {
+  PricingPanel,
+  type DisciplinePanelState,
+  type PricingPanelState,
+} from '@/components/collections/PricingPanel'
 import {
   createDuesPrice,
   createDuesSettlement,
@@ -23,6 +27,7 @@ import {
   type DuesPrice,
   type DuesPriceInput,
 } from '@/lib/api/dues'
+import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
 import {
   createCollectionsIdempotencyStore,
@@ -58,6 +63,9 @@ export default function CollectionsPage() {
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
   const [pricingError, setPricingError] = useState('')
+  const [disciplines, setDisciplines] = useState<DisciplinaOption[]>([])
+  const [disciplineState, setDisciplineState] = useState<DisciplinePanelState>('loading')
+  const [disciplineError, setDisciplineError] = useState('')
   const [generationStatus, setGenerationStatus] = useState<GenerationPanelStatus>('idle')
   const [generationError, setGenerationError] = useState('')
   const [socios, setSocios] = useState<Socio[]>([])
@@ -72,15 +80,28 @@ export default function CollectionsPage() {
     setPrices(response.items)
     setPricingState(response.items.length ? 'ready' : 'empty')
   }
+  const loadDisciplines = async () => {
+    const response = await getDisciplinas()
+    setDisciplines(response.items)
+    setDisciplineState(response.items.length ? 'ready' : 'empty')
+  }
 
   useEffect(() => {
     if (!authorized) return
     let active = true
     setPricingState('loading')
+    setPricingError('')
     void loadPrices().catch((reason: unknown) => {
       if (!active) return
-      setPricingError(errorText(reason, 'Unable to load pricing.'))
+      setPricingError(errorText(reason, 'No se pudieron cargar las cuotas.'))
       setPricingState(pricingErrorState(reason))
+    })
+    setDisciplineState('loading')
+    setDisciplineError('')
+    void loadDisciplines().catch((reason: unknown) => {
+      if (!active) return
+      setDisciplineError(errorText(reason, 'No se pudieron cargar las disciplinas.'))
+      setDisciplineState('error')
     })
     return () => {
       active = false
@@ -88,13 +109,11 @@ export default function CollectionsPage() {
   }, [authorized, period])
 
   if (!collectionsEnabled)
-    return <CollectionStatus tone="error">Collections is currently disabled.</CollectionStatus>
-  if (!authorized)
     return (
-      <CollectionStatus tone="error">
-        You do not have permission to use Collections.
-      </CollectionStatus>
+      <CollectionStatus tone="error">La cobranza está deshabilitada actualmente.</CollectionStatus>
     )
+  if (!authorized)
+    return <CollectionStatus tone="error">No tenés permiso para usar la cobranza.</CollectionStatus>
 
   const runPriceAction = async (action: Promise<unknown>, fallback: string) => {
     setPricingState('loading')
@@ -110,10 +129,15 @@ export default function CollectionsPage() {
     }
   }
   const createPrice = (input: DuesPriceInput) =>
-    runPriceAction(createDuesPrice(input), 'Unable to save price.')
-  const revokePrice = async (id: string, reason: string) => {
-    return runPriceAction(revokeDuesPrice(id, reason), 'Unable to revoke price.')
-  }
+    runPriceAction(
+      createDuesPrice(input),
+      'No se pudo guardar la cuota. Revisá los datos e intentá nuevamente.',
+    )
+  const revokePrice = (id: string, reason: string) =>
+    runPriceAction(
+      revokeDuesPrice(id, reason),
+      'No se pudo dar de baja la cuota. Intentá nuevamente.',
+    )
   const generate = async (selectedPeriod: string) => {
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const input = {
@@ -191,7 +215,7 @@ export default function CollectionsPage() {
     <main aria-labelledby="collections-title" className="space-y-6">
       <header>
         <h1 id="collections-title" className="font-display text-2xl font-bold text-ink-900">
-          Collections
+          Cobranza
         </h1>
       </header>
       <section aria-labelledby="collections-workspace-title">
@@ -199,7 +223,7 @@ export default function CollectionsPage() {
           id="collections-workspace-title"
           className="font-display text-lg font-semibold text-ink-900"
         >
-          Collections workspace
+          Espacio de trabajo de cobranzas
         </h2>
         <div className="grid gap-6 lg:grid-cols-2">
           {user?.role === 'ADMIN' ? (
@@ -207,13 +231,18 @@ export default function CollectionsPage() {
               prices={prices}
               state={pricingState}
               error={pricingError}
+              disciplines={disciplines}
+              disciplineState={disciplineState}
+              disciplineError={disciplineError}
               onCreate={createPrice}
               onRevoke={revokePrice}
             />
           ) : (
             <section aria-labelledby="pricing-readonly-title">
-              <h3 id="pricing-readonly-title">Pricing</h3>
-              <p role="status">Pricing administration is available to ADMIN operators only.</p>
+              <h3 id="pricing-readonly-title">Configuración de cuotas</h3>
+              <p role="status">
+                La administración de cuotas está disponible solo para operadores ADMIN.
+              </p>
             </section>
           )}
           <GenerationPanel
