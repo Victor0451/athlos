@@ -22,9 +22,9 @@ test('disabled Collections direct access is denied by default', async ({
 
   await page.goto('/collections')
 
-  await expect(page.getByText('Collections is currently disabled.')).toBeVisible()
+  await expect(page.getByText('La cobranza está deshabilitada actualmente.')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Collections', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Collections', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Cobranza', exact: true })).toHaveCount(0)
 })
 
 test('enabled ADMIN can navigate Collections and recover keyboard focus', async ({
