@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import AppShell from '@/components/AppShell'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * Server-component layout for the `(authed)` route group.
  *

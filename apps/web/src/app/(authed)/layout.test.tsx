@@ -5,30 +5,43 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/components/AppShell', () => ({
   default: ({
     children,
+    cashEnabled,
     collectionsEnabled,
   }: {
     children: ReactNode
+    cashEnabled: boolean
     collectionsEnabled: boolean
   }) => (
-    <div data-testid="collections-enabled" data-enabled={String(collectionsEnabled)}>
+    <div
+      data-testid="feature-config"
+      data-cash-enabled={String(cashEnabled)}
+      data-collections-enabled={String(collectionsEnabled)}
+    >
       {children}
     </div>
   ),
 }))
 
-const { default: AuthedLayout } = await import('./layout')
+const { default: AuthedLayout, dynamic } = await import('./layout')
 
 const originalAssessment = process.env.DUES_ASSESSMENT_ENABLED
+const originalCash = process.env.DUES_CASH_ENABLED
 const originalCollections = process.env.NATIVE_COLLECTIONS_WEB_ENABLED
 
 afterEach(() => {
   if (originalAssessment === undefined) delete process.env.DUES_ASSESSMENT_ENABLED
   else process.env.DUES_ASSESSMENT_ENABLED = originalAssessment
+  if (originalCash === undefined) delete process.env.DUES_CASH_ENABLED
+  else process.env.DUES_CASH_ENABLED = originalCash
   if (originalCollections === undefined) delete process.env.NATIVE_COLLECTIONS_WEB_ENABLED
   else process.env.NATIVE_COLLECTIONS_WEB_ENABLED = originalCollections
 })
 
 describe('authed Web feature configuration', () => {
+  it('opts out of static generation so runtime flags reach the client shell', () => {
+    expect(dynamic).toBe('force-dynamic')
+  })
+
   it.each([
     ['absent', undefined, false],
     ['explicit false', 'false', false],
@@ -44,8 +57,8 @@ describe('authed Web feature configuration', () => {
       </AuthedLayout>,
     )
 
-    expect(screen.getByTestId('collections-enabled')).toHaveAttribute(
-      'data-enabled',
+    expect(screen.getByTestId('feature-config')).toHaveAttribute(
+      'data-collections-enabled',
       String(expected),
     )
   })
@@ -60,7 +73,10 @@ describe('authed Web feature configuration', () => {
       </AuthedLayout>,
     )
 
-    expect(screen.getByTestId('collections-enabled')).toHaveAttribute('data-enabled', 'false')
+    expect(screen.getByTestId('feature-config')).toHaveAttribute(
+      'data-collections-enabled',
+      'false',
+    )
   })
 
   it('keeps Web Collections enabled when assessment APIs are disabled', () => {
@@ -73,6 +89,26 @@ describe('authed Web feature configuration', () => {
       </AuthedLayout>,
     )
 
-    expect(screen.getByTestId('collections-enabled')).toHaveAttribute('data-enabled', 'true')
+    expect(screen.getByTestId('feature-config')).toHaveAttribute('data-collections-enabled', 'true')
+  })
+
+  it.each([
+    ['absent', undefined, false],
+    ['explicit false', 'false', false],
+    ['explicit true', 'true', true],
+  ] as const)('maps the cash flag at runtime: %s', (_label, value, expected) => {
+    if (value === undefined) delete process.env.DUES_CASH_ENABLED
+    else process.env.DUES_CASH_ENABLED = value
+
+    render(
+      <AuthedLayout>
+        <span>content</span>
+      </AuthedLayout>,
+    )
+
+    expect(screen.getByTestId('feature-config')).toHaveAttribute(
+      'data-cash-enabled',
+      String(expected),
+    )
   })
 })
