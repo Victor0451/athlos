@@ -140,6 +140,28 @@ async function seed(standin: ReturnType<typeof createStandinDb>) {
 }
 
 describe('GET /api/v1/padrones', () => {
+  it('returns the current discipline catalog from the padrones source', async () => {
+    const { app, standin } = await bootstrap()
+    try {
+      await seed(standin)
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/padrones/disciplinas',
+        headers: { authorization: `Bearer ${bearer('ADMIN')}` },
+      })
+
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({
+        items: [
+          { id: 'd-futbol', codigo: 'FUTBOL', nombre: 'Fútbol' },
+          { id: 'd-hockey', codigo: 'HOCKEY', nombre: 'Hockey' },
+        ],
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
   it('returns only the matching disciplina + ejercicio', async () => {
     const { app, standin } = await bootstrap()
     try {

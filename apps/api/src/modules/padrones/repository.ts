@@ -43,6 +43,20 @@ export interface ListByDisciplinaResult {
   limit: number
 }
 
+export interface DisciplinaOption {
+  id: string
+  codigo: string
+  nombre: string
+}
+
+/** List the current disciplines from the same source used by padrones. */
+export async function listDisciplinas(db: Db): Promise<DisciplinaOption[]> {
+  const rows = await db.select().from(disciplinas).limit(10_000)
+  return rows
+    .map(({ id, codigo, nombre }) => ({ id, codigo, nombre }))
+    .sort((left, right) => left.nombre.localeCompare(right.nombre, 'es'))
+}
+
 /**
  * Page through the padron for one disciplina + ejercicio. The
  * filters are required (the route layer rejects missing query

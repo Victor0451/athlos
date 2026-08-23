@@ -10,7 +10,11 @@ import {
   GenerationPanel,
   type GenerationPanelStatus,
 } from '@/components/collections/GenerationPanel'
-import { PricingPanel, type PricingPanelState } from '@/components/collections/PricingPanel'
+import {
+  PricingPanel,
+  type DisciplinePanelState,
+  type PricingPanelState,
+} from '@/components/collections/PricingPanel'
 import {
   createDuesPrice,
   createDuesSettlement,
@@ -20,9 +24,11 @@ import {
   revokeDuesPrice,
   reverseDuesSettlement,
   type DebtDetail,
+  type DuesGenerationResult,
   type DuesPrice,
   type DuesPriceInput,
 } from '@/lib/api/dues'
+import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
 import {
   createCollectionsIdempotencyStore,
@@ -40,8 +46,7 @@ export function canAccessCollections(
   return collectionsEnabled && (user?.role === 'ADMIN' || user?.role === 'TESORERO')
 }
 
-const errorText = (reason: unknown, fallback: string) =>
-  reason instanceof Error ? reason.message : fallback
+const errorText = (_reason: unknown, fallback: string) => fallback
 const pricingErrorState = (reason: unknown): PricingPanelState =>
   reason instanceof ApiError && reason.status === 409
     ? 'conflict'
@@ -58,8 +63,12 @@ export default function CollectionsPage() {
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
   const [pricingError, setPricingError] = useState('')
+  const [disciplines, setDisciplines] = useState<DisciplinaOption[]>([])
+  const [disciplineState, setDisciplineState] = useState<DisciplinePanelState>('loading')
+  const [disciplineError, setDisciplineError] = useState('')
   const [generationStatus, setGenerationStatus] = useState<GenerationPanelStatus>('idle')
   const [generationError, setGenerationError] = useState('')
+  const [generationResult, setGenerationResult] = useState<DuesGenerationResult | null>(null)
   const [socios, setSocios] = useState<Socio[]>([])
   const [selectedSocio, setSelectedSocio] = useState<DebtSocio | null>(null)
   const [debt, setDebt] = useState<DebtDetail | null>(null)
@@ -67,20 +76,34 @@ export default function CollectionsPage() {
   const [debtError, setDebtError] = useState('')
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
+
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
     setPrices(response.items)
     setPricingState(response.items.length ? 'ready' : 'empty')
+  }
+  const loadDisciplines = async () => {
+    const response = await getDisciplinas()
+    setDisciplines(response.items)
+    setDisciplineState(response.items.length ? 'ready' : 'empty')
   }
 
   useEffect(() => {
     if (!authorized) return
     let active = true
     setPricingState('loading')
+    setPricingError('')
     void loadPrices().catch((reason: unknown) => {
       if (!active) return
-      setPricingError(errorText(reason, 'Unable to load pricing.'))
+      setPricingError(errorText(reason, 'No se pudieron cargar las cuotas.'))
       setPricingState(pricingErrorState(reason))
+    })
+    setDisciplineState('loading')
+    setDisciplineError('')
+    void loadDisciplines().catch((reason: unknown) => {
+      if (!active) return
+      setDisciplineError(errorText(reason, 'No se pudieron cargar las disciplinas.'))
+      setDisciplineState('error')
     })
     return () => {
       active = false
@@ -88,13 +111,11 @@ export default function CollectionsPage() {
   }, [authorized, period])
 
   if (!collectionsEnabled)
-    return <CollectionStatus tone="error">Collections is currently disabled.</CollectionStatus>
-  if (!authorized)
     return (
-      <CollectionStatus tone="error">
-        You do not have permission to use Collections.
-      </CollectionStatus>
+      <CollectionStatus tone="error">La cobranza está deshabilitada actualmente.</CollectionStatus>
     )
+  if (!authorized)
+    return <CollectionStatus tone="error">No tenés permiso para usar la cobranza.</CollectionStatus>
 
   const runPriceAction = async (action: Promise<unknown>, fallback: string) => {
     setPricingState('loading')
@@ -110,10 +131,15 @@ export default function CollectionsPage() {
     }
   }
   const createPrice = (input: DuesPriceInput) =>
-    runPriceAction(createDuesPrice(input), 'Unable to save price.')
-  const revokePrice = async (id: string, reason: string) => {
-    return runPriceAction(revokeDuesPrice(id, reason), 'Unable to revoke price.')
-  }
+    runPriceAction(
+      createDuesPrice(input),
+      'No se pudo guardar la cuota. Revisá los datos e intentá nuevamente.',
+    )
+  const revokePrice = (id: string, reason: string) =>
+    runPriceAction(
+      revokeDuesPrice(id, reason),
+      'No se pudo dar de baja la cuota. Intentá nuevamente.',
+    )
   const generate = async (selectedPeriod: string) => {
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const input = {
@@ -124,13 +150,17 @@ export default function CollectionsPage() {
     const replayed = Boolean(idempotency.current.peek(input))
     const key = idempotency.current.getOrCreate(input)
     setGenerationError('')
+    setGenerationResult(null)
     setGenerationStatus('loading')
     try {
       const result = await generateDuesAssessments(selectedPeriod, key)
       idempotency.current.complete(input)
+      setGenerationResult(result)
       setGenerationStatus(replayed ? 'replayed' : result.obligation_ids.length ? 'created' : 'zero')
     } catch (reason) {
-      setGenerationError(errorText(reason, 'Unable to generate obligations.'))
+      setGenerationError(
+        errorText(reason, 'No se pudieron generar las deudas del período. Intentá nuevamente.'),
+      )
       setGenerationStatus(generationErrorState(reason))
       throw reason
     }
@@ -151,19 +181,19 @@ export default function CollectionsPage() {
       setDebtStatus(result.status)
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) {
-        setDebtError('')
+        setDebtError('No se encontró el detalle de deuda de este socio.')
         setDebtStatus('not_found')
       } else if (reason instanceof ApiError && reason.status >= 500) {
-        setDebtError('Debt detail is unavailable.')
+        setDebtError('El detalle de deuda no está disponible.')
         setDebtStatus('unavailable')
       } else {
-        setDebtError(errorText(reason, 'Unable to load debt detail.'))
+        setDebtError(errorText(reason, 'No se pudo cargar el detalle de deuda.'))
         setDebtStatus('error')
       }
     }
   }
   // prettier-ignore
-  const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status)}catch(reason){setDebtError(errorText(reason,'Unable to refresh debt detail.'));setDebtStatus('error')}}
+  const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('')}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error')}}
   // prettier-ignore
   const runSettlementMutation=async(action:string,draftFingerprint:string,request:(key:string)=>Promise<unknown>)=>{if(!user||!selectedSocio)return;if(!idempotency.current)idempotency.current=createCollectionsIdempotencyStore();const input={operatorId:user.operator_id,action,draftFingerprint},replayed=Boolean(idempotency.current.peek(input)),key=idempotency.current.getOrCreate(input);try{await request(key);idempotency.current.complete(input);await refreshDebt();return{replayed}}catch(reason){if(reason instanceof ApiError&&reason.status===409){idempotency.current.abandon(input);await refreshDebt()}throw reason}}
   const allocate = (input: AllocationRequest) =>
@@ -191,7 +221,7 @@ export default function CollectionsPage() {
     <main aria-labelledby="collections-title" className="space-y-6">
       <header>
         <h1 id="collections-title" className="font-display text-2xl font-bold text-ink-900">
-          Collections
+          Cobranza
         </h1>
       </header>
       <section aria-labelledby="collections-workspace-title">
@@ -199,7 +229,7 @@ export default function CollectionsPage() {
           id="collections-workspace-title"
           className="font-display text-lg font-semibold text-ink-900"
         >
-          Collections workspace
+          Espacio de trabajo de cobranzas
         </h2>
         <div className="grid gap-6 lg:grid-cols-2">
           {user?.role === 'ADMIN' ? (
@@ -207,18 +237,24 @@ export default function CollectionsPage() {
               prices={prices}
               state={pricingState}
               error={pricingError}
+              disciplines={disciplines}
+              disciplineState={disciplineState}
+              disciplineError={disciplineError}
               onCreate={createPrice}
               onRevoke={revokePrice}
             />
           ) : (
             <section aria-labelledby="pricing-readonly-title">
-              <h3 id="pricing-readonly-title">Pricing</h3>
-              <p role="status">Pricing administration is available to ADMIN operators only.</p>
+              <h3 id="pricing-readonly-title">Configuración de cuotas</h3>
+              <p role="status">
+                La administración de cuotas está disponible solo para operadores ADMIN.
+              </p>
             </section>
           )}
           <GenerationPanel
             period={period}
             status={generationStatus}
+            result={generationResult}
             error={generationError}
             onGenerate={generate}
           />

@@ -15,12 +15,12 @@ describe('SettlementActions', () => {
     const user = userEvent.setup(),
       onAllocate = vi.fn().mockResolvedValue({ replayed: false })
     renderActions(onAllocate)
-    await user.click(screen.getByRole('button', { name: /record native settlement/i }))
-    const first = screen.getByLabelText(/amount for 2026-01-01/i),
-      second = screen.getByLabelText(/amount for 2026-02-01/i)
+    await user.click(screen.getByRole('button', { name: /registrar pago/i }))
+    const first = screen.getByLabelText(/importe del período 2026-01-01/i),
+      second = screen.getByLabelText(/importe del período 2026-02-01/i)
     await user.type(first, '2000')
     await user.type(second, '3000')
-    await user.click(screen.getByRole('button', { name: /confirm native settlement/i }))
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(onAllocate).toHaveBeenCalledWith({
       amount_cents: 5_000,
       allocations: [
@@ -36,32 +36,32 @@ describe('SettlementActions', () => {
         .mockRejectedValueOnce(new ApiError(409, 'CONFLICT', 'Balance changed'))
         .mockResolvedValueOnce({ replayed: true })
     renderActions(onAllocate)
-    await user.click(screen.getByRole('button', { name: /record native settlement/i }))
-    const amount = screen.getByLabelText(/amount for 2026-01-01/i)
+    await user.click(screen.getByRole('button', { name: /registrar pago/i }))
+    const amount = screen.getByLabelText(/importe del período 2026-01-01/i)
     await user.type(amount, '2000')
-    await user.click(screen.getByRole('button', { name: /confirm native settlement/i }))
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(amount).toHaveValue(2000)
     expect(screen.getByRole('alert')).toHaveFocus()
-    await user.click(screen.getByRole('button', { name: /review refreshed balances/i }))
-    await user.click(screen.getByRole('button', { name: /confirm native settlement/i }))
+    await user.click(screen.getByRole('button', { name: /revisar saldos actualizados/i }))
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(onAllocate).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('status')).toHaveTextContent(/replayed/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/repetido/i)
   })
   it('requires a reason and appends a compensation reversal without cash controls', async () => {
     const user = userEvent.setup(),
       onReverse = vi.fn().mockResolvedValue({ replayed: false })
     renderActions(undefined, onReverse)
-    await user.click(screen.getByRole('button', { name: /reverse allocation-1/i }))
-    const confirm = screen.getByRole('button', { name: /confirm reversal/i })
+    await user.click(screen.getByRole('button', { name: /revertir allocation-1/i }))
+    const confirm = screen.getByRole('button', { name: /confirmar reversión/i })
     expect(confirm).toBeDisabled()
-    await user.type(screen.getByLabelText(/reversal reason/i), 'Incorrect allocation')
+    await user.type(screen.getByLabelText(/motivo de reversión/i), 'Asignación incorrecta')
     await user.click(confirm)
     expect(onReverse).toHaveBeenCalledWith({
       settlement_id: 'settlement-1',
       allocation_id: 'allocation-1',
-      reason: 'Incorrect allocation',
+      reason: 'Asignación incorrecta',
     })
-    expect(screen.getByRole('status')).toHaveTextContent(/compensation/i)
-    expect(screen.queryByText(/cash|reconciliation/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(/compensación/i)
+    expect(screen.queryByText(/caja|conciliación/i)).not.toBeInTheDocument()
   })
 })
