@@ -13,10 +13,9 @@ build/
 .env
 .env.local
 .env.*.local
-# .env.production is intentionally committed for the operator console
-# (apps/web) — it sets NEXT_PUBLIC_API_BASE_URL to the production
-# server IP. See apps/web/.env.production for the full rationale.
-!.env.production
+.env.production
+# The Web app contains public build-time configuration only.
+!apps/web/.env.production
 
 # IDE / OS
 .DS_Store
