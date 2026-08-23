@@ -110,6 +110,7 @@ beforeAll(async () => {
     '0051_dues_family_groups.sql',
     '0052_dues_settlements.sql',
     '0053_dues_agreements_community_work.sql',
+    '0058_dues_open_agreements.sql',
   ]
   await db.pool.query(
     (
@@ -505,6 +506,104 @@ it('projects a positive monetary settlement as a legacy CREDITO', async () => {
       `dues:ctacte:SETTLEMENT:${sourceId}`,
     ]),
   ).resolves.toMatchObject({ rows: [{ tipo: 'CREDITO', debe: '0.00', haber: '125.00' }] })
+})
+
+it('persists negotiated narrative terms without allocation and validates agreement-linked work ownership', async () => {
+  const socioId = await member()
+  const otherSocioId = await member()
+  const target = await obligation(socioId, 8_000, period(2503, 1))
+  const otherTarget = await obligation(otherSocioId, 8_000, period(2503, 2))
+  const terms = { narrative: 'El socio realizará una acción acordada.' }
+  const agreement = await db.pool.query(
+    `INSERT INTO tesoreria.dues_agreements
+          (socio_id, obligation_id, kind, terms_version, terms, reason, operator_id, caller_key, request_fingerprint)
+         VALUES ($1, $2, 'NEGOTIATED', 1, $3::jsonb, 'Negotiated fixture', $4, $5, repeat('n', 64))
+         RETURNING id, kind, terms_version, terms`,
+    [socioId, target, JSON.stringify(terms), operatorId, `api-negotiated-${randomUUID()}`],
+  )
+  expect(agreement.rows[0]).toMatchObject({
+    kind: 'NEGOTIATED',
+    terms_version: 1,
+    terms,
+  })
+  await expect(
+    db.pool.query(
+      `SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id = $1`,
+      [target],
+    ),
+  ).resolves.toMatchObject({ rows: [{ count: 0 }] })
+  await expect(
+    db.pool.query(
+      `INSERT INTO tesoreria.dues_agreements
+            (socio_id, obligation_id, kind, terms_version, terms, reason, operator_id, caller_key, request_fingerprint)
+           VALUES ($1, $2, 'NEGOTIATED', 1, $3::jsonb, 'Malformed fixture', $4, $5, repeat('m', 64))`,
+      [
+        socioId,
+        await obligation(socioId, 8_000, period(2503, 3)),
+        JSON.stringify({
+          narrative: 'Bad commitment',
+          commitments: [{ id: 'bad', title: 'Action' }],
+        }),
+        operatorId,
+        `api-malformed-${randomUUID()}`,
+      ],
+    ),
+  ).rejects.toMatchObject({ code: '23514' })
+  const otherAgreement = await db.pool.query(
+    `INSERT INTO tesoreria.dues_agreements
+          (socio_id, obligation_id, kind, terms_version, terms, reason, operator_id, caller_key, request_fingerprint)
+         VALUES ($1, $2, 'NEGOTIATED', 1, $3::jsonb, 'Other negotiated fixture', $4, $5, repeat('o', 64))
+         RETURNING id`,
+    [
+      otherSocioId,
+      otherTarget,
+      JSON.stringify({ narrative: 'Otro acuerdo.' }),
+      operatorId,
+      `api-other-negotiated-${randomUUID()}`,
+    ],
+  )
+  const settlement = await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements
+          (socio_id, kind, amount, operator_id, caller_key, request_fingerprint)
+         VALUES ($1, 'NON_CASH', 10.00, $2, $3, repeat('p', 64)) RETURNING id`,
+    [socioId, operatorId, `api-work-${randomUUID()}`],
+  )
+  await expect(
+    db.pool.query(
+      `INSERT INTO tesoreria.dues_community_work
+            (socio_id, obligation_id, settlement_id, amount, evidence, approval_reason, operator_id, caller_key, request_fingerprint, agreement_id)
+           VALUES ($1, $2, $3, 10.00, '{}'::jsonb, 'Approved work', $4, $5, repeat('q', 64), $6)`,
+      [
+        socioId,
+        target,
+        settlement.rows[0].id,
+        operatorId,
+        `api-work-row-${randomUUID()}`,
+        agreement.rows[0].id,
+      ],
+    ),
+  ).resolves.toMatchObject({ rowCount: 1 })
+  const crossSettlement = await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements
+          (socio_id, kind, amount, operator_id, caller_key, request_fingerprint)
+         VALUES ($1, 'NON_CASH', 10.00, $2, $3, repeat('r', 64)) RETURNING id`,
+    [socioId, operatorId, `api-cross-work-${randomUUID()}`],
+  )
+  await expect(
+    db.pool.query(
+      `INSERT INTO tesoreria.dues_community_work
+            (socio_id, obligation_id, settlement_id, amount, evidence, approval_reason, operator_id, caller_key, request_fingerprint, agreement_id)
+           VALUES ($1, $2, $3, 10.00, '{}'::jsonb, 'Cross-owner work', $4, $5, repeat('s', 64), $6)`,
+      [
+        socioId,
+        target,
+        crossSettlement.rows[0].id,
+        operatorId,
+        `api-cross-work-row-${randomUUID()}`,
+        otherAgreement.rows[0].id,
+      ],
+    ),
+  ).rejects.toMatchObject({ code: '23514' })
 })
 
 it('persists redacted financial audit snapshots and reversal reasons', async () => {
