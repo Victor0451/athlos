@@ -36,23 +36,25 @@ describe('treasury page', () => {
 
   it('exposes labeled shift controls and a meaningful empty state', () => {
     render(<TreasuryPage />)
-    expect(screen.getByRole('heading', { name: 'Cash desk' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Desk')).toBeInTheDocument()
-    expect(screen.getByText('No shifts')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Caja' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Puesto')).toBeInTheDocument()
+    expect(screen.getByText('No hay turnos.')).toBeInTheDocument()
   })
 
   it('renders accessible loading and error states', () => {
     mocks.query = { data: undefined, isPending: true, isError: true, refetch: vi.fn() }
     render(<TreasuryPage />)
-    expect(screen.getByText('Loading cash shifts…')).toBeInTheDocument()
-    expect(screen.getByText('Unable to load cash shifts.')).toBeInTheDocument()
+    expect(screen.getByText('Cargando turnos de caja…')).toBeInTheDocument()
+    expect(screen.getByText('No se pudieron cargar los turnos de caja.')).toBeInTheDocument()
   })
 
   it('surfaces command failures without an unhandled rejection', async () => {
     mocks.openCashShift.mockRejectedValueOnce(new Error('open failed'))
     render(<TreasuryPage />)
-    fireEvent.submit(screen.getByRole('form', { name: 'Open cash shift' }))
-    await waitFor(() => expect(screen.getByText('open failed')).toBeInTheDocument())
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    await waitFor(() =>
+      expect(screen.getByText('No se pudo ejecutar la operación de caja.')).toBeInTheDocument(),
+    )
   })
 
   it('renders an accessible disabled fallback when the server gate is off', () => {
@@ -61,7 +63,7 @@ describe('treasury page', () => {
         <TreasuryPage />
       </FeatureConfigProvider>,
     )
-    expect(screen.getByRole('alert')).toHaveTextContent('disabled')
+    expect(screen.getByRole('alert')).toHaveTextContent('deshabilitada')
   })
 
   it('keeps expired recovery separate and requires confirmation plus a reason', async () => {
@@ -80,20 +82,22 @@ describe('treasury page', () => {
     mocks.forceCloseCashShift.mockResolvedValue({ discrepancy: {} })
     render(<TreasuryPage />)
 
-    expect(screen.getByRole('button', { name: /recover expired shift/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^close front$/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /recover expired shift/i }))
+    expect(screen.getByRole('button', { name: /recuperar turno vencido/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^cerrar front$/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /recuperar turno vencido/i }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    const confirm = screen.getByRole('button', { name: /confirm recovery/i })
+    const confirm = screen.getByRole('button', { name: /confirmar recuperación/i })
     expect(confirm).toBeDisabled()
-    fireEvent.change(screen.getByLabelText('Recovery reason'), { target: { value: 'Unattended' } })
+    fireEvent.change(screen.getByLabelText('Motivo de recuperación'), {
+      target: { value: 'Sin atención' },
+    })
     expect(confirm).toBeEnabled()
     fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
     await waitFor(() =>
       expect(mocks.forceCloseCashShift).toHaveBeenCalledWith(
         'expired-1',
         { CASH: 0 },
-        'Unattended',
+        'Sin atención',
         expect.any(String),
       ),
     )
@@ -119,12 +123,18 @@ describe('treasury page', () => {
       }),
     )
     render(<TreasuryPage />)
-    fireEvent.click(screen.getByRole('button', { name: /recover expired shift/i }))
-    fireEvent.change(screen.getByLabelText('Recovery reason'), { target: { value: 'Audit trail' } })
+    fireEvent.click(screen.getByRole('button', { name: /recuperar turno vencido/i }))
+    fireEvent.change(screen.getByLabelText('Motivo de recuperación'), {
+      target: { value: 'Registro de auditoría' },
+    })
     fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
-    expect(screen.getByRole('button', { name: /recovering/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /recuperando/i })).toBeDisabled()
     rejectRecovery(new Error('recovery failed'))
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('recovery failed'))
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'No se pudo ejecutar la operación de caja.',
+      ),
+    )
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 })
