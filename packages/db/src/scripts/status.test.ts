@@ -231,6 +231,7 @@ describe('migrate:status', () => {
         '0055_cash_policy_atomicity',
         '0056_cash_recovery_policy',
         '0057_cash_lifecycle_boundaries',
+        '0058_dues_open_agreements',
       ],
       divergence: [],
       exitCode: 1,
