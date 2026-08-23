@@ -35,11 +35,24 @@ export const test = base.extend<{
   authenticatedPage: async ({ page }, use) => {
     // Test-only localStorage state; production authentication is never bypassed.
     await page.addInitScript((state) => {
-      window.localStorage.setItem('athlos.auth', JSON.stringify(state))
+      let serializedState: string
+      try {
+        serializedState = JSON.stringify(state)
+      } catch (error) {
+        throw new Error('Failed to serialize the Playwright authentication fixture', {
+          cause: error,
+        })
+      }
+      window.localStorage.setItem('athlos.auth', serializedState)
     }, authState)
 
     await page.route('**/api/v1/club-status*', async (route) => {
-      const period = new URL(route.request().url()).searchParams.get('period') ?? 'current-month'
+      let period = 'current-month'
+      try {
+        period = new URL(route.request().url()).searchParams.get('period') ?? period
+      } catch (error) {
+        throw new Error('Failed to parse the mocked club-status request URL', { cause: error })
+      }
       await route.fulfill({
         json: {
           period,

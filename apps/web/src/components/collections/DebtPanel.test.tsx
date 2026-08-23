@@ -19,8 +19,8 @@ describe('DebtPanel', () => {
       />,
     )
 
-    expect(screen.getByRole('status')).toHaveTextContent(/no debt/i)
-    expect(screen.getByRole('heading', { name: /debt explanation/i })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(/no hay deuda/i)
+    expect(screen.getByRole('heading', { name: /detalle de deuda/i })).toBeInTheDocument()
   })
 
   it('announces an unavailable read as an alert', () => {
@@ -29,13 +29,13 @@ describe('DebtPanel', () => {
         socio={socio}
         status="unavailable"
         debt={null}
-        error="Debt detail is unavailable."
+        error="El detalle de deuda no está disponible."
         onSearch={vi.fn()}
         onSelectSocio={vi.fn()}
       />,
     )
 
-    expect(screen.getByRole('alert')).toHaveTextContent(/unavailable/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(/no está disponible/i)
     expect(screen.getByRole('alert')).toHaveFocus()
   })
 
@@ -51,11 +51,13 @@ describe('DebtPanel', () => {
       />,
     )
 
-    expect(screen.getByRole('list', { name: /debt obligations/i })).toBeInTheDocument()
-    expect(screen.getByRole('listitem', { name: /2026-01-01/i })).toHaveTextContent(/original/i)
+    expect(screen.getByRole('list', { name: /obligaciones de deuda/i })).toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: /2026-01-01/i })).toHaveTextContent(
+      /importe original/i,
+    )
     expect(screen.getAllByText(/benefit-1/i)).not.toHaveLength(0)
     expect(screen.getByText(/settlement-1/i)).toBeInTheDocument()
-    expect(screen.getByText(/eligible for reversal/i)).toBeInTheDocument()
+    expect(screen.getByText(/se puede revertir/i)).toBeInTheDocument()
     expect(screen.queryByText(/authorization|audit/i)).not.toBeInTheDocument()
   })
 })
