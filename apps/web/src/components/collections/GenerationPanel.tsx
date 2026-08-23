@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
+import type { DuesGenerationResult } from '@/lib/api/dues'
 
 export type GenerationPanelStatus =
   | 'idle'
@@ -13,29 +14,38 @@ export type GenerationPanelStatus =
 type Props = {
   period?: string
   status?: GenerationPanelStatus
+  result?: DuesGenerationResult | null
   error?: string
   onGenerate: (period: string) => Promise<unknown> | unknown
 }
 const outcome: Record<string, string> = {
-  created: 'Generation completed.',
-  replayed: 'Generation replayed.',
-  zero: 'No obligations were generated.',
-  conflict: 'Generation needs review.',
+  created: 'Se generaron las deudas del período.',
+  replayed: 'El período ya estaba generado.',
+  zero: 'No se generaron deudas.',
+  conflict: 'La generación requiere revisión.',
 }
 
 export function GenerationPanel({
   period: initial = '',
   status = 'idle',
+  result,
   error,
   onGenerate,
 }: Props) {
   const [period, setPeriod] = useState(initial)
+  const evidence =
+    result && status === 'created'
+      ? `Se generaron ${result.obligation_ids.length} obligaciones para ${result.period}.`
+      : result && status === 'replayed'
+        ? `El período ya estaba generado; se conservaron ${result.obligation_ids.length} obligaciones.`
+        : null
   const message =
     error ||
+    evidence ||
     (status === 'loading'
-      ? 'Generating obligations.'
+      ? 'Generando deudas del período…'
       : status === 'error'
-        ? 'Unable to generate obligations.'
+        ? 'No se pudieron generar las deudas del período.'
         : (outcome[status] ?? ''))
   const alert = Boolean(error || status === 'error' || status === 'conflict')
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -45,7 +55,7 @@ export function GenerationPanel({
   return (
     <section aria-labelledby="generation-title" className="space-y-4 rounded-lg border p-4">
       <h2 id="generation-title" className="text-lg font-semibold">
-        Monthly generation
+        Generación mensual
       </h2>
       {message && (
         <p role={alert ? 'alert' : 'status'} aria-live={alert ? 'assertive' : 'polite'}>
@@ -54,7 +64,7 @@ export function GenerationPanel({
       )}
       <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
         <label>
-          Period
+          Período
           <input
             type="month"
             required
@@ -63,9 +73,10 @@ export function GenerationPanel({
           />
         </label>
         <button type="submit" disabled={status === 'loading'}>
-          Generate obligations
+          Generar deudas del período
         </button>
       </form>
+      <a href="#debt-title">Ver detalle de deudas</a>
     </section>
   )
 }

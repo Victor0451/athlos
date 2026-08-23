@@ -2,7 +2,7 @@ import type { FastifyPluginCallback } from 'fastify'
 import { z } from 'zod'
 import { throwIfInvalid } from '@athlos/errors'
 import { requireAuth } from '@athlos/auth'
-import { listByDisciplina } from '../modules/padrones/repository.ts'
+import { listByDisciplina, listDisciplinas } from '../modules/padrones/repository.ts'
 import type { AppContainer } from '../container.ts'
 
 /**
@@ -30,6 +30,11 @@ const AUTH = { preHandler: requireAuth() }
 
 export const padronesRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container: AppContainer = fastify.container
+
+  fastify.get('/api/v1/padrones/disciplinas', AUTH, async (_request, reply) => {
+    const items = await listDisciplinas(container.db)
+    return reply.code(200).send({ items })
+  })
 
   fastify.get('/api/v1/padrones', AUTH, async (request, reply) => {
     const q = throwIfInvalid(querySchema, request.query, 'query')

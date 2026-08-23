@@ -108,6 +108,15 @@ async function seed() {
 }
 
 describe('padrones repository — listByDisciplina', () => {
+  it('lists disciplines with their ids and operator-facing names', async () => {
+    await seed()
+
+    await expect(repo.listDisciplinas(db)).resolves.toEqual([
+      { id: 'd-futbol', codigo: 'FUTBOL', nombre: 'Fútbol' },
+      { id: 'd-hockey', codigo: 'HOCKEY', nombre: 'Hockey' },
+    ])
+  })
+
   it('returns only socios in the matching disciplina + ejercicio', async () => {
     await seed()
     const result = await repo.listByDisciplina(db, {
