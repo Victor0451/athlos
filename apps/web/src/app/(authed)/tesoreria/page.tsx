@@ -32,19 +32,18 @@ export default function TreasuryPage() {
     enabled: allowed && cashEnabled,
   })
 
-  if (!cashEnabled) return <div role="alert">Cash desk is currently disabled.</div>
-  if (!allowed) return <div role="alert">You do not have permission to operate the cash desk.</div>
+  if (!cashEnabled) return <div role="alert">La caja está deshabilitada actualmente.</div>
+  if (!allowed) return <div role="alert">No tenés permiso para operar la caja.</div>
 
   const shifts = query.data?.items ?? []
-  const errorMessage = (error: unknown) =>
-    error instanceof Error ? error.message : 'Cash desk command failed'
+  const errorMessage = (_error: unknown) => 'No se pudo ejecutar la operación de caja.'
 
   const open = async (event: FormEvent) => {
     event.preventDefault()
     setCommandError('')
     try {
       await openCashShift(desk, { CASH: Number(cash) }, crypto.randomUUID())
-      setMessage('Shift opened.')
+      setMessage('Turno abierto.')
       await query.refetch?.()
     } catch (error) {
       setCommandError(errorMessage(error))
@@ -62,8 +61,8 @@ export default function TreasuryPage() {
       )
       setMessage(
         Object.keys(result.discrepancy).length
-          ? `Discrepancy: ${JSON.stringify(result.discrepancy)}`
-          : 'Shift closed.',
+          ? `Diferencia detectada: ${JSON.stringify(result.discrepancy)}`
+          : 'Turno cerrado.',
       )
       await query.refetch?.()
     } catch (error) {
@@ -90,7 +89,7 @@ export default function TreasuryPage() {
       )
       setRecoveryShift(null)
       setRecoveryReason('')
-      setMessage('Expired shift recovered and closed.')
+      setMessage('Turno vencido recuperado y cerrado.')
       await query.refetch?.()
     } catch (error) {
       setRecoveryError(errorMessage(error))
@@ -102,25 +101,25 @@ export default function TreasuryPage() {
   return (
     <main className="space-y-6" aria-labelledby="treasury-title">
       <header>
-        <p className="font-mono text-xs uppercase tracking-widest text-accent">Treasury</p>
+        <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
         <h1 id="treasury-title" className="font-display text-2xl font-bold text-ink-900">
-          Cash desk
+          Caja
         </h1>
         <p className="mt-1 text-sm text-ink-500">
-          Open, reconcile, and close assigned shifts without exposing private settlement evidence.
+          Abrí, conciliá y cerrá los turnos asignados sin exponer evidencia privada de pagos.
         </p>
       </header>
-      {query.isPending && <p role="status">Loading cash shifts…</p>}
-      {query.isError && <p role="alert">Unable to load cash shifts.</p>}
+      {query.isPending && <p role="status">Cargando turnos de caja…</p>}
+      {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
       {commandError && <p role="alert">{commandError}</p>}
       {message && <p role="status">{message}</p>}
       <form
         onSubmit={open}
-        aria-label="Open cash shift"
+        aria-label="Abrir turno de caja"
         className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
       >
         <label>
-          Desk
+          Puesto
           <input
             className="mt-1 block w-full rounded border p-2"
             value={desk}
@@ -128,7 +127,7 @@ export default function TreasuryPage() {
           />
         </label>
         <label>
-          Opening cash (cents)
+          Efectivo inicial (centavos)
           <input
             className="mt-1 block w-full rounded border p-2"
             inputMode="numeric"
@@ -137,15 +136,15 @@ export default function TreasuryPage() {
           />
         </label>
         <button className="rounded bg-accent px-3 py-2 text-accent-foreground" type="submit">
-          Open shift
+          Abrir turno
         </button>
       </form>
       <section
-        aria-label="Close cash shift"
+        aria-label="Cerrar turno de caja"
         className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
       >
         <label>
-          Counted cash (cents)
+          Efectivo contado (centavos)
           <input
             className="mt-1 block w-full rounded border p-2"
             inputMode="numeric"
@@ -154,15 +153,15 @@ export default function TreasuryPage() {
           />
         </label>
         <label>
-          Discrepancy reason
+          Motivo de diferencia
           <input
             className="mt-1 block w-full rounded border p-2"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
         </label>
-        <div className="space-y-2" aria-label="Open shifts">
-          {shifts.length === 0 && <p role="status">No shifts</p>}
+        <div className="space-y-2" aria-label="Turnos abiertos">
+          {shifts.length === 0 && <p role="status">No hay turnos.</p>}
           {shifts
             .filter((shift) => shift.status === 'OPEN' && !expired(shift))
             .map((shift) => (
@@ -172,21 +171,21 @@ export default function TreasuryPage() {
                 className="rounded border px-3 py-2"
                 onClick={() => void close(shift)}
               >
-                Close {shift.desk_id}
+                Cerrar {shift.desk_id}
               </button>
             ))}
         </div>
       </section>
       <section
-        aria-label="Expired shift recovery"
+        aria-label="Recuperación de turnos vencidos"
         className="grid gap-3 rounded-lg border border-danger/30 bg-surface p-4"
       >
-        <h2 className="font-display text-lg font-semibold text-ink-900">Expired shift recovery</h2>
+        <h2 className="font-display text-lg font-semibold text-ink-900">Recuperar turno vencido</h2>
         <p className="text-sm text-ink-600">
-          Recovery is available only after 24 hours and requires a reason. Normal close remains
-          separate above.
+          La recuperación está disponible después de 24 horas y requiere un motivo. El cierre normal
+          se mantiene separado arriba.
         </p>
-        {shifts.filter(expired).length === 0 && <p role="status">No expired shifts</p>}
+        {shifts.filter(expired).length === 0 && <p role="status">No hay turnos vencidos.</p>}
         {shifts.filter(expired).map((shift) => (
           <button
             key={shift.id}
@@ -197,7 +196,7 @@ export default function TreasuryPage() {
               setRecoveryError('')
             }}
           >
-            Recover expired shift {shift.desk_id}
+            Recuperar turno vencido {shift.desk_id}
           </button>
         ))}
       </section>
@@ -212,16 +211,16 @@ export default function TreasuryPage() {
             id="expired-recovery-title"
             className="font-display text-lg font-semibold text-ink-900"
           >
-            Confirm expired shift recovery
+            Confirmar recuperación del turno vencido
           </h2>
           <p className="mt-1 text-sm text-ink-600">
-            This permanently closes the expired shift for {recoveryShift.desk_id} and records the
-            recovery reason in the audit log.
+            Esta acción cierra de forma permanente el turno vencido de {recoveryShift.desk_id} y
+            registra el motivo de recuperación en la auditoría.
           </p>
           {recoveryError && <p role="alert">{recoveryError}</p>}
           <form onSubmit={confirmRecovery} className="mt-3 grid gap-3 sm:grid-cols-2">
             <label>
-              Recovery reason
+              Motivo de recuperación
               <input
                 className="mt-1 block w-full rounded border p-2"
                 required
@@ -237,7 +236,7 @@ export default function TreasuryPage() {
                 onClick={() => setRecoveryShift(null)}
                 disabled={recoveryPending}
               >
-                Cancel recovery
+                Cancelar recuperación
               </button>
               <button
                 type="submit"
@@ -245,7 +244,7 @@ export default function TreasuryPage() {
                 disabled={recoveryPending || !recoveryReason.trim()}
                 aria-busy={recoveryPending}
               >
-                {recoveryPending ? 'Recovering…' : 'Confirm recovery'}
+                {recoveryPending ? 'Recuperando…' : 'Confirmar recuperación'}
               </button>
             </div>
           </form>

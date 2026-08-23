@@ -24,6 +24,7 @@ import {
   revokeDuesPrice,
   reverseDuesSettlement,
   type DebtDetail,
+  type DuesGenerationResult,
   type DuesPrice,
   type DuesPriceInput,
 } from '@/lib/api/dues'
@@ -45,8 +46,7 @@ export function canAccessCollections(
   return collectionsEnabled && (user?.role === 'ADMIN' || user?.role === 'TESORERO')
 }
 
-const errorText = (reason: unknown, fallback: string) =>
-  reason instanceof Error ? reason.message : fallback
+const errorText = (_reason: unknown, fallback: string) => fallback
 const pricingErrorState = (reason: unknown): PricingPanelState =>
   reason instanceof ApiError && reason.status === 409
     ? 'conflict'
@@ -68,6 +68,7 @@ export default function CollectionsPage() {
   const [disciplineError, setDisciplineError] = useState('')
   const [generationStatus, setGenerationStatus] = useState<GenerationPanelStatus>('idle')
   const [generationError, setGenerationError] = useState('')
+  const [generationResult, setGenerationResult] = useState<DuesGenerationResult | null>(null)
   const [socios, setSocios] = useState<Socio[]>([])
   const [selectedSocio, setSelectedSocio] = useState<DebtSocio | null>(null)
   const [debt, setDebt] = useState<DebtDetail | null>(null)
@@ -75,6 +76,7 @@ export default function CollectionsPage() {
   const [debtError, setDebtError] = useState('')
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
+
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
     setPrices(response.items)
@@ -148,13 +150,17 @@ export default function CollectionsPage() {
     const replayed = Boolean(idempotency.current.peek(input))
     const key = idempotency.current.getOrCreate(input)
     setGenerationError('')
+    setGenerationResult(null)
     setGenerationStatus('loading')
     try {
       const result = await generateDuesAssessments(selectedPeriod, key)
       idempotency.current.complete(input)
+      setGenerationResult(result)
       setGenerationStatus(replayed ? 'replayed' : result.obligation_ids.length ? 'created' : 'zero')
     } catch (reason) {
-      setGenerationError(errorText(reason, 'Unable to generate obligations.'))
+      setGenerationError(
+        errorText(reason, 'No se pudieron generar las deudas del período. Intentá nuevamente.'),
+      )
       setGenerationStatus(generationErrorState(reason))
       throw reason
     }
@@ -175,19 +181,19 @@ export default function CollectionsPage() {
       setDebtStatus(result.status)
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) {
-        setDebtError('')
+        setDebtError('No se encontró el detalle de deuda de este socio.')
         setDebtStatus('not_found')
       } else if (reason instanceof ApiError && reason.status >= 500) {
-        setDebtError('Debt detail is unavailable.')
+        setDebtError('El detalle de deuda no está disponible.')
         setDebtStatus('unavailable')
       } else {
-        setDebtError(errorText(reason, 'Unable to load debt detail.'))
+        setDebtError(errorText(reason, 'No se pudo cargar el detalle de deuda.'))
         setDebtStatus('error')
       }
     }
   }
   // prettier-ignore
-  const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status)}catch(reason){setDebtError(errorText(reason,'Unable to refresh debt detail.'));setDebtStatus('error')}}
+  const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('')}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error')}}
   // prettier-ignore
   const runSettlementMutation=async(action:string,draftFingerprint:string,request:(key:string)=>Promise<unknown>)=>{if(!user||!selectedSocio)return;if(!idempotency.current)idempotency.current=createCollectionsIdempotencyStore();const input={operatorId:user.operator_id,action,draftFingerprint},replayed=Boolean(idempotency.current.peek(input)),key=idempotency.current.getOrCreate(input);try{await request(key);idempotency.current.complete(input);await refreshDebt();return{replayed}}catch(reason){if(reason instanceof ApiError&&reason.status===409){idempotency.current.abandon(input);await refreshDebt()}throw reason}}
   const allocate = (input: AllocationRequest) =>
@@ -248,6 +254,7 @@ export default function CollectionsPage() {
           <GenerationPanel
             period={period}
             status={generationStatus}
+            result={generationResult}
             error={generationError}
             onGenerate={generate}
           />

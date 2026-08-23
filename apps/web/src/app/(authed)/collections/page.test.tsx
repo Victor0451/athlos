@@ -69,7 +69,7 @@ describe('Collections navigation and direct access', () => {
 
   it('keeps generation available to TESORERO while withholding ADMIN pricing controls', () => {
     renderPage(true, 'TESORERO')
-    expect(screen.getByRole('heading', { name: /monthly generation/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /generación mensual/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar cuota' })).not.toBeInTheDocument()
     expect(screen.getByRole('main')).not.toHaveTextContent(/ctacte|reconciliation/i)
   })
@@ -109,10 +109,10 @@ describe('Collections pricing and generation panels', () => {
   })
 
   it.each([
-    ['created', 'Generation completed.'],
-    ['replayed', 'Generation replayed.'],
-    ['zero', 'No obligations were generated.'],
-    ['conflict', 'Generation needs review.'],
+    ['created', 'Se generaron las deudas del período.'],
+    ['replayed', 'El período ya estaba generado.'],
+    ['zero', 'No se generaron deudas.'],
+    ['conflict', 'La generación requiere revisión.'],
   ] as const)('renders the generation %s state', (status, message) => {
     render(<GenerationPanel status={status} onGenerate={vi.fn()} />)
     expect(screen.getByText(message)).toBeInTheDocument()
@@ -152,6 +152,53 @@ describe('Collections pricing and generation panels', () => {
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'SPORT', disciplina_id: 'disciplina-1' }),
+    )
+  })
+
+  it('submits a base fee without a discipline', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(<PricingPanel prices={[]} onCreate={onCreate} />)
+
+    await user.type(screen.getByLabelText('Importe (centavos)'), '12500')
+    await user.type(screen.getByLabelText('Vigente desde'), '2026-01-01')
+    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'BASE', disciplina_id: null }),
+    )
+    expect(screen.queryByLabelText('Disciplina')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['loading', 'Cargando disciplinas…'],
+    ['empty', 'No hay disciplinas disponibles.'],
+    ['error', 'No se pudieron cargar las disciplinas.'],
+  ] as const)('renders the discipline %s state in Spanish', (disciplineState, message) => {
+    render(
+      <PricingPanel
+        prices={[]}
+        disciplines={[]}
+        disciplineState={disciplineState}
+        onCreate={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(message)).toBeInTheDocument()
+  })
+
+  it('shows generation evidence and a direct continuation to debt detail', () => {
+    render(
+      <GenerationPanel
+        status="created"
+        result={{ period: '2026-01', obligation_ids: ['deuda-1', 'deuda-2'] }}
+        onGenerate={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(/2 obligaciones/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /ver detalle de deudas/i })).toHaveAttribute(
+      'href',
+      '#debt-title',
     )
   })
 })
