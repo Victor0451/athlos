@@ -3,9 +3,10 @@ import { apiFetch } from '@/lib/api'
 /**
  * Padrones API wrappers (TASK-027, PR 8b.3).
  *
- * One read-only endpoint, `GET /api/v1/padrones`, with TWO
- * required query params — `disciplina` (string codigo, e.g.
- * 'NATACION') and `ejercicio` (number year, e.g. 2026).
+ * The padrones source exposes a discipline catalog and one read-only
+ * endpoint, `GET /api/v1/padrones`, with TWO required query params —
+ * `disciplina` (string codigo, e.g. 'NATACION') and `ejercicio`
+ * (number year, e.g. 2026).
  *
  *   GET /api/v1/padrones?disciplina=NATACION&ejercicio=2026
  *     Returns { disciplina, ejercicio, items, page, limit, total, has_more }
@@ -30,6 +31,13 @@ import { apiFetch } from '@/lib/api'
  * + detail flows only; write operations land in a later slice
  * once the deportes write endpoints ship.
  */
+
+/** Wire DTO for a discipline option shared with dues pricing. */
+export interface DisciplinaOption {
+  id: string
+  codigo: string
+  nombre: string
+}
 
 /** Wire DTO for one row of the padron (one inscripcion). */
 export interface PadronRow {
@@ -75,6 +83,13 @@ export interface PadronListParams {
   page?: number
   /** Page size — server defaults to 50, max 200. */
   limit?: number
+}
+
+/** Load the discipline catalog used by padrones and dues pricing. */
+export function getDisciplinas(): Promise<{ items: DisciplinaOption[] }> {
+  return apiFetch<{ items: DisciplinaOption[] }>('/api/v1/padrones/disciplinas', {
+    query: {},
+  })
 }
 
 /**

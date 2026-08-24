@@ -130,6 +130,43 @@ teardown() {
   [ "$(sha256sum "$temp/deploy/docker-compose.beta.yml" | cut -d' ' -f1)" = "$BETA_HASH" ]
 }
 
+@test "beta requires the complete four-flag set and permits all-off rollback" {
+  flags=(
+    NATIVE_COLLECTIONS_WEB_ENABLED
+    DUES_ASSESSMENT_ENABLED
+    DUES_AGREEMENTS_ENABLED
+    DUES_CASH_ENABLED
+  )
+
+  for flag in "${flags[@]}"; do
+    partial="$temp/partial-$flag.yml"
+    sed -E "s/^([[:space:]]+$flag:[[:space:]]+)true$/\\1false/" \
+      "$root/docker-compose.beta.yml" > "$partial"
+    partial_hash="$(sha256sum "$partial" | cut -d' ' -f1)"
+    run "$gate" preflight-beta "$DIGEST" "$WEB_DIGEST" "$partial_hash" < "$partial"
+    [ "$status" -eq 1 ]
+  done
+
+  for flag in "${flags[@]}"; do
+    [ "$(grep -Ec "^[[:space:]]+$flag:[[:space:]]+true$" "$root/docker-compose.beta.yml")" -eq 2 ]
+  done
+
+  rollback="$temp/rollback.yml"
+  sed -E 's/^([[:space:]]+(NATIVE_COLLECTIONS_WEB_ENABLED|DUES_ASSESSMENT_ENABLED|DUES_AGREEMENTS_ENABLED|DUES_CASH_ENABLED):[[:space:]]+)true$/\1false/' \
+    "$root/docker-compose.beta.yml" > "$rollback"
+  rollback_hash="$(sha256sum "$rollback" | cut -d' ' -f1)"
+  run "$gate" preflight-beta "$DIGEST" "$WEB_DIGEST" "$rollback_hash" < "$rollback"
+  [ "$status" -eq 0 ]
+
+  entry_rollback="$temp/entry-rollback.yml"
+  sed -E \
+    's/^([[:space:]]+(NATIVE_COLLECTIONS_WEB_ENABLED|DUES_AGREEMENTS_ENABLED):[[:space:]]+)true$/\1false/' \
+    "$root/docker-compose.beta.yml" > "$entry_rollback"
+  entry_rollback_hash="$(sha256sum "$entry_rollback" | cut -d' ' -f1)"
+  run "$gate" preflight-beta "$DIGEST" "$WEB_DIGEST" "$entry_rollback_hash" < "$entry_rollback"
+  [ "$status" -eq 0 ]
+}
+
 @test "beta rejects a symlink destination and preflight never installs" {
   cp "$temp/deploy/docker-compose.beta.yml" "$temp/prior.yml"
   mv "$temp/deploy/docker-compose.beta.yml" "$temp/deploy/docker-compose.beta.real"

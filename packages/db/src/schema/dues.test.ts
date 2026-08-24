@@ -55,9 +55,10 @@ function migrationSql() {
       '0051_dues_family_groups.sql',
       '0052_dues_settlements.sql',
       '0053_dues_agreements_community_work.sql',
+      '0058_dues_open_agreements.sql',
     ].map((file) => readFile(join(root, 'drizzle', file), 'utf8')),
-  ).then(([pricing, benefits, familyGroups, settlements, agreements]) =>
-    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}\n${agreements}`
+  ).then(([pricing, benefits, familyGroups, settlements, agreements, openAgreements]) =>
+    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}\n${agreements}\n${openAgreements}`
       .replace('CREATE SCHEMA IF NOT EXISTS tesoreria', `CREATE SCHEMA IF NOT EXISTS ${q}`)
       .replaceAll('tesoreria.', `${q}.`)
       .replaceAll('deportes.', `${q}.`)
@@ -66,9 +67,14 @@ function migrationSql() {
   )
 }
 
+let seedObligationCount = 0
 async function seedObligation(memberId = socioId) {
+  // Each seeded obligation needs a distinct monthly natural key (socio + period).
+  const index = seedObligationCount++
+  const start = new Date(Date.UTC(2026, index, 1)).toISOString().slice(0, 10)
+  const end = new Date(Date.UTC(2026, index + 1, 1)).toISOString().slice(0, 10)
   // prettier-ignore
-  await pool.query(`WITH receipt AS (INSERT INTO ${q}.dues_generation_receipts (operator_id, caller_key, request_fingerprint, period_start, period_end, authorization_evidence) VALUES ($1, gen_random_uuid(), repeat('a', 64), DATE '2026-01-01', DATE '2026-02-01', '{}') RETURNING id), obligation AS (INSERT INTO ${q}.dues_obligations (socio_id, kind, period_start, period_end, amount, generation_receipt_id, snapshot, actor_id, authorization_evidence) SELECT $2, 'MONTHLY_DUES', DATE '2026-01-01', DATE '2026-02-01', 100.00, id, '{}', $1, '{}' FROM receipt RETURNING id) INSERT INTO ${q}.dues_obligation_components (obligation_id, kind, component_key, amount, calculation_inputs, eligibility_snapshot, price_snapshot) SELECT id, 'BASE', 'base', 100.00, '{}', '{}', '{}' FROM obligation`, [operatorId, memberId])
+  await pool.query(`WITH receipt AS (INSERT INTO ${q}.dues_generation_receipts (operator_id, caller_key, request_fingerprint, period_start, period_end, authorization_evidence) VALUES ($1, gen_random_uuid(), repeat('a', 64), $3, $4, '{}') RETURNING id), obligation AS (INSERT INTO ${q}.dues_obligations (socio_id, kind, period_start, period_end, amount, generation_receipt_id, snapshot, actor_id, authorization_evidence) SELECT $2, 'MONTHLY_DUES', $3, $4, 100.00, id, '{}', $1, '{}' FROM receipt RETURNING id) INSERT INTO ${q}.dues_obligation_components (obligation_id, kind, component_key, amount, calculation_inputs, eligibility_snapshot, price_snapshot) SELECT id, 'BASE', 'base', 100.00, '{}', '{}', '{}' FROM obligation`, [operatorId, memberId, start, end])
   return (await pool.query(`SELECT id FROM ${q}.dues_obligations ORDER BY created_at DESC LIMIT 1`))
     .rows[0].id as string
 }
@@ -103,7 +109,7 @@ describe('dues pricing and obligation schema', () => {
     expect(duesFamilyMemberships).toBeDefined()
     expect(duesSettlementKind.enumValues).toEqual(['MONETARY', 'NON_CASH'])
     expect(duesAllocationKind.enumValues).toEqual(['ALLOCATION', 'COMPENSATION'])
-    expect(duesAgreementKind.enumValues).toEqual(['SIMPLE', 'INSTALLMENT'])
+    expect(duesAgreementKind.enumValues).toEqual(['SIMPLE', 'INSTALLMENT', 'NEGOTIATED'])
     expect(duesAgreementStatus.enumValues).toEqual([
       'ACTIVE',
       'FULFILLED',
@@ -112,6 +118,8 @@ describe('dues pricing and obligation schema', () => {
     ])
     expect(duesAgreements).toBeDefined()
     expect(duesCommunityWork).toBeDefined()
+    expect(duesAgreements.termsVersion.columnType).toBe('PgInteger')
+    expect(duesCommunityWork.agreementId.columnType).toBe('PgUUID')
     expect(duesAgreements.requestFingerprint.columnType).toBe('PgChar')
     const files = (await readdir(join(root, 'drizzle')))
       .filter((f) => /^\d{4}_.+\.sql$/.test(f))
@@ -121,7 +129,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0057_cash_lifecycle_boundaries',
+      tag: '0058_dues_open_agreements',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
@@ -398,5 +406,222 @@ describe('dues pricing and obligation schema', () => {
       pool.query(`DELETE FROM ${q}.dues_allocations WHERE id = $1`, [allocation.rows[0].id]),
       '55000',
     )
+  })
+})
+
+describe('versioned negotiated agreements', () => {
+  const insertAgreement = (input: {
+    socioId: string
+    obligationId: string
+    kind?: string
+    termsVersion?: number
+    terms: Record<string, unknown>
+    callerKey?: string
+  }) =>
+    pool.query(
+      `INSERT INTO ${q}.dues_agreements
+            (socio_id, obligation_id, kind, terms_version, terms, reason, operator_id, caller_key, request_fingerprint)
+           VALUES ($1, $2, $3, $4, $5::jsonb, 'Approved agreement fixture', $6, $7, repeat('z', 64))
+           RETURNING id, kind, terms_version, terms`,
+      [
+        input.socioId,
+        input.obligationId,
+        input.kind ?? 'NEGOTIATED',
+        input.termsVersion ?? 1,
+        JSON.stringify(input.terms),
+        operatorId,
+        input.callerKey ?? randomUUID(),
+      ],
+    )
+
+  it('reads legacy plans and accepts narrative-only negotiated terms without allocations', async () => {
+    const simpleObligation = await seedObligation()
+    const installmentObligation = await seedObligation()
+    const negotiatedObligation = await seedObligation()
+    await insertAgreement({
+      socioId,
+      obligationId: simpleObligation,
+      kind: 'SIMPLE',
+      termsVersion: 0,
+      terms: {
+        amountCents: 10_000,
+        installments: [{ amountCents: 10_000, dueDate: '2099-01-01' }],
+      },
+      callerKey: 'legacy-simple',
+    })
+    await insertAgreement({
+      socioId,
+      obligationId: installmentObligation,
+      kind: 'INSTALLMENT',
+      termsVersion: 0,
+      terms: {
+        amountCents: 10_000,
+        installments: [
+          { amountCents: 5_000, dueDate: '2099-01-01' },
+          { amountCents: 5_000, dueDate: '2099-02-01' },
+        ],
+      },
+      callerKey: 'legacy-installment',
+    })
+    const negotiated = await insertAgreement({
+      socioId,
+      obligationId: negotiatedObligation,
+      terms: { narrative: 'El socio colaborará con tareas acordadas.' },
+      callerKey: 'negotiated-narrative-only',
+    })
+
+    await expect(
+      pool.query(
+        `SELECT kind, terms_version, terms FROM ${q}.dues_agreements ORDER BY created_at, id`,
+      ),
+    ).resolves.toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({ kind: 'SIMPLE', terms_version: 0 }),
+        expect.objectContaining({ kind: 'INSTALLMENT', terms_version: 0 }),
+        expect.objectContaining({
+          kind: 'NEGOTIATED',
+          terms_version: 1,
+          terms: { narrative: 'El socio colaborará con tareas acordadas.' },
+        }),
+      ]),
+    })
+    await expect(
+      pool.query(
+        `SELECT count(*)::int AS count FROM ${q}.dues_allocations WHERE obligation_id = $1`,
+        [negotiatedObligation],
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] })
+    expect(negotiated.rows[0]).toMatchObject({ kind: 'NEGOTIATED', terms_version: 1 })
+    await expect(
+      pool.query(`UPDATE ${q}.dues_agreements SET terms_version = 2 WHERE obligation_id = $1`, [
+        negotiatedObligation,
+      ]),
+    ).rejects.toMatchObject({ code: '55000' })
+  })
+
+  it('accepts zero and the maximum number of bounded commitments with optional evidence', async () => {
+    const obligationId = await seedObligation()
+    await expect(
+      insertAgreement({
+        socioId,
+        obligationId,
+        callerKey: 'negotiated-max-commitments',
+        terms: {
+          narrative: 'Compromiso con estructuras opcionales.',
+          commitments: Array.from({ length: 50 }, (_, index) => ({
+            id: randomUUID(),
+            title: `Compromiso ${index}`,
+            description: 'Detalle acotado',
+            dueDate: '2099-01-01',
+            amountCents: 100,
+            evidence: { note: 'Evidencia acotada', references: [`ref-${index}`], metadata: {} },
+          })),
+          evidence: { note: 'Acta de la conversación', references: ['meeting-1'], metadata: {} },
+        },
+      }),
+    ).resolves.toMatchObject({ rowCount: 1 })
+  })
+
+  it('rejects unsupported representations and malformed bounded negotiated terms', async () => {
+    const cases = [
+      { kind: 'NEGOTIATED', termsVersion: 2, terms: { narrative: 'Unsupported version' } },
+      { kind: 'SIMPLE', termsVersion: 1, terms: { narrative: 'Wrong discriminator' } },
+      { kind: 'NEGOTIATED', termsVersion: 1, terms: { narrative: '   ' } },
+      {
+        kind: 'NEGOTIATED',
+        termsVersion: 1,
+        terms: {
+          narrative: 'Too many commitments',
+          commitments: Array.from({ length: 51 }, (_, index) => ({
+            id: randomUUID(),
+            title: `Commitment ${index}`,
+          })),
+        },
+      },
+      {
+        kind: 'NEGOTIATED',
+        termsVersion: 1,
+        terms: {
+          narrative: 'Malformed commitment',
+          commitments: [{ id: 'not-a-uuid', title: 'Action', dueDate: '2026-02-31' }],
+        },
+      },
+      {
+        kind: 'NEGOTIATED',
+        termsVersion: 1,
+        terms: {
+          narrative: 'Malformed amount',
+          commitments: [{ id: randomUUID(), title: 'Action', amountCents: 0 }],
+        },
+      },
+      {
+        kind: 'NEGOTIATED',
+        termsVersion: 1,
+        terms: { narrative: 'Malformed evidence', evidence: { note: 'x'.repeat(2001) } },
+      },
+    ]
+    for (const [index, input] of cases.entries()) {
+      const obligationId = await seedObligation()
+      await expect(
+        insertAgreement({ ...input, socioId, obligationId, callerKey: `invalid-${index}` }),
+      ).rejects.toMatchObject({ code: '23514' })
+    }
+  })
+
+  it('requires community work agreement linkage to preserve socio and obligation ownership', async () => {
+    const otherSocioId = await insertSocio()
+    const target = await seedObligation()
+    const otherTarget = await seedObligation(otherSocioId)
+    const agreement = await insertAgreement({
+      socioId,
+      obligationId: target,
+      terms: { narrative: 'Trabajo comunitario aprobado.' },
+      callerKey: 'community-work-agreement',
+    })
+    const otherAgreement = await insertAgreement({
+      socioId: otherSocioId,
+      obligationId: otherTarget,
+      terms: { narrative: 'Otro acuerdo aprobado.' },
+      callerKey: 'other-community-work-agreement',
+    })
+    const settlement = await pool.query(
+      `INSERT INTO ${q}.dues_settlements
+            (socio_id, kind, amount, operator_id, caller_key, request_fingerprint)
+           VALUES ($1, 'NON_CASH', 100.00, $2, $3, repeat('w', 64)) RETURNING id`,
+      [socioId, operatorId, 'community-work-link'],
+    )
+    const workValues = [
+      randomUUID(),
+      socioId,
+      target,
+      settlement.rows[0].id,
+      JSON.stringify({ approval: 'fixture' }),
+      operatorId,
+      'community-work-link',
+      agreement.rows[0].id,
+    ]
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.dues_community_work
+              (id, socio_id, obligation_id, settlement_id, amount, evidence, approval_reason, operator_id, caller_key, request_fingerprint, agreement_id)
+             VALUES ($1, $2, $3, $4, 100.00, $5::jsonb, 'Approved work', $6, $7, repeat('x', 64), $8)`,
+        workValues,
+      ),
+    ).resolves.toBeTruthy()
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.dues_community_work
+              (socio_id, obligation_id, settlement_id, amount, evidence, approval_reason, operator_id, caller_key, request_fingerprint, agreement_id)
+             VALUES ($1, $2, $3, 100.00, '{}'::jsonb, 'Cross-owner work', $4, $5, repeat('y', 64), $6)`,
+        [
+          socioId,
+          target,
+          settlement.rows[0].id,
+          operatorId,
+          'cross-owner-work',
+          otherAgreement.rows[0].id,
+        ],
+      ),
+    ).rejects.toMatchObject({ code: '23514' })
   })
 })

@@ -31,7 +31,7 @@ else
   die 'SSH_ORIGINAL_COMMAND is required'
 fi
 
-read -r -a argv <<< "$command"
+read -r -a argv <<<"$command"
 operation="${argv[0]:-}"
 api_image="${argv[1]:-}"
 web_image="${argv[2]:-}"
@@ -64,7 +64,7 @@ read_beta_artifact() {
   beta_candidate="$(mktemp "$deploy_path/.docker-compose.beta.incoming.XXXXXX")" || die 'cannot create beta config temporary file'
   chmod 600 "$beta_candidate"
   dd of="$beta_candidate" bs=$((MAX_BETA_CONFIG_BYTES + 1)) count=1 status=none || true
-  actual_size="$(wc -c < "$beta_candidate")"
+  actual_size="$(wc -c <"$beta_candidate")"
   [[ "$actual_size" -le "$MAX_BETA_CONFIG_BYTES" ]] || die 'beta config payload exceeds size limit'
   extra_file="$(mktemp "$deploy_path/.docker-compose.beta.extra.XXXXXX")" || die 'cannot create beta EOF probe'
   chmod 600 "$extra_file"
@@ -78,12 +78,38 @@ read_beta_artifact() {
 
 validate_beta_policy() {
   local config_file="$1"
-  grep -Eq '^[[:space:]]*- "3100:3000"$' "$config_file" || die 'beta policy requires web port 3100:3000'
-  grep -Eq '^[[:space:]]*- "4100:3001"$' "$config_file" || die 'beta policy requires API port 4100:3001'
+  grep -Eq "^[[:space:]]*- ['\"]3100:3000['\"]$" "$config_file" || die 'beta policy requires web port 3100:3000'
+  grep -Eq "^[[:space:]]*- ['\"]4100:3001['\"]$" "$config_file" || die 'beta policy requires API port 4100:3001'
   grep -Fq '.env.beta' "$config_file" || die 'beta policy requires .env.beta'
   grep -Fq 'name: athlos_default' "$config_file" || die 'beta policy requires the shared database network'
   grep -Fq 'storage-beta:/app/storage' "$config_file" || die 'beta policy requires isolated storage'
   ! grep -Eq '"3000:3000"|"4000:3001"' "$config_file" || die 'beta policy rejects production ports'
+
+  local flag state true_count false_count
+  local native_state='' assessment_state='' agreements_state='' cash_state=''
+  for flag in \
+    NATIVE_COLLECTIONS_WEB_ENABLED \
+    DUES_ASSESSMENT_ENABLED \
+    DUES_AGREEMENTS_ENABLED \
+    DUES_CASH_ENABLED; do
+    true_count="$(grep -Ec "^[[:space:]]+$flag:[[:space:]]+true[[:space:]]*$" "$config_file" || true)"
+    false_count="$(grep -Ec "^[[:space:]]+$flag:[[:space:]]+false[[:space:]]*$" "$config_file" || true)"
+    [[ "$true_count" -eq 2 || "$false_count" -eq 2 ]] ||
+      die "beta policy requires $flag in both services with one shared state"
+    state=1
+    [[ "$false_count" -eq 2 ]] && state=0
+    case "$flag" in
+    NATIVE_COLLECTIONS_WEB_ENABLED) native_state="$state" ;;
+    DUES_ASSESSMENT_ENABLED) assessment_state="$state" ;;
+    DUES_AGREEMENTS_ENABLED) agreements_state="$state" ;;
+    DUES_CASH_ENABLED) cash_state="$state" ;;
+    esac
+  done
+  if [[ "$native_state$assessment_state$agreements_state$cash_state" != 1111 &&
+    "$native_state$assessment_state$agreements_state$cash_state" != 0000 &&
+    "$native_state$assessment_state$agreements_state$cash_state" != 0101 ]]; then
+    die 'beta policy requires the complete four-flag set or a supported rollback state'
+  fi
 }
 
 preflight() {
@@ -163,7 +189,7 @@ fi
 "${compose[@]}" up -d api web
 
 for _ in {1..24}; do
-  if curl --fail --silent --show-error "$api_health_url" >/dev/null && \
+  if curl --fail --silent --show-error "$api_health_url" >/dev/null &&
     curl --fail --silent --show-error "$web_health_url" >/dev/null; then
     running_api_image="$(docker inspect --format '{{.Config.Image}}' "$api_container")"
     running_web_image="$(docker inspect --format '{{.Config.Image}}' "$web_container")"

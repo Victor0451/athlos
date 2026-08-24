@@ -351,6 +351,13 @@
       "when": 1786900008000,
       "tag": "0057_cash_lifecycle_boundaries",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1786900009000,
+      "tag": "0058_dues_open_agreements",
+      "breakpoints": true
     }
   ]
 }
