@@ -25,6 +25,27 @@ describe('AgreementForm', () => {
     })
   })
 
+  it('validates and submits a revision with a distinct Spanish reason label', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <AgreementForm open busy={false} mode="revision" onCancel={vi.fn()} onSubmit={onSubmit} />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /actualizar acuerdo/i }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/narrativa.*motivo de la revisión/i)
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await user.type(screen.getByLabelText(/narrativa del acuerdo/i), 'Narrativa revisada')
+    await user.type(screen.getByLabelText(/motivo de la revisión/i), 'Nueva condición')
+    await user.click(screen.getByRole('button', { name: /actualizar acuerdo/i }))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      narrative: 'Narrativa revisada',
+      reason: 'Nueva condición',
+    })
+  })
+
   it('keeps a supplied API error accessible without clearing the draft', async () => {
     const user = userEvent.setup()
     render(
