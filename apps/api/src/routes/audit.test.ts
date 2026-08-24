@@ -471,3 +471,106 @@ describe('GET /api/v1/audit', () => {
     expect(response.body).not.toContain('rawMetadata')
   })
 })
+
+describe('dues agreement audit projection (1C)', () => {
+  const auditItem = (
+    action: string,
+    metadata: unknown,
+    oldValue: unknown = null,
+    newValue: unknown = null,
+  ) => ({
+    id: 'audit-agreement-1',
+    operatorId: null,
+    action,
+    entityType: 'dues_agreement',
+    entityId: 'agreement-2',
+    oldValue,
+    newValue,
+    sourceIp: null,
+    metadata,
+    createdAt: new Date('2026-08-19T00:00:00.000Z'),
+  })
+  const auditPage = (items: unknown[]) =>
+    ({ items, total: items.length, page: 1, limit: 100, pages: 1 }) as never
+  const auditGet = (app: FastifyInstance) =>
+    app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: { authorization: `Bearer ${makeAdminToken()}` },
+    })
+
+  it('projects complete dues evidence for authorized callers while redacting agreement narrative and lineage internals', async () => {
+    const app = await buildApp()
+    const actorId = '00000000-0000-4000-8000-000000000001'
+    const metadata = {
+      actorId,
+      role: 'TESORERO',
+      permissions: ['dues:agreements'],
+      authorizationEvidence: { role: 'TESORERO', permissions: ['dues:agreements'] },
+      callerKey: 'revision-1',
+      requestFingerprint: '9'.repeat(64),
+      time: '2026-08-19T00:00:00.000Z',
+      reason: 'Renegociación acordada',
+      predecessorAgreementId: 'agreement-1',
+      successorAgreementId: 'agreement-2',
+      revisionReason: 'Renegociación acordada',
+      secretMetadata: 'must-not-leak',
+    }
+    vi.mocked(queryAudit).mockResolvedValueOnce(
+      auditPage([
+        auditItem(
+          'DUES_AGREEMENT_REVISED',
+          metadata,
+          {
+            id: 'agreement-1',
+            kind: 'NEGOTIATED',
+            termsVersion: 1,
+            terms: { narrative: 'Narrativa sensible del acuerdo original' },
+            status: 'SUPERSEDED',
+            revisionNumber: 1,
+          },
+          {
+            id: 'agreement-2',
+            obligationId: 'obligation-1',
+            kind: 'NEGOTIATED',
+            termsVersion: 1,
+            terms: { narrative: 'Narrativa sensible del acuerdo vigente' },
+            status: 'ACTIVE',
+            revisionNumber: 2,
+            reason: 'Renegociación acordada',
+          },
+        ),
+      ]),
+    )
+
+    const response = await auditGet(app)
+    expect(response.statusCode).toBe(200)
+    const item = JSON.parse(response.body).items[0]
+    expect(item).toMatchObject({
+      action: 'DUES_AGREEMENT_REVISED',
+      oldValue: null,
+      newValue: null,
+      dues_reason: 'Renegociación acordada',
+    })
+    expect(item.dues_evidence).toEqual({
+      actor: { id: actorId, role: 'TESORERO', permissions: ['dues:agreements'] },
+      authorization_evidence: { role: 'TESORERO', permissions: ['dues:agreements'] },
+      idempotency: { caller_key: 'revision-1', request_fingerprint: '9'.repeat(64) },
+      time: '2026-08-19T00:00:00.000Z',
+    })
+    expect(item).not.toHaveProperty('metadata')
+    expect(response.body).not.toContain('Narrativa sensible')
+    expect(response.body).not.toContain('must-not-leak')
+    expect(response.body).not.toContain('predecessorAgreementId')
+  })
+
+  it('denies the audit trail to roles without steward authority', async () => {
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/audit',
+      headers: { authorization: `Bearer ${makeConsultaToken()}` },
+    })
+    expect(res.statusCode).toBe(403)
+  })
+})

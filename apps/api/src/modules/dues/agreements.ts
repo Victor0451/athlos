@@ -43,13 +43,14 @@ type AgreementRow = {
   termsVersion: number
   terms: LegacyAgreementTerms | NegotiatedAgreementTermsV1
   reason: string
+  revisionReason: string | null
   agreementDate: string
   revisionOfAgreementId: string | null
 }
 
 export type AgreementKind = 'SIMPLE' | 'INSTALLMENT' | 'NEGOTIATED'
 export type AgreementStatus = 'ACTIVE' | 'FULFILLED' | 'CANCELLED' | 'SUPERSEDED'
-export type Agreement = Omit<AgreementRow, 'reason'>
+export type Agreement = AgreementRow
 export type AgreementInput = {
   socioId: string
   obligationId: string
@@ -71,7 +72,7 @@ type RescheduleInput = Omit<
 }
 
 const rows = <T>(value: unknown) => (value as { rows?: T[] }).rows ?? []
-const fields = sql`id,socio_id AS "socioId",obligation_id AS "obligationId",kind,status,revision_number AS "revisionNumber",terms_version AS "termsVersion",terms,reason,agreement_date AS "agreementDate",revision_of_agreement_id AS "revisionOfAgreementId"`
+const fields = sql`id,socio_id AS "socioId",obligation_id AS "obligationId",kind,status,revision_number AS "revisionNumber",terms_version AS "termsVersion",terms,reason,revision_reason AS "revisionReason",agreement_date AS "agreementDate",revision_of_agreement_id AS "revisionOfAgreementId"`
 const map = (row: AgreementRow): Agreement => ({
   id: row.id,
   socioId: row.socioId,
@@ -81,6 +82,8 @@ const map = (row: AgreementRow): Agreement => ({
   revisionNumber: row.revisionNumber,
   termsVersion: row.termsVersion,
   terms: row.terms,
+  reason: row.reason,
+  revisionReason: row.revisionReason,
   agreementDate: row.agreementDate,
   revisionOfAgreementId: row.revisionOfAgreementId,
 })
@@ -289,6 +292,17 @@ export async function findAgreement(db: DuesDb, id: string): Promise<Agreement |
   )
 }
 
+export async function listObligationAgreements(
+  db: DuesDb,
+  obligationId: string,
+): Promise<Agreement[]> {
+  return rows<AgreementRow>(
+    await db.execute(
+      sql`SELECT ${fields} FROM tesoreria.dues_agreements WHERE obligation_id=${obligationId} ORDER BY revision_number ASC`,
+    ),
+  ).map(map)
+}
+
 export async function createAgreement(
   db: DuesDb,
   input: AgreementInput,
@@ -394,8 +408,14 @@ type AgreementRepository = {
   createAgreement: typeof createAgreement
   rescheduleAgreement: typeof rescheduleAgreement
   reviseAgreement: typeof reviseAgreement
+  findAgreement: typeof findAgreement
+  listObligationAgreements: typeof listObligationAgreements
 }
-type Dependencies = { repository?: AgreementRepository; audit?: AuditEmitter; now?: () => Date }
+type Dependencies = {
+  repository?: Partial<AgreementRepository>
+  audit?: AuditEmitter
+  now?: () => Date
+}
 type Repository = AgreementRepository
 
 export type AgreementCommand = AuditContext &
@@ -426,10 +446,13 @@ export class AgreementService {
     private readonly db: Db,
     dependencies: Dependencies = {},
   ) {
-    this.repository = dependencies.repository ?? {
+    this.repository = {
       createAgreement,
       rescheduleAgreement,
       reviseAgreement,
+      findAgreement,
+      listObligationAgreements,
+      ...(dependencies.repository ?? {}),
     }
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
@@ -440,20 +463,36 @@ export class AgreementService {
     action: string,
     result: Agreement,
     reason: string,
+    predecessor: Agreement | null = null,
   ) {
     await this.audit(db, {
       action,
       operatorId: input.actorId,
       entityType: 'dues_agreement',
       entityId: result.id,
-      oldValue: null,
+      oldValue: predecessor
+        ? {
+            id: predecessor.id,
+            obligationId: predecessor.obligationId,
+            kind: predecessor.kind,
+            termsVersion: predecessor.termsVersion,
+            terms: predecessor.terms,
+            status: predecessor.status,
+            revisionNumber: predecessor.revisionNumber,
+            revisionOfAgreementId: predecessor.revisionOfAgreementId,
+            reason: predecessor.reason,
+          }
+        : null,
       newValue: {
         id: result.id,
         obligationId: result.obligationId,
         kind: result.kind,
+        termsVersion: result.termsVersion,
+        terms: result.terms,
         status: result.status,
         revisionNumber: result.revisionNumber,
         revisionOfAgreementId: result.revisionOfAgreementId,
+        reason,
       },
       sourceIp: input.sourceIp,
       callerKey: input.callerKey,
@@ -466,6 +505,13 @@ export class AgreementService {
         requestFingerprint: input.requestFingerprint,
         time: this.now().toISOString(),
         reason,
+        ...(predecessor
+          ? {
+              predecessorAgreementId: predecessor.id,
+              successorAgreementId: result.id,
+              revisionReason: reason,
+            }
+          : {}),
       },
     })
   }
@@ -520,16 +566,42 @@ export class AgreementService {
         callerKey: input.callerKey,
         requestFingerprint: input.requestFingerprint,
       })
-      if (result.outcome === 'created')
+      if (result.outcome === 'created') {
+        const predecessor = await this.repository.findAgreement(tx, input.agreementId)
         await this.record(
           tx,
           input,
           AuditAction.DUES_AGREEMENT_REVISED,
           result.agreement,
           input.reason,
+          predecessor,
         )
+      }
       return result
     })
+  }
+  async lineage(input: { obligationId: string }): Promise<{
+    active: Agreement | null
+    revisions: Agreement[]
+  }> {
+    const agreements = await this.repository.listObligationAgreements(this.db, input.obligationId)
+    for (const agreement of agreements) {
+      try {
+        decodeAgreementTerms(
+          agreement.kind,
+          agreement.termsVersion,
+          agreement.terms,
+          agreement.agreementDate,
+        )
+      } catch {
+        throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Agreement lineage is unavailable')
+      }
+    }
+    const revisions = [...agreements].sort((a, b) => a.revisionNumber - b.revisionNumber)
+    return {
+      active: revisions.find((agreement) => agreement.status === 'ACTIVE') ?? null,
+      revisions,
+    }
   }
   async reschedule(input: RescheduleCommand): Promise<AgreementMutationResult> {
     authorize(input.role)
