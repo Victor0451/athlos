@@ -17,6 +17,7 @@ const duesMocks = vi.hoisted(() => ({
   getObligationAgreements: vi.fn(),
   createNegotiatedAgreement: vi.fn(),
   reviseNegotiatedAgreement: vi.fn(),
+  createCommunityWorkEvidence: vi.fn(),
   DuesOperationError: class MockDuesOperationError extends Error {
     constructor(
       readonly kind: string,
@@ -338,5 +339,88 @@ describe('Collections pricing and generation panels', () => {
       'href',
       '#debt-title',
     )
+  })
+})
+
+describe('community-work evidence settlement', () => {
+  const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+  // prettier-ignore
+  const active = { id: 'agreement-1', socio_id: 'socio-1', obligation_id: 'obligation-1', kind: 'NEGOTIATED', status: 'ACTIVE', revision_number: 1, terms_version: 1, terms: { narrative: 'Trabajo acordado' }, reason: 'Acuerdo vigente', revision_reason: null, agreement_date: '2026-01-03', revision_of_agreement_id: null, replayed: false }
+  // prettier-ignore
+  const debt = (outstanding = 10_000) => ({ status: 'ready', socio_id: 'socio-1', currency: 'ARS', total_debt_cents: outstanding, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 10_000, outstanding_cents: outstanding, currency: 'ARS', status: outstanding ? 'OPEN' : 'PAID', components: [], benefits: [], allocations: [] }] })
+  // prettier-ignore
+  const communityResult = (replayed = false) => ({ community_work_id: 'work-1', settlement_id: 'settlement-1', allocation_id: 'allocation-1', obligation_id: 'obligation-1', agreement_id: 'agreement-1', amount_cents: 2_500, currency: 'ARS', replayed })
+  // prettier-ignore
+  const prepare = () => { vi.clearAllMocks(); duesMocks.getDebt.mockResolvedValueOnce(debt()).mockResolvedValueOnce(debt(7_500)); duesMocks.getObligationAgreements.mockResolvedValue({ active, revisions: [active] }); sociosMocks.getSocios.mockResolvedValue({ items: [socio] }) }
+  // prettier-ignore
+  const openForm = async () => { const user = userEvent.setup(); renderPage(true, 'ADMIN', true); await user.type(screen.getByLabelText('Buscar socio'), 'Ana'); await user.click(screen.getByRole('button', { name: 'Buscar socio' })); await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ })); await user.click(await screen.findByRole('button', { name: /registrar trabajo comunitario/i })); return user }
+  // prettier-ignore
+  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada'); await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
+
+  it('links the active agreement, reuses the draft key, and refreshes debt only after confirmation', async () => {
+    prepare()
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1))
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        socio_id: 'socio-1',
+        obligation_id: 'obligation-1',
+        agreement_id: 'agreement-1',
+        amount_cents: 2_500,
+        evidence: { description: 'Acta 12 aprobada' },
+        reason: 'Trabajo aceptado',
+      }),
+      expect.any(String),
+    )
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('Deuda total pendiente: 75.00 ARS')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['conflict', 'El saldo cambió', false],
+    ['permission', 'No tenés permiso para registrar trabajo comunitario.', false],
+    ['partial_data', 'Los datos del trabajo comunitario están incompletos.', false],
+    ['unavailable', 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.', false],
+    ['replayed', 'Este trabajo comunitario ya había sido registrado.', true],
+  ] as const)(
+    'handles %s without an unconfirmed debt refresh and preserves the draft',
+    async (kind, message, confirmed) => {
+      prepare()
+      if (confirmed) {
+        duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult(true))
+      } else {
+        duesMocks.createCommunityWorkEvidence.mockRejectedValue(
+          new duesMocks.DuesOperationError(kind, kind),
+        )
+      }
+      const user = await openForm()
+      const evidence = screen.getByLabelText(/evidencia/i)
+      await completeDraft(user)
+
+      await waitFor(() =>
+        expect(screen.getByText((content) => content.includes(message))).toBeInTheDocument(),
+      )
+      expect(evidence).toHaveValue('Acta 12 aprobada')
+      expect(duesMocks.getDebt).toHaveBeenCalledTimes(confirmed ? 2 : 1)
+    },
+  )
+
+  it('abandons a conflict key and uses a new idempotency key only on explicit resubmission', async () => {
+    prepare()
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new duesMocks.DuesOperationError('conflict', 'conflict'))
+      .mockResolvedValueOnce(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/saldo cambió/i))
+    const firstKey = duesMocks.createCommunityWorkEvidence.mock.calls[0]![1]
+    await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
+
+    expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(firstKey)
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
   })
 })

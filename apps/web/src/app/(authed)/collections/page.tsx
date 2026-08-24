@@ -6,6 +6,7 @@ import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
+import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
 import type { AllocationRequest, ReversalRequest } from '@/components/collections/SettlementActions'
 import {
@@ -18,6 +19,7 @@ import {
   type PricingPanelState,
 } from '@/components/collections/PricingPanel'
 import {
+  createCommunityWorkEvidence,
   createDuesPrice,
   createDuesSettlement,
   createNegotiatedAgreement,
@@ -240,7 +242,7 @@ export default function CollectionsPage() {
     }
   }
   // prettier-ignore
-  const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('')}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error')}}
+  const refreshDebt=async()=>{if(!selectedSocio)return false;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('');return true}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error');return false}}
   // prettier-ignore
   const refreshAgreement = (obligationId: string) => loadAgreement(obligationId)
   const createAgreement = async (obligationId: string, draft: AgreementDraft) => {
@@ -318,8 +320,63 @@ export default function CollectionsPage() {
       throw reason
     }
   }
-  // prettier-ignore
-  const runSettlementMutation=async(action:string,draftFingerprint:string,request:(key:string)=>Promise<unknown>)=>{if(!user||!selectedSocio)return;if(!idempotency.current)idempotency.current=createCollectionsIdempotencyStore();const input={operatorId:user.operator_id,action,draftFingerprint},replayed=Boolean(idempotency.current.peek(input)),key=idempotency.current.getOrCreate(input);try{await request(key);idempotency.current.complete(input);await refreshDebt();return{replayed}}catch(reason){if(reason instanceof ApiError&&reason.status===409){idempotency.current.abandon(input);await refreshDebt()}throw reason}}
+  const runSettlementMutation = async <T extends object>(
+    action: string,
+    draftFingerprint: string,
+    request: (key: string) => Promise<T>,
+  ) => {
+    if (!user || !selectedSocio)
+      throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = { operatorId: user.operator_id, action, draftFingerprint }
+    const replayed = Boolean(idempotency.current.peek(input))
+    const key = idempotency.current.getOrCreate(input)
+    try {
+      const result = await request(key)
+      idempotency.current.complete(input)
+      if (!(await refreshDebt()))
+        throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+      return {
+        ...result,
+        replayed: Boolean((result as { replayed?: boolean }).replayed) || replayed,
+      }
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict')
+        idempotency.current.abandon(input)
+      if (reason instanceof ApiError && reason.status === 409) {
+        idempotency.current.abandon(input)
+        await refreshDebt()
+      }
+      throw reason
+    }
+  }
+  const createCommunityWork = (
+    obligationId: string,
+    agreementId: string,
+    draft: CommunityWorkDraft,
+  ) =>
+    runSettlementMutation(
+      `community-work:${agreementId}`,
+      JSON.stringify({
+        obligationId,
+        agreementId,
+        ...draft,
+        evidence: draft.evidence.trim(),
+        reason: draft.reason.trim(),
+      }),
+      (key) =>
+        createCommunityWorkEvidence(
+          {
+            socio_id: selectedSocio!.id,
+            obligation_id: obligationId,
+            agreement_id: agreementId,
+            amount_cents: draft.amountCents,
+            evidence: { description: draft.evidence.trim() },
+            reason: draft.reason.trim(),
+          },
+          key,
+        ),
+    )
   const allocate = (input: AllocationRequest) =>
     runSettlementMutation('allocate-settlement', JSON.stringify(input), (key) =>
       createDuesSettlement(
@@ -398,6 +455,7 @@ export default function CollectionsPage() {
         agreementStates={agreementStates}
         onCreateAgreement={createAgreement}
         onReviseAgreement={reviseAgreement}
+        onRecordCommunityWork={createCommunityWork}
         onRefreshAgreement={refreshAgreement}
       />
     </main>
