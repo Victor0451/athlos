@@ -5,6 +5,8 @@ import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
+import type { AgreementViewState } from '@/components/collections/AgreementActions'
+import type { AgreementDraft } from '@/components/collections/AgreementForm'
 import type { AllocationRequest, ReversalRequest } from '@/components/collections/SettlementActions'
 import {
   GenerationPanel,
@@ -18,11 +20,14 @@ import {
 import {
   createDuesPrice,
   createDuesSettlement,
+  createNegotiatedAgreement,
   generateDuesAssessments,
   getDebt,
   getDuesPrices,
+  getObligationAgreements,
   revokeDuesPrice,
   reverseDuesSettlement,
+  DuesOperationError,
   type DebtDetail,
   type DuesGenerationResult,
   type DuesPrice,
@@ -58,7 +63,7 @@ const generationErrorState = (reason: unknown): GenerationPanelStatus =>
 
 export default function CollectionsPage() {
   const { user } = useAuth()
-  const { collectionsEnabled } = useFeatureConfig()
+  const { collectionsEnabled, agreementsEnabled } = useFeatureConfig()
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
@@ -74,8 +79,10 @@ export default function CollectionsPage() {
   const [debt, setDebt] = useState<DebtDetail | null>(null)
   const [debtStatus, setDebtStatus] = useState<DebtPanelStatus>('idle')
   const [debtError, setDebtError] = useState('')
+  const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
+  const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
 
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
@@ -86,6 +93,35 @@ export default function CollectionsPage() {
     const response = await getDisciplinas()
     setDisciplines(response.items)
     setDisciplineState(response.items.length ? 'ready' : 'empty')
+  }
+  // prettier-ignore
+  const agreementFailure = (reason:unknown, active:AgreementViewState['active']=null):AgreementViewState => { if (reason instanceof DuesOperationError) { const failures:Record<DuesOperationError['kind'],[AgreementViewState['status'],string]> = {validation:['error','Los datos del acuerdo no son válidos.'],permission:['permission','No tenés permiso para registrar o modificar acuerdos.'],conflict:['conflict','El acuerdo cambió. Revisá el acuerdo actualizado antes de volver a enviarlo.'],not_found:['unavailable','No se encontró el acuerdo. Actualizá el detalle e intentá nuevamente.'],partial_data:['partial_data','El acuerdo tiene datos incompletos y no puede mostrarse como confirmado.'],unavailable:['unavailable','No se pudo cargar el acuerdo. Intentá nuevamente.']}; const [status,message]=failures[reason.kind]; return {status,active,message} } return {status:'unavailable',active,message:'No se pudo cargar el acuerdo. Intentá nuevamente.'} }
+  const loadAgreement = async (obligationId: string) => {
+    setAgreementStates((current) => ({
+      ...current,
+      [obligationId]: { status: 'loading', active: current[obligationId]?.active ?? null },
+    }))
+    try {
+      const lineage = await getObligationAgreements(obligationId)
+      setAgreementStates((current) => ({
+        ...current,
+        [obligationId]: { status: 'ready', active: lineage.active },
+      }))
+    } catch (reason) {
+      setAgreementStates((current) => ({
+        ...current,
+        [obligationId]: agreementFailure(reason, current[obligationId]?.active ?? null),
+      }))
+    }
+  }
+  const loadAgreements = async (detail: DebtDetail) => {
+    const openObligations = detail.obligations.filter(({ status }) => status === 'OPEN')
+    setAgreementStates(
+      Object.fromEntries(
+        openObligations.map(({ id }) => [id, { status: 'loading', active: null }]),
+      ),
+    )
+    await Promise.all(openObligations.map(({ id }) => loadAgreement(id)))
   }
 
   useEffect(() => {
@@ -179,6 +215,8 @@ export default function CollectionsPage() {
       const result = await getDebt(socio.id)
       setDebt(result)
       setDebtStatus(result.status)
+      if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
+      else setAgreementStates({})
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 404) {
         setDebtError('No se encontró el detalle de deuda de este socio.')
@@ -194,6 +232,45 @@ export default function CollectionsPage() {
   }
   // prettier-ignore
   const refreshDebt=async()=>{if(!selectedSocio)return;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('')}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error')}}
+  // prettier-ignore
+  const refreshAgreement = (obligationId: string) => loadAgreement(obligationId)
+  const createAgreement = async (obligationId: string, draft: AgreementDraft) => {
+    if (!user || !selectedSocio)
+      throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = {
+      operatorId: user.operator_id,
+      action: `agreement-create:${obligationId}`,
+      draftFingerprint: JSON.stringify({
+        obligationId,
+        narrative: draft.narrative.trim(),
+        reason: draft.reason.trim(),
+      }),
+    }
+    const replayed = Boolean(idempotency.current.peek(input))
+    const key = idempotency.current.getOrCreate(input)
+    try {
+      const result = await createNegotiatedAgreement(
+        {
+          socio_id: selectedSocio.id,
+          obligation_id: obligationId,
+          terms: { narrative: draft.narrative.trim() },
+          reason: draft.reason.trim(),
+        },
+        key,
+      )
+      idempotency.current.complete(input)
+      await loadAgreement(obligationId)
+      return { ...result, replayed: result.replayed || replayed }
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
+        idempotency.current.abandon(input)
+        await loadAgreement(obligationId)
+        await refreshDebt()
+      }
+      throw reason
+    }
+  }
   // prettier-ignore
   const runSettlementMutation=async(action:string,draftFingerprint:string,request:(key:string)=>Promise<unknown>)=>{if(!user||!selectedSocio)return;if(!idempotency.current)idempotency.current=createCollectionsIdempotencyStore();const input={operatorId:user.operator_id,action,draftFingerprint},replayed=Boolean(idempotency.current.peek(input)),key=idempotency.current.getOrCreate(input);try{await request(key);idempotency.current.complete(input);await refreshDebt();return{replayed}}catch(reason){if(reason instanceof ApiError&&reason.status===409){idempotency.current.abandon(input);await refreshDebt()}throw reason}}
   const allocate = (input: AllocationRequest) =>
@@ -270,6 +347,10 @@ export default function CollectionsPage() {
         onSelectSocio={selectSocio}
         onAllocate={allocate}
         onReverse={reverse}
+        agreementsEnabled={agreementWorkflowEnabled}
+        agreementStates={agreementStates}
+        onCreateAgreement={createAgreement}
+        onRefreshAgreement={refreshAgreement}
       />
     </main>
   )

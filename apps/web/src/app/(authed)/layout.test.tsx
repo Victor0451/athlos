@@ -7,15 +7,18 @@ vi.mock('@/components/AppShell', () => ({
     children,
     cashEnabled,
     collectionsEnabled,
+    agreementsEnabled,
   }: {
     children: ReactNode
     cashEnabled: boolean
     collectionsEnabled: boolean
+    agreementsEnabled: boolean
   }) => (
     <div
       data-testid="feature-config"
       data-cash-enabled={String(cashEnabled)}
       data-collections-enabled={String(collectionsEnabled)}
+      data-agreements-enabled={String(agreementsEnabled)}
     >
       {children}
     </div>
@@ -27,6 +30,7 @@ const { default: AuthedLayout, dynamic } = await import('./layout')
 const originalAssessment = process.env.DUES_ASSESSMENT_ENABLED
 const originalCash = process.env.DUES_CASH_ENABLED
 const originalCollections = process.env.NATIVE_COLLECTIONS_WEB_ENABLED
+const originalAgreements = process.env.DUES_AGREEMENTS_ENABLED
 
 afterEach(() => {
   if (originalAssessment === undefined) delete process.env.DUES_ASSESSMENT_ENABLED
@@ -35,6 +39,8 @@ afterEach(() => {
   else process.env.DUES_CASH_ENABLED = originalCash
   if (originalCollections === undefined) delete process.env.NATIVE_COLLECTIONS_WEB_ENABLED
   else process.env.NATIVE_COLLECTIONS_WEB_ENABLED = originalCollections
+  if (originalAgreements === undefined) delete process.env.DUES_AGREEMENTS_ENABLED
+  else process.env.DUES_AGREEMENTS_ENABLED = originalAgreements
 })
 
 describe('authed Web feature configuration', () => {
@@ -90,6 +96,43 @@ describe('authed Web feature configuration', () => {
     )
 
     expect(screen.getByTestId('feature-config')).toHaveAttribute('data-collections-enabled', 'true')
+  })
+
+  it('passes both independent workflow flags to the shell', () => {
+    process.env.NATIVE_COLLECTIONS_WEB_ENABLED = 'false'
+    process.env.DUES_AGREEMENTS_ENABLED = 'true'
+
+    render(
+      <AuthedLayout>
+        <span>content</span>
+      </AuthedLayout>,
+    )
+
+    expect(screen.getByTestId('feature-config')).toHaveAttribute(
+      'data-collections-enabled',
+      'false',
+    )
+    expect(screen.getByTestId('feature-config')).toHaveAttribute('data-agreements-enabled', 'true')
+  })
+
+  it.each([
+    ['absent', undefined, false],
+    ['explicit false', 'false', false],
+    ['explicit true', 'true', true],
+  ] as const)('maps the agreement workflow flag: %s', (_label, value, expected) => {
+    if (value === undefined) delete process.env.DUES_AGREEMENTS_ENABLED
+    else process.env.DUES_AGREEMENTS_ENABLED = value
+
+    render(
+      <AuthedLayout>
+        <span>content</span>
+      </AuthedLayout>,
+    )
+
+    expect(screen.getByTestId('feature-config')).toHaveAttribute(
+      'data-agreements-enabled',
+      String(expected),
+    )
   })
 
   it.each([

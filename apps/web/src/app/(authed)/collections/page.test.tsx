@@ -13,19 +13,29 @@ const duesMocks = vi.hoisted(() => ({
   createDuesPrice: vi.fn(),
   revokeDuesPrice: vi.fn(),
   generateDuesAssessments: vi.fn(),
+  getDebt: vi.fn(),
+  getObligationAgreements: vi.fn(),
+  createNegotiatedAgreement: vi.fn(),
 }))
 const padronesMocks = vi.hoisted(() => ({
   getDisciplinas: vi.fn(() => new Promise(() => undefined)),
 }))
+const sociosMocks = vi.hoisted(() => ({
+  getSocios: vi.fn(),
+}))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
+vi.mock('@/lib/api/socios', () => sociosMocks)
 const { default: CollectionsPage } = await import('./page')
 
-const renderPage = (enabled: boolean | undefined, role: string) => {
+const renderPage = (enabled: boolean | undefined, role: string, agreementsEnabled = false) => {
   authState.user = { role }
   return render(
-    <FeatureConfigProvider {...(enabled === undefined ? {} : { collectionsEnabled: enabled })}>
+    <FeatureConfigProvider
+      {...(enabled === undefined ? {} : { collectionsEnabled: enabled })}
+      agreementsEnabled={agreementsEnabled}
+    >
       <CollectionsPage />
     </FeatureConfigProvider>,
   )
@@ -56,6 +66,50 @@ describe('Collections navigation and direct access', () => {
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
     renderPage(true, 'OPERADOR')
     expect(screen.getByText('No tenés permiso para usar la cobranza.')).toBeInTheDocument()
+  })
+
+  it('requires both Collections Web and agreements flags for agreement actions', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    const debt = {
+      status: 'ready',
+      socio_id: 'socio-1',
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue(debt)
+    duesMocks.getObligationAgreements.mockResolvedValue({ active: null, revisions: [] })
+
+    const disabledView = renderPage(true, 'ADMIN', false)
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledWith('socio-1'))
+    expect(screen.queryByRole('button', { name: 'Registrar acuerdo' })).not.toBeInTheDocument()
+
+    disabledView.unmount()
+    renderPage(true, 'ADMIN', true)
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Registrar acuerdo' })).toBeInTheDocument(),
+    )
   })
 
   it('exposes labelled landmarks for an authorized operator', () => {

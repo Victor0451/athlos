@@ -22,6 +22,7 @@ export default function AuthedLayout({ children }: { children: ReactNode }) {
     <AppShell
       cashEnabled={process.env.DUES_CASH_ENABLED === 'true'}
       collectionsEnabled={process.env.NATIVE_COLLECTIONS_WEB_ENABLED === 'true'}
+      agreementsEnabled={process.env.DUES_AGREEMENTS_ENABLED === 'true'}
     >
       {children}
     </AppShell>
