@@ -267,15 +267,20 @@ Exit codes for `mount-usb.sh` / `unmount-usb.sh` / `backup-to-usb.sh`:
 **Troubleshooting**:
 
 - Keyfile error (exit 1): ensure `$USB_KEYFILE` has mode `0600` and owner `root:root`
+
   ```bash
   ls -l /root/athlos-usb.key      # should be -rw------- 1 root root
   ```
+
 - USB not found (exit 2): check the USB is plugged in and has the correct label
+
   ```bash
   sudo lsblk -o NAME,LABEL,SIZE
   sudo blkid /dev/disk/by-label/athlos-backup-usb
   ```
+
 - LUKS status:
+
   ```bash
   sudo cryptsetup status athlos-backup-usb
   sudo ls -l /dev/mapper/athlos-backup-usb
@@ -598,6 +603,27 @@ not roll back container images, database state, or application data. Evidence
 must include the checked-out artifact hash, gate preflight output, the exact
 operation/hash contract, unchanged destination after preflight, and—after a
 failed deploy—a read-only comparison proving restoration.
+
+### Negotiated dues BETA smoke-check and rollback
+
+After the four BETA flags are enabled together and the dependent slices are deployed,
+an authorized operator must verify the following against an open obligation:
+
+1. Save a negotiated agreement and confirm the saved agreement is visible.
+2. Confirm accepted community work and verify the debt view refreshes once after the
+   confirmed non-cash settlement.
+3. Run an existing monetary settlement and reversal, confirming both remain available
+   and unchanged.
+4. Confirm the workflow makes no Treasury request, cash/tender side effect, or
+   `CTActe` request/control; record the API and Web evidence with the smoke result.
+
+To roll back the negotiated entry points, set
+`NATIVE_COLLECTIONS_WEB_ENABLED=false` and `DUES_AGREEMENTS_ENABLED=false` together
+in the canonical BETA Compose artifact and deploy that artifact as one operational
+action. Keep `DUES_ASSESSMENT_ENABLED` and `DUES_CASH_ENABLED` enabled so existing
+monetary settlement and reversal remain available. Rollback never removes or
+rewrites the additive schema, agreement/revision rows, settlement/allocation rows,
+evidence, or audit history.
 
 ### Connectivity boundary
 

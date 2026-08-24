@@ -224,19 +224,18 @@ EOF
   [[ "$output" == *"name: athlos_default"* ]]
 }
 
-@test "beta Compose keeps Web dues cash disabled by default and honors explicit enablement" {
+@test "beta Compose enables the complete four-flag dues set" {
   cp "$ROOT/docker-compose.beta.yml" "$TMPDIR/docker-compose.beta.yml"
   touch "$TMPDIR/.env.beta"
 
-  run env -u DUES_CASH_ENABLED ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
+  run env -u NATIVE_COLLECTIONS_WEB_ENABLED -u DUES_ASSESSMENT_ENABLED \
+    -u DUES_AGREEMENTS_ENABLED -u DUES_CASH_ENABLED \
+    ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
     docker compose -p athlos-beta -f "$TMPDIR/docker-compose.beta.yml" config --format json
   [ "$status" -eq 0 ]
-  run jq -e '.services.web.environment.DUES_CASH_ENABLED == "false"' <<<"$output"
-  [ "$status" -eq 0 ]
-
-  run env DUES_CASH_ENABLED=true ATHLOS_API_IMAGE="$DIGEST" ATHLOS_WEB_IMAGE="$WEB_DIGEST" \
-    docker compose -p athlos-beta -f "$TMPDIR/docker-compose.beta.yml" config --format json
-  [ "$status" -eq 0 ]
-  run jq -e '.services.web.environment.DUES_CASH_ENABLED == "true"' <<<"$output"
-  [ "$status" -eq 0 ]
+  compose_output="$output"
+  for flag in NATIVE_COLLECTIONS_WEB_ENABLED DUES_ASSESSMENT_ENABLED DUES_AGREEMENTS_ENABLED DUES_CASH_ENABLED; do
+    run jq -e ".services.web.environment.$flag == \"true\" and .services.api.environment.$flag == \"true\"" <<<"$compose_output"
+    [ "$status" -eq 0 ]
+  done
 }
