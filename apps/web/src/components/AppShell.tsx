@@ -35,10 +35,12 @@ export default function AppShell({
   children,
   cashEnabled = true,
   collectionsEnabled = false,
+  agreementsEnabled = false,
 }: {
   children: ReactNode
   cashEnabled?: boolean
   collectionsEnabled?: boolean
+  agreementsEnabled?: boolean
 }) {
   const { isAuthenticated, refresh } = useAuth()
   const router = useRouter()
@@ -82,7 +84,11 @@ export default function AppShell({
   }
 
   return (
-    <FeatureConfigProvider cashEnabled={cashEnabled} collectionsEnabled={collectionsEnabled}>
+    <FeatureConfigProvider
+      cashEnabled={cashEnabled}
+      collectionsEnabled={collectionsEnabled}
+      agreementsEnabled={agreementsEnabled}
+    >
       <div className="flex h-screen bg-surface-page">
         <Sidebar />
         <main className="flex-1 flex flex-col overflow-hidden" data-mobile-drawer-background="true">

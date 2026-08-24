@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { DebtDetail } from '@/lib/api/dues'
 import type { Socio } from '@/lib/api/socios'
+import { AgreementActions, type AgreementViewState } from './AgreementActions'
+import type { AgreementDraft } from './AgreementForm'
 import {
   SettlementActions,
   type AllocationRequest,
@@ -14,14 +16,14 @@ export type { DebtDetail } from '@/lib/api/dues'
 export type DebtPanelStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'not_found' | 'unavailable' | 'error'
 type SocioOption = Pick<Socio, 'id' | 'nombre' | 'apellido' | 'numero_socio'>
 // prettier-ignore
-type Props = { socio: SocioOption | null; socios?: SocioOption[]; status: DebtPanelStatus; debt: DebtDetail | null; error: string; onSearch: (term: string) => Promise<void> | void; onSelectSocio: (socio: SocioOption) => Promise<void> | void; onAllocate?: (input: AllocationRequest) => Promise<{ replayed?: boolean } | void>; onReverse?: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void> }
+type Props = { socio: SocioOption | null; socios?: SocioOption[]; status: DebtPanelStatus; debt: DebtDetail | null; error: string; onSearch: (term: string) => Promise<void> | void; onSelectSocio: (socio: SocioOption) => Promise<void> | void; onAllocate?: (input: AllocationRequest) => Promise<{ replayed?: boolean } | void>; onReverse?: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>; agreementsEnabled?: boolean; agreementStates?: Record<string, AgreementViewState>; onCreateAgreement?: (obligationId: string, draft: AgreementDraft) => Promise<{ replayed?: boolean } | void>; onRefreshAgreement?: (obligationId: string) => Promise<void> | void }
 const money = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency}`
 // prettier-ignore
 const statusMessage = (status: DebtPanelStatus) => ({ loading: 'Cargando el detalle de deuda…', empty: 'No hay deuda registrada para este socio.', not_found: 'No se encontró el detalle de deuda de este socio.', unavailable: 'El detalle de deuda no está disponible.' } as Partial<Record<DebtPanelStatus, string>>)[status] ?? ''
 const obligationStatus = (status: 'OPEN' | 'PAID') => (status === 'OPEN' ? 'Abierta' : 'Pagada')
 
 // prettier-ignore
-export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, onSelectSocio, onAllocate, onReverse }: Props) {
+export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, onSelectSocio, onAllocate, onReverse, agreementsEnabled = false, agreementStates = {}, onCreateAgreement, onRefreshAgreement }: Props) {
   const [term, setTerm] = useState('')
   const statusRef = useRef<HTMLParagraphElement>(null)
   const alert = Boolean(error || status === 'error' || status === 'unavailable')
@@ -45,6 +47,7 @@ export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, o
         <h4>Componentes financieros</h4><ul aria-label={`Componentes del período ${obligation.period_start}`}>{obligation.components.map((component) => <li key={component.id}>{component.component_key}: {money(component.amount_cents, obligation.currency)}</li>)}</ul>
         {obligation.benefits.length > 0 && <><h4>Beneficios aplicados</h4><ul aria-label={`Beneficios del período ${obligation.period_start}`}>{obligation.benefits.map((benefit) => <li key={benefit.id}>{benefit.component_key}: {money(benefit.amount_cents, obligation.currency)}</li>)}</ul></>}
         <h4>Historial de pagos</h4>{obligation.allocations.length > 0 ? <ul aria-label={`Historial de pagos del período ${obligation.period_start}`}>{obligation.allocations.map((allocation) => <li key={allocation.id}>Pago {allocation.settlement_id}: {money(allocation.amount_cents, allocation.currency)} · {allocation.reversal_eligible ? 'Se puede revertir' : 'No se puede revertir'}</li>)}</ul> : <p>No hay pagos registrados.</p>}
+        {agreementsEnabled && onCreateAgreement && onRefreshAgreement && <AgreementActions obligation={obligation} state={agreementStates[obligation.id] ?? { status: 'idle', active: null }} onCreate={(draft) => onCreateAgreement(obligation.id, draft)} onRefresh={() => onRefreshAgreement(obligation.id)} />}
       </li>)}</ul>
     </div>}
     {debt?.status === 'ready' && onAllocate && onReverse && <SettlementActions debt={debt} onAllocate={onAllocate} onReverse={onReverse} />}
