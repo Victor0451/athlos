@@ -136,9 +136,31 @@ const termsSchema = z
         })
   })
 // prettier-ignore
-const agreementBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), kind: z.enum(['SIMPLE', 'INSTALLMENT']), terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
+const legacyAgreementBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), kind: z.enum(['SIMPLE', 'INSTALLMENT']), terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
+const negotiatedTermsBodySchema = z
+  .object({ narrative: z.string().trim().min(1).max(4000) })
+  .catchall(z.unknown())
+const negotiatedAgreementBodySchema = z
+  .object({
+    socio_id: z.string().uuid(),
+    obligation_id: z.string().uuid(),
+    kind: z.literal('NEGOTIATED'),
+    terms_version: z.literal(1),
+    terms: negotiatedTermsBodySchema,
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict()
+const agreementBodySchema = z.union([legacyAgreementBodySchema, negotiatedAgreementBodySchema])
 // prettier-ignore
 const rescheduleBodySchema = z.object({ terms: termsSchema, reason: z.string().trim().min(1).max(500) }).strict()
+const revisionBodySchema = z
+  .object({
+    terms_version: z.literal(1),
+    terms: negotiatedTermsBodySchema,
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict()
+const obligationIdParamSchema = z.object({ obligationId: z.string().uuid() })
 // prettier-ignore
 const communityWorkBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), amount_cents: z.number().int().positive().max(MAX_MONEY_CENTS), evidence: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0, 'evidence is required'), reason: z.string().trim().min(1).max(500) }).strict()
 // prettier-ignore
@@ -152,7 +174,7 @@ export interface DuesRouteOptions {
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
   settlementService?: Pick<SettlementService, 'create'> &
     Partial<Pick<SettlementService, 'reverse' | 'debt'>>
-  agreementService?: Pick<AgreementService, 'create' | 'reschedule'>
+  agreementService?: Pick<AgreementService, 'create' | 'reschedule' | 'revise' | 'lineage'>
   communityWorkService?: Pick<CommunityWorkService, 'create'>
   ctacteProjectionService?: Pick<CtacteProjectionService, 'project'>
 }
@@ -238,7 +260,7 @@ function enabled(container: AppContainer): void {
 // prettier-ignore
 function agreementsEnabled(container: AppContainer): void { if (!container.env.DUES_AGREEMENTS_ENABLED) throw BusinessError(ErrorCode.NOT_FOUND, 'Resource not found') }
 // prettier-ignore
-function toAgreementDTO(row: Agreement) { return { id: row.id, socio_id: row.socioId, obligation_id: row.obligationId, kind: row.kind, status: row.status, revision_number: row.revisionNumber, terms: row.terms, agreement_date: row.agreementDate, revision_of_agreement_id: row.revisionOfAgreementId } }
+function toAgreementDTO(row: Agreement, replayed = false) { return { id: row.id, socio_id: row.socioId, obligation_id: row.obligationId, kind: row.kind, status: row.status, revision_number: row.revisionNumber, terms_version: row.termsVersion, terms: row.terms, reason: row.reason, revision_reason: row.revisionReason, agreement_date: row.agreementDate, revision_of_agreement_id: row.revisionOfAgreementId, replayed } }
 
 function callerKey(request: FastifyRequest, required = false): string {
   const header = request.headers['idempotency-key']
@@ -416,9 +438,13 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
 
   if (container.env.DUES_AGREEMENTS_ENABLED) {
     // prettier-ignore
-    fastify.post('/api/v1/dues/agreements', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(agreementBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, kind: body.kind, terms: body.terms, reason: body.reason }); return reply.code(201).send(toAgreementDTO(result.agreement)) })
+    fastify.post('/api/v1/dues/agreements', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(agreementBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, kind: body.kind, termsVersion: body.kind === 'NEGOTIATED' ? 1 : 0, terms: body.terms, reason: body.reason }); return reply.code(201).send(toAgreementDTO(result.agreement, result.outcome === 'replayed')) })
     // prettier-ignore
-    fastify.post<{ Params: { id: string } }>('/api/v1/dues/agreements/:id/reschedule', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(idParamSchema, request.params, 'params'), body = throwIfInvalid(rescheduleBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.reschedule({ ...context(request, key, body), agreementId: params.id, terms: body.terms, reason: body.reason }); return reply.code(200).send(toAgreementDTO(result.agreement)) })
+    fastify.post<{ Params: { id: string } }>('/api/v1/dues/agreements/:id/reschedule', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(idParamSchema, request.params, 'params'), body = throwIfInvalid(rescheduleBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.reschedule({ ...context(request, key, body), agreementId: params.id, terms: body.terms, reason: body.reason }); return reply.code(200).send(toAgreementDTO(result.agreement, result.outcome === 'replayed')) })
+    // prettier-ignore
+    fastify.post<{ Params: { id: string } }>('/api/v1/dues/agreements/:id/revisions', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(idParamSchema, request.params, 'params'), body = throwIfInvalid(revisionBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true); const result = await agreementService.revise({ ...context(request, key, body), agreementId: params.id, termsVersion: body.terms_version, terms: body.terms, reason: body.reason }); return reply.code(200).send(toAgreementDTO(result.agreement, result.outcome === 'replayed')) })
+    // prettier-ignore
+    fastify.get<{ Params: { obligationId: string } }>('/api/v1/dues/obligations/:obligationId/agreements', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(obligationIdParamSchema, request.params, 'params'); const lineage = await agreementService.lineage({ obligationId: params.obligationId }); return reply.code(200).send({ active: lineage.active ? toAgreementDTO(lineage.active) : null, revisions: lineage.revisions.map((agreement) => toAgreementDTO(agreement)) }) })
     // prettier-ignore
     fastify.post('/api/v1/dues/community-work', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(communityWorkBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await communityWorkService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, amountCents: body.amount_cents, evidence: body.evidence, reason: body.reason }); return reply.code(201).send({ id: result.id, settlement_id: result.settlementId, allocation_id: result.allocationId, obligation_id: result.obligationId, amount_cents: result.amountCents }) })
   }

@@ -229,7 +229,7 @@ it('creates a negotiated agreement and reports the claim outcome', async () => {
 // prettier-ignore
 it('revises a negotiated agreement through the successor repository path', async () => {
   const audit = auditLog(), successor = { id: 'agreement-n2', socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED' as const, status: 'ACTIVE' as const, revisionNumber: 2, termsVersion: 1, terms: negotiatedTerms({ narrative: 'Actualización.' }), agreementDate: '2026-08-18', revisionOfAgreementId: 'agreement-n1' }
-  const repository = { createAgreement: vi.fn(), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn().mockResolvedValue({ outcome: 'created', agreement: successor }) }
+  const repository = { createAgreement: vi.fn(), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn().mockResolvedValue({ outcome: 'created', agreement: successor }), findAgreement: vi.fn().mockResolvedValue({ ...successor, id: 'agreement-n1', status: 'SUPERSEDED' as const, revisionNumber: 1, revisionOfAgreementId: null, reason: 'Acuerdo original', revisionReason: null }) }
   const service = new AgreementService(db(), { repository, audit: audit.emit, now: () => new Date('2026-08-18T20:00:00Z') })
   const result = await service.revise({ ...context, agreementId: 'agreement-n1', terms: successor.terms, reason: 'Renegociación' })
   expect(result).toMatchObject({ outcome: 'created', agreement: expect.objectContaining({ revisionNumber: 2, revisionOfAgreementId: 'agreement-n1' }) })
@@ -259,4 +259,51 @@ it('validates negotiated mutations before persistence and surfaces repository co
   expect(repository.createAgreement).not.toHaveBeenCalled()
   await expect(service.reschedule({ ...context, agreementId: 'agreement-n1', terms: terms(1, 1), reason: 'Legacy over negotiated' })).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
   await expect(service.revise({ ...context, agreementId: 'agreement-1', terms: negotiatedTerms(), reason: 'Negotiated over legacy' })).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+})
+
+// prettier-ignore
+it('reads obligation lineage ordered by revision and fails closed on malformed persisted terms', async () => {
+  const older = { id: 'agreement-g1', socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED' as const, status: 'SUPERSEDED' as const, revisionNumber: 1, termsVersion: 1, terms: negotiatedTerms(), reason: 'Acuerdo original', revisionReason: null, agreementDate: '2026-08-18', revisionOfAgreementId: null }
+  const newer = { ...older, id: 'agreement-g2', status: 'ACTIVE' as const, revisionNumber: 2, terms: negotiatedTerms({ narrative: 'Actualización acordada.' }), revisionOfAgreementId: 'agreement-g1', revisionReason: 'Renegociación' }
+  const repository = { createAgreement: vi.fn(), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn(), listObligationAgreements: vi.fn().mockResolvedValue([newer, older]) }
+  const service = new AgreementService(db(), { repository, audit: auditLog().emit })
+  const lineage = await service.lineage({ obligationId: 'obligation-1' })
+  expect(repository.listObligationAgreements).toHaveBeenCalledWith(expect.anything(), 'obligation-1')
+  expect(lineage.revisions.map(({ id }) => id)).toEqual(['agreement-g1', 'agreement-g2'])
+  expect(lineage.active).toMatchObject({ id: 'agreement-g2', status: 'ACTIVE', reason: 'Acuerdo original', revisionReason: 'Renegociación' })
+  repository.listObligationAgreements.mockResolvedValueOnce([newer, { ...older, terms: { narrative: '' } }])
+  await expect(service.lineage({ obligationId: 'obligation-1' })).rejects.toMatchObject({ code: ErrorCode.SERVICE_UNAVAILABLE })
+})
+
+// prettier-ignore
+it('records complete create and revision audit payloads with predecessor and successor lineage', async () => {
+  const audit = auditLog(), original = { id: 'agreement-c1', socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED' as const, status: 'ACTIVE' as const, revisionNumber: 1, termsVersion: 1, terms: negotiatedTerms(), reason: 'Condiciones acordadas', revisionReason: null, agreementDate: '2026-08-18', revisionOfAgreementId: null }
+  const successor = { ...original, id: 'agreement-c2', revisionNumber: 2, terms: negotiatedTerms({ narrative: 'Actualización acordada.' }), revisionOfAgreementId: 'agreement-c1', revisionReason: 'Renegociación' }
+  const repository = { createAgreement: vi.fn().mockResolvedValue({ outcome: 'created', agreement: original }), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn().mockResolvedValue({ outcome: 'created', agreement: successor }), findAgreement: vi.fn().mockResolvedValue({ ...original, status: 'SUPERSEDED' as const }) }
+  const service = new AgreementService(db(), { repository, audit: audit.emit, now: () => new Date('2026-08-18T20:00:00Z') })
+  await service.create({ ...context, socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED', termsVersion: 1, terms: original.terms, reason: 'Condiciones acordadas' })
+  await service.revise({ ...context, callerKey: 'agreement-c2', agreementId: 'agreement-c1', terms: successor.terms, reason: 'Renegociación' })
+  const created = audit.records[0]!, revised = audit.records[1]!
+  expect(created.oldValue).toBeNull()
+  expect(created.newValue).toMatchObject({ id: 'agreement-c1', obligationId: 'obligation-1', kind: 'NEGOTIATED', termsVersion: 1, terms: original.terms, status: 'ACTIVE', revisionNumber: 1, reason: 'Condiciones acordadas' })
+  expect(created.metadata).toMatchObject({ actorId: context.actorId, role: 'ADMIN', permissions: context.permissions, authorizationEvidence: context.authorizationEvidence, callerKey: 'agreement-1', requestFingerprint: context.requestFingerprint, time: '2026-08-18T20:00:00.000Z', reason: 'Condiciones acordadas' })
+  expect(revised.oldValue).toMatchObject({ id: 'agreement-c1', kind: 'NEGOTIATED', termsVersion: 1, terms: original.terms, status: 'SUPERSEDED', revisionNumber: 1 })
+  expect(revised.newValue).toMatchObject({ id: 'agreement-c2', terms: successor.terms, revisionNumber: 2, revisionOfAgreementId: 'agreement-c1', reason: 'Renegociación' })
+  expect(revised.metadata).toMatchObject({ predecessorAgreementId: 'agreement-c1', successorAgreementId: 'agreement-c2', revisionReason: 'Renegociación' })
+})
+
+// prettier-ignore
+it('aborts the agreement transaction when audit emission fails', async () => {
+  const repository = { createAgreement: vi.fn().mockResolvedValue({ outcome: 'created', agreement: { id: 'agreement-f1', socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED' as const, status: 'ACTIVE' as const, revisionNumber: 1, termsVersion: 1, terms: negotiatedTerms(), reason: 'Plan', revisionReason: null, agreementDate: '2026-08-18', revisionOfAgreementId: null } }), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn() }
+  const service = new AgreementService(db(), { repository, audit: vi.fn().mockRejectedValue(new Error('audit unavailable')), now: () => new Date('2026-08-18T20:00:00Z') })
+  await expect(service.create({ ...context, socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED', termsVersion: 1, terms: negotiatedTerms(), reason: 'Plan' })).rejects.toThrow('audit unavailable')
+  expect(repository.createAgreement).toHaveBeenCalledTimes(1)
+})
+
+// prettier-ignore
+it('emits no audit when authorization rejects the mutation', async () => {
+  const audit = auditLog(), service = new AgreementService(db(), { repository: { createAgreement: vi.fn(), rescheduleAgreement: vi.fn(), reviseAgreement: vi.fn() }, audit: audit.emit })
+  await expect(service.create({ ...context, role: 'OPERADOR', socioId: 'socio-1', obligationId: 'obligation-1', kind: 'NEGOTIATED', termsVersion: 1, terms: negotiatedTerms(), reason: 'Denied' })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+  await expect(service.revise({ ...context, role: 'OPERADOR', agreementId: 'agreement-1', terms: negotiatedTerms(), reason: 'Denied' })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+  expect(audit.records).toHaveLength(0)
 })
