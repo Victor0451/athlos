@@ -25,6 +25,7 @@ import {
   getDebt,
   getDuesPrices,
   getObligationAgreements,
+  reviseNegotiatedAgreement,
   revokeDuesPrice,
   reverseDuesSettlement,
   DuesOperationError,
@@ -99,13 +100,21 @@ export default function CollectionsPage() {
   const loadAgreement = async (obligationId: string) => {
     setAgreementStates((current) => ({
       ...current,
-      [obligationId]: { status: 'loading', active: current[obligationId]?.active ?? null },
+      [obligationId]: {
+        status: 'loading',
+        active: current[obligationId]?.active ?? null,
+        revisions: current[obligationId]?.revisions ?? [],
+      },
     }))
     try {
       const lineage = await getObligationAgreements(obligationId)
       setAgreementStates((current) => ({
         ...current,
-        [obligationId]: { status: 'ready', active: lineage.active },
+        [obligationId]: {
+          status: 'ready',
+          active: lineage.active,
+          revisions: lineage.revisions,
+        },
       }))
     } catch (reason) {
       setAgreementStates((current) => ({
@@ -271,6 +280,44 @@ export default function CollectionsPage() {
       throw reason
     }
   }
+  const reviseAgreement = async (
+    obligationId: string,
+    agreementId: string,
+    draft: AgreementDraft,
+  ) => {
+    if (!user || !selectedSocio)
+      throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = {
+      operatorId: user.operator_id,
+      action: `agreement-revise:${agreementId}`,
+      draftFingerprint: JSON.stringify({
+        obligationId,
+        agreementId,
+        narrative: draft.narrative.trim(),
+        reason: draft.reason.trim(),
+      }),
+    }
+    const replayed = Boolean(idempotency.current.peek(input))
+    const key = idempotency.current.getOrCreate(input)
+    try {
+      const result = await reviseNegotiatedAgreement(
+        agreementId,
+        { terms: { narrative: draft.narrative.trim() }, reason: draft.reason.trim() },
+        key,
+      )
+      idempotency.current.complete(input)
+      await loadAgreement(obligationId)
+      return { ...result, replayed: result.replayed || replayed }
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
+        idempotency.current.abandon(input)
+        await loadAgreement(obligationId)
+        await refreshDebt()
+      }
+      throw reason
+    }
+  }
   // prettier-ignore
   const runSettlementMutation=async(action:string,draftFingerprint:string,request:(key:string)=>Promise<unknown>)=>{if(!user||!selectedSocio)return;if(!idempotency.current)idempotency.current=createCollectionsIdempotencyStore();const input={operatorId:user.operator_id,action,draftFingerprint},replayed=Boolean(idempotency.current.peek(input)),key=idempotency.current.getOrCreate(input);try{await request(key);idempotency.current.complete(input);await refreshDebt();return{replayed}}catch(reason){if(reason instanceof ApiError&&reason.status===409){idempotency.current.abandon(input);await refreshDebt()}throw reason}}
   const allocate = (input: AllocationRequest) =>
@@ -350,6 +397,7 @@ export default function CollectionsPage() {
         agreementsEnabled={agreementWorkflowEnabled}
         agreementStates={agreementStates}
         onCreateAgreement={createAgreement}
+        onReviseAgreement={reviseAgreement}
         onRefreshAgreement={refreshAgreement}
       />
     </main>

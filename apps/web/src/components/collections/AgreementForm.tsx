@@ -6,10 +6,12 @@ import { Modal } from '@/components/ui/Modal'
 // prettier-ignore
 export interface AgreementDraft { narrative:string; reason:string }
 // prettier-ignore
-type Props = { open:boolean; busy:boolean; error?:string; formId?:string; onCancel:()=>void; onReview?:()=>Promise<void>|void; onSubmit:(draft:AgreementDraft)=>Promise<void>|void }
+type Props = { open:boolean; busy:boolean; error?:string; formId?:string; mode?:'create'|'revision'; onCancel:()=>void; onReview?:()=>Promise<void>|void; onSubmit:(draft:AgreementDraft)=>Promise<void>|void }
 // prettier-ignore
-export function AgreementForm({open,busy,error='',formId='agreement-form',onCancel,onReview,onSubmit}: Props) {
+export function AgreementForm({open,busy,error='',formId='agreement-form',mode='create',onCancel,onReview,onSubmit}: Props) {
   const [draft, setDraft] = useState<AgreementDraft>({ narrative: '', reason: '' })
+   const revision = mode === 'revision'
+
   const [validationError, setValidationError] = useState('')
   const alertRef = useRef<HTMLParagraphElement>(null)
   const message = validationError || error
@@ -25,7 +27,11 @@ export function AgreementForm({open,busy,error='',formId='agreement-form',onCanc
     const narrative = draft.narrative.trim()
     const reason = draft.reason.trim()
     if (!narrative || !reason) {
-      setValidationError('La narrativa y el motivo del acuerdo son obligatorios.')
+      setValidationError(
+        revision
+          ? 'La narrativa y el motivo de la revisión son obligatorios.'
+          : 'La narrativa y el motivo del acuerdo son obligatorios.',
+      )
       return
     }
     setValidationError('')
@@ -35,7 +41,7 @@ export function AgreementForm({open,busy,error='',formId='agreement-form',onCanc
   return (
     <Modal
       open
-      title="Registrar acuerdo"
+      title={revision ? 'Revisar acuerdo' : 'Registrar acuerdo'}
       dataTestid="agreement-modal"
       descriptionId="agreement-guidance"
       footer={
@@ -44,15 +50,22 @@ export function AgreementForm({open,busy,error='',formId='agreement-form',onCanc
             Cancelar
           </button>
           <button type="submit" form={formId} disabled={busy}>
-            {busy ? 'Guardando acuerdo…' : 'Guardar acuerdo'}
+            {busy
+              ? revision
+                ? 'Actualizando acuerdo…'
+                : 'Guardando acuerdo…'
+              : revision
+                ? 'Actualizar acuerdo'
+                : 'Guardar acuerdo'}
           </button>
         </>
       }
     >
       <form id={formId} noValidate onSubmit={(event) => void submit(event)} className="space-y-4">
         <p id="agreement-guidance" role="status">
-          Guardar el acuerdo no reduce la deuda. La deuda cambia solo cuando se registra una
-          cancelación válida.
+          {revision
+            ? 'Actualizar el acuerdo no reduce la deuda. La deuda cambia solo cuando se registra una cancelación válida.'
+            : 'Guardar el acuerdo no reduce la deuda. La deuda cambia solo cuando se registra una cancelación válida.'}
         </p>
         {message && (
           <p ref={alertRef} role="alert" tabIndex={-1} aria-live="assertive">
@@ -74,16 +87,16 @@ export function AgreementForm({open,busy,error='',formId='agreement-form',onCanc
             onChange={(event) => setDraft({ ...draft, narrative: event.target.value })}
           />
         </label>
-        <label>
-          Motivo del acuerdo
-          <textarea
-            required
-            maxLength={500}
-            value={draft.reason}
-            aria-invalid={Boolean(validationError && !draft.reason.trim())}
-            onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
-          />
-        </label>
+            <label>
+              {revision ? 'Motivo de la revisión' : 'Motivo del acuerdo'}
+              <textarea
+                required
+                maxLength={500}
+                value={draft.reason}
+                aria-invalid={Boolean(validationError && !draft.reason.trim())}
+                onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
+              />
+            </label>
       </form>
     </Modal>
   )

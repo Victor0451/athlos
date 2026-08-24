@@ -16,6 +16,15 @@ const duesMocks = vi.hoisted(() => ({
   getDebt: vi.fn(),
   getObligationAgreements: vi.fn(),
   createNegotiatedAgreement: vi.fn(),
+  reviseNegotiatedAgreement: vi.fn(),
+  DuesOperationError: class MockDuesOperationError extends Error {
+    constructor(
+      readonly kind: string,
+      message: string,
+    ) {
+      super(message)
+    }
+  },
 }))
 const padronesMocks = vi.hoisted(() => ({
   getDisciplinas: vi.fn(() => new Promise(() => undefined)),
@@ -109,6 +118,81 @@ describe('Collections navigation and direct access', () => {
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Registrar acuerdo' })).toBeInTheDocument(),
+    )
+  })
+
+  it('refreshes lineage and debt after a stale revision and resubmits with a new key', async () => {
+    duesMocks.getDebt.mockClear()
+    duesMocks.getObligationAgreements.mockClear()
+    duesMocks.reviseNegotiatedAgreement.mockClear()
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    const debt = {
+      status: 'ready',
+      socio_id: 'socio-1',
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    }
+    const active = {
+      id: 'agreement-1',
+      socio_id: 'socio-1',
+      obligation_id: 'obligation-1',
+      kind: 'NEGOTIATED',
+      status: 'ACTIVE',
+      revision_number: 1,
+      terms_version: 1,
+      terms: { narrative: 'Narrativa vigente' },
+      reason: 'Motivo original',
+      revision_reason: null,
+      agreement_date: '2026-01-03',
+      revision_of_agreement_id: null,
+      replayed: false,
+    }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue(debt)
+    duesMocks.getObligationAgreements.mockResolvedValue({ active, revisions: [active] })
+    duesMocks.reviseNegotiatedAgreement
+      .mockRejectedValueOnce(new duesMocks.DuesOperationError('conflict', 'conflict'))
+      .mockResolvedValueOnce({ ...active, revision_number: 2, replayed: false })
+
+    renderPage(true, 'ADMIN', true)
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(await screen.findByRole('button', { name: 'Revisar acuerdo activo' }))
+    await user.clear(screen.getByLabelText(/narrativa del acuerdo/i))
+    await user.type(screen.getByLabelText(/narrativa del acuerdo/i), 'Nueva narrativa')
+    await user.type(screen.getByLabelText(/motivo de la revisión/i), 'Cambio acordado')
+    await user.click(screen.getByRole('button', { name: /actualizar acuerdo/i }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/cambió/i)
+    expect(duesMocks.getObligationAgreements).toHaveBeenCalledTimes(2)
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
+    await user.click(screen.getByRole('button', { name: /revisar acuerdo actualizado/i }))
+    await user.click(screen.getByRole('button', { name: /actualizar acuerdo/i }))
+
+    expect(duesMocks.reviseNegotiatedAgreement).toHaveBeenCalledTimes(2)
+    expect(duesMocks.reviseNegotiatedAgreement.mock.calls[0]![2]).not.toBe(
+      duesMocks.reviseNegotiatedAgreement.mock.calls[1]![2],
+    )
+    expect(duesMocks.reviseNegotiatedAgreement).toHaveBeenLastCalledWith(
+      'agreement-1',
+      { terms: { narrative: 'Nueva narrativa' }, reason: 'Cambio acordado' },
+      expect.any(String),
     )
   })
 
