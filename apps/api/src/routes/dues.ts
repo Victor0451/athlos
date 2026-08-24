@@ -162,7 +162,7 @@ const revisionBodySchema = z
   .strict()
 const obligationIdParamSchema = z.object({ obligationId: z.string().uuid() })
 // prettier-ignore
-const communityWorkBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), amount_cents: z.number().int().positive().max(MAX_MONEY_CENTS), evidence: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0, 'evidence is required'), reason: z.string().trim().min(1).max(500) }).strict()
+const communityWorkBodySchema = z.object({ socio_id: z.string().uuid(), obligation_id: z.string().uuid(), agreement_id: z.string().uuid().optional(), amount_cents: z.number().int().positive().max(MAX_MONEY_CENTS), evidence: z.record(z.string(), z.unknown()).refine((value) => Object.keys(value).length > 0, 'evidence is required'), reason: z.string().trim().min(1).max(500) }).strict()
 // prettier-ignore
 const projectionBodySchema = z.object({ source_type: z.enum(['OBLIGATION', 'SETTLEMENT']), source_id: z.string().uuid() }).strict()
 
@@ -446,7 +446,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     // prettier-ignore
     fastify.get<{ Params: { obligationId: string } }>('/api/v1/dues/obligations/:obligationId/agreements', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const params = throwIfInvalid(obligationIdParamSchema, request.params, 'params'); const lineage = await agreementService.lineage({ obligationId: params.obligationId }); return reply.code(200).send({ active: lineage.active ? toAgreementDTO(lineage.active) : null, revisions: lineage.revisions.map((agreement) => toAgreementDTO(agreement)) }) })
     // prettier-ignore
-    fastify.post('/api/v1/dues/community-work', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(communityWorkBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await communityWorkService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, amountCents: body.amount_cents, evidence: body.evidence, reason: body.reason }); return reply.code(201).send({ id: result.id, settlement_id: result.settlementId, allocation_id: result.allocationId, obligation_id: result.obligationId, amount_cents: result.amountCents }) })
+    fastify.post('/api/v1/dues/community-work', FINANCE_GATE, async (request, reply) => { agreementsEnabled(container); const body = throwIfInvalid(communityWorkBodySchema, request.body ?? {}, 'body'), key = callerKey(request, true), result = await communityWorkService.create({ ...context(request, key, body), socioId: body.socio_id, obligationId: body.obligation_id, ...(body.agreement_id ? { agreementId: body.agreement_id } : {}), amountCents: body.amount_cents, evidence: body.evidence, reason: body.reason }); return reply.code(201).send({ community_work_id: result.id, settlement_id: result.settlementId, allocation_id: result.allocationId, obligation_id: result.obligationId, agreement_id: result.agreementId, amount_cents: result.amountCents, replayed: result.replayed === true }) })
   }
 
   // prettier-ignore
