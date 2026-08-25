@@ -29,6 +29,9 @@ const generationBodySchema = z.object({ period: periodSchema }).strict()
 const previewBodySchema = z
   .object({ socio_id: z.string().uuid(), from_period: periodSchema, through_period: periodSchema })
   .strict()
+const executeAssessmentBodySchema = previewBodySchema
+  .extend({ preview_fingerprint: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict()
 const revokeBodySchema = z.object({ revoke_reason: z.string().trim().min(1).max(500) }).strict()
 const priceBodySchema = z
   .object({
@@ -172,7 +175,7 @@ const projectionBodySchema = z.object({ source_type: z.enum(['OBLIGATION', 'SETT
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
   assessmentService?: Pick<AssessmentService, 'generate'> &
-    Partial<Pick<AssessmentService, 'preview'>>
+    Partial<Pick<AssessmentService, 'preview' | 'executeRange'>>
   listEffectivePrices?: typeof repository.listEffectivePrices
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
@@ -438,6 +441,22 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
       from_period: result.fromPeriod,
       through_period: result.throughPeriod,
     })
+  })
+
+  fastify.post('/api/v1/dues/assessments/execute', FINANCE_GATE, async (request, reply) => {
+    enabled(container)
+    const body = throwIfInvalid(executeAssessmentBodySchema, request.body ?? {}, 'body'),
+      key = callerKey(request, true)
+    const result = await assessmentService.executeRange!({
+      ...context(request, key, body, 'dues-assessment-execute'),
+      socioId: body.socio_id,
+      fromPeriod: body.from_period,
+      throughPeriod: body.through_period,
+      previewFingerprint: body.preview_fingerprint,
+    })
+    return reply
+      .code(200)
+      .send({ created_obligation_ids: result.createdObligationIds, periods: result.periods })
   })
 
   fastify.post('/api/v1/dues/assessments/generate', FINANCE_GATE, async (request, reply) => {

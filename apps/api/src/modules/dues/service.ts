@@ -33,11 +33,13 @@ export type PreviewAssessmentCommand = AuditContext & {
   fromPeriod: string
   throughPeriod: string
 }
+export type ExecuteRangeCommand = PreviewAssessmentCommand & { previewFingerprint: string }
 export type GenerationResult = { period: repository.Period; obligationIds: string[] }
+export type RangeExecutionResult = { createdObligationIds: string[]; periods: string[] }
 // prettier-ignore
 export type PricingRepository = Pick<typeof repository, 'createPrice' | 'revokePrice'>
 // prettier-ignore
-export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates' | 'listAssessmentFacts'>>
+export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'lockRange' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation' | 'insertObligationInTransaction'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates' | 'listAssessmentFacts'>>
 type Dependencies<T> = { repository?: T; audit?: AuditEmitter; now?: Clock }
 
 const CALCULATOR_VERSION = 'dues-calculator-v1'
@@ -135,12 +137,15 @@ export class AssessmentService {
     this.now = dependencies.now ?? (() => new Date())
   }
   async preview(input: PreviewAssessmentCommand) {
+    return this.plan(input, this.db)
+  }
+  private async plan(input: PreviewAssessmentCommand, db: DuesDb) {
     authorize(input.role, ['ADMIN', 'TESORERO'])
     const current = this.now().toISOString().slice(0, 7)
     if (input.fromPeriod > input.throughPeriod || input.throughPeriod > current) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'El rango de evaluación es inválido o futuro')
     const throughStart = new Date(`${input.throughPeriod}-01T00:00:00Z`); throughStart.setUTCMonth(throughStart.getUTCMonth() + 1)
     const range = { start: `${input.fromPeriod}-01`, end: throughStart.toISOString().slice(0, 10) }
-    const facts = await (this.repository.listAssessmentFacts ?? repository.listAssessmentFacts)(this.db, input.socioId, range)
+    const facts = await (this.repository.listAssessmentFacts ?? repository.listAssessmentFacts)(db, input.socioId, range)
     if (!facts.member) throw BusinessError(ErrorCode.NOT_FOUND, 'Socio no encontrado para la evaluación')
     const periods = [] as Array<Record<string, unknown>>, issues: unknown[] = []
     for (let period = input.fromPeriod; period <= input.throughPeriod;) {
@@ -155,6 +160,29 @@ export class AssessmentService {
     const executable = issues.length === 0 && periods.every((period) => (period.pendingAmountCents !== null)) && !periods.some((period) => (period.components as Array<{ status: string }>).some((component) => component.status === 'CONFLICT'))
     const result = { socioId: input.socioId, fromPeriod: input.fromPeriod, throughPeriod: input.throughPeriod, executable, currency: facts.prices[0]?.currency ?? null, periods, issues, sourceSnapshot }
     return { ...result, fingerprint: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
+  }
+  async executeRange(input: ExecuteRangeCommand): Promise<RangeExecutionResult> {
+    authorize(input.role, ['ADMIN', 'TESORERO'])
+    return this.db.transaction(async (tx) => {
+      const claim = await this.repository.claimReceipt(tx, { operatorId: input.actorId, callerKey: input.callerKey, requestFingerprint: input.requestFingerprint, periodStart: `${input.fromPeriod}-01`, periodEnd: `${input.throughPeriod}-01`, authorizationEvidence: input.authorizationEvidence })
+      if (claim.status === 'replayed') return claim.result as RangeExecutionResult
+      await this.repository.lockRange(tx, input.socioId)
+      const plan = await this.plan(input, tx)
+      if (!plan.executable) throw BusinessError(ErrorCode.CONFLICT, 'La evaluación revisada ya no es ejecutable')
+      if (plan.fingerprint !== input.previewFingerprint) throw BusinessError(ErrorCode.CONFLICT, 'Los datos de la evaluación cambiaron; generá una nueva vista previa')
+      const createdObligationIds: string[] = [], periods: string[] = []
+      for (const period of plan.periods as Array<{ period: string; start: string; end: string; pendingAmountCents: number; components: Array<Record<string, unknown>> }>) {
+        periods.push(period.period)
+        if (period.pendingAmountCents <= 0) continue
+        const components = period.components.map((component) => ({ kind: component.kind as 'BASE' | 'SPORT', componentKey: component.componentKey as string, amountCents: component.amountCents as number, priceVersionId: null, calculationInputs: component, eligibilitySnapshot: { eligibleFrom: component.eligibleFrom, eligibleTo: component.eligibleTo }, priceSnapshot: { segments: component.segments } }))
+        const inserted = await this.repository.insertObligationInTransaction(tx, { periodStart: period.start, periodEnd: period.end, socioId: input.socioId, amountCents: period.pendingAmountCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: { planFingerprint: plan.fingerprint, period, sourceSnapshot: plan.sourceSnapshot }, authorizationEvidence: input.authorizationEvidence, components })
+        createdObligationIds.push(inserted.obligation.id)
+      }
+      const result = { createdObligationIds, periods }
+      await auditAction(this.audit, tx, AuditAction.DUES_PERIOD_GENERATED, input, { entityType: 'dues_range', entityId: `${input.socioId}:${input.fromPeriod}:${input.throughPeriod}`, oldValue: null, newValue: result, payload: { fingerprint: plan.fingerprint, result } }, this.now().toISOString())
+      await this.repository.finalizeReceipt(tx, claim.receipt.id, result)
+      return result
+    })
   }
   async generate(input: GenerateAssessmentCommand): Promise<GenerationResult> {
     authorize(input.role, ['ADMIN', 'TESORERO'])
@@ -176,11 +204,11 @@ export class AssessmentService {
         if (prior) { existing = true; obligationIds.push(prior.obligation.id); continue }
         // prettier-ignore
         const resolveBenefitRuleCandidates = this.repository.resolveBenefitRuleCandidates ?? resolveBenefitRuleCandidatesDefault
-        const applicable = await resolveBenefitRuleCandidates(tx, { socioId: member.socioId, ...(member.familyGroupId !== undefined ? { familyGroupId: member.familyGroupId } : {}), period: input.period })
+        const applicable = await resolveBenefitRuleCandidates(tx, { socioId: member.socioId, ...(member.familyGroupId === undefined ? {} : { familyGroupId: member.familyGroupId }), period: input.period })
         const benefitResult = applyBenefits(calculation.totalCents, applicable, currency)
         if (benefitResult.totalCents === 0) continue
         const obligationSnapshot = snapshot(input, member, source, calculation, benefitResult.applied, claim.receipt.requestFingerprint, generatedAt)
-        const inserted = await this.repository.insertObligation(tx, { periodStart: input.period.start, periodEnd: input.period.end, socioId: member.socioId, amountCents: benefitResult.totalCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: obligationSnapshot, authorizationEvidence: input.authorizationEvidence, components: obligationComponents(member, source, calculation, benefitResult.components) })
+        const inserted = await this.repository.insertObligationInTransaction(tx, { periodStart: input.period.start, periodEnd: input.period.end, socioId: member.socioId, amountCents: benefitResult.totalCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: obligationSnapshot, authorizationEvidence: input.authorizationEvidence, components: obligationComponents(member, source, calculation, benefitResult.components) })
         for (const benefit of benefitResult.applied) await auditAction(this.audit, tx, AuditAction.DUES_BENEFIT_APPLIED, input, { entityType: 'dues_benefit_application', entityId: benefit.id, oldValue: null, newValue: { obligationId: inserted.obligation.id, appliedAmountCents: benefit.appliedAmountCents, truncatedAmountCents: benefit.truncatedAmountCents }, payload: { benefitId: benefit.id, obligationId: inserted.obligation.id } }, generatedAt)
         created = true; obligationIds.push(inserted.obligation.id); snapshots.push(obligationSnapshot)
       }

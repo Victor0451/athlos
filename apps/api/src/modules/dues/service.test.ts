@@ -68,10 +68,12 @@ describe('dues services', () => {
       claimReceipt: vi.fn().mockResolvedValue({ status: 'replayed', receipt: {}, result }),
       finalizeReceipt: vi.fn(),
       lockPeriod: vi.fn(),
+      lockRange: vi.fn(),
       listEligibleMembers: vi.fn(),
       listEffectivePrices: vi.fn(),
       findObligation: vi.fn(),
       insertObligation: vi.fn(),
+      insertObligationInTransaction: vi.fn(),
     }
     const service = new AssessmentService(db(), { repository, audit: audit.emit })
 
