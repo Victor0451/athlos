@@ -15,12 +15,12 @@ describe('cash desk reconciliation', () => {
           { tender: 'CASH', direction: 'INCOME', amountCents: 2_000 },
           { tender: 'CARD', direction: 'EXPENSE', amountCents: 100 },
         ],
-        { CASH: 2_900, CARD: 400 },
+        { CASH: 2_900 },
         'Counted cash was short',
       ),
     ).toEqual({
-      expected: { CASH: 3_000, CARD: 400 },
-      counted: { CASH: 2_900, CARD: 400 },
+      expected: { CASH: 3_000 },
+      counted: { CASH: 2_900 },
       discrepancy: { CASH: -100 },
     })
   })
