@@ -26,6 +26,9 @@ const periodSchema = z.string().regex(periodPattern, 'period must be YYYY-MM')
 const idParamSchema = z.object({ id: z.string().uuid() })
 const periodQuerySchema = z.object({ period: periodSchema })
 const generationBodySchema = z.object({ period: periodSchema }).strict()
+const previewBodySchema = z
+  .object({ socio_id: z.string().uuid(), from_period: periodSchema, through_period: periodSchema })
+  .strict()
 const revokeBodySchema = z.object({ revoke_reason: z.string().trim().min(1).max(500) }).strict()
 const priceBodySchema = z
   .object({
@@ -168,7 +171,8 @@ const projectionBodySchema = z.object({ source_type: z.enum(['OBLIGATION', 'SETT
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
-  assessmentService?: Pick<AssessmentService, 'generate'>
+  assessmentService?: Pick<AssessmentService, 'generate'> &
+    Partial<Pick<AssessmentService, 'preview'>>
   listEffectivePrices?: typeof repository.listEffectivePrices
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
@@ -414,6 +418,26 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     const query = throwIfInvalid(periodQuerySchema, request.query, 'query')
     const prices = await listEffectivePrices(container.db, periodBounds(query.period))
     return reply.code(200).send({ items: [...prices.base, ...prices.sports].map(toPriceDTO) })
+  })
+
+  fastify.post('/api/v1/dues/assessments/preview', FINANCE_GATE, async (request, reply) => {
+    enabled(container)
+    const body = throwIfInvalid(previewBodySchema, request.body ?? {}, 'body'),
+      current = container.clock.now().toISOString().slice(0, 7)
+    if (body.from_period > body.through_period || body.through_period > current)
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'El rango de evaluación es inválido o futuro')
+    const result = await assessmentService.preview!({
+      ...context(request, callerKey(request), body, 'dues-assessment-preview'),
+      socioId: body.socio_id,
+      fromPeriod: body.from_period,
+      throughPeriod: body.through_period,
+    })
+    return reply.code(200).send({
+      ...result,
+      socio_id: result.socioId,
+      from_period: result.fromPeriod,
+      through_period: result.throughPeriod,
+    })
   })
 
   fastify.post('/api/v1/dues/assessments/generate', FINANCE_GATE, async (request, reply) => {

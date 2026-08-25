@@ -100,4 +100,84 @@ describe('dues services', () => {
     expect(audit.records.map((record) => record.action)).toEqual([AuditAction.DUES_BENEFIT_CREATED, AuditAction.DUES_BENEFIT_REVOKED])
     await expect(service.create({ ...context, role: 'TESORERO', kind: 'FIXED_DISCOUNT', socioId: 'member-1', amountCents: 500, currency: 'ARS', effectiveFrom: '2026-01-01', priority: 10, combinability: 'COMBINABLE', reason: 'Denied' })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
   })
+
+  it('builds a repeatable complete read-only preview without mutating facts', async () => {
+const repository = {
+listAssessmentFacts: vi.fn().mockResolvedValue({
+member: { socioId: 'member-1', fechaAlta: '2026-01-10', enrollments: [] },
+prices: [{ versionId: 'base-1', kind: 'BASE', disciplinaId: null, amountCents: 3100, currency: 'ARS', rule: 'FULL_MONTH', effectiveFrom: '2026-01-01', effectiveTo: null }],
+obligations: [{ id: 'ob-1', periodStart: '2026-01-01', amountCents: 3100 }],
+}),
+}
+const database = db()
+const service = new AssessmentService(database, { repository: repository as never, now: () => new Date('2026-02-15T12:00:00Z') })
+const input = { ...context, role: 'TESORERO' as const, socioId: 'member-1', fromPeriod: '2026-01', throughPeriod: '2026-02' }
+const [first, second] = await Promise.all([service.preview(input), service.preview(input)])
+expect(first).toEqual(second)
+    expect(first).toMatchObject({ executable: true, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), periods: [{ existingObligationId: 'ob-1' }, { pendingAmountCents: 3100 }] })
+    expect(first.issues).toEqual([])
+    expect(first.periods[0]).toMatchObject({
+      pendingAmountCents: 0,
+      components: expect.arrayContaining([expect.objectContaining({ status: 'ALREADY_GENERATED' })]),
+    })
+    expect(repository.listAssessmentFacts).toHaveBeenCalledTimes(2)
+expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled()
+  })
+
+  it('retains existing-period pricing conflicts while excluding its obligation from pending creation', async () => {
+    const service = new AssessmentService(db(), {
+      repository: {
+        listAssessmentFacts: vi.fn().mockResolvedValue({
+          member: { socioId: 'member-1', fechaAlta: '2026-01-01', enrollments: [] },
+          prices: [
+            {
+              versionId: 'late',
+              kind: 'BASE',
+              disciplinaId: null,
+              amountCents: 100,
+              currency: 'ARS',
+              rule: 'FULL_MONTH',
+              effectiveFrom: '2026-02-01',
+              effectiveTo: null,
+            },
+          ],
+          obligations: [{ id: 'ob-1', periodStart: '2026-01-01', amountCents: 100 }],
+        }),
+      } as never,
+      now: () => new Date('2026-02-15T12:00:00Z'),
+    })
+
+    const result = await service.preview({
+      ...context,
+      role: 'TESORERO',
+      socioId: 'member-1',
+      fromPeriod: '2026-01',
+      throughPeriod: '2026-02',
+    })
+
+    expect(result.executable).toBe(false)
+    expect(result.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'PRICE_GAP', period: '2026-01' })]),
+    )
+    expect(result.periods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          period: '2026-01',
+          existingObligationId: 'ob-1',
+          pendingAmountCents: 0,
+          components: expect.arrayContaining([expect.objectContaining({ status: 'ALREADY_GENERATED' })]),
+        }),
+      ]),
+    )
+  })
+
+  it.each(['PRICE_GAP', 'PRICE_OVERLAP'] as const)('retains %s across the complete non-executable range', async (expected) => {
+const prices = expected === 'PRICE_GAP'
+    ? [{ versionId: 'late', kind: 'BASE' as const, disciplinaId: null, amountCents: 100, currency: 'ARS', rule: 'FULL_MONTH' as const, effectiveFrom: '2026-02-01', effectiveTo: null }]
+    : ['a', 'b'].map((versionId) => ({ versionId, kind: 'BASE' as const, disciplinaId: null, amountCents: 100, currency: 'ARS', rule: 'FULL_MONTH' as const, effectiveFrom: '2026-01-01', effectiveTo: null }))
+const service = new AssessmentService(db(), { repository: { listAssessmentFacts: vi.fn().mockResolvedValue({ member: { socioId: 'member-1', fechaAlta: '2026-01-01', enrollments: [] }, prices, obligations: [] }) } as never, now: () => new Date('2026-02-15T12:00:00Z') })
+const result = await service.preview({ ...context, role: 'TESORERO', socioId: 'member-1', fromPeriod: '2026-01', throughPeriod: '2026-02' })
+expect(result).toMatchObject({ executable: false, issues: expect.arrayContaining([expect.objectContaining({ code: expected })]) })
+expect(result.periods).toHaveLength(2)
+  })
 })

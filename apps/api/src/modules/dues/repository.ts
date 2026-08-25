@@ -366,6 +366,77 @@ export async function listEffectivePrices(db: DuesDb, period: Period) {
   }
 }
 
+export type AssessmentFacts = {
+  member: { socioId: string; fechaAlta: string; enrollments: EligibleEnrollment[] } | null
+  prices: Array<{
+    versionId: string
+    kind: PriceKind
+    disciplinaId: string | null
+    amountCents: number
+    currency: string
+    rule: PriceRule
+    effectiveFrom: string
+    effectiveTo: string | null
+  }>
+  obligations: Array<{ id: string; periodStart: string; amountCents: number }>
+}
+type AssessmentMemberRow = {
+  socioId: string
+  fechaAlta: string
+  enrollmentId: string | null
+  disciplinaId: string | null
+  estado: string | null
+  sportAlta: string | null
+  sportBaja: string | null
+}
+export async function listAssessmentFacts(
+  db: DuesDb,
+  socioId: string,
+  range: Period,
+): Promise<AssessmentFacts> {
+  const memberRows = rows<AssessmentMemberRow>(
+    await db.execute(
+      sql`SELECT s.id AS "socioId", s.fecha_alta AS "fechaAlta", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", i.estado, i.fecha_alta AS "sportAlta", i.fecha_baja AS "sportBaja" FROM socios.socios s LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${range.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${range.start}) WHERE s.id = ${socioId} AND s.estado = 'activo' ORDER BY i.id`,
+    ),
+  )
+  const first = memberRows[0]
+  const prices = rows<PriceRow>(
+    await db.execute(
+      sql`SELECT id AS "versionId", kind, disciplina_id AS "disciplinaId", amount::text, btrim(currency) AS currency, rule, effective_from AS "effectiveFrom", effective_to AS "effectiveTo" FROM tesoreria.dues_price_versions WHERE revoked_at IS NULL AND effective_from < ${range.end} AND (effective_to IS NULL OR effective_to > ${range.start}) ORDER BY kind, disciplina_id, effective_from, id`,
+    ),
+  ).map((row) => ({ ...row, amountCents: cents(row.amount) }))
+  const obligations = rows<{ id: string; periodStart: string; amount: string }>(
+    await db.execute(
+      sql`SELECT id, period_start AS "periodStart", amount::text FROM tesoreria.dues_obligations WHERE socio_id = ${socioId} AND kind = 'MONTHLY_DUES' AND period_start >= ${range.start} AND period_start < ${range.end} ORDER BY period_start, id`,
+    ),
+  ).map(({ amount, ...row }) => ({ ...row, amountCents: cents(amount) }))
+  return {
+    member: first
+      ? {
+          socioId: first.socioId,
+          fechaAlta: first.fechaAlta,
+          enrollments: memberRows.flatMap((row) =>
+            row.enrollmentId && row.sportAlta
+              ? [
+                  {
+                    id: row.enrollmentId,
+                    disciplinaId: row.disciplinaId!,
+                    estado: row.estado!,
+                    fechaAlta: row.sportAlta,
+                    fechaBaja: row.sportBaja,
+                    eligibleFrom: row.sportAlta,
+                    eligibleTo: row.sportBaja ?? range.end,
+                  },
+                ]
+              : [],
+          ),
+        }
+      : null,
+    prices,
+    obligations,
+  }
+}
+
 // prettier-ignore
 export type ObligationComponentInput = { kind: 'BASE' | 'SPORT' | 'BENEFIT' | 'ADJUSTMENT'; componentKey: string; amountCents: number; priceVersionId?: string | null; disciplinaId?: string | null; enrollmentId?: string | null; unitAmountCents?: number | null; rule?: 'FULL_MONTH' | 'DAILY_PRORATED' | 'NEXT_PERIOD' | null; eligibleFrom?: string | null; eligibleTo?: string | null; eligibleDays?: number | null; periodDays?: number | null; calculationInputs: Json; eligibilitySnapshot: Json; priceSnapshot: Json }
 // prettier-ignore

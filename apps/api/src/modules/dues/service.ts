@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import { AuditAction, emitAudit, type AuditRecord, type EmitAuditResult } from '@athlos/audit'
 import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 // prettier-ignore
 import { calculateAssessment, type AssessmentInput, type AssessmentResult as CalculationResult, type SportInput } from './calculator.ts'
 import { applyBenefits, type AppliedBenefit, type BenefitComponent } from './benefits.ts'
+import { planAssessmentRange } from './range-planner.ts'
 import * as repository from './repository.ts'
 import { resolveBenefitRuleCandidates as resolveBenefitRuleCandidatesDefault } from './repository.ts'
 
@@ -26,11 +28,16 @@ export type CreatePriceCommand = AuditContext & Omit<repository.PriceInput, 'cre
 export type RevokePriceCommand = AuditContext & Omit<repository.PriceRevocationInput, 'revokedBy'>
 // prettier-ignore
 export type GenerateAssessmentCommand = AuditContext & { period: repository.Period; currency?: string }
+export type PreviewAssessmentCommand = AuditContext & {
+  socioId: string
+  fromPeriod: string
+  throughPeriod: string
+}
 export type GenerationResult = { period: repository.Period; obligationIds: string[] }
 // prettier-ignore
 export type PricingRepository = Pick<typeof repository, 'createPrice' | 'revokePrice'>
 // prettier-ignore
-export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates'>>
+export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates' | 'listAssessmentFacts'>>
 type Dependencies<T> = { repository?: T; audit?: AuditEmitter; now?: Clock }
 
 const CALCULATOR_VERSION = 'dues-calculator-v1'
@@ -126,6 +133,28 @@ export class AssessmentService {
     this.repository = dependencies.repository ?? { ...repository, resolveBenefitRuleCandidates: repository.resolveBenefitRuleCandidates }
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
+  }
+  async preview(input: PreviewAssessmentCommand) {
+    authorize(input.role, ['ADMIN', 'TESORERO'])
+    const current = this.now().toISOString().slice(0, 7)
+    if (input.fromPeriod > input.throughPeriod || input.throughPeriod > current) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'El rango de evaluación es inválido o futuro')
+    const throughStart = new Date(`${input.throughPeriod}-01T00:00:00Z`); throughStart.setUTCMonth(throughStart.getUTCMonth() + 1)
+    const range = { start: `${input.fromPeriod}-01`, end: throughStart.toISOString().slice(0, 10) }
+    const facts = await (this.repository.listAssessmentFacts ?? repository.listAssessmentFacts)(this.db, input.socioId, range)
+    if (!facts.member) throw BusinessError(ErrorCode.NOT_FOUND, 'Socio no encontrado para la evaluación')
+    const periods = [] as Array<Record<string, unknown>>, issues: unknown[] = []
+    for (let period = input.fromPeriod; period <= input.throughPeriod;) {
+      const start = `${period}-01`, next = new Date(`${start}T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1); const end = next.toISOString().slice(0, 10)
+      const components = [{ key: 'base', kind: 'BASE' as const, alta: facts.member.fechaAlta, baja: null, prices: facts.prices.filter((price) => price.kind === 'BASE').map((price) => ({ priceVersionId: price.versionId, amountCents: price.amountCents, currency: price.currency, from: price.effectiveFrom, to: price.effectiveTo ?? end, rule: price.rule })) }, ...facts.member.enrollments.map((enrollment) => ({ key: `sport:${enrollment.id}`, kind: 'SPORT' as const, alta: enrollment.fechaAlta, baja: enrollment.fechaBaja, prices: facts.prices.filter((price) => price.kind === 'SPORT' && price.disciplinaId === enrollment.disciplinaId).map((price) => ({ priceVersionId: price.versionId, amountCents: price.amountCents, currency: price.currency, from: price.effectiveFrom, to: price.effectiveTo ?? end, rule: price.rule })) }))]
+      const plan = planAssessmentRange({ period: { start, end }, components }), existing = facts.obligations.find((obligation) => obligation.periodStart === start)
+      issues.push(...plan.issues.map((issue) => ({ ...issue, period })))
+      periods.push({ period, start, end, calendarDays: plan.components[0]?.calendarDays ?? 0, components: plan.components.map((component) => ({ ...component, kind: component.componentKey === 'base' ? 'BASE' : 'SPORT', status: existing ? 'ALREADY_GENERATED' : component.status })), existingObligationId: existing?.id ?? null, pendingAmountCents: existing || !plan.executable ? 0 : plan.totalCents })
+      period = end.slice(0, 7)
+    }
+    const sourceSnapshot = { member: facts.member, prices: facts.prices, obligations: facts.obligations, range: input.fromPeriod + ':' + input.throughPeriod }
+    const executable = issues.length === 0 && periods.every((period) => (period.pendingAmountCents !== null)) && !periods.some((period) => (period.components as Array<{ status: string }>).some((component) => component.status === 'CONFLICT'))
+    const result = { socioId: input.socioId, fromPeriod: input.fromPeriod, throughPeriod: input.throughPeriod, executable, currency: facts.prices[0]?.currency ?? null, periods, issues, sourceSnapshot }
+    return { ...result, fingerprint: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
   }
   async generate(input: GenerateAssessmentCommand): Promise<GenerationResult> {
     authorize(input.role, ['ADMIN', 'TESORERO'])
