@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { expect, it, vi, type Mock } from 'vitest'
 import { AuditAction, type AuditRecord } from '@athlos/audit'
 import { ErrorCode } from '@athlos/errors'
 import { getDebt } from './allocations.ts'
@@ -32,13 +32,13 @@ const auditLog = () => {
 // prettier-ignore
 it('creates an explicit non-cash settlement and its allocation atomically',async()=>{const audit=auditLog(),repository={claimSettlement:vi.fn().mockResolvedValue({status:'claimed',settlement:{id:'settlement-1',socioId:'socio-1',kind:'NON_CASH',amountCents:5_000,currency:'ARS'}}),insertAllocation:vi.fn().mockResolvedValue({id:'allocation-1',obligationId:'obligation-2',amountCents:5_000})},service=new SettlementService(db(),{repository,audit:audit.emit}); await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:5_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-2',amountCents:5_000}]})).resolves.toMatchObject({settlementId:'settlement-1',kind:'NON_CASH'}); expect(repository.insertAllocation).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({settlementId:'settlement-1',obligationId:'obligation-2',amountCents:5_000})); expect(audit.records.map(({action})=>action)).toEqual([AuditAction.DUES_SETTLEMENT_CREATED,AuditAction.DUES_ALLOCATION_CREATED])})
 // prettier-ignore
-it('rejects unauthorized settlement commands before persistence',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit}); await expect(service.create({...context,role:'OPERADOR',socioId:'socio-1',kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.INSUFFICIENT_PERMISSIONS}); expect(repository.claimSettlement).not.toHaveBeenCalled()})
+it('rejects legacy monetary settlement commands before persistence',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit}); await expect(service.create({...context,role:'OPERADOR',socioId:'socio-1',kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND}); expect(repository.claimSettlement).not.toHaveBeenCalled()})
 // prettier-ignore
-it('rejects allocations that exceed the settlement value before claiming it',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit}); await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_001}]})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR}); expect(repository.claimSettlement).not.toHaveBeenCalled()})
+it('rejects allocations that exceed the settlement value before claiming it',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit}); await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_001}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND}); expect(repository.claimSettlement).not.toHaveBeenCalled()})
 // prettier-ignore
-it('rejects duplicate obligation allocations before claiming an explicit settlement',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_000},{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(repository.claimSettlement).not.toHaveBeenCalled()})
+it('rejects duplicate legacy monetary allocations before claiming',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_000},{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND});expect(repository.claimSettlement).not.toHaveBeenCalled()})
 // prettier-ignore
-it('returns an exact idempotent replay without inserting allocations or audit',async()=>{const audit=auditLog(),repository={claimSettlement:vi.fn().mockResolvedValue({status:'replayed',settlement:{id:'settlement-1',socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS'},allocations:[{id:'allocation-1',obligationId:'obligation-1',amountCents:2_000}]}),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:audit.emit}); await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:2_000}]})).resolves.toMatchObject({settlementId:'settlement-1',allocations:[{id:'allocation-1'}]}); expect(repository.insertAllocation).not.toHaveBeenCalled(); expect(audit.records).toEqual([])})
+it('rejects legacy monetary settlement before transaction, repository, or audit',async()=>{const database=db() as {transaction:Mock},repository={claimSettlement:vi.fn()},audit=auditLog(),service=new SettlementService(database as never,{repository,audit:audit.emit});await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:1,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND});expect(database.transaction).not.toHaveBeenCalled();expect(repository.claimSettlement).not.toHaveBeenCalled();expect(audit.records).toEqual([])})
 
 it('persists privacy-safe snapshots and reversal reason through the emitter fields', async () => {
   const audit = auditLog()
@@ -48,7 +48,7 @@ it('persists privacy-safe snapshots and reversal reason through the emitter fiel
       settlement: {
         id: 'settlement-1',
         socioId: 'socio-1',
-        kind: 'MONETARY',
+        kind: 'NON_CASH',
         amountCents: 2_000,
         currency: 'ARS',
         reversalOfSettlementId: null,
@@ -68,10 +68,11 @@ it('persists privacy-safe snapshots and reversal reason through the emitter fiel
   await service.create({
     ...context,
     socioId: 'socio-1',
-    kind: 'MONETARY',
+    kind: 'NON_CASH',
     amountCents: 2_000,
     currency: 'ARS',
     evidence: { private: 'must-not-be-audited' },
+    reason: 'Approved non-cash settlement',
     allocations: [{ obligationId: 'obligation-1', amountCents: 2_000 }],
   })
 
@@ -81,7 +82,7 @@ it('persists privacy-safe snapshots and reversal reason through the emitter fiel
     oldValue: null,
     newValue: {
       settlementId: 'settlement-1',
-      kind: 'MONETARY',
+      kind: 'NON_CASH',
       amountCents: 2_000,
       currency: 'ARS',
     },
@@ -108,7 +109,7 @@ it('maps a duplicate different-key reversal to a domain conflict', async () => {
       settlement: {
         id: 'reversal-1',
         socioId: 'socio-1',
-        kind: 'MONETARY',
+        kind: 'NON_CASH',
         amountCents: 2_000,
         currency: 'ARS',
       },
@@ -136,6 +137,49 @@ it('requires a non-empty trimmed reversal reason before opening a transaction',a
 // prettier-ignore
 it('appends one compensation allocation without changing the original',async()=>{const repository={findAllocation:vi.fn().mockResolvedValue({id:'allocation-1',settlementId:'settlement-1',obligationId:'obligation-1',socioId:'socio-1',settlementKind:'MONETARY',amountCents:2_000,currency:'ARS',kind:'ALLOCATION',compensatesAllocationId:null}),claimSettlement:vi.fn().mockResolvedValue({status:'claimed',settlement:{id:'reversal-1',socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS'}}),insertAllocation:vi.fn().mockResolvedValue({id:'compensation-1',settlementId:'reversal-1',obligationId:'obligation-1',kind:'COMPENSATION',amountCents:2_000,compensatesAllocationId:'allocation-1'})},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.reverse({...context,settlementId:'settlement-1',allocationId:'allocation-1',reason:'Incorrect allocation'})).resolves.toMatchObject({allocations:[{kind:'COMPENSATION'}]});expect(repository.insertAllocation).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({kind:'COMPENSATION',compensatesAllocationId:'allocation-1',reason:'Incorrect allocation'}))})
 
+it('prepares a full-selection payment command without monetary fields or writes', async () => {
+  const selection = {
+    socioId: 'socio-1',
+    currency: 'ARS',
+    totalCents: 1_000,
+    allocations: [{ obligationId: 'obligation-1', amountCents: 1_000 }],
+    fingerprint: 'b'.repeat(64),
+  }
+  const repository = { selectFullOutstanding: vi.fn().mockResolvedValue(selection) }
+  const database = db() as { transaction: Mock }
+  const service = new SettlementService(database as never, { repository, audit: auditLog().emit })
+  const command = {
+    ...context,
+    socioId: '00000000-0000-4000-8000-000000000001',
+    obligationIds: ['00000000-0000-4000-8000-000000000002'],
+    shiftId: '00000000-0000-4000-8000-000000000003',
+    tender: 'CASH' as const,
+    selectionFingerprint: selection.fingerprint,
+  }
+
+  await expect(service.prepareFullSelectionPayment(command)).resolves.toEqual({
+    command,
+    selection,
+  })
+  expect(repository.selectFullOutstanding).toHaveBeenCalledWith(expect.anything(), {
+    socioId: command.socioId,
+    obligationIds: command.obligationIds,
+    selectionFingerprint: command.selectionFingerprint,
+  })
+  expect(database.transaction).toHaveBeenCalledOnce()
+
+  await expect(
+    service.prepareFullSelectionPayment({ ...command, amountCents: 1_000 } as typeof command),
+  ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR })
+  expect(repository.selectFullOutstanding).toHaveBeenCalledOnce()
+})
+
+// prettier-ignore
+it.each([['socioId','not-a-uuid'],['obligationIds',['not-a-uuid']],['shiftId','not-a-uuid'],['tender','CARD']])('rejects invalid full-selection %s before reads or writes',async(field,value)=>{const repository={selectFullOutstanding:vi.fn()},database=db() as {transaction:Mock},service=new SettlementService(database as never,{repository,audit:auditLog().emit}),command={...context,socioId:'00000000-0000-4000-8000-000000000001',obligationIds:['00000000-0000-4000-8000-000000000002'],shiftId:'00000000-0000-4000-8000-000000000003',tender:'CASH' as const,selectionFingerprint:'b'.repeat(64),[field]:value};await expect(service.prepareFullSelectionPayment(command as never)).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(database.transaction).not.toHaveBeenCalled();expect(repository.selectFullOutstanding).not.toHaveBeenCalled()})
+
+// prettier-ignore
+it.each(['DEBIT','CREDIT'])('accepts %s as an electronic full-selection tender',async tender=>{const selection={socioId:'socio-1',currency:'ARS',totalCents:1_000,allocations:[],fingerprint:'b'.repeat(64)},repository={selectFullOutstanding:vi.fn().mockResolvedValue(selection)},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.prepareFullSelectionPayment({...context,socioId:'00000000-0000-4000-8000-000000000001',obligationIds:['00000000-0000-4000-8000-000000000002'],shiftId:'00000000-0000-4000-8000-000000000003',tender,selectionFingerprint:selection.fingerprint} as never)).resolves.toMatchObject({command:{tender}})})
+
 it('rejects amounts outside PostgreSQL numeric(14,2) bounds', async () => {
   const repository = { claimSettlement: vi.fn(), insertAllocation: vi.fn() }
   const service = new SettlementService(db(), { repository, audit: auditLog().emit })
@@ -150,7 +194,7 @@ it('rejects amounts outside PostgreSQL numeric(14,2) bounds', async () => {
       evidence: {},
       allocations: [{ obligationId: 'obligation-1', amountCents: MAX_MONEY_CENTS + 1 }],
     }),
-  ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR })
+  ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND })
   expect(repository.claimSettlement).not.toHaveBeenCalled()
 })
 

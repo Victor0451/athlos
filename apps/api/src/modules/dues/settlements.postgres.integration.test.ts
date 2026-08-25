@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
+import { sql } from 'drizzle-orm'
 import { AuditAction } from '@athlos/audit'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { insertObligation, claimReceipt, type ObligationInput } from './repository.ts'
+import { selectFullOutstanding } from './allocations.ts'
 import { SettlementService } from './settlements.ts'
 import { AgreementService } from './agreements.ts'
 import { CommunityWorkService } from './community-work.ts'
@@ -41,6 +43,7 @@ const obligation = async (
   socioId: string,
   amountCents: number,
   p: { start: string; end: string },
+  snapshot: Record<string, unknown> = { source: 'fixture' },
 ) => {
   const receipt = await claimReceipt(db.db, {
     operatorId,
@@ -57,7 +60,7 @@ const obligation = async (
     amountCents,
     generationReceiptId: receipt.receipt.id,
     actorId: operatorId,
-    snapshot: { source: 'fixture' },
+    snapshot,
     authorizationEvidence: { source: 'fixture' },
     components: [
       {
@@ -143,6 +146,9 @@ it('runs the projection fixture in a disposable database', async () => {
 
   expect(currentDatabase).not.toBe(configuredDatabase)
 })
+
+// prettier-ignore
+it('locks full balances, rejects stale or ineligible selections, and writes nothing itself',async()=>{const socioId=await member(),other=await member(),service=new SettlementService(db.db),first=await obligation(socioId,10_000,period(2510,1)),second=await obligation(socioId,2_000,period(2510,2)),paid=await obligation(socioId,1_000,period(2510,3)),restored=await obligation(socioId,1_000,period(2510,4)),foreign=await obligation(other,1_000,period(2510,5)),usd=await obligation(socioId,1_000,period(2510,6),{inputs:{currency:'USD'}}); await service.create({...context(),socioId,kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:paid,amountCents:1_000}]}); const restoredSettlement=await service.create({...context(),socioId,kind:'MONETARY',amountCents:1_000,currency:'ARS',evidence:{},allocations:[{obligationId:restored,amountCents:1_000}]}); await service.reverse({...context(),settlementId:restoredSettlement.settlementId,allocationId:restoredSettlement.allocations[0]!.id,reason:'Fixture compensation'}); const reviewed=await selectFullOutstanding(db.db,{socioId,obligationIds:[second,first]}),settlementId=randomUUID(),count=async()=>(await db.pool.query<{obligations:number;allocations:number;settlements:number;audits:number}>(`SELECT (SELECT count(*)::int FROM tesoreria.dues_obligations) obligations,(SELECT count(*)::int FROM tesoreria.dues_allocations) allocations,(SELECT count(*)::int FROM tesoreria.dues_settlements) settlements,(SELECT count(*)::int FROM public.audit_events) audits`)).rows[0]!; await db.pool.query(`INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,evidence,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',10.00,'ARS','{}',$3,'{}',$4,$5)`,[settlementId,socioId,operatorId,`selection-${settlementId}`,'a'.repeat(64)]); const before=await count(); let enter!:()=>void,release!:()=>void; const entered=new Promise<void>(resolve=>enter=resolve),released=new Promise<void>(resolve=>release=resolve),firstLock=db.db.transaction(async tx=>{const result=await selectFullOutstanding(tx,{socioId,obligationIds:[first,second]});enter();await released;return result}); await entered;let followerDone=false;const follower=db.db.transaction(async tx=>{const result=await selectFullOutstanding(tx,{socioId,obligationIds:[first,second]});followerDone=true;return result});await new Promise(resolve=>setTimeout(resolve,50));expect(followerDone).toBe(false);release();await expect(firstLock).resolves.toMatchObject({totalCents:12_000});await expect(follower).resolves.toMatchObject({totalCents:12_000});await db.db.transaction(async tx=>{await tx.execute(sql`INSERT INTO tesoreria.dues_allocations (settlement_id,obligation_id,kind,amount) VALUES (${settlementId},${first},'ALLOCATION',10.00)`)});const afterWriter=await count();expect(afterWriter).toEqual({...before,allocations:before.allocations+1});await expect(selectFullOutstanding(db.db,{socioId,obligationIds:[first,second],selectionFingerprint:reviewed.fingerprint})).rejects.toMatchObject({code:'CONFLICT'});await expect(selectFullOutstanding(db.db,{socioId,obligationIds:[first,second]})).resolves.toMatchObject({totalCents:11_000,allocations:[first,second].sort().map(obligationId=>({obligationId,amountCents:obligationId===first?9_000:2_000}))});await Promise.all([selectFullOutstanding(db.db,{socioId,obligationIds:[paid]}),selectFullOutstanding(db.db,{socioId,obligationIds:[foreign]}),selectFullOutstanding(db.db,{socioId,obligationIds:[first,usd]})].map(selection=>expect(selection).rejects.toMatchObject({code:'CONFLICT'})));expect(await count()).toEqual(afterWriter)})
 
 // prettier-ignore
 it('allocates only the explicitly selected obligation and reports aging',async()=>{const socioId=await member(),first=await obligation(socioId,10_000,period(2500,1)),second=await obligation(socioId,20_000,period(2500,2)),service=new SettlementService(db.db); await service.create({...context(),socioId,kind:'MONETARY',amountCents:5_000,currency:'ARS',evidence:{},allocations:[{obligationId:second,amountCents:5_000}]}); await expect(service.debt({role:'TESORERO',socioId})).resolves.toMatchObject({totalCents:25_000,obligations:[{id:first,outstandingCents:10_000},{id:second,outstandingCents:15_000}]})})

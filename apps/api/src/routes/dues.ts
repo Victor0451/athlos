@@ -109,11 +109,8 @@ const familyMembershipBodySchema = z
   })
 
 // prettier-ignore
-const allocationBodySchema=z.object({obligation_id:z.string().uuid(),amount_cents:z.number().int().positive().max(MAX_MONEY_CENTS)}).strict()
 // prettier-ignore
-const settlementBodySchema=z.object({socio_id:z.string().uuid(),kind:z.enum(['MONETARY','NON_CASH']),amount_cents:z.number().int().positive().max(MAX_MONEY_CENTS),currency:z.string().regex(/^[A-Z]{3}$/).default('ARS'),evidence:z.record(z.string(),z.unknown()).default({}),reason:z.string().trim().min(1).max(500).optional(),allocations:z.array(allocationBodySchema).min(1)}).strict()
 // prettier-ignore
-const settlementReverseBodySchema=z.object({allocation_id:z.string().uuid(),reason:z.string().trim().min(1).max(500)}).strict()
 // prettier-ignore
 const installmentTermsSchema = z.object({ amountCents: z.number().int().positive().max(MAX_MONEY_CENTS), dueDate: dateSchema }).strict()
 const termsSchema = z
@@ -472,9 +469,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
 
   if (container.env.DUES_ASSESSMENT_ENABLED) {
     // prettier-ignore
-    fastify.post('/api/v1/dues/settlements',FINANCE_GATE,async(request,reply)=>{enabled(container);const body=throwIfInvalid(settlementBodySchema,request.body ?? {},'body'),key=callerKey(request,true),result=await settlementService.create({...context(request,key,body),socioId:body.socio_id,kind:body.kind,amountCents:body.amount_cents,currency:body.currency ?? 'ARS',evidence:body.evidence ?? {},...(body.reason ? {reason:body.reason} : {}),allocations:body.allocations.map(({obligation_id,amount_cents})=>({obligationId:obligation_id,amountCents:amount_cents}))});return reply.code(201).send({settlement_id:result.settlementId,kind:result.kind,amount_cents:result.amountCents,currency:result.currency,allocations:result.allocations.map(({id,obligationId,amountCents})=>({id,obligation_id:obligationId,amount_cents:amountCents}))})})
     // prettier-ignore
-    fastify.post<{Params:{id:string}}>('/api/v1/dues/settlements/:id/reverse',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,request.params,'params'),body=throwIfInvalid(settlementReverseBodySchema,request.body ?? {},'body'),key=callerKey(request,true),result=await settlementService.reverse!({...context(request,key,body),settlementId:params.id,allocationId:body.allocation_id,reason:body.reason});return reply.code(201).send({settlement_id:result.settlementId,kind:result.kind,amount_cents:result.amountCents,currency:result.currency,allocations:result.allocations.map(({id,obligationId,amountCents})=>({id,obligation_id:obligationId,amount_cents:amountCents}))})})
     // prettier-ignore
     fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id}),body={status:result.status,socio_id:result.socioId,currency:result.currency,total_debt_cents:result.totalCents,obligations:result.obligations.map((obligation)=>({id:obligation.id,period_start:obligation.periodStart,period_end:obligation.periodEnd,original_amount_cents:obligation.originalCents,outstanding_cents:obligation.outstandingCents,currency:obligation.currency,status:obligation.status,components:obligation.components.map(({id,kind,componentKey,amountCents})=>({id,kind,component_key:componentKey,amount_cents:amountCents})),benefits:obligation.benefits.map(({id,componentKey,amountCents})=>({id,component_key:componentKey,amount_cents:amountCents})),allocations:obligation.allocations.map(({id,settlementId,settlementKind,settlementAmountCents,currency,amountCents,kind,compensatesAllocationId,reversalEligible})=>({id,settlement_id:settlementId,settlement_kind:settlementKind,settlement_amount_cents:settlementAmountCents,currency,amount_cents:amountCents,kind,compensates_allocation_id:compensatesAllocationId,reversal_eligible:reversalEligible}))}))};return reply.code(result.status === 'not_found' ? 404 : 200).send(body)})
   }
