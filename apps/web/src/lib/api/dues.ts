@@ -51,6 +51,14 @@ export interface DuesSettlementResult {
   currency: string
   allocations: Array<{ id: string; obligation_id: string; amount_cents: number }>
 }
+export interface DuesSettlementReversalResult {
+  original_settlement_id: string
+  reversal_settlement_id: string
+  kind: 'MONETARY'
+  amount_cents: number
+  currency: string
+  allocations: Array<{ id: string; obligation_id: string; amount_cents: number }>
+}
 // prettier-ignore
 export interface LegacyAgreementTerms { amountCents?: number; installments?: number }
 // prettier-ignore
@@ -180,6 +188,37 @@ function decodeCommunityWork(value: unknown): CommunityWorkEvidenceResult | null
     replayed: value.replayed === true,
   }
 }
+function decodeSettlementReversal(value: unknown): DuesSettlementReversalResult | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.original_settlement_id) ||
+    !isString(value.reversal_settlement_id) ||
+    value.kind !== 'MONETARY' ||
+    !isNumber(value.amount_cents) ||
+    !isString(value.currency) ||
+    !Array.isArray(value.allocations) ||
+    !value.allocations.every(
+      (allocation) =>
+        isRecord(allocation) &&
+        isString(allocation.id) &&
+        isString(allocation.obligation_id) &&
+        isNumber(allocation.amount_cents),
+    )
+  )
+    return null
+  return {
+    original_settlement_id: value.original_settlement_id,
+    reversal_settlement_id: value.reversal_settlement_id,
+    kind: 'MONETARY',
+    amount_cents: value.amount_cents,
+    currency: value.currency,
+    allocations: value.allocations.map((allocation) => ({
+      id: allocation.id,
+      obligation_id: allocation.obligation_id,
+      amount_cents: allocation.amount_cents,
+    })),
+  }
+}
 function mapError(error: unknown): DuesOperationError {
   if (error instanceof DuesOperationError) return error
   if (error instanceof ApiError || (isRecord(error) && typeof error.status === 'number')) {
@@ -298,12 +337,16 @@ export function createDuesSettlement(input: DuesSettlementInput, key: string) {
 
 export function reverseDuesSettlement(
   settlementId: string,
-  input: { allocation_id: string; reason: string },
+  input: { reason: string },
   key: string,
 ) {
-  return apiFetch<DuesSettlementResult>(`/api/v1/dues/settlements/${settlementId}/reverse`, {
-    method: 'POST',
-    headers: { 'idempotency-key': key },
-    body: input,
-  })
+  return duesOperation(
+    () =>
+      apiFetch(`/api/v1/dues/settlements/${settlementId}/reverse`, {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: input,
+      }),
+    decodeSettlementReversal,
+  )
 }

@@ -391,11 +391,7 @@ export default function CollectionsPage() {
     )
   const reverse = (input: ReversalRequest) =>
     runSettlementMutation('reverse-settlement', JSON.stringify(input), (key) =>
-      reverseDuesSettlement(
-        input.settlement_id,
-        { allocation_id: input.allocation_id, reason: input.reason },
-        key,
-      ),
+      reverseDuesSettlement(input.settlement_id, { reason: input.reason }, key),
     )
 
   return (

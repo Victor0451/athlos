@@ -47,18 +47,17 @@ describe('SettlementActions', () => {
     expect(onAllocate).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('status')).toHaveTextContent(/repetido/i)
   })
-  it('requires a reason and appends a compensation reversal without cash controls', async () => {
+  it('requires a reason and submits a whole-settlement reversal without allocation selection', async () => {
     const user = userEvent.setup(),
       onReverse = vi.fn().mockResolvedValue({ replayed: false })
     renderActions(undefined, onReverse)
-    await user.click(screen.getByRole('button', { name: /revertir allocation-1/i }))
+    await user.click(screen.getByRole('button', { name: /revertir pago settlement-1/i }))
     const confirm = screen.getByRole('button', { name: /confirmar reversión/i })
     expect(confirm).toBeDisabled()
     await user.type(screen.getByLabelText(/motivo de reversión/i), 'Asignación incorrecta')
     await user.click(confirm)
     expect(onReverse).toHaveBeenCalledWith({
       settlement_id: 'settlement-1',
-      allocation_id: 'allocation-1',
       reason: 'Asignación incorrecta',
     })
     expect(screen.getByRole('status')).toHaveTextContent(/compensación/i)
