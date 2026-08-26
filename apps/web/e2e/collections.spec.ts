@@ -125,7 +125,7 @@ test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
   await page.getByRole('button', { name: 'Buscar socio' }).click()
   await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
   await expect(page.getByRole('list', { name: 'Obligaciones de deuda' })).toBeVisible()
-  await expect(page.getByText(/Pago settlement-1/)).toBeVisible()
+  await expect(page.getByText(/settlement-1 · MONETARY: 25.00 ARS/)).toBeVisible()
 
   await assertNoPageOverflow(page)
   await assertInteractiveNames(page)
