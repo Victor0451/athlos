@@ -18,7 +18,7 @@ import {
 import {
   createCommunityWorkEvidence,
   createDuesPrice,
-  createDuesSettlement,
+  createFullSelectionPayment,
   createNegotiatedAgreement,
   getDebt,
   getDuesPrices,
@@ -33,7 +33,9 @@ import {
   type AssessmentPreviewInput,
   type DuesPrice,
   type DuesPriceInput,
+  type FullSelectionPaymentInput,
 } from '@/lib/api/dues'
+import { getOpenCashShifts } from '@/lib/api/treasury'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
 import {
@@ -314,6 +316,7 @@ export default function CollectionsPage() {
     action: string,
     draftFingerprint: string,
     request: (key: string) => Promise<T>,
+    retainOnConflict = false,
   ) => {
     if (!user || !selectedSocio)
       throw new DuesOperationError('permission', 'Authentication required')
@@ -323,17 +326,17 @@ export default function CollectionsPage() {
     const key = idempotency.current.getOrCreate(input)
     try {
       const result = await request(key)
-      idempotency.current.complete(input)
       if (!(await refreshDebt()))
         throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+      idempotency.current.complete(input)
       return {
         ...result,
         replayed: Boolean((result as { replayed?: boolean }).replayed) || replayed,
       }
     } catch (reason) {
-      if (reason instanceof DuesOperationError && reason.kind === 'conflict')
+      if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
         idempotency.current.abandon(input)
-      if (reason instanceof ApiError && reason.status === 409) {
+      if (!retainOnConflict && reason instanceof ApiError && reason.status === 409) {
         idempotency.current.abandon(input)
         await refreshDebt()
       }
@@ -368,17 +371,28 @@ export default function CollectionsPage() {
         ),
     )
   const allocate = (input: AllocationRequest) =>
-    runSettlementMutation('allocate-settlement', JSON.stringify(input), (key) =>
-      createDuesSettlement(
-        {
-          socio_id: selectedSocio!.id,
-          kind: 'MONETARY',
-          currency: debt?.currency ?? 'ARS',
-          ...input,
-        },
-        key,
-      ),
+    runSettlementMutation('allocate-settlement', JSON.stringify(input), () =>
+      Promise.reject(new DuesOperationError('not_found', 'Legacy payment is unavailable')),
     )
+  const pay = async (draft: Omit<FullSelectionPaymentInput, 'socio_id'>) => {
+    const openShifts = await getOpenCashShifts()
+    if (!openShifts.some(({ id }) => id === draft.shift_id))
+      throw new DuesOperationError('conflict', 'Selected cash shift is not open')
+    const obligation_ids = [...draft.obligation_ids].sort()
+    return runSettlementMutation(
+      'full-selection-payment',
+      JSON.stringify({
+        socioId: selectedSocio!.id,
+        obligation_ids,
+        shift_id: draft.shift_id,
+        tender: draft.tender,
+        selection_fingerprint: draft.selection_fingerprint,
+      }),
+      (key) =>
+        createFullSelectionPayment({ ...draft, socio_id: selectedSocio!.id, obligation_ids }, key),
+      true,
+    )
+  }
   const reverse = (input: ReversalRequest) =>
     runSettlementMutation('reverse-settlement', JSON.stringify(input), (key) =>
       reverseDuesSettlement(input.settlement_id, { reason: input.reason }, key),
@@ -436,6 +450,7 @@ export default function CollectionsPage() {
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
         onAllocate={allocate}
+        onPayment={pay}
         onReverse={reverse}
         agreementsEnabled={agreementWorkflowEnabled}
         agreementStates={agreementStates}
