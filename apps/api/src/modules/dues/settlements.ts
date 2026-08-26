@@ -18,6 +18,7 @@ type Repository = Partial<
     typeof allocations,
     | 'claimSettlement'
     | 'findSettlementReplay'
+    | 'findReversibleSettlement'
     | 'insertAllocation'
     | 'findAllocation'
     | 'getDebt'
@@ -49,8 +50,8 @@ export type FullSelectionPaymentPreparation = {
 }
 export type ReverseSettlementCommand = AuditContext & {
   settlementId: string
-  allocationId: string
   reason: string
+  allocationId?: string
 }
 export type DebtCommand = Pick<AuditContext, 'role'> & { socioId: string }
 export type SettlementResult = {
@@ -397,94 +398,67 @@ export class SettlementService {
 
   async reverse(input: ReverseSettlementCommand): Promise<SettlementResult> {
     authorize(input.role)
-    if (!input.reason.trim())
+    if (!input.reason.trim() || !Object.keys(input.authorizationEvidence ?? {}).length)
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A settlement reversal reason is required')
 
     return this.db.transaction(async (tx) => {
-      const original = await (this.repository.findAllocation ?? allocations.findAllocation)(
-        tx,
-        input.allocationId,
-      )
-      if (!original) throw BusinessError(ErrorCode.NOT_FOUND, 'Allocation not found')
-      if (original.settlementId !== input.settlementId || original.kind !== 'ALLOCATION')
-        throw BusinessError(ErrorCode.CONFLICT, 'Allocation does not belong to the settlement')
-
-      const claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
-        operatorId: input.actorId,
-        socioId: original.socioId,
-        kind: original.settlementKind,
-        amountCents: original.amountCents,
-        currency: original.currency,
-        evidence: { compensatesAllocationId: input.allocationId },
-        reason: input.reason,
-        reversalOfSettlementId: input.settlementId,
-        callerKey: input.callerKey,
-        requestFingerprint: input.requestFingerprint,
-        authorizationEvidence: input.authorizationEvidence,
-      })
-      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
-
-      let compensation: allocations.AllocationRecord
-      try {
-        compensation = await (this.repository.insertAllocation ?? allocations.insertAllocation)(
-          tx,
-          {
-            settlementId: claim.settlement.id,
-            socioId: original.socioId,
-            obligationId: original.obligationId,
-            amountCents: original.amountCents,
-            kind: 'COMPENSATION',
-            compensatesAllocationId: original.id,
-            reason: input.reason,
-          },
+      const original = await (
+        this.repository.findReversibleSettlement ?? allocations.findReversibleSettlement
+      )(tx, input.settlementId)
+      if (!original) throw BusinessError(ErrorCode.NOT_FOUND, 'Settlement not found')
+      const total = original.allocations.reduce((sum, item) => sum + item.amountCents, 0)
+      if (
+        original.kind !== 'MONETARY' ||
+        original.reversalOfSettlementId ||
+        !original.allocations.length ||
+        total !== original.amountCents ||
+        original.allocations.some(
+          (item) => item.kind !== 'ALLOCATION' || item.compensatesAllocationId,
         )
+      )
+        throw BusinessError(ErrorCode.CONFLICT, 'Settlement is not eligible for reversal')
+      let claim: allocations.SettlementClaim
+      try {
+        claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
+          operatorId: input.actorId,
+          socioId: original.socioId,
+          kind: original.kind,
+          amountCents: original.amountCents,
+          currency: original.currency,
+          evidence: { reversalOfSettlementId: original.id },
+          reason: input.reason,
+          reversalOfSettlementId: original.id,
+          callerKey: input.callerKey,
+          requestFingerprint: input.requestFingerprint,
+          authorizationEvidence: input.authorizationEvidence,
+        })
       } catch (error) {
-        if (isConstraint(error, 'dues_allocations_compensation_unique'))
-          throw BusinessError(ErrorCode.CONFLICT, 'Allocation was already reversed')
+        if (isConstraint(error, 'dues_settlements_reversal_of_settlement_unique'))
+          throw BusinessError(ErrorCode.CONFLICT, 'Settlement was already reversed')
         throw error
       }
+      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
 
-      const now = this.now().toISOString()
-      await record(
-        this.audit,
-        tx,
-        input,
-        AuditAction.DUES_SETTLEMENT_REVERSED,
-        'dues_settlement',
-        claim.settlement.id,
-        { settlementId: input.settlementId, allocationId: original.id },
-        {
-          settlementId: claim.settlement.id,
-          reversalOfSettlementId: input.settlementId,
-          kind: claim.settlement.kind,
-          amountCents: claim.settlement.amountCents,
-          currency: claim.settlement.currency,
-        },
-        now,
-        { reason: input.reason },
-      )
-      await record(
-        this.audit,
-        tx,
-        input,
-        AuditAction.DUES_ALLOCATION_COMPENSATED,
-        'dues_allocation',
-        compensation.id,
-        {
-          allocationId: original.id,
-          obligationId: original.obligationId,
-          amountCents: original.amountCents,
-        },
-        {
-          allocationId: compensation.id,
-          compensatesAllocationId: original.id,
-          obligationId: original.obligationId,
-          amountCents: compensation.amountCents,
-        },
-        now,
-        { reason: input.reason },
-      )
-      return result(claim.settlement, [compensation])
+      const compensations: allocations.AllocationRecord[] = []
+      try {
+        for (const originalAllocation of original.allocations)
+          compensations.push(
+            await (this.repository.insertAllocation ?? allocations.insertAllocation)(tx, {
+              settlementId: claim.settlement.id,
+              socioId: original.socioId,
+              obligationId: originalAllocation.obligationId,
+              amountCents: originalAllocation.amountCents,
+              kind: 'COMPENSATION',
+              compensatesAllocationId: originalAllocation.id,
+              reason: input.reason,
+            }),
+          )
+      } catch (error) {
+        if (isConstraint(error, 'dues_allocations_compensation_unique'))
+          throw BusinessError(ErrorCode.CONFLICT, 'Settlement was already reversed')
+        throw error
+      }
+      return result(claim.settlement, compensations)
     })
   }
 

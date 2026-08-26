@@ -142,6 +142,7 @@ beforeAll(async () => {
     '0056_cash_recovery_policy.sql',
     '0057_cash_lifecycle_boundaries.sql',
     '0058_dues_open_agreements.sql',
+    '0060_dues_settlement_reversal_unique.sql',
   ]
   await db.pool.query(
     (
@@ -184,6 +185,9 @@ it('allocates only the explicitly selected obligation and reports aging',async()
 it('keeps non-cash settlement out of cash income and replays idempotently',async()=>{const socioId=await member(),target=await obligation(socioId,8_000,period(2500,3)),key=`noncash-${randomUUID()}`,beforeCash=(await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count,service=new SettlementService(db.db),input={...context(key),socioId,kind:'NON_CASH' as const,amountCents:8_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved non-cash value',allocations:[{obligationId:target,amountCents:8_000}]}; const first=await service.create(input),replay=await service.create(input); expect(replay).toEqual(first); expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_settlements WHERE caller_key=$1',[key])).rows[0].count).toBe(1); expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE settlement_id=$1',[first.settlementId])).rows[0].count).toBe(1); expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count).toBe(beforeCash); await expect(db.pool.query('SELECT action FROM public.audit_events WHERE entity_id=$1',[first.settlementId])).resolves.toMatchObject({rows:[{action:AuditAction.DUES_SETTLEMENT_CREATED}]})})
 // prettier-ignore
 it('reverses by compensation without deleting the original allocation',async()=>{const socioId=await member(),target=await obligation(socioId,6_000,period(2500,4)),service=new SettlementService(db.db),created=await payment(socioId,[target]),reversed=await service.reverse({...context(),settlementId:created.settlementId,allocationId:created.allocations[0]!.id,reason:'Incorrect allocation'}); expect(reversed).toMatchObject({kind:'MONETARY',amountCents:6_000}); expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1',[target])).rows[0].count).toBe(2); await expect(service.debt({role:'TESORERO',socioId})).resolves.toMatchObject({totalCents:6_000,obligations:[{id:target,outstandingCents:6_000}]})})
+
+// prettier-ignore
+it('rolls back every reversal write when compensation persistence fails',async()=>{const socioId=await member(),first=await obligation(socioId,1_000,period(2512,1)),second=await obligation(socioId,2_000,period(2512,2)),created=await payment(socioId,[first,second]),count=()=>db.pool.query(`SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations`,[socioId]);const before=await count();await expect(new SettlementService(db.db,{repository:{insertAllocation:async()=>{throw new Error('forced compensation failure')}}}).reverse({...context(),settlementId:created.settlementId,reason:'Rollback proof'})).rejects.toThrow('forced compensation failure');await expect(count()).resolves.toEqual(before)})
 
 it('serializes different-key allocations for one obligation', async () => {
   const socioId = await member()
