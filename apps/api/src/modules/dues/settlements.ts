@@ -3,6 +3,7 @@ import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as allocations from './allocations.ts'
 import {
+  recordReversalSettlementTenderInTransaction,
   recordSettlementTenderInTransaction,
   validateSettlementShiftInTransaction,
 } from './cash-desk.ts'
@@ -25,7 +26,12 @@ type Repository = Partial<
     | 'selectFullOutstanding'
   >
 >
-type Dependencies = { repository?: Repository; audit?: AuditEmitter; now?: () => Date }
+type Dependencies = {
+  repository?: Repository
+  audit?: AuditEmitter
+  now?: () => Date
+  cash?: typeof recordReversalSettlementTenderInTransaction
+}
 
 export type SettlementCommand = AuditContext & {
   socioId: string
@@ -134,6 +140,7 @@ export class SettlementService {
   private readonly repository: Repository
   private readonly audit: AuditEmitter
   private readonly now: () => Date
+  private readonly cash: typeof recordReversalSettlementTenderInTransaction
 
   constructor(
     private readonly db: Db,
@@ -142,6 +149,7 @@ export class SettlementService {
     this.repository = dependencies.repository ?? {}
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
+    this.cash = dependencies.cash ?? recordReversalSettlementTenderInTransaction
   }
 
   async create(input: SettlementCommand | FullSelectionPaymentCommand): Promise<SettlementResult> {
@@ -458,6 +466,45 @@ export class SettlementService {
           throw BusinessError(ErrorCode.CONFLICT, 'Settlement was already reversed')
         throw error
       }
+      await this.cash(tx, {
+        ...input,
+        settlementId: claim.settlement.id,
+        originalSettlementId: original.id,
+      })
+      const now = this.now().toISOString()
+      await record(
+        this.audit,
+        tx,
+        input,
+        AuditAction.DUES_SETTLEMENT_REVERSED,
+        'dues_settlement',
+        claim.settlement.id,
+        null,
+        {
+          settlementId: claim.settlement.id,
+          amountCents: claim.settlement.amountCents,
+          currency: claim.settlement.currency,
+        },
+        now,
+        { reason: input.reason },
+      )
+      for (const compensation of compensations)
+        await record(
+          this.audit,
+          tx,
+          input,
+          AuditAction.DUES_ALLOCATION_COMPENSATED,
+          'dues_allocation',
+          compensation.id,
+          null,
+          {
+            allocationId: compensation.id,
+            settlementId: claim.settlement.id,
+            obligationId: compensation.obligationId,
+            amountCents: compensation.amountCents,
+          },
+          now,
+        )
       return result(claim.settlement, compensations)
     })
   }
