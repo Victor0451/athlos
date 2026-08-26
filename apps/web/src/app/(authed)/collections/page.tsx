@@ -341,7 +341,12 @@ export default function CollectionsPage() {
     } catch (reason) {
       if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
         idempotency.current.abandon(input)
-      if (!retainOnConflict && reason instanceof ApiError && reason.status === 409) {
+      if (
+        action === 'reverse-settlement' &&
+        !retainOnConflict &&
+        ((reason instanceof ApiError && reason.status === 409) ||
+          (reason instanceof DuesOperationError && reason.kind === 'conflict'))
+      ) {
         idempotency.current.abandon(input)
         await refreshDebt()
       }

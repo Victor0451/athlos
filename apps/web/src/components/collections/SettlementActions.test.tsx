@@ -73,7 +73,7 @@ describe('SettlementActions', () => {
     const user = userEvent.setup(),
       onReverse = vi.fn().mockResolvedValue({ replayed: false })
     renderActions(vi.fn(), onReverse)
-    await user.click(screen.getByRole('button', { name: /revertir pago settlement-1/i }))
+    await user.click(screen.getByRole('button', { name: /revertir liquidación settlement-1/i }))
     const confirm = screen.getByRole('button', { name: /confirmar reversión/i })
     expect(confirm).toBeDisabled()
     await user.type(screen.getByLabelText(/motivo de reversión/i), 'Asignación incorrecta')
@@ -84,5 +84,32 @@ describe('SettlementActions', () => {
     })
     expect(screen.getByRole('status')).toHaveTextContent(/compensación/i)
     expect(screen.queryByText(/caja|conciliación/i)).not.toBeInTheDocument()
+  })
+  it('reviews every affected obligation before submitting the eligible settlement reversal', async () => {
+    const user = userEvent.setup(),
+      onReverse = vi.fn().mockResolvedValue({})
+    renderActions(vi.fn(), onReverse)
+
+    await user.click(screen.getByRole('button', { name: /revertir liquidación settlement-1/i }))
+
+    expect(screen.getByRole('alertdialog', { name: /revisar reversión/i })).toBeInTheDocument()
+    expect(screen.getByText(/liquidación settlement-1/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/20.00 ARS/i)).not.toHaveLength(0)
+    expect(screen.getByRole('list', { name: /asignaciones afectadas/i })).toHaveTextContent(
+      /obligación 2026-02-01/i,
+    )
+    expect(screen.getByText(/estado actual: apta para reversión/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /confirmar reversión/i })).toBeDisabled()
+
+    const reason = screen.getByLabelText(/motivo de reversión/i)
+    expect(reason).toHaveFocus()
+    await user.type(reason, 'Registro duplicado')
+    await user.click(screen.getByRole('button', { name: /confirmar reversión/i }))
+
+    expect(onReverse).toHaveBeenCalledWith({
+      settlement_id: 'settlement-1',
+      reason: 'Registro duplicado',
+    })
+    expect(screen.getByRole('status')).toHaveFocus()
   })
 })
