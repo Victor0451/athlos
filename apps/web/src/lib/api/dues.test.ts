@@ -23,6 +23,7 @@ const {
   getDuesPrices,
   getDebt,
   getObligationAgreements,
+  previewDuesAssessments,
   reviseNegotiatedAgreement,
   reverseDuesSettlement,
   revokeDuesPrice,
@@ -104,8 +105,33 @@ describe('typed native dues client', () => {
   })
 
   it('uses the typed debt detail read for the selected socio', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      status: 'empty',
+      socio_id: 'socio-1',
+      currency: null,
+      total_debt_cents: 0,
+      obligations: [],
+    })
     await getDebt('socio-1')
     expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/debt/socio-1', { query: {} })
+  })
+
+  // prettier-ignore
+  it('maps a preview request and rejects malformed nested preview data', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01', executable: true,
+      currency: 'ARS', fingerprint: 'fingerprint', periods: [{ period: '2026-01', start: '2026-01-01', end: '2026-02-01', calendarDays: 31, existingObligationId: null, pendingAmountCents: 1000, components: [{ componentKey: 'base', kind: 'BASE', eligibleFrom: '2026-01-01', eligibleTo: '2026-02-01', eligibleDays: 31, calendarDays: 31, segments: [{ priceVersionId: 'price-1', amountCents: 1000, currency: 'ARS', from: '2026-01-01', to: '2026-02-01', rule: 'FULL_MONTH', eligibleDays: 31, numerator: 31000 }], numerator: 31000, remainder: 0, amountCents: 1000, status: 'PENDING' }], }], issues: [],
+    })
+    await expect(previewDuesAssessments({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' })).resolves.toMatchObject({ executable: true, periods: [{ components: [{ status: 'PENDING' }] }] })
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/assessments/preview', { method: 'POST', body: { socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' } })
+    apiFetchMock.mockResolvedValueOnce({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01', executable: true, currency: 'ARS', fingerprint: 'fingerprint', periods: [{ components: [] }], issues: [] })
+    await expect(previewDuesAssessments({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' })).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+
+  // prettier-ignore
+  it('rejects malformed nested debt data instead of casting it', async () => {
+    apiFetchMock.mockResolvedValueOnce({ status: 'ready', socio_id: 'socio-1', currency: 'ARS', total_debt_cents: 1000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 1000, outstanding_cents: 1000, currency: 'ARS', status: 'OPEN', components: [], benefits: [], allocations: [{ id: 'allocation-1', settlement_id: 'settlement-1', settlement_kind: 'MONETARY', settlement_amount_cents: 1000, currency: 'ARS', amount_cents: 1000, kind: 'ALLOCATION', compensates_allocation_id: null, reversal_eligible: 'true' }] }] })
+    await expect(getDebt('socio-1')).rejects.toMatchObject({ kind: 'partial_data' })
   })
 
   // prettier-ignore
