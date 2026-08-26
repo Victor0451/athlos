@@ -6,15 +6,12 @@ import type {
   FullSelectionPaymentInput,
   FullSelectionPaymentResult,
 } from '@/lib/api/dues'
+import type { CashShift } from '@/lib/api/treasury'
 import type { Socio } from '@/lib/api/socios'
 import { AgreementActions, type AgreementViewState } from './AgreementActions'
 import type { CommunityWorkDraft } from './CommunityWorkForm'
 import type { AgreementDraft } from './AgreementForm'
-import {
-  SettlementActions,
-  type AllocationRequest,
-  type ReversalRequest,
-} from './SettlementActions'
+import { SettlementActions, type ReversalRequest } from './SettlementActions'
 
 export type { DebtDetail } from '@/lib/api/dues'
 // prettier-ignore
@@ -30,7 +27,7 @@ type Props = {
   error: string
   onSearch: (term: string) => Promise<void> | void
   onSelectSocio: (socio: SocioOption) => Promise<void> | void
-  onAllocate?: (input: AllocationRequest) => Promise<{ replayed?: boolean } | void>
+  openShifts?: CashShift[]
   onPayment?: (
     input: FullSelectionPaymentDraft,
   ) => Promise<FullSelectionPaymentResult & { replayed?: boolean }>
@@ -61,7 +58,7 @@ const allocationKind = (kind: 'ALLOCATION' | 'COMPENSATION') =>
   kind === 'ALLOCATION' ? 'Asignación' : 'Compensación'
 
 // prettier-ignore
-export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, onSelectSocio, onAllocate, onReverse, agreementsEnabled = false, agreementStates = {}, onCreateAgreement, onReviseAgreement, onRecordCommunityWork, onRefreshAgreement }: Props) {
+export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, onSelectSocio, openShifts = [], onPayment, onReverse, agreementsEnabled = false, agreementStates = {}, onCreateAgreement, onReviseAgreement, onRecordCommunityWork, onRefreshAgreement }: Props) {
   const [term, setTerm] = useState('')
   const statusRef = useRef<HTMLParagraphElement>(null)
   const alert = Boolean(error || status === 'error' || status === 'unavailable')
@@ -88,6 +85,6 @@ export function DebtPanel({ socio, socios = [], status, debt, error, onSearch, o
         {agreementsEnabled && onCreateAgreement && onRefreshAgreement && <AgreementActions obligation={obligation} state={agreementStates[obligation.id] ?? { status: 'idle', active: null }} onCreate={(draft) => onCreateAgreement(obligation.id, draft)} {...(onReviseAgreement ? { onRevise: (agreementId: string, draft: AgreementDraft) => onReviseAgreement(obligation.id, agreementId, draft) } : {})} {...(onRecordCommunityWork ? { onRecordCommunityWork: (agreementId: string, draft: CommunityWorkDraft) => onRecordCommunityWork(obligation.id, agreementId, draft) } : {})} onRefresh={() => onRefreshAgreement(obligation.id)} />}
       </li>)}</ul>{debt.obligations.length === 0 && <p role="status">No hay obligaciones para detallar.</p>}
     </div>}
-    {debt?.status === 'ready' && onAllocate && onReverse && <SettlementActions debt={debt} onAllocate={onAllocate} onReverse={onReverse} />}
+    {debt?.status === 'ready' && onPayment && onReverse && <SettlementActions debt={debt} shifts={openShifts} onPayment={onPayment} onReverse={onReverse} />}
   </section>
 }

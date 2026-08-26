@@ -8,7 +8,7 @@ import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPa
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
-import type { AllocationRequest, ReversalRequest } from '@/components/collections/SettlementActions'
+import type { ReversalRequest } from '@/components/collections/SettlementActions'
 import { AssessmentPreviewPanel } from '@/components/collections/AssessmentPreviewPanel'
 import {
   PricingPanel,
@@ -35,7 +35,7 @@ import {
   type DuesPriceInput,
   type FullSelectionPaymentInput,
 } from '@/lib/api/dues'
-import { getOpenCashShifts } from '@/lib/api/treasury'
+import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
 import {
@@ -82,6 +82,7 @@ export default function CollectionsPage() {
   const [debt, setDebt] = useState<DebtDetail | null>(null)
   const [debtStatus, setDebtStatus] = useState<DebtPanelStatus>('idle')
   const [debtError, setDebtError] = useState('')
+  const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
@@ -212,12 +213,16 @@ export default function CollectionsPage() {
   const selectSocio = async (socio: DebtSocio) => {
     setSelectedSocio(socio)
     setDebt(null)
+    setOpenShifts([])
     setDebtError('')
     setDebtStatus('loading')
     try {
       const result = await getDebt(socio.id)
       setDebt(result)
       setDebtStatus(result.status)
+      void getOpenCashShifts()
+        .then(setOpenShifts)
+        .catch(() => setOpenShifts([]))
       if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
       else setAgreementStates({})
     } catch (reason) {
@@ -370,12 +375,7 @@ export default function CollectionsPage() {
           key,
         ),
     )
-  const allocate = (input: AllocationRequest) =>
-    runSettlementMutation('allocate-settlement', JSON.stringify(input), () =>
-      Promise.reject(new DuesOperationError('not_found', 'Legacy payment is unavailable')),
-    )
   const pay = async (draft: Omit<FullSelectionPaymentInput, 'socio_id'>) => {
-    const openShifts = await getOpenCashShifts()
     if (!openShifts.some(({ id }) => id === draft.shift_id))
       throw new DuesOperationError('conflict', 'Selected cash shift is not open')
     const obligation_ids = [...draft.obligation_ids].sort()
@@ -449,7 +449,7 @@ export default function CollectionsPage() {
         error={debtError}
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
-        onAllocate={allocate}
+        openShifts={openShifts}
         onPayment={pay}
         onReverse={reverse}
         agreementsEnabled={agreementWorkflowEnabled}
