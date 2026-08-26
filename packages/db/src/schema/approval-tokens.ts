@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 import { operators } from './operators.ts'
 
 /**
@@ -39,6 +39,16 @@ export const approvalTokens = pgTable(
       .notNull()
       .default('pending')
       .$type<'pending' | 'approved' | 'rejected' | 'expired'>(),
+    condonationSnapshot: jsonb('condonation_snapshot'),
+    requestReason: text('request_reason'),
+    requestEvidence: text('request_evidence'),
+    decidedByOperatorId: uuid('decided_by_operator_id').references(() => operators.id, {
+      onDelete: 'restrict',
+    }),
+    decisionReason: text('decision_reason'),
+    decisionEvidence: text('decision_evidence'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    executionId: uuid('execution_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

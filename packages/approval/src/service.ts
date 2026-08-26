@@ -1,6 +1,7 @@
 import type { Db } from '@athlos/db'
 import { approvalTokens, type ApprovalToken } from '@athlos/db/schema'
 import { and, eq, gt, isNull } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import { generateApprovalToken, hashApprovalToken } from './token.ts'
 
@@ -28,6 +29,158 @@ export interface CreateApprovalLinkRequest {
  * can serialise it without re-deriving the DTO shape.
  */
 export type ApprovalTokenRecord = ApprovalToken
+
+export interface CondonationSnapshot {
+  clubId: string
+  memberId: string
+  obligations: Array<{ obligationId: string; currency: string; outstandingAmountCents: number }>
+}
+
+export interface CreateCondonationApprovalRequest {
+  requestId: string
+  contextSummary: string
+  requesterId: string
+  approverChannel: 'whatsapp' | 'email'
+  approverAddress: string
+  snapshot: CondonationSnapshot
+  reason: string
+  evidence: string
+  expiresInHours?: number
+}
+
+export interface CondonationDecision {
+  requestId: string
+  actorId: string
+  decision: 'approved' | 'rejected'
+  reason: string
+  evidence: string
+}
+
+function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {
+  const ids = new Set(snapshot.obligations.map((obligation) => obligation.obligationId))
+  const currencies = new Set(snapshot.obligations.map((obligation) => obligation.currency))
+  if (
+    !snapshot.clubId ||
+    !snapshot.memberId ||
+    snapshot.obligations.length === 0 ||
+    ids.size !== snapshot.obligations.length ||
+    currencies.size !== 1 ||
+    snapshot.obligations.some(
+      (obligation) =>
+        !obligation.obligationId ||
+        !obligation.currency ||
+        !Number.isInteger(obligation.outstandingAmountCents) ||
+        obligation.outstandingAmountCents <= 0,
+    )
+  ) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Invalid condonation obligation snapshot')
+  }
+}
+
+/** Persist a financially inert, immutable condonation request in approval_tokens. */
+export async function createCondonationApprovalRequest(
+  db: Db,
+  req: CreateCondonationApprovalRequest,
+): Promise<{ raw: string; expiresAt: Date; record: ApprovalToken }> {
+  assertCondonationSnapshot(req.snapshot)
+  if (!req.requestId || !req.contextSummary || !req.reason || !req.evidence) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Condonation request details are required')
+  }
+  const { raw, hash } = generateApprovalToken()
+  const expiresAt = new Date(Date.now() + (req.expiresInHours ?? 48) * 60 * 60 * 1000)
+  const [row] = await db
+    .insert(approvalTokens)
+    .values({
+      tokenHash: hash,
+      actionType: 'dues.condonation',
+      actionId: req.requestId,
+      contextSummary: req.contextSummary,
+      createdByOperatorId: req.requesterId,
+      approverChannel: req.approverChannel,
+      approverAddress: req.approverAddress,
+      expiresAt,
+      condonationSnapshot: req.snapshot,
+      requestReason: req.reason,
+      requestEvidence: req.evidence,
+    })
+    .returning()
+  if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'approval_tokens insert returned no row')
+  return { raw, expiresAt, record: row }
+}
+
+function isExactDecision(row: ApprovalToken, input: CondonationDecision): boolean {
+  return (
+    row.status === input.decision &&
+    row.decidedByOperatorId === input.actorId &&
+    row.decisionReason === input.reason &&
+    row.decisionEvidence === input.evidence
+  )
+}
+
+/**
+ * Record one authenticated decision for a scoped condonation request. This only
+ * authorizes later execution: it never consumes the token or touches financial facts.
+ */
+export async function decideCondonationApproval(
+  db: Db,
+  input: CondonationDecision,
+): Promise<ApprovalToken> {
+  const [current] = await db
+    .select()
+    .from(approvalTokens)
+    .where(
+      and(
+        eq(approvalTokens.actionType, 'dues.condonation'),
+        eq(approvalTokens.actionId, input.requestId),
+      ),
+    )
+    .limit(1)
+  if (!current) throw BusinessError(ErrorCode.NOT_FOUND, 'Condonation request not found')
+  if (current.createdByOperatorId === input.actorId) {
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Requester cannot decide this condonation',
+    )
+  }
+  if (current.status !== 'pending' || current.decidedAt || current.usedAt) {
+    if (isExactDecision(current, input)) return current
+    throw BusinessError(ErrorCode.CONFLICT, 'Condonation request already decided')
+  }
+  if (current.expiresAt <= new Date()) {
+    throw BusinessError(ErrorCode.APPROVAL_LINK_EXPIRED, 'Condonation request has expired')
+  }
+
+  const decisionAt = new Date()
+  const [updated] = await db
+    .update(approvalTokens)
+    .set({
+      status: input.decision,
+      decidedByOperatorId: input.actorId,
+      decisionReason: input.reason,
+      decisionEvidence: input.evidence,
+      decidedAt: decisionAt,
+      executionId: input.decision === 'approved' ? randomUUID() : null,
+    })
+    .where(
+      and(
+        eq(approvalTokens.id, current.id),
+        eq(approvalTokens.status, 'pending'),
+        isNull(approvalTokens.decidedAt),
+        isNull(approvalTokens.usedAt),
+        gt(approvalTokens.expiresAt, decisionAt),
+      ),
+    )
+    .returning()
+  if (updated) return updated
+
+  const [raced] = await db
+    .select()
+    .from(approvalTokens)
+    .where(eq(approvalTokens.id, current.id))
+    .limit(1)
+  if (raced && isExactDecision(raced, input)) return raced
+  throw BusinessError(ErrorCode.CONFLICT, 'Condonation request lifecycle changed')
+}
 
 /**
  * Create a fresh approval link. Returns the raw token (the one and only

@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { createHash } from 'node:crypto'
 import { ErrorCode } from '@athlos/errors'
 import type { ApiError } from '@athlos/errors'
-import { consumeApprovalToken, createApprovalToken, getApprovalToken } from './service.ts'
+import {
+  createCondonationApprovalRequest,
+  decideCondonationApproval,
+  consumeApprovalToken,
+  createApprovalToken,
+  getApprovalToken,
+} from './service.ts'
 import { generateApprovalToken, hashApprovalToken } from './token.ts'
 import type { ApprovalToken } from '@athlos/db/schema'
 
@@ -50,6 +56,14 @@ const SQL_TO_JS: Record<string, keyof Row> = {
   expires_at: 'expiresAt',
   used_at: 'usedAt',
   status: 'status',
+  condonation_snapshot: 'condonationSnapshot',
+  request_reason: 'requestReason',
+  request_evidence: 'requestEvidence',
+  decided_by_operator_id: 'decidedByOperatorId',
+  decision_reason: 'decisionReason',
+  decision_evidence: 'decisionEvidence',
+  decided_at: 'decidedAt',
+  execution_id: 'executionId',
   created_at: 'createdAt',
 }
 
@@ -83,6 +97,14 @@ function createStandinDb(): StandinDb {
         expiresAt: values.expiresAt!,
         usedAt: values.usedAt ?? null,
         status: (values.status ?? 'pending') as Row['status'],
+        condonationSnapshot: values.condonationSnapshot ?? null,
+        requestReason: values.requestReason ?? null,
+        requestEvidence: values.requestEvidence ?? null,
+        decidedByOperatorId: values.decidedByOperatorId ?? null,
+        decisionReason: values.decisionReason ?? null,
+        decisionEvidence: values.decisionEvidence ?? null,
+        decidedAt: values.decidedAt ?? null,
+        executionId: values.executionId ?? null,
         createdAt: values.createdAt ?? new Date(),
       }
       rows.push(row)
@@ -383,5 +405,111 @@ describe('consumeApprovalToken', () => {
     } catch (err) {
       expect((err as ApiError).code).toBe(ErrorCode.APPROVAL_ALREADY_USED)
     }
+  })
+})
+
+describe('condonation approval lifecycle', () => {
+  const snapshot = {
+    clubId: 'club-1',
+    memberId: 'member-1',
+    obligations: [{ obligationId: 'obligation-1', currency: 'ARS', outstandingAmountCents: 12500 }],
+  }
+
+  it('persists the immutable request snapshot, reason, and evidence', async () => {
+    const standin = createStandinDb()
+    const result = await createCondonationApprovalRequest(asDrizzle(standin), {
+      requestId: 'request-1',
+      contextSummary: 'Condone January membership fee',
+      requesterId: 'operator-1',
+      approverChannel: 'email',
+      approverAddress: 'treasury@example.test',
+      snapshot,
+      reason: 'Documented hardship',
+      evidence: 'case-123',
+    })
+
+    expect(result.record).toMatchObject({
+      actionType: 'dues.condonation',
+      actionId: 'request-1',
+      condonationSnapshot: snapshot,
+      requestReason: 'Documented hardship',
+      requestEvidence: 'case-123',
+      status: 'pending',
+      usedAt: null,
+      executionId: null,
+    })
+  })
+
+  it('records one approved decision without consuming or executing the request', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await createCondonationApprovalRequest(db, {
+      requestId: 'request-1',
+      contextSummary: 'Condone January membership fee',
+      requesterId: 'operator-1',
+      approverChannel: 'email',
+      approverAddress: 'treasury@example.test',
+      snapshot,
+      reason: 'Documented hardship',
+      evidence: 'case-123',
+    })
+
+    const result = await decideCondonationApproval(db, {
+      requestId: 'request-1',
+      actorId: 'treasurer-1',
+      decision: 'approved',
+      reason: 'Evidence accepted',
+      evidence: 'treasury-note-9',
+    })
+
+    expect(result).toMatchObject({
+      status: 'approved',
+      decidedByOperatorId: 'treasurer-1',
+      decisionReason: 'Evidence accepted',
+      decisionEvidence: 'treasury-note-9',
+      usedAt: null,
+    })
+    expect(result.decidedAt).toBeInstanceOf(Date)
+    expect(result.executionId).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('rejects self-decision and conflicting replay while returning an exact replay', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await createCondonationApprovalRequest(db, {
+      requestId: 'request-1',
+      contextSummary: 'Condone January membership fee',
+      requesterId: 'operator-1',
+      approverChannel: 'email',
+      approverAddress: 'treasury@example.test',
+      snapshot,
+      reason: 'Documented hardship',
+      evidence: 'case-123',
+    })
+
+    await expect(
+      decideCondonationApproval(db, {
+        requestId: 'request-1',
+        actorId: 'operator-1',
+        decision: 'rejected',
+        reason: 'No',
+        evidence: 'x',
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+
+    const input = {
+      requestId: 'request-1',
+      actorId: 'treasurer-1',
+      decision: 'rejected' as const,
+      reason: 'Insufficient evidence',
+      evidence: 'treasury-note-9',
+    }
+    const first = await decideCondonationApproval(db, input)
+    await expect(decideCondonationApproval(db, input)).resolves.toEqual(first)
+    await expect(
+      decideCondonationApproval(db, { ...input, decision: 'approved' }),
+    ).rejects.toMatchObject({
+      code: ErrorCode.CONFLICT,
+    })
   })
 })

@@ -379,6 +379,13 @@
       "when": 1787757000000,
       "tag": "0061_dues_cash_settlement_reversal_expense",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787853601000,
+      "tag": "0062_approval_condonation_lifecycle",
+      "breakpoints": true
     }
   ]
 }
