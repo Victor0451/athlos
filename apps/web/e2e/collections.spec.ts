@@ -41,7 +41,9 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
   await expect(
     page.getByRole('heading', { name: 'Configuración de cuotas', exact: true }),
   ).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Generación mensual', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('main').getByText(/ctacte|reconciliation/i)).toHaveCount(0)
   await assertNoPageOverflow(page)
   await assertInteractiveNames(page)
@@ -57,7 +59,7 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
   await expect(trigger).toBeFocused()
 })
 
-test('enabled TESORERO can generate without pricing controls or projection requests', async ({
+test('enabled TESORERO can preview assessments without pricing controls or projection requests', async ({
   authenticatedPage: page,
 }) => {
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
@@ -77,7 +79,9 @@ test('enabled TESORERO can generate without pricing controls or projection reque
   await mockEmptyDisciplines(page)
   await page.goto('/collections')
 
-  await expect(page.getByRole('heading', { name: 'Generación mensual', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Guardar cuota' })).toHaveCount(0)
 
   expect(projectionRequests).toEqual([])

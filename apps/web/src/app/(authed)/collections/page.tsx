@@ -9,10 +9,7 @@ import type { AgreementViewState } from '@/components/collections/AgreementActio
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
 import type { AllocationRequest, ReversalRequest } from '@/components/collections/SettlementActions'
-import {
-  GenerationPanel,
-  type GenerationPanelStatus,
-} from '@/components/collections/GenerationPanel'
+import { AssessmentPreviewPanel } from '@/components/collections/AssessmentPreviewPanel'
 import {
   PricingPanel,
   type DisciplinePanelState,
@@ -23,7 +20,6 @@ import {
   createDuesPrice,
   createDuesSettlement,
   createNegotiatedAgreement,
-  generateDuesAssessments,
   getDebt,
   getDuesPrices,
   getObligationAgreements,
@@ -32,7 +28,9 @@ import {
   reverseDuesSettlement,
   DuesOperationError,
   type DebtDetail,
-  type DuesGenerationResult,
+  previewDuesAssessments,
+  type AssessmentPreview,
+  type AssessmentPreviewInput,
   type DuesPrice,
   type DuesPriceInput,
 } from '@/lib/api/dues'
@@ -61,8 +59,6 @@ const pricingErrorState = (reason: unknown): PricingPanelState =>
     : reason instanceof ApiError && (reason.status === 404 || reason.status >= 500)
       ? 'unavailable'
       : 'error'
-const generationErrorState = (reason: unknown): GenerationPanelStatus =>
-  reason instanceof ApiError && reason.status === 409 ? 'conflict' : 'error'
 
 export default function CollectionsPage() {
   const { user } = useAuth()
@@ -74,9 +70,11 @@ export default function CollectionsPage() {
   const [disciplines, setDisciplines] = useState<DisciplinaOption[]>([])
   const [disciplineState, setDisciplineState] = useState<DisciplinePanelState>('loading')
   const [disciplineError, setDisciplineError] = useState('')
-  const [generationStatus, setGenerationStatus] = useState<GenerationPanelStatus>('idle')
-  const [generationError, setGenerationError] = useState('')
-  const [generationResult, setGenerationResult] = useState<DuesGenerationResult | null>(null)
+  const [preview, setPreview] = useState<AssessmentPreview | null>(null)
+  const [previewStatus, setPreviewStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'empty' | 'blocked' | 'error'
+  >('idle')
+  const [previewError, setPreviewError] = useState('')
   const [socios, setSocios] = useState<Socio[]>([])
   const [selectedSocio, setSelectedSocio] = useState<DebtSocio | null>(null)
   const [debt, setDebt] = useState<DebtDetail | null>(null)
@@ -187,29 +185,21 @@ export default function CollectionsPage() {
       revokeDuesPrice(id, reason),
       'No se pudo dar de baja la cuota. Intentá nuevamente.',
     )
-  const generate = async (selectedPeriod: string) => {
-    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
-    const input = {
-      operatorId: user!.operator_id,
-      action: 'generate-assessments',
-      draftFingerprint: `period:${selectedPeriod}`,
-    }
-    const replayed = Boolean(idempotency.current.peek(input))
-    const key = idempotency.current.getOrCreate(input)
-    setGenerationError('')
-    setGenerationResult(null)
-    setGenerationStatus('loading')
+  const loadPreview = async (input: AssessmentPreviewInput) => {
+    setPreviewError('')
+    setPreview(null)
+    setPreviewStatus('loading')
     try {
-      const result = await generateDuesAssessments(selectedPeriod, key)
-      idempotency.current.complete(input)
-      setGenerationResult(result)
-      setGenerationStatus(replayed ? 'replayed' : result.obligation_ids.length ? 'created' : 'zero')
+      const result = await previewDuesAssessments(input)
+      setPreview(result)
+      setPreviewStatus(result.periods.length ? (result.executable ? 'ready' : 'blocked') : 'empty')
     } catch (reason) {
-      setGenerationError(
-        errorText(reason, 'No se pudieron generar las deudas del período. Intentá nuevamente.'),
+      setPreviewError(
+        reason instanceof DuesOperationError && reason.kind === 'partial_data'
+          ? 'La vista previa contiene datos incompletos.'
+          : errorText(reason, 'No se pudo cargar la vista previa de evaluación.'),
       )
-      setGenerationStatus(generationErrorState(reason))
-      throw reason
+      setPreviewStatus('error')
     }
   }
   const searchSocios = async (term: string) => {
@@ -428,12 +418,12 @@ export default function CollectionsPage() {
               </p>
             </section>
           )}
-          <GenerationPanel
-            period={period}
-            status={generationStatus}
-            result={generationResult}
-            error={generationError}
-            onGenerate={generate}
+          <AssessmentPreviewPanel
+            socio={selectedSocio}
+            preview={preview}
+            status={previewStatus}
+            error={previewError}
+            onPreview={loadPreview}
           />
         </div>
       </section>
