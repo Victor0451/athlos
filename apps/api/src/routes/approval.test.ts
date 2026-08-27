@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { createStandinDb } from '../test-standins/db.ts'
 import { buildServer } from '../server.ts'
 import type { FastifyInstance } from 'fastify'
@@ -10,9 +10,16 @@ import { signAccessToken } from '@athlos/auth'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import type * as AllocationsModule from '../modules/dues/allocations.ts'
 
+const executeApproved = vi.fn()
+
 vi.mock('../modules/dues/allocations.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof AllocationsModule>()),
   selectFullOutstanding: vi.fn(),
+}))
+vi.mock('../modules/dues/condonations.ts', () => ({
+  CondonationExecutionService: class {
+    executeApproved = executeApproved
+  },
 }))
 
 /**
@@ -268,6 +275,72 @@ describe('POST /api/v1/approval/:token', () => {
 })
 
 describe('authenticated condonation requests and decisions', () => {
+  beforeEach(() => executeApproved.mockReset())
+
+  it('executes only an approved Treasury execution identity once and audits only its first success', async () => {
+    executeApproved.mockResolvedValue({
+      executionId: '00000000-0000-4000-8000-000000000050',
+      approvalId: '00000000-0000-4000-8000-000000000051',
+      memberId,
+      currency: 'ARS',
+      totalAmountCents: 12500,
+      treatmentIds: ['00000000-0000-4000-8000-000000000052'],
+      status: 'executed',
+    })
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        headers: { ...auth('TESORERO', approverId), 'idempotency-key': 'condonation-execution-1' },
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        execution_id: '00000000-0000-4000-8000-000000000050',
+        approval_id: '00000000-0000-4000-8000-000000000051',
+        member_id: memberId,
+        currency: 'ARS',
+        approved_amount_cents: 12500,
+        treatment_ids: ['00000000-0000-4000-8000-000000000052'],
+        status: 'executed',
+      })
+      expect(executeApproved).toHaveBeenCalledWith({
+        requestId: '00000000-0000-4000-8000-000000000053',
+        executionId: '00000000-0000-4000-8000-000000000050',
+        actorId: approverId,
+        callerKey: 'condonation-execution-1',
+        sourceIp: '127.0.0.1',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('denies unauthenticated and OPERADOR execution before invoking the executor', async () => {
+    const { app } = await bootstrap()
+    try {
+      const unauthenticated = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+      const operator = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        headers: auth('OPERADOR'),
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+
+      expect(unauthenticated.statusCode).toBe(401)
+      expect(operator.statusCode).toBe(403)
+      expect(executeApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
   it('creates an inert, audited eligible request and replays the same caller key exactly', async () => {
     vi.mocked(selectFullOutstanding).mockResolvedValue({
       socioId: memberId,

@@ -15,6 +15,7 @@ import {
 } from '@athlos/approval'
 import type { AppContainer } from '../container.ts'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
+import { CondonationExecutionService } from '../modules/dues/condonations.ts'
 import { validateIdempotencyKey } from '../lib/idempotency.ts'
 import { randomUUID } from 'node:crypto'
 
@@ -63,6 +64,7 @@ const condonationDecisionSchema = z
   })
   .strict()
 const condonationIdSchema = z.object({ id: z.string().uuid() })
+const condonationExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
 const CONDONATION_REQUEST_GATE = { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') }
 const CONDONATION_DECISION_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
 
@@ -301,6 +303,36 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         return decided
       })
       return reply.code(200).send(condonationDto(result))
+    },
+  )
+
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/condonation-requests/:id/execution',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      const { id } = throwIfInvalid(condonationIdSchema, request.params, 'params')
+      const { execution_id: executionId } = throwIfInvalid(
+        condonationExecutionSchema,
+        request.body,
+        'body',
+      )
+      const result = await new CondonationExecutionService(container.db).executeApproved({
+        requestId: id,
+        executionId,
+        actorId: request.operator.sub,
+        callerKey: callerKey(request),
+        sourceIp: request.ip ?? null,
+      })
+      return reply.code(200).send({
+        execution_id: result.executionId,
+        approval_id: result.approvalId,
+        member_id: result.memberId,
+        currency: result.currency,
+        approved_amount_cents: result.totalAmountCents,
+        treatment_ids: result.treatmentIds,
+        status: result.status,
+      })
     },
   )
 
