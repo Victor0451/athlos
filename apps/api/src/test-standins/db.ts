@@ -733,6 +733,17 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         expiresAt: v['expiresAt']!,
         usedAt: (v['usedAt'] as Date | null) ?? null,
         status: (v['status'] as ApprovalTokenRow['status']) ?? 'pending',
+        condonationSnapshot:
+          (v['condonationSnapshot'] as ApprovalTokenRow['condonationSnapshot']) ?? null,
+        requestReason: (v['requestReason'] as string | null) ?? null,
+        requestEvidence: (v['requestEvidence'] as string | null) ?? null,
+        decidedByOperatorId: (v['decidedByOperatorId'] as string | null) ?? null,
+        decisionReason: (v['decisionReason'] as string | null) ?? null,
+        decisionEvidence: (v['decisionEvidence'] as string | null) ?? null,
+        decidedAt: (v['decidedAt'] as Date | null) ?? null,
+        executionId: (v['executionId'] as string | null) ?? null,
+        callerKey: (v['callerKey'] as string | null) ?? null,
+        requestFingerprint: (v['requestFingerprint'] as string | null) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as ApprovalTokenRow
     }

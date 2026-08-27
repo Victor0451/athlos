@@ -97,7 +97,7 @@ export function condonationRequestFingerprint(req: CreateCondonationApprovalRequ
     .digest('hex')
 }
 
-async function findCondonationRequest(db: Db, requesterId: string, callerKey: string) {
+export async function findCondonationRequest(db: Db, requesterId: string, callerKey: string) {
   const [row] = await db
     .select()
     .from(approvalTokens)

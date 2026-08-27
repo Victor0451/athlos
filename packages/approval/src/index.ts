@@ -16,6 +16,7 @@ export {
   createApprovalToken,
   createCondonationApprovalRequest,
   decideCondonationApproval,
+  findCondonationRequest,
   getApprovalToken,
   consumeApprovalToken,
 } from './service.ts'
