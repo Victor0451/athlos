@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
-import { CondonationActions } from '@/components/collections/CondonationActions'
-import { CondonationLifecycle as CondonationLifecyclePresenter } from '@/components/collections/CondonationLifecycle'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
+import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
@@ -497,7 +496,6 @@ export default function CollectionsPage() {
     return result
   }
 
-  const pendingLifecycle = lifecycle.find((item) => item.state === 'pending')
   const presentExecution = async (item: CondonationLifecycle) => {
     setExecutionFeedback({ id: item.id, status: 'executing' })
     try {
@@ -573,44 +571,29 @@ export default function CollectionsPage() {
         error={debtError}
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
-        openShifts={openShifts}
-        {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
-        agreementsEnabled={agreementWorkflowEnabled}
-        agreementStates={agreementStates}
-        onCreateAgreement={createAgreement}
-        onReviseAgreement={reviseAgreement}
-        onRecordCommunityWork={createCommunityWork}
-        onRefreshAgreement={refreshAgreement}
       />
       {selectedSocio && debt?.status === 'ready' && (
-        <CondonationActions
-          key={selectedSocio.id}
+        <TreatmentWorkspace
           memberId={selectedSocio.id}
-          obligations={debt.obligations}
-          canDecide={canSettle}
-          {...(pendingLifecycle
-            ? {
-                request: {
-                  id: pendingLifecycle.id,
-                  status: 'pending' as const,
-                  expires_at: pendingLifecycle.expires_at,
-                  decided_at: null,
-                },
-              }
-            : {})}
-          onRequest={requestCondonation}
-          onDecision={decideCondonation}
+          debt={debt}
+          role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
+          canSettle={canSettle}
+          canRequestCondonation
+          agreementsEnabled={agreementWorkflowEnabled}
+          agreementStates={agreementStates}
+          shifts={openShifts}
+          lifecycle={lifecycle}
+          {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+          onCreateAgreement={createAgreement}
+          onReviseAgreement={reviseAgreement}
+          onRecordCommunityWork={createCommunityWork}
+          onRefreshAgreement={refreshAgreement}
+          onRequestCondonation={requestCondonation}
+          onDecideCondonation={decideCondonation}
+          onExecuteCondonation={presentExecution}
+          executionFeedback={executionFeedback}
         />
       )}
-      {lifecycle.map((item) => (
-        <CondonationLifecyclePresenter
-          key={item.id}
-          lifecycle={item}
-          role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
-          {...(executionFeedback?.id === item.id ? { actionStatus: executionFeedback.status } : {})}
-          {...(canSettle ? { onExecute: () => presentExecution(item) } : {})}
-        />
-      ))}
     </main>
   )
 }

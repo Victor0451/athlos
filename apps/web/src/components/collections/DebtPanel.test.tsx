@@ -61,7 +61,7 @@ describe('DebtPanel', () => {
     expect(screen.queryByText(/authorization|audit/i)).not.toBeInTheDocument()
   })
 
-  it('itemizes settlements and compensations without changing the action seam', () => {
+  it('itemizes settlements and compensations without treatment actions', () => {
     const itemizedDebt = {
       ...debt,
       obligations: [
@@ -92,8 +92,6 @@ describe('DebtPanel', () => {
         error=""
         onSearch={vi.fn()}
         onSelectSocio={vi.fn()}
-        onPayment={vi.fn()}
-        onReverse={vi.fn()}
       />,
     )
 
@@ -101,7 +99,7 @@ describe('DebtPanel', () => {
     expect(screen.getByText('Asignación')).toBeInTheDocument()
     expect(screen.getByText('-25.00 ARS')).toBeInTheDocument()
     expect(screen.getByText(/compensa la asignación allocation-1/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /acciones de pago/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /acciones de pago/i })).not.toBeInTheDocument()
   })
 
   it('distinguishes a ready response with no itemized obligations from debt history', () => {
