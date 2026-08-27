@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
 import { CondonationActions } from '@/components/collections/CondonationActions'
+import { CondonationLifecycle as CondonationLifecyclePresenter } from '@/components/collections/CondonationLifecycle'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
@@ -96,6 +97,16 @@ export default function CollectionsPage() {
   const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
+  const [executionFeedback, setExecutionFeedback] = useState<{
+    id: string
+    status:
+      | 'idle'
+      | 'executing'
+      | 'replayed'
+      | 'recoverable_error'
+      | 'denied'
+      | 'transactional_error'
+  } | null>(null)
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
@@ -227,6 +238,7 @@ export default function CollectionsPage() {
   const selectSocio = async (socio: DebtSocio) => {
     setSelectedSocio(socio)
     setLifecycle([])
+    setExecutionFeedback(null)
     setDebt(null)
     setOpenShifts([])
     setDebtError('')
@@ -471,7 +483,7 @@ export default function CollectionsPage() {
       draftFingerprint: executionId,
     }
     const key = idempotency.current.getOrCreate(input)
-    await executeCondonationRequest(id, executionId, key)
+    const result = await executeCondonationRequest(id, executionId, key)
     const refreshed = await refreshLifecycle(selectedSocio.id)
     if (
       !refreshed.some(
@@ -482,10 +494,33 @@ export default function CollectionsPage() {
     if (!(await refreshDebt()))
       throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
     idempotency.current.complete(input)
+    return result
   }
 
-  const executionLifecycle = lifecycle.find((item) => item.state === 'approved_awaiting_execution')
   const pendingLifecycle = lifecycle.find((item) => item.state === 'pending')
+  const presentExecution = async (item: CondonationLifecycle) => {
+    setExecutionFeedback({ id: item.id, status: 'executing' })
+    try {
+      const result = await executeCondonation(item.id, item.execution_id!)
+      setExecutionFeedback({
+        id: item.id,
+        status: result.status === 'replayed' ? 'replayed' : 'idle',
+      })
+      return result
+    } catch (cause) {
+      const kind = cause instanceof CondonationOperationError ? cause.kind : 'unavailable'
+      setExecutionFeedback({
+        id: item.id,
+        status:
+          kind === 'permission'
+            ? 'denied'
+            : kind === 'conflict'
+              ? 'recoverable_error'
+              : 'transactional_error',
+      })
+      throw cause
+    }
+  }
 
   return (
     <main aria-labelledby="collections-title" className="space-y-6">
@@ -553,8 +588,6 @@ export default function CollectionsPage() {
           memberId={selectedSocio.id}
           obligations={debt.obligations}
           canDecide={canSettle}
-          canExecute={canSettle}
-          {...(executionLifecycle ? { lifecycle: executionLifecycle } : {})}
           {...(pendingLifecycle
             ? {
                 request: {
@@ -567,9 +600,17 @@ export default function CollectionsPage() {
             : {})}
           onRequest={requestCondonation}
           onDecision={decideCondonation}
-          onExecute={executeCondonation}
         />
       )}
+      {lifecycle.map((item) => (
+        <CondonationLifecyclePresenter
+          key={item.id}
+          lifecycle={item}
+          role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
+          {...(executionFeedback?.id === item.id ? { actionStatus: executionFeedback.status } : {})}
+          {...(canSettle ? { onExecute: () => presentExecution(item) } : {})}
+        />
+      ))}
     </main>
   )
 }

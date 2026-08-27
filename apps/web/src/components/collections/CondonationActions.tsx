@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from 'react'
 import type {
   CondonationDecisionInput,
-  CondonationLifecycle,
   CondonationRequest,
   CondonationRequestInput,
 } from '@/lib/api/condonation'
@@ -13,12 +12,9 @@ type Props = {
   memberId: string
   obligations: Obligation[]
   canDecide: boolean
-  canExecute?: boolean
-  lifecycle?: Pick<CondonationLifecycle, 'id' | 'state' | 'execution_id'>
   request?: CondonationRequest
   onRequest: (input: CondonationRequestInput) => Promise<CondonationRequest>
   onDecision?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
-  onExecute?: (id: string, executionId: string) => Promise<void>
 }
 const failure = (cause: unknown, decision = false) => {
   const kind = (cause as { kind?: unknown })?.kind
@@ -36,12 +32,9 @@ export function CondonationActions({
   memberId,
   obligations,
   canDecide,
-  canExecute = false,
-  lifecycle,
   request: initial,
   onRequest,
   onDecision,
-  onExecute,
 }: Props) {
   const eligible = obligations
     .filter(({ outstanding_cents }) => outstanding_cents > 0)
@@ -89,17 +82,6 @@ export function CondonationActions({
       setError(failure(cause, true))
     }
   }
-  const execute = async () => {
-    if (!lifecycle || !onExecute) return
-    setError('')
-    setMessage('')
-    try {
-      await onExecute(lifecycle.id, lifecycle.execution_id!)
-      setMessage('Ejecución confirmada al recargar el estado y la deuda.')
-    } catch (cause) {
-      setError(failure(cause, true))
-    }
-  }
   // prettier-ignore
   return <section aria-labelledby="condonation-title" className="space-y-4 rounded-lg border p-4">
     <h3 id="condonation-title" className="text-lg font-semibold">Solicitud de condonación</h3>
@@ -119,6 +101,5 @@ export function CondonationActions({
       <label>Evidencia de la decisión<textarea value={decisionEvidence} onChange={(event) => setDecisionEvidence(event.target.value)} required /></label>
       <button type="submit">Registrar decisión</button>
     </form>}
-    {canExecute && lifecycle?.state === 'approved_awaiting_execution' && lifecycle.execution_id && onExecute && <button type="button" onClick={() => void execute()}>Ejecutar condonación</button>}
   </section>
 }
