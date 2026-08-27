@@ -1,6 +1,6 @@
 import type { Db } from '@athlos/db'
-import { approvalTokens, type ApprovalToken } from '@athlos/db/schema'
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { approvalTokens, duesCondonationExecutions, type ApprovalToken } from '@athlos/db/schema'
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm'
 import { createHash, randomUUID } from 'node:crypto'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import { generateApprovalToken, hashApprovalToken } from './token.ts'
@@ -54,6 +54,57 @@ export interface CondonationDecision {
   decision: 'approved' | 'rejected'
   reason: string
   evidence: string
+}
+export type CondonationLifecycle = Pick<
+  ApprovalToken,
+  | 'actionId'
+  | 'status'
+  | 'expiresAt'
+  | 'decidedAt'
+  | 'usedAt'
+  | 'executionId'
+  | 'createdAt'
+  | 'createdByOperatorId'
+  | 'decidedByOperatorId'
+  | 'condonationSnapshot'
+  | 'requestReason'
+  | 'requestEvidence'
+  | 'decisionReason'
+  | 'decisionEvidence'
+> & { executionReceiptId: string | null }
+export type ListCondonationLifecycleInput = {
+  memberId: string
+  requesterId?: string
+  limit: number
+}
+
+/** Read persisted approval rows joined to execution receipts; this never infers execution from approval. */
+export async function listCondonationLifecycle(
+  db: Db,
+  input: ListCondonationLifecycleInput,
+): Promise<CondonationLifecycle[]> {
+  const where = and(
+    eq(approvalTokens.actionType, 'dues.condonation'),
+    sql`${approvalTokens.condonationSnapshot}->>'memberId' = ${input.memberId}`,
+    ...(input.requesterId ? [eq(approvalTokens.createdByOperatorId, input.requesterId)] : []),
+  )
+  const rows = await db
+    .select({ approval: approvalTokens, executionReceiptId: duesCondonationExecutions.executionId })
+    .from(approvalTokens)
+    .leftJoin(
+      duesCondonationExecutions,
+      eq(duesCondonationExecutions.approvalTokenId, approvalTokens.id),
+    )
+    .where(where)
+    .orderBy(desc(approvalTokens.createdAt), desc(approvalTokens.id))
+    .limit(input.limit)
+  return rows
+    .filter(
+      (row) =>
+        (row.approval.condonationSnapshot as CondonationSnapshot | null)?.memberId ===
+        input.memberId,
+    )
+    .map(({ approval, executionReceiptId }) => ({ ...approval, executionReceiptId }))
 }
 
 function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {
