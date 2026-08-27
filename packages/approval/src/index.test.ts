@@ -64,6 +64,8 @@ const SQL_TO_JS: Record<string, keyof Row> = {
   decision_evidence: 'decisionEvidence',
   decided_at: 'decidedAt',
   execution_id: 'executionId',
+  caller_key: 'callerKey',
+  request_fingerprint: 'requestFingerprint',
   created_at: 'createdAt',
 }
 
@@ -105,6 +107,8 @@ function createStandinDb(): StandinDb {
         decisionEvidence: values.decisionEvidence ?? null,
         decidedAt: values.decidedAt ?? null,
         executionId: values.executionId ?? null,
+        callerKey: values.callerKey ?? null,
+        requestFingerprint: values.requestFingerprint ?? null,
         createdAt: values.createdAt ?? new Date(),
       }
       rows.push(row)
@@ -410,7 +414,6 @@ describe('consumeApprovalToken', () => {
 
 describe('condonation approval lifecycle', () => {
   const snapshot = {
-    clubId: 'club-1',
     memberId: 'member-1',
     obligations: [{ obligationId: 'obligation-1', currency: 'ARS', outstandingAmountCents: 12500 }],
   }
@@ -426,6 +429,7 @@ describe('condonation approval lifecycle', () => {
       snapshot,
       reason: 'Documented hardship',
       evidence: 'case-123',
+      callerKey: 'condonation-request-1',
     })
 
     expect(result.record).toMatchObject({
@@ -440,6 +444,28 @@ describe('condonation approval lifecycle', () => {
     })
   })
 
+  it('replays an identical condonation request without creating another token', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const request = {
+      requestId: 'request-1',
+      contextSummary: 'Condone January membership fee',
+      requesterId: 'operator-1',
+      approverChannel: 'email' as const,
+      approverAddress: 'treasury@example.test',
+      snapshot,
+      reason: 'Documented hardship',
+      evidence: 'case-123',
+      callerKey: 'condonation-request-1',
+    }
+
+    const first = await createCondonationApprovalRequest(db, request)
+    const replay = await createCondonationApprovalRequest(db, request)
+
+    expect(replay.record).toEqual(first.record)
+    expect(standin.rows).toHaveLength(1)
+  })
+
   it('records one approved decision without consuming or executing the request', async () => {
     const standin = createStandinDb()
     const db = asDrizzle(standin)
@@ -452,6 +478,7 @@ describe('condonation approval lifecycle', () => {
       snapshot,
       reason: 'Documented hardship',
       evidence: 'case-123',
+      callerKey: 'condonation-request-1',
     })
 
     const result = await decideCondonationApproval(db, {
@@ -485,6 +512,7 @@ describe('condonation approval lifecycle', () => {
       snapshot,
       reason: 'Documented hardship',
       evidence: 'case-123',
+      callerKey: 'condonation-request-1',
     })
 
     await expect(

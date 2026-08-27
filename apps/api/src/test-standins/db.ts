@@ -176,6 +176,16 @@ const APPROVAL_SQL_TO_JS: Record<string, keyof ApprovalTokenRow> = {
   expires_at: 'expiresAt',
   used_at: 'usedAt',
   status: 'status',
+  condonation_snapshot: 'condonationSnapshot',
+  request_reason: 'requestReason',
+  request_evidence: 'requestEvidence',
+  decided_by_operator_id: 'decidedByOperatorId',
+  decision_reason: 'decisionReason',
+  decision_evidence: 'decisionEvidence',
+  decided_at: 'decidedAt',
+  execution_id: 'executionId',
+  caller_key: 'callerKey',
+  request_fingerprint: 'requestFingerprint',
   created_at: 'createdAt',
 }
 
