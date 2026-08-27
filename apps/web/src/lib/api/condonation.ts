@@ -48,6 +48,15 @@ export interface CondonationLifecycle {
 export interface CondonationLifecyclePage {
   items: CondonationLifecycle[]
 }
+export interface CondonationExecution {
+  execution_id: string
+  approval_id: string
+  member_id: string
+  currency: string
+  approved_amount_cents: number
+  treatment_ids: string[]
+  status: 'executed' | 'replayed'
+}
 export class CondonationOperationError extends Error {
   // prettier-ignore
   constructor(readonly kind: 'partial_data' | 'permission' | 'conflict' | 'unavailable', cause?: unknown) {
@@ -167,6 +176,30 @@ const lifecycle = (value: unknown): CondonationLifecycle | null => {
     decision,
   }
 }
+const execution = (value: unknown): CondonationExecution | null => {
+  if (
+    !record(value) ||
+    !uuid(value.execution_id) ||
+    !uuid(value.approval_id) ||
+    !uuid(value.member_id) ||
+    typeof value.currency !== 'string' ||
+    !/^[A-Z]{3}$/.test(value.currency) ||
+    !nonNegativeCents(value.approved_amount_cents) ||
+    !Array.isArray(value.treatment_ids) ||
+    !value.treatment_ids.every(uuid) ||
+    (value.status !== 'executed' && value.status !== 'replayed')
+  )
+    return null
+  return {
+    execution_id: value.execution_id,
+    approval_id: value.approval_id,
+    member_id: value.member_id,
+    currency: value.currency,
+    approved_amount_cents: value.approved_amount_cents,
+    treatment_ids: value.treatment_ids,
+    status: value.status,
+  }
+}
 export const listCondonationLifecycle = async (
   memberId: string,
   limit = 25,
@@ -205,3 +238,24 @@ export const decideCondonationRequest = (
       body: input,
     }),
   )
+export const executeCondonationRequest = async (id: string, executionId: string, key: string) => {
+  try {
+    const result = execution(
+      await apiFetch<unknown>(`/api/v1/condonation-requests/${id}/execution`, {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: { execution_id: executionId },
+      }),
+    )
+    if (!result) throw new CondonationOperationError('partial_data')
+    return result
+  } catch (cause) {
+    if (cause instanceof CondonationOperationError) throw cause
+    if (cause instanceof ApiError)
+      throw new CondonationOperationError(
+        cause.status === 403 ? 'permission' : cause.status === 409 ? 'conflict' : 'unavailable',
+        cause,
+      )
+    throw new CondonationOperationError('unavailable', cause)
+  }
+}

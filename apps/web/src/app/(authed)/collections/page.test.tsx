@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { PricingPanel } from '@/components/collections/PricingPanel'
 import type { CurrentUser } from '@/lib/auth'
+import type { CondonationLifecyclePage } from '@/lib/api/condonation'
 import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
@@ -33,10 +34,27 @@ const padronesMocks = vi.hoisted(() => ({
 const sociosMocks = vi.hoisted(() => ({
   getSocios: vi.fn(),
 }))
+const condonationMocks = vi.hoisted(() => ({
+  createCondonationRequest: vi.fn(),
+  decideCondonationRequest: vi.fn(),
+  executeCondonationRequest: vi.fn(),
+  listCondonationLifecycle: vi.fn<() => Promise<CondonationLifecyclePage>>(() =>
+    Promise.resolve({ items: [] }),
+  ),
+  CondonationOperationError: class MockCondonationOperationError extends Error {
+    constructor(
+      readonly kind: string,
+      message: string,
+    ) {
+      super(message)
+    }
+  },
+}))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
 vi.mock('@/lib/api/socios', () => sociosMocks)
+vi.mock('@/lib/api/condonation', () => condonationMocks)
 const { default: CollectionsPage } = await import('./page')
 
 const renderPage = (enabled: boolean | undefined, role: string, agreementsEnabled = false) => {
@@ -52,6 +70,71 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 }
 
 describe('Collections navigation and direct access', () => {
+  it('loads lifecycle per selected member and refreshes it before debt after a replayed execution', async () => {
+    const user = userEvent.setup()
+    const first = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    const second = { id: 'socio-2', nombre: 'Beto', apellido: 'Luna', numero_socio: '43' }
+    const debt = (socio_id: string) => ({
+      status: 'ready',
+      socio_id,
+      currency: 'ARS',
+      total_debt_cents: 100,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 100,
+          outstanding_cents: 100,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    })
+    const awaiting: CondonationLifecyclePage['items'][number] = {
+      id: 'request-1',
+      state: 'approved_awaiting_execution',
+      expires_at: '2026-02-01T00:00:00.000Z',
+      decided_at: '2026-01-31T00:00:00.000Z',
+      used_at: null,
+      execution_id: 'execution-1',
+      execution_status: 'recoverable',
+      snapshot: { member_id: second.id, obligations: [] },
+      requester: { operator_id: 'operator-1' },
+      reason: null,
+      evidence: null,
+      decision: null,
+    }
+    sociosMocks.getSocios.mockResolvedValue({ items: [first, second] })
+    duesMocks.getDebt
+      .mockResolvedValueOnce(debt(first.id))
+      .mockResolvedValueOnce(debt(second.id))
+      .mockResolvedValueOnce(debt(second.id))
+    condonationMocks.listCondonationLifecycle
+      .mockResolvedValueOnce({ items: [awaiting] })
+      .mockResolvedValueOnce({ items: [awaiting] })
+      .mockResolvedValueOnce({ items: [{ ...awaiting, state: 'executed' }] })
+    condonationMocks.executeCondonationRequest.mockResolvedValue({ status: 'replayed' })
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'a')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(await screen.findByRole('button', { name: /Luna, Beto/ }))
+    await user.click(await screen.findByRole('button', { name: /ejecutar condonación/i }))
+    await waitFor(() =>
+      expect(condonationMocks.executeCondonationRequest).toHaveBeenCalledWith(
+        'request-1',
+        'execution-1',
+        expect.any(String),
+      ),
+    )
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(condonationMocks.listCondonationLifecycle).toHaveBeenCalledWith('socio-2')
+  })
+
   it('shows enabled ADMIN/TESORERO navigation and denies disabled or other roles', () => {
     const admin: CurrentUser = {
       operator_id: 'operator-1',

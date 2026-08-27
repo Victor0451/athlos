@@ -40,7 +40,10 @@ import {
   createCondonationRequest,
   CondonationOperationError,
   decideCondonationRequest,
+  executeCondonationRequest,
+  listCondonationLifecycle,
   type CondonationDecisionInput,
+  type CondonationLifecycle,
   type CondonationRequestInput,
 } from '@/lib/api/condonation'
 import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
@@ -92,7 +95,9 @@ export default function CollectionsPage() {
   const [debtError, setDebtError] = useState('')
   const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
+  const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
+  const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
@@ -221,10 +226,19 @@ export default function CollectionsPage() {
   }
   const selectSocio = async (socio: DebtSocio) => {
     setSelectedSocio(socio)
+    setLifecycle([])
     setDebt(null)
     setOpenShifts([])
     setDebtError('')
     setDebtStatus('loading')
+    const load = ++lifecycleLoad.current
+    void listCondonationLifecycle(socio.id)
+      .then(({ items }) => {
+        if (load === lifecycleLoad.current) setLifecycle(items)
+      })
+      .catch(() => {
+        if (load === lifecycleLoad.current) setLifecycle([])
+      })
     try {
       const result = await getDebt(socio.id)
       setDebt(result)
@@ -249,6 +263,13 @@ export default function CollectionsPage() {
   }
   // prettier-ignore
   const refreshDebt=async()=>{if(!selectedSocio)return false;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('');return true}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error');return false}}
+  const refreshLifecycle = async (memberId: string) => {
+    const load = ++lifecycleLoad.current
+    setLifecycle([])
+    const result = await listCondonationLifecycle(memberId)
+    if (load === lifecycleLoad.current) setLifecycle(result.items)
+    return result.items
+  }
   // prettier-ignore
   const refreshAgreement = (obligationId: string) => loadAgreement(obligationId)
   const createAgreement = async (obligationId: string, draft: AgreementDraft) => {
@@ -420,11 +441,51 @@ export default function CollectionsPage() {
     return request(key).then((result) => { idempotency.current!.complete(input); return result }).catch((reason) => { if (reason instanceof CondonationOperationError && reason.kind === 'conflict') idempotency.current!.abandon(input); throw reason })
   }
   const requestCondonation = (input: CondonationRequestInput) =>
-    condonation('condonation-request', input, (key) => createCondonationRequest(input, key))
+    condonation('condonation-request', input, (key) => createCondonationRequest(input, key)).then(
+      async (result) => {
+        await refreshLifecycle(input.member_id)
+        return result
+      },
+    )
   const decideCondonation = (id: string, input: CondonationDecisionInput) =>
     condonation(`condonation-decision:${id}`, input, (key) =>
       decideCondonationRequest(id, input, key),
+    ).then(async (result) => {
+      if (selectedSocio) await refreshLifecycle(selectedSocio.id)
+      return result
+    })
+  const executeCondonation = async (id: string, executionId: string) => {
+    if (!user || !selectedSocio)
+      throw new DuesOperationError('permission', 'Authentication required')
+    const current = lifecycle.find(
+      (item) =>
+        item.id === id &&
+        item.state === 'approved_awaiting_execution' &&
+        item.execution_id === executionId,
     )
+    if (!current) throw new CondonationOperationError('conflict')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = {
+      operatorId: user.operator_id,
+      action: `condonation-execution:${id}`,
+      draftFingerprint: executionId,
+    }
+    const key = idempotency.current.getOrCreate(input)
+    await executeCondonationRequest(id, executionId, key)
+    const refreshed = await refreshLifecycle(selectedSocio.id)
+    if (
+      !refreshed.some(
+        (item) => item.id === id && item.execution_id === executionId && item.state === 'executed',
+      )
+    )
+      throw new CondonationOperationError('unavailable')
+    if (!(await refreshDebt()))
+      throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+    idempotency.current.complete(input)
+  }
+
+  const executionLifecycle = lifecycle.find((item) => item.state === 'approved_awaiting_execution')
+  const pendingLifecycle = lifecycle.find((item) => item.state === 'pending')
 
   return (
     <main aria-labelledby="collections-title" className="space-y-6">
@@ -488,11 +549,25 @@ export default function CollectionsPage() {
       />
       {selectedSocio && debt?.status === 'ready' && (
         <CondonationActions
+          key={selectedSocio.id}
           memberId={selectedSocio.id}
           obligations={debt.obligations}
           canDecide={canSettle}
+          canExecute={canSettle}
+          {...(executionLifecycle ? { lifecycle: executionLifecycle } : {})}
+          {...(pendingLifecycle
+            ? {
+                request: {
+                  id: pendingLifecycle.id,
+                  status: 'pending' as const,
+                  expires_at: pendingLifecycle.expires_at,
+                  decided_at: null,
+                },
+              }
+            : {})}
           onRequest={requestCondonation}
           onDecision={decideCondonation}
+          onExecute={executeCondonation}
         />
       )}
     </main>
