@@ -60,7 +60,7 @@ describe('SettlementActions', () => {
     await user.click(screen.getByRole('button', { name: /registrar pago/i }))
     await user.click(screen.getByLabelText(/período 2026-01-01/i))
     await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
-    expect(screen.getByRole('alert')).toHaveFocus()
+    expect(await screen.findByRole('alert')).toHaveFocus()
     await user.click(screen.getByRole('button', { name: /revisar saldos actualizados/i }))
     await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(onPayment).toHaveBeenCalledTimes(2)
