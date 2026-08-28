@@ -134,8 +134,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await db?.pool.end()
   try {
-    if (admin && databaseName)
-      await admin.pool.query(`DROP DATABASE IF EXISTS "${databaseName}" WITH (FORCE)`)
+    if (admin && databaseName) await admin.pool.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
     cleanup = 'dropped'
   } finally {
     await admin?.pool.end()
