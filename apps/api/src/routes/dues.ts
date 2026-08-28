@@ -516,6 +516,15 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
       FINANCE_GATE,
       async (request, reply) => {
         enabled(container)
+        if (
+          request.body !== null &&
+          typeof request.body === 'object' &&
+          'allocation_id' in request.body
+        )
+          throw BusinessError(
+            ErrorCode.NOT_FOUND,
+            'Legacy settlement reversal route is unavailable',
+          )
         const params = throwIfInvalid(idParamSchema, request.params, 'params')
         const body = throwIfInvalid(settlementReversalBodySchema, request.body ?? {}, 'body')
         const key = callerKey(request, true)
