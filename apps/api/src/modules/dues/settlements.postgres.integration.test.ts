@@ -124,6 +124,9 @@ beforeAll(async () => {
   await db.pool.query(
     'DROP TABLE IF EXISTS tesoreria.dues_community_work, tesoreria.dues_agreements CASCADE',
   )
+  await db.pool.query(
+    "CREATE TABLE IF NOT EXISTS tesoreria.gastos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),tipo integer NOT NULL,tipo_cuenta integer NOT NULL,cuenta_principal text NOT NULL,cuenta_auxiliar integer,secuencia integer NOT NULL DEFAULT 0,comprobante text NOT NULL DEFAULT '',fecha date NOT NULL,concepto text,importe text NOT NULL,iva text NOT NULL DEFAULT '0.00',ingreso_bruto text,socio_id uuid,legacy_id text,anulado boolean NOT NULL DEFAULT false,anulado_at timestamptz,anulado_motivo text,created_at timestamptz NOT NULL DEFAULT now())",
+  )
   const files = [
     '0049_dues_pricing_obligations.sql',
     '0050_dues_benefit_rules.sql',
