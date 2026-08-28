@@ -135,8 +135,6 @@ export class SettlementService {
   }
 
   async create(input: SettlementCommand): Promise<SettlementResult> {
-    if (input.kind === 'MONETARY')
-      throw BusinessError(ErrorCode.NOT_FOUND, 'Monetary settlement creation is unavailable')
     authorize(input.role)
     if (
       !Number.isSafeInteger(input.amountCents) ||
