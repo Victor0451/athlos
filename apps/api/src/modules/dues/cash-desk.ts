@@ -10,8 +10,34 @@ type CashDb = Db | Parameters<Parameters<Db['transaction']>[0]>[0]
 type Direction = 'INCOME' | 'EXPENSE'
 type Tender = { tender: string; direction: Direction; amountCents: number }
 type Totals = Record<string, number>
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Row = Record<string, any>
+
+type Row = {
+  id: string
+  desk_id: string
+  status: string
+  assigned_operator_id: string
+  business_date: string
+  opened_at: string | Date
+  closed_at: string | Date | null
+  shift_id: string
+  direction: string
+  tender: string
+  amount: string
+  source_type: string
+  source_id: string | null
+  expected_tenders: Totals
+  counted_tenders: Totals
+  discrepancy: Totals
+  reason: string | null
+  force_close: boolean
+  request_fingerprint: string
+  kind: string
+  original_gasto_id: string
+  compensating_gasto_id: string
+  fecha: string
+  importe: string
+  opening_tenders: Totals
+}
 
 const rows = (value: unknown) => (value as { rows?: Row[] }).rows ?? []
 const cents = (value: string) => {
@@ -54,10 +80,12 @@ export function reconcileTenders(
   counted: Totals,
   reason?: string,
 ) {
-  const expected = clean(opening)
+  const openingCash = clean(opening).CASH
+  const expected: Totals = openingCash === undefined ? {} : { CASH: openingCash }
   for (const movement of movements) {
-    expected[movement.tender] =
-      (expected[movement.tender] ?? 0) +
+    if (movement.tender !== 'CASH') continue
+    expected.CASH =
+      (expected.CASH ?? 0) +
       (movement.direction === 'INCOME' ? movement.amountCents : -movement.amountCents)
   }
   const normalized = clean(counted)
@@ -114,7 +142,7 @@ const responseClose = (row: Row) => ({
   countedTenders: row.counted_tenders,
   discrepancy: row.discrepancy,
   reason: row.reason,
-  closedAt: new Date(row.closed_at).toISOString(),
+  closedAt: new Date(row.closed_at!).toISOString(),
   ...(row.force_close ? { forceClose: true } : {}),
 })
 
@@ -130,11 +158,108 @@ export type TenderCommand = CashCommand & {
   reason?: string
 }
 export type ExpenseCommand = CashCommand & { shiftId: string; gastoId: string; tender: string }
+export type SettlementTenderInput = CashCommand & {
+  shiftId: string
+  settlementId: string
+  tender: 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER'
+}
 export type CloseCashCommand = CashCommand & {
   shiftId: string
   countedTenders: Totals
   reason?: string
   forceClose?: boolean
+}
+
+const settlementTenders = new Set(['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'])
+
+export async function recordSettlementTenderInTransaction(
+  db: CashDb,
+  input: SettlementTenderInput,
+) {
+  authorize(input.role)
+  if (!settlementTenders.has(input.tender)) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A supported settlement tender is required')
+  }
+  const replay = rows(
+    await db.execute(
+      sql`SELECT * FROM tesoreria.dues_cash_tenders WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+    ),
+  )[0]
+  if (replay) {
+    if (requestFingerprintConflict(replay.request_fingerprint, input.requestFingerprint)) {
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different tender',
+      )
+    }
+    return responseTender(replay)
+  }
+  const shift = rows(
+    await db.execute(
+      sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE id = ${input.shiftId} FOR UPDATE`,
+    ),
+  )[0]
+  if (!shift) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
+  if (shift.status !== 'OPEN')
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
+  if (shift.assigned_operator_id !== input.actorId && input.role !== 'ADMIN') {
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Cash shift responsibility does not match the operator',
+    )
+  }
+  const openedAt = new Date(shift.opened_at)
+  if (Date.now() < openedAt.getTime() || Date.now() > openedAt.getTime() + 24 * 60 * 60 * 1000) {
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shifts cannot remain open longer than 24 hours')
+  }
+  const settlement = rows(
+    await db.execute(
+      sql`SELECT kind,amount::text FROM tesoreria.dues_settlements WHERE id = ${input.settlementId}`,
+    ),
+  )[0]
+  if (!settlement) throw BusinessError(ErrorCode.NOT_FOUND, 'Settlement not found')
+  if (settlement.kind !== 'MONETARY') {
+    throw BusinessError(ErrorCode.CONFLICT, 'Non-cash settlement cannot enter a tender total')
+  }
+  const amountCents = cents(settlement.amount)
+  const inserted = rows(
+    await db.execute(
+      sql`INSERT INTO tesoreria.dues_cash_tenders (shift_id,direction,tender,amount,source_type,source_id,operator_id,caller_key,request_fingerprint) VALUES (${input.shiftId},'INCOME',${input.tender},${money(amountCents)},'SETTLEMENT',${input.settlementId},${input.actorId},${input.callerKey},${input.requestFingerprint}) ON CONFLICT (operator_id,caller_key) DO NOTHING RETURNING *`,
+    ),
+  )[0]
+  if (!inserted) {
+    const raced = rows(
+      await db.execute(
+        sql`SELECT * FROM tesoreria.dues_cash_tenders WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+      ),
+    )[0]
+    if (!raced) throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Tender replay is unavailable')
+    if (requestFingerprintConflict(raced.request_fingerprint, input.requestFingerprint)) {
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different tender',
+      )
+    }
+    return responseTender(raced)
+  }
+  await emitAudit(db, {
+    operatorId: input.actorId,
+    action: AuditAction.DUES_CASH_TENDER_RECORDED,
+    entityType: 'dues_cash',
+    entityId: inserted.id,
+    oldValue: null,
+    newValue: null,
+    sourceIp: input.sourceIp,
+    callerKey: input.callerKey,
+    metadata: {
+      ...input.authorizationEvidence,
+      shiftId: input.shiftId,
+      tender: input.tender,
+      amountCents,
+      sourceType: 'SETTLEMENT',
+    },
+  })
+  return responseTender(inserted)
 }
 
 type CompensationInput = {
@@ -337,6 +462,15 @@ export class CashDeskService {
       throw BusinessError(
         ErrorCode.VALIDATION_ERROR,
         'Tender amount, direction, and manual reason are required',
+      )
+    }
+    if (input.sourceType === 'SETTLEMENT') {
+      return this.db.transaction((tx) =>
+        recordSettlementTenderInTransaction(tx, {
+          ...input,
+          settlementId: input.sourceId ?? '',
+          tender: input.tender as SettlementTenderInput['tender'],
+        }),
       )
     }
     return this.db
