@@ -145,4 +145,14 @@ describe('CondonationLifecycle', () => {
     )
     expect(screen.getByRole('region', { name: /estado de la condonación/i })).toHaveFocus()
   })
+
+  it('uses explicit badges and premium snapshot styling without relying on color alone', () => {
+    render(
+      <CondonationLifecycle lifecycle={lifecycle('approved_awaiting_execution')} role="OPERADOR" />,
+    )
+    expect(screen.getByText('Aprobada: pendiente de ejecución')).toBeInTheDocument()
+    expect(screen.getByText('Recuperación requerida')).toBeInTheDocument()
+    expect(screen.getByText('12.50 ARS')).toHaveClass('font-mono', 'tabular-nums')
+    expect(screen.getByText('12.50 ARS').closest('li')).toHaveClass('bg-surface-sunken')
+  })
 })

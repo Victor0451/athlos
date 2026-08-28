@@ -49,5 +49,13 @@ describe('TreatmentWorkspace', () => {
     expect(screen.getByText(/no reduce la deuda/i)).toBeInTheDocument()
     expect(screen.getByText(/ejecución aprobada/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /registrar pago/i })).not.toBeInTheDocument()
+    const workspace = screen.getByRole('region', { name: /tratamientos de deuda/i })
+    expect(workspace).toHaveClass('min-w-0')
+    expect(workspace.firstElementChild?.nextElementSibling).toHaveClass('lg:grid-cols-2')
+    for (const heading of ['Pago', 'Trabajo comunitario', 'Acuerdo', 'Condonación']) {
+      expect(screen.getByRole('heading', { name: heading }).closest('section')).toHaveClass(
+        'border-l-4',
+      )
+    }
   })
 })
