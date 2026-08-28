@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
@@ -59,10 +59,12 @@ describe('SettlementActions', () => {
     const view = renderActions(onPayment)
     await user.click(screen.getByRole('button', { name: /registrar pago/i }))
     await user.click(screen.getByLabelText(/período 2026-01-01/i))
-    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    const confirm = screen.getByRole('button', { name: /confirmar pago/i })
+    await user.click(confirm)
     expect(await screen.findByRole('alert')).toHaveFocus()
     await user.click(screen.getByRole('button', { name: /revisar saldos actualizados/i }))
-    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    await waitFor(() => expect(confirm).toBeEnabled())
+    await user.click(confirm)
     expect(onPayment).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('status')).toHaveTextContent(/repetido/i)
     view.unmount()
