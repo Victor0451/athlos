@@ -237,6 +237,7 @@ describe('migrate:status', () => {
         '0061_dues_cash_settlement_reversal_expense',
         '0062_approval_condonation_lifecycle',
         '0063_approval_condonation_request_idempotency',
+        '0064_dues_condonation_treatments',
       ],
       divergence: [],
       exitCode: 1,
