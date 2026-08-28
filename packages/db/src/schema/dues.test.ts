@@ -130,7 +130,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0063_approval_condonation_request_idempotency',
+      tag: '0064_dues_condonation_treatments',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
