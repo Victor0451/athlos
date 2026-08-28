@@ -358,6 +358,13 @@
       "when": 1786900009000,
       "tag": "0058_dues_open_agreements",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1786900010000,
+      "tag": "0059_collections_inscription_compatibility",
+      "breakpoints": true
     }
   ]
 }
