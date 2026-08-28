@@ -144,6 +144,8 @@ beforeAll(async () => {
     '0058_dues_open_agreements.sql',
     '0060_dues_settlement_reversal_unique.sql',
     '0061_dues_cash_settlement_reversal_expense.sql',
+    '0062_approval_condonation_lifecycle.sql',
+    '0063_approval_condonation_request_idempotency.sql',
     '0064_dues_condonation_treatments.sql',
   ]
   await db.pool.query(
