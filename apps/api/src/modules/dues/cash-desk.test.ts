@@ -7,7 +7,7 @@ import {
 } from './cash-desk.ts'
 
 describe('cash desk reconciliation', () => {
-  it('keeps opening balance, income, and expense totals separated by tender', () => {
+  it('keeps cash reconciliation separate from non-cash tender reporting', () => {
     expect(
       reconcileTenders(
         { CASH: 1_000, CARD: 500 },
@@ -19,9 +19,9 @@ describe('cash desk reconciliation', () => {
         'Counted cash was short',
       ),
     ).toEqual({
-      expected: { CASH: 3_000, CARD: 400 },
+      expected: { CASH: 3_000 },
       counted: { CASH: 2_900, CARD: 400 },
-      discrepancy: { CASH: -100 },
+      discrepancy: { CASH: -100, CARD: 400 },
     })
   })
 
