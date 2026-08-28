@@ -2,6 +2,10 @@ import { AuditAction, emitAudit, type AuditRecord, type EmitAuditResult } from '
 import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as allocations from './allocations.ts'
+import {
+  recordSettlementTenderInTransaction,
+  validateSettlementShiftInTransaction,
+} from './cash-desk.ts'
 import type { AuditContext } from './service.ts'
 
 export { MAX_MONEY_CENTS } from './allocations.ts'
@@ -12,7 +16,12 @@ type AuditEmitter = (db: DuesDb, record: AuditRecord) => Promise<EmitAuditResult
 type Repository = Partial<
   Pick<
     typeof allocations,
-    'claimSettlement' | 'insertAllocation' | 'findAllocation' | 'getDebt' | 'selectFullOutstanding'
+    | 'claimSettlement'
+    | 'findSettlementReplay'
+    | 'insertAllocation'
+    | 'findAllocation'
+    | 'getDebt'
+    | 'selectFullOutstanding'
   >
 >
 type Dependencies = { repository?: Repository; audit?: AuditEmitter; now?: () => Date }
@@ -134,7 +143,8 @@ export class SettlementService {
     this.now = dependencies.now ?? (() => new Date())
   }
 
-  async create(input: SettlementCommand): Promise<SettlementResult> {
+  async create(input: SettlementCommand | FullSelectionPaymentCommand): Promise<SettlementResult> {
+    if ('tender' in input) return this.createFullSelectionPayment(input)
     if (input.kind === 'MONETARY')
       throw BusinessError(ErrorCode.NOT_FOUND, 'Monetary settlement creation is unavailable')
     authorize(input.role)
@@ -224,6 +234,117 @@ export class SettlementService {
             settlementId: claim.settlement.id,
             obligationId: item.obligationId,
             amountCents: item.amountCents,
+          },
+          now,
+        )
+      return result(claim.settlement, created)
+    })
+  }
+
+  private async createFullSelectionPayment(
+    input: FullSelectionPaymentCommand,
+  ): Promise<SettlementResult> {
+    const allowed = new Set([
+      'actorId',
+      'role',
+      'permissions',
+      'sourceIp',
+      'callerKey',
+      'requestFingerprint',
+      'authorizationEvidence',
+      'socioId',
+      'obligationIds',
+      'shiftId',
+      'tender',
+      'selectionFingerprint',
+    ])
+    if (
+      Object.keys(input).some((key) => !allowed.has(key)) ||
+      !uuidPattern.test(input.socioId) ||
+      !uuidPattern.test(input.shiftId) ||
+      !/^[a-f0-9]{64}$/.test(input.selectionFingerprint) ||
+      !fullSelectionTenders.has(input.tender) ||
+      !input.obligationIds.length ||
+      input.obligationIds.some((id) => !uuidPattern.test(id)) ||
+      new Set(input.obligationIds).size !== input.obligationIds.length
+    )
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Full selection payment command is invalid')
+    authorize(input.role)
+    const command = { ...input, obligationIds: [...input.obligationIds].sort() }
+    return this.db.transaction(async (tx) => {
+      const replay = await (
+        this.repository.findSettlementReplay ?? allocations.findSettlementReplay
+      )(tx, command.actorId, command.callerKey, command.requestFingerprint)
+      if (replay) return result(replay.settlement, replay.allocations)
+      const selection = await (
+        this.repository.selectFullOutstanding ?? allocations.selectFullOutstanding
+      )(tx, {
+        socioId: command.socioId,
+        obligationIds: command.obligationIds,
+        selectionFingerprint: command.selectionFingerprint,
+      })
+      await validateSettlementShiftInTransaction(tx, command)
+      const claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
+        operatorId: command.actorId,
+        socioId: command.socioId,
+        kind: 'MONETARY',
+        amountCents: selection.totalCents,
+        currency: selection.currency,
+        evidence: {
+          shiftId: command.shiftId,
+          tender: command.tender,
+          selectionFingerprint: command.selectionFingerprint,
+        },
+        callerKey: command.callerKey,
+        requestFingerprint: command.requestFingerprint,
+        authorizationEvidence: command.authorizationEvidence,
+      })
+      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
+      const created: allocations.AllocationRecord[] = []
+      for (const allocation of selection.allocations)
+        created.push(
+          await (this.repository.insertAllocation ?? allocations.insertAllocation)(tx, {
+            settlementId: claim.settlement.id,
+            socioId: command.socioId,
+            obligationId: allocation.obligationId,
+            amountCents: allocation.amountCents,
+          }),
+        )
+      await recordSettlementTenderInTransaction(tx, {
+        ...command,
+        settlementId: claim.settlement.id,
+      })
+      const now = this.now().toISOString()
+      await record(
+        this.audit,
+        tx,
+        command,
+        AuditAction.DUES_SETTLEMENT_CREATED,
+        'dues_settlement',
+        claim.settlement.id,
+        null,
+        {
+          settlementId: claim.settlement.id,
+          kind: 'MONETARY',
+          amountCents: selection.totalCents,
+          currency: selection.currency,
+        },
+        now,
+      )
+      for (const allocation of created)
+        await record(
+          this.audit,
+          tx,
+          command,
+          AuditAction.DUES_ALLOCATION_CREATED,
+          'dues_allocation',
+          allocation.id,
+          null,
+          {
+            allocationId: allocation.id,
+            settlementId: claim.settlement.id,
+            obligationId: allocation.obligationId,
+            amountCents: allocation.amountCents,
           },
           now,
         )

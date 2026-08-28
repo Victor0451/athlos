@@ -39,6 +39,30 @@ it('rejects allocations that exceed the settlement value before claiming it',asy
 it('rejects duplicate legacy monetary allocations before claiming',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1_000},{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND});expect(repository.claimSettlement).not.toHaveBeenCalled()})
 // prettier-ignore
 it('rejects legacy monetary settlement before transaction, repository, or audit',async()=>{const database=db() as {transaction:Mock},repository={claimSettlement:vi.fn()},audit=auditLog(),service=new SettlementService(database as never,{repository,audit:audit.emit});await expect(service.create({...context,socioId:'socio-1',kind:'MONETARY',amountCents:1,currency:'ARS',evidence:{},allocations:[{obligationId:'obligation-1',amountCents:1}]})).rejects.toMatchObject({code:ErrorCode.NOT_FOUND});expect(database.transaction).not.toHaveBeenCalled();expect(repository.claimSettlement).not.toHaveBeenCalled();expect(audit.records).toEqual([])})
+it('rejects unauthorized settlement commands before persistence', async () => {
+  const repository = { claimSettlement: vi.fn(), insertAllocation: vi.fn() },
+    service = new SettlementService(db(), { repository, audit: auditLog().emit })
+  await expect(
+    service.create({
+      ...context,
+      role: 'OPERADOR',
+      socioId: 'socio-1',
+      kind: 'NON_CASH',
+      amountCents: 1_000,
+      currency: 'ARS',
+      evidence: { approval: 'fixture' },
+      reason: 'Approved settlement',
+      allocations: [{ obligationId: 'obligation-1', amountCents: 1_000 }],
+    }),
+  ).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+  expect(repository.claimSettlement).not.toHaveBeenCalled()
+})
+// prettier-ignore
+it('rejects allocations that exceed the settlement value before claiming it',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit}); await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:1_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-1',amountCents:1_001}]})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR}); expect(repository.claimSettlement).not.toHaveBeenCalled()})
+// prettier-ignore
+it('rejects duplicate obligation allocations before claiming an explicit settlement',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-1',amountCents:1_000},{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(repository.claimSettlement).not.toHaveBeenCalled()})
+// prettier-ignore
+it('returns an exact idempotent replay without inserting allocations or audit',async()=>{const audit=auditLog(),repository={claimSettlement:vi.fn().mockResolvedValue({status:'replayed',settlement:{id:'settlement-1',socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS'},allocations:[{id:'allocation-1',obligationId:'obligation-1',amountCents:2_000}]}),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:audit.emit}); await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-1',amountCents:2_000}]})).resolves.toMatchObject({settlementId:'settlement-1',allocations:[{id:'allocation-1'}]}); expect(repository.insertAllocation).not.toHaveBeenCalled(); expect(audit.records).toEqual([])})
 
 it('persists privacy-safe snapshots and reversal reason through the emitter fields', async () => {
   const audit = auditLog()
@@ -188,13 +212,14 @@ it('rejects amounts outside PostgreSQL numeric(14,2) bounds', async () => {
     service.create({
       ...context,
       socioId: 'socio-1',
-      kind: 'MONETARY',
+      kind: 'NON_CASH',
       amountCents: MAX_MONEY_CENTS + 1,
       currency: 'ARS',
-      evidence: {},
+      evidence: { approval: 'fixture' },
+      reason: 'Approved settlement',
       allocations: [{ obligationId: 'obligation-1', amountCents: MAX_MONEY_CENTS + 1 }],
     }),
-  ).rejects.toMatchObject({ code: ErrorCode.NOT_FOUND })
+  ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR })
   expect(repository.claimSettlement).not.toHaveBeenCalled()
 })
 
