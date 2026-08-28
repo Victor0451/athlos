@@ -10,7 +10,6 @@ import { CondonationExecutionService } from '../modules/dues/condonations.ts'
 import { getDebt } from '../modules/dues/allocations.ts'
 
 const testUrl = process.env.ATHLOS_TEST_DATABASE_URL
-const expectedUrl = 'postgresql://athlos:athlos@localhost:5432/postgres'
 const namePattern = /^athlos_condonation_execution_[0-9a-f]{32}$/
 const migrationFiles = [
   '0049_dues_pricing_obligations.sql',
@@ -140,12 +139,16 @@ async function approval(
 }
 
 beforeAll(async () => {
-  if (testUrl !== expectedUrl)
-    throw new Error('ATHLOS_TEST_DATABASE_URL must name local athlos-test-pg postgres')
+  const adminUrl = new URL(testUrl ?? 'invalid:')
+  if (
+    !/^postgres(?:ql)?:$/.test(adminUrl.protocol) ||
+    !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(adminUrl.hostname) ||
+    !/^(postgres|athlos_test)$/.test(adminUrl.pathname.slice(1))
+  )
+    throw new Error('ATHLOS_TEST_DATABASE_URL must name a local test PostgreSQL database')
   databaseName = `athlos_condonation_execution_${randomUUID().replaceAll('-', '')}`
   if (!namePattern.test(databaseName)) throw new Error('unsafe disposable database name')
-  const adminUrl = new URL(testUrl)
-  const disposableUrl = new URL(testUrl)
+  const disposableUrl = new URL(adminUrl)
   disposableUrl.pathname = `/${databaseName}`
   admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
   await admin.pool.query(`CREATE DATABASE "${databaseName}"`)
@@ -247,10 +250,7 @@ beforeAll(async () => {
       '{"inputs":{"currency":"ARS"}}',
     ],
   )
-  console.info(
-    { database: databaseName, container: 'athlos-test-pg', migrationHead: '0064' },
-    'condonation execution fixture',
-  )
+  console.info({ database: databaseName, migrationHead: '0064' }, 'condonation execution fixture')
 }, 60_000)
 
 afterAll(async () => {
@@ -266,10 +266,7 @@ afterAll(async () => {
     cleanup = 'dropped'
   } finally {
     await admin?.pool.end()
-    console.info(
-      { database: databaseName, container: 'athlos-test-pg', cleanup },
-      'condonation execution cleanup',
-    )
+    console.info({ database: databaseName, cleanup }, 'condonation execution cleanup')
   }
   if (closeError) throw closeError
 }, 60_000)
