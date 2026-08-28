@@ -232,6 +232,7 @@ describe('migrate:status', () => {
         '0056_cash_recovery_policy',
         '0057_cash_lifecycle_boundaries',
         '0058_dues_open_agreements',
+        '0059_collections_inscription_compatibility',
       ],
       divergence: [],
       exitCode: 1,
