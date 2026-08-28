@@ -11,6 +11,7 @@ import {
 } from './cash-desk.ts'
 import type { AuditContext } from './service.ts'
 import { assertGastoMutable } from '../../routes/admin/gastos.ts'
+import { disposableCashDatabase, dropDisposableCashDatabase } from './postgres-test-database.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let db: ReturnType<typeof createDb>
@@ -55,7 +56,7 @@ beforeAll(async () => {
   const isolatedUrl = new URL(url)
   isolatedUrl.pathname = `/${isolatedDatabaseName}`
   admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
-  await admin.pool.query(`CREATE DATABASE "${isolatedDatabaseName}"`)
+  await disposableCashDatabase(admin.pool, isolatedDatabaseName)
   db = createDb({ connectionString: isolatedUrl.toString(), poolMax: 8 })
   operatorId = randomUUID()
   secondOperatorId = randomUUID()
@@ -107,7 +108,7 @@ afterAll(async () => {
   await db?.pool.end()
   if (!admin || !isolatedDatabaseName) return
   try {
-    await admin.pool.query(`DROP DATABASE IF EXISTS "${isolatedDatabaseName}"`)
+    await dropDisposableCashDatabase(admin.pool, isolatedDatabaseName)
   } finally {
     await admin.pool.end()
   }
