@@ -334,7 +334,7 @@ describe('dues settlement reversal route', () => {
       'legacy allocation payload',
       auth('ADMIN', 'reverse-3'),
       { reason: 'Corrección', allocation_id: 'allocation-1' },
-      400,
+      404,
     ],
     [
       'caller amount payload',
