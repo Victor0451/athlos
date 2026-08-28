@@ -172,6 +172,28 @@ export type CloseCashCommand = CashCommand & {
 
 const settlementTenders = new Set(['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'])
 
+export async function validateSettlementShiftInTransaction(
+  db: CashDb,
+  input: Pick<SettlementTenderInput, 'shiftId' | 'actorId' | 'role'>,
+) {
+  const shift = rows(
+    await db.execute(
+      sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE id = ${input.shiftId} FOR UPDATE`,
+    ),
+  )[0]
+  if (!shift) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
+  if (shift.status !== 'OPEN')
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
+  if (shift.assigned_operator_id !== input.actorId && input.role !== 'ADMIN')
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Cash shift responsibility does not match the operator',
+    )
+  const openedAt = new Date(shift.opened_at)
+  if (Date.now() < openedAt.getTime() || Date.now() > openedAt.getTime() + 24 * 60 * 60 * 1000)
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shifts cannot remain open longer than 24 hours')
+}
+
 export async function recordSettlementTenderInTransaction(
   db: CashDb,
   input: SettlementTenderInput,
@@ -194,24 +216,7 @@ export async function recordSettlementTenderInTransaction(
     }
     return responseTender(replay)
   }
-  const shift = rows(
-    await db.execute(
-      sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE id = ${input.shiftId} FOR UPDATE`,
-    ),
-  )[0]
-  if (!shift) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
-  if (shift.status !== 'OPEN')
-    throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
-  if (shift.assigned_operator_id !== input.actorId && input.role !== 'ADMIN') {
-    throw BusinessError(
-      ErrorCode.INSUFFICIENT_PERMISSIONS,
-      'Cash shift responsibility does not match the operator',
-    )
-  }
-  const openedAt = new Date(shift.opened_at)
-  if (Date.now() < openedAt.getTime() || Date.now() > openedAt.getTime() + 24 * 60 * 60 * 1000) {
-    throw BusinessError(ErrorCode.CONFLICT, 'Cash shifts cannot remain open longer than 24 hours')
-  }
+  await validateSettlementShiftInTransaction(db, input)
   const settlement = rows(
     await db.execute(
       sql`SELECT kind,amount::text FROM tesoreria.dues_settlements WHERE id = ${input.settlementId}`,
