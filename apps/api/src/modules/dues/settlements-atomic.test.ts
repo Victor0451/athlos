@@ -2,10 +2,11 @@ import { expect, it, vi } from 'vitest'
 import { AuditAction } from '@athlos/audit'
 import { SettlementService } from './settlements.ts'
 
-const seam = vi.hoisted(() => ({ shift: vi.fn(), tender: vi.fn() }))
+const seam = vi.hoisted(() => ({ shift: vi.fn(), tender: vi.fn(), reversalTender: vi.fn() }))
 vi.mock('./cash-desk.ts', () => ({
   validateSettlementShiftInTransaction: seam.shift,
   recordSettlementTenderInTransaction: seam.tender,
+  recordReversalSettlementTenderInTransaction: seam.reversalTender,
 }))
 
 const command = {
@@ -68,6 +69,9 @@ it.each(['selection', 'claim', 'allocation', 'tender', 'audit'] as const)(
       calls.push('tender')
       if (failure === 'tender') await fail()
     })
+    seam.reversalTender.mockImplementation(async () => {
+      calls.push('reversal-tender')
+    })
     const audit = vi.fn(async (_: unknown, event: { action: string }) => {
       calls.push(event.action)
       if (failure === 'audit') await fail()
@@ -82,5 +86,6 @@ it.each(['selection', 'claim', 'allocation', 'tender', 'audit'] as const)(
       expect.arrayContaining([failure === 'audit' ? AuditAction.DUES_SETTLEMENT_CREATED : failure]),
     )
     if (failure !== 'audit') expect(calls.at(-1)).toBe(failure)
+    expect(calls).not.toContain('reversal-tender')
   },
 )
