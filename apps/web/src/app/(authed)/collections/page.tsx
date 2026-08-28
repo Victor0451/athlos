@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
+import { collectionSectionClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
 import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
@@ -521,20 +522,32 @@ export default function CollectionsPage() {
   }
 
   return (
-    <main aria-labelledby="collections-title" className="space-y-6">
-      <header>
-        <h1 id="collections-title" className="font-display text-2xl font-bold text-ink-900">
+    <main
+      aria-labelledby="collections-title"
+      className="min-w-0 space-y-8 bg-surface-page p-4 sm:p-6"
+    >
+      <header className="space-y-2 border-b border-ink-200 pb-6">
+        <p className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-accent">
+          Gestión operativa
+        </p>
+        <h1
+          id="collections-title"
+          className="font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl"
+        >
           Cobranza
         </h1>
+        <p className="max-w-2xl font-body text-sm leading-6 text-ink-500">
+          Configurá cuotas y consultá evaluaciones antes de gestionar la deuda de cada socio.
+        </p>
       </header>
-      <section aria-labelledby="collections-workspace-title">
+      <section aria-labelledby="collections-workspace-title" className="space-y-4">
         <h2
           id="collections-workspace-title"
-          className="font-display text-lg font-semibold text-ink-900"
+          className="font-display text-xl font-semibold text-ink-900"
         >
           Espacio de trabajo de cobranzas
         </h2>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
           {user?.role === 'ADMIN' ? (
             <PricingPanel
               prices={prices}
@@ -547,11 +560,16 @@ export default function CollectionsPage() {
               onRevoke={revokePrice}
             />
           ) : (
-            <section aria-labelledby="pricing-readonly-title">
-              <h3 id="pricing-readonly-title">Configuración de cuotas</h3>
-              <p role="status">
+            <section aria-labelledby="pricing-readonly-title" className={collectionSectionClass}>
+              <h3
+                id="pricing-readonly-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Configuración de cuotas
+              </h3>
+              <CollectionStatus>
                 La administración de cuotas está disponible solo para operadores ADMIN.
-              </p>
+              </CollectionStatus>
             </section>
           )}
           <AssessmentPreviewPanel
