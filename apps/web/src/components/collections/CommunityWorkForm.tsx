@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Modal } from '@/components/ui/Modal'
+import {
+  collectionButtonClass,
+  collectionFieldClass,
+  collectionInlineStatusClass,
+} from './CollectionPrimitives'
 
 export interface CommunityWorkDraft {
   amountCents: number
@@ -41,41 +46,65 @@ export function CommunityWorkForm({
       descriptionId="community-work-guidance"
       footer={
         <>
-          <button type="button" onClick={onCancel} disabled={busy}>
+          <button
+            className={collectionButtonClass.secondary}
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+          >
             Cancelar
           </button>
-          <button type="submit" form={formId} disabled={busy}>
+          <button
+            className={collectionButtonClass.primary}
+            type="submit"
+            form={formId}
+            disabled={busy}
+          >
             {busy ? 'Confirmando trabajo comunitario…' : 'Confirmar trabajo comunitario'}
           </button>
         </>
       }
     >
-      <form id={formId} noValidate onSubmit={(event) => void submit(event)} className="space-y-4">
-        <p id="community-work-guidance" role="status">
+      <form id={formId} noValidate onSubmit={(event) => void submit(event)} className="space-y-5">
+        <p
+          id="community-work-guidance"
+          role="status"
+          className="border-l-2 border-info bg-info-soft px-3 py-2 font-body text-sm text-ink-900"
+        >
           La deuda cambia solo después de confirmar el trabajo comunitario y validar la asignación.
         </p>
         {message && (
-          <p ref={alertRef} role="alert" tabIndex={-1} aria-live="assertive">
+          <p
+            ref={alertRef}
+            role="alert"
+            tabIndex={-1}
+            aria-live="assertive"
+            className={collectionInlineStatusClass('error')}
+          >
             {message}
           </p>
         )}
-        <label>
-          Valor aprobado (centavos)
-          <input
-            required
-            min={1}
-            step={1}
-            type="number"
-            value={draft.amountCents}
-            aria-invalid={Boolean(
-              validationError && (!draft.amountCents || Number(draft.amountCents) <= 0),
-            )}
-            onChange={(event) => setDraft({ ...draft, amountCents: event.target.value })}
-          />
-        </label>
-        <label>
-          Evidencia del trabajo aceptado
+        <div className="grid gap-5 border-t border-ink-100 pt-4 sm:grid-cols-2">
+          <label className="grid gap-2 font-body text-sm font-medium text-ink-900">
+            <span>Valor aprobado (centavos)</span>
+            <input
+              className={`${collectionFieldClass} font-mono tabular-nums`}
+              required
+              min={1}
+              step={1}
+              type="number"
+              value={draft.amountCents}
+              aria-invalid={Boolean(
+                validationError && (!draft.amountCents || Number(draft.amountCents) <= 0),
+              )}
+              onChange={(event) => setDraft({ ...draft, amountCents: event.target.value })}
+            />
+          </label>
+        </div>
+        <label className="grid gap-2 border-t border-ink-100 pt-4 font-body text-sm font-medium text-ink-900">
+          <span>Evidencia del trabajo aceptado</span>
           <textarea
+            className={`${collectionFieldClass} min-h-28 py-3`}
             required
             maxLength={4000}
             value={draft.evidence}
@@ -83,9 +112,10 @@ export function CommunityWorkForm({
             onChange={(event) => setDraft({ ...draft, evidence: event.target.value })}
           />
         </label>
-        <label>
-          Motivo de la aceptación
+        <label className="grid gap-2 border-t border-ink-100 pt-4 font-body text-sm font-medium text-ink-900">
+          <span>Motivo de la aceptación</span>
           <textarea
+            className={`${collectionFieldClass} min-h-24 py-3`}
             required
             maxLength={500}
             value={draft.reason}
