@@ -10,7 +10,10 @@ type DuesDb = Db | allocations.DuesDb
 type Json = Record<string, unknown>
 type AuditEmitter = (db: DuesDb, record: AuditRecord) => Promise<EmitAuditResult>
 type Repository = Partial<
-  Pick<typeof allocations, 'claimSettlement' | 'insertAllocation' | 'findAllocation' | 'getDebt'>
+  Pick<
+    typeof allocations,
+    'claimSettlement' | 'insertAllocation' | 'findAllocation' | 'getDebt' | 'selectFullOutstanding'
+  >
 >
 type Dependencies = { repository?: Repository; audit?: AuditEmitter; now?: () => Date }
 
@@ -22,6 +25,18 @@ export type SettlementCommand = AuditContext & {
   evidence: Json
   reason?: string
   allocations: Array<{ obligationId: string; amountCents: number }>
+}
+export type FullSelectionTender = 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER'
+export type FullSelectionPaymentCommand = AuditContext & {
+  socioId: string
+  obligationIds: string[]
+  shiftId: string
+  tender: FullSelectionTender
+  selectionFingerprint: string
+}
+export type FullSelectionPaymentPreparation = {
+  command: FullSelectionPaymentCommand
+  selection: allocations.FullOutstandingSelection
 }
 export type ReverseSettlementCommand = AuditContext & {
   settlementId: string
@@ -91,6 +106,9 @@ const isAllocationBalanceConstraint = (error: unknown) => {
   )
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const fullSelectionTenders = new Set<FullSelectionTender>(['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'])
+
 const result = (
   settlement: allocations.SettlementRecord,
   items: allocations.AllocationRecord[],
@@ -117,6 +135,8 @@ export class SettlementService {
   }
 
   async create(input: SettlementCommand): Promise<SettlementResult> {
+    if (input.kind === 'MONETARY')
+      throw BusinessError(ErrorCode.NOT_FOUND, 'Monetary settlement creation is unavailable')
     authorize(input.role)
     if (
       !Number.isSafeInteger(input.amountCents) ||
@@ -209,6 +229,49 @@ export class SettlementService {
         )
       return result(claim.settlement, created)
     })
+  }
+
+  async prepareFullSelectionPayment(
+    input: FullSelectionPaymentCommand,
+  ): Promise<FullSelectionPaymentPreparation> {
+    const allowed = new Set([
+      'actorId',
+      'role',
+      'permissions',
+      'sourceIp',
+      'callerKey',
+      'requestFingerprint',
+      'authorizationEvidence',
+      'socioId',
+      'obligationIds',
+      'shiftId',
+      'tender',
+      'selectionFingerprint',
+    ])
+    if (
+      Object.keys(input).some((key) => !allowed.has(key)) ||
+      !uuidPattern.test(input.socioId) ||
+      !uuidPattern.test(input.shiftId) ||
+      !/^[a-f0-9]{64}$/.test(input.selectionFingerprint) ||
+      !fullSelectionTenders.has(input.tender) ||
+      !input.obligationIds.length ||
+      input.obligationIds.some((id) => !uuidPattern.test(id)) ||
+      new Set(input.obligationIds).size !== input.obligationIds.length
+    )
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Full selection payment command is invalid')
+    authorize(input.role)
+    const command = { ...input, obligationIds: [...input.obligationIds].sort() }
+    return this.db.transaction(async (tx) => ({
+      command,
+      selection: await (this.repository.selectFullOutstanding ?? allocations.selectFullOutstanding)(
+        tx,
+        {
+          socioId: command.socioId,
+          obligationIds: command.obligationIds,
+          selectionFingerprint: command.selectionFingerprint,
+        },
+      ),
+    }))
   }
 
   async reverse(input: ReverseSettlementCommand): Promise<SettlementResult> {

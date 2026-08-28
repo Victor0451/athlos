@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
@@ -29,6 +30,18 @@ export type DebtAllocation={id:string;settlementId:string;settlementKind:Settlem
 export type DebtObligation={id:string;periodStart:string;periodEnd:string;originalCents:number;outstandingCents:number;currency:string;status:'OPEN'|'PAID';components:DebtComponent[];benefits:Array<Pick<DebtComponent,'id'|'componentKey'|'amountCents'>>;allocations:DebtAllocation[]}
 // prettier-ignore
 export type DebtDetail={status:DebtStatus;socioId:string;currency:string|null;totalCents:number;obligations:DebtObligation[]}
+export type FullOutstandingSelectionCommand = {
+  socioId: string
+  obligationIds: string[]
+  selectionFingerprint?: string
+}
+export type FullOutstandingSelection = {
+  socioId: string
+  currency: string
+  totalCents: number
+  allocations: Array<{ obligationId: string; amountCents: number }>
+  fingerprint: string
+}
 const rows = <T>(value: unknown) => (value as { rows?: T[] }).rows ?? []
 const jsonRows = <T>(value: unknown): T[] => (Array.isArray(value) ? value : []) as T[]
 const money = (cents: number) => (cents / 100).toFixed(2)
@@ -46,6 +59,55 @@ const settlementFields = sql`id, socio_id AS "socioId", kind, amount::text, btri
 const allocationFields = sql`id, settlement_id AS "settlementId", obligation_id AS "obligationId", kind, amount::text, compensates_allocation_id AS "compensatesAllocationId"`
 // prettier-ignore
 export async function listAllocations(db:DuesDb, settlementId:string):Promise<AllocationRecord[]> { return rows<Parameters<typeof allocation>[0]>(await db.execute(sql`SELECT ${allocationFields} FROM tesoreria.dues_allocations WHERE settlement_id = ${settlementId} ORDER BY created_at, id`)).map(allocation) }
+export async function selectFullOutstanding(
+  db: DuesDb,
+  input: FullOutstandingSelectionCommand,
+): Promise<FullOutstandingSelection> {
+  const ids = [...input.obligationIds].sort()
+  if (!ids.length || new Set(ids).size !== ids.length)
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'La selección debe indicar obligaciones únicas')
+  const locked = rows<{ id: string; socioId: string; currency: string; outstanding: string }>(
+    await db.execute(
+      sql`SELECT o.id,o.socio_id AS "socioId",COALESCE(NULLIF(o.snapshot #>> '{inputs,currency}',''),'ARS') AS currency,(o.amount-COALESCE((SELECT SUM(CASE WHEN a.kind='ALLOCATION' THEN a.amount ELSE -a.amount END) FROM tesoreria.dues_allocations a WHERE a.obligation_id=o.id),0))::text AS outstanding FROM tesoreria.dues_obligations o WHERE o.id IN (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`,`,
+      )}) ORDER BY o.id FOR UPDATE`,
+    ),
+  )
+  if (locked.length !== ids.length || locked.some((row) => row.socioId !== input.socioId))
+    throw BusinessError(ErrorCode.CONFLICT, 'La selección no pertenece al socio')
+  locked.sort((left, right) => left.id.localeCompare(right.id))
+  const currencies = new Set(locked.map((row) => row.currency))
+  const allocations = locked.map((row) => ({
+    obligationId: row.id,
+    amountCents: cents(row.outstanding),
+  }))
+  if (
+    currencies.size !== 1 ||
+    allocations.some(
+      (item) =>
+        !Number.isSafeInteger(item.amountCents) ||
+        item.amountCents <= 0 ||
+        item.amountCents > MAX_MONEY_CENTS,
+    )
+  )
+    throw BusinessError(ErrorCode.CONFLICT, 'La selección no tiene saldos abiertos compatibles')
+  const totalCents = allocations.reduce((total, item) => total + item.amountCents, 0)
+  if (!Number.isSafeInteger(totalCents) || totalCents <= 0 || totalCents > MAX_MONEY_CENTS)
+    throw BusinessError(ErrorCode.CONFLICT, 'La selección no tiene un total válido')
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ socioId: input.socioId, currency: [...currencies][0], allocations }))
+    .digest('hex')
+  if (input.selectionFingerprint && input.selectionFingerprint !== fingerprint)
+    throw BusinessError(ErrorCode.CONFLICT, 'La selección cambió; revisá los saldos')
+  return {
+    socioId: input.socioId,
+    currency: [...currencies][0]!,
+    totalCents,
+    allocations,
+    fingerprint,
+  }
+}
 // prettier-ignore
 export async function claimSettlement(db:DuesDb, input:SettlementInput):Promise<SettlementClaim> { const inserted = rows<Parameters<typeof settlement>[0]>(await db.execute(sql`INSERT INTO tesoreria.dues_settlements (socio_id,kind,amount,currency,evidence,reason,reversal_of_settlement_id,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES (${input.socioId},${input.kind},${money(input.amountCents)},${input.currency},${JSON.stringify(input.evidence)}::jsonb,${input.reason ?? null},${input.reversalOfSettlementId ?? null},${input.operatorId},${JSON.stringify(input.authorizationEvidence)}::jsonb,${input.callerKey},${input.requestFingerprint}) ON CONFLICT (operator_id,caller_key) DO NOTHING RETURNING ${settlementFields}`))[0]; if (inserted) return { status:'claimed', settlement:settlement(inserted) }; const existing = rows<Parameters<typeof settlement>[0]>(await db.execute(sql`SELECT ${settlementFields} FROM tesoreria.dues_settlements WHERE operator_id = ${input.operatorId} AND caller_key = ${input.callerKey}`))[0]; if (!existing) throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Settlement claim is unavailable'); const fingerprint = rows<{requestFingerprint:string}>(await db.execute(sql`SELECT request_fingerprint AS "requestFingerprint" FROM tesoreria.dues_settlements WHERE id = ${existing.id}`))[0]?.requestFingerprint; if (fingerprint !== input.requestFingerprint) throw BusinessError(ErrorCode.CONFLICT, 'Idempotency key was already used for a different settlement'); return { status:'replayed', settlement:settlement(existing), allocations:await listAllocations(db, existing.id) } }
 // prettier-ignore
