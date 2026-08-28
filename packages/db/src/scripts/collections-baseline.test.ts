@@ -96,6 +96,9 @@ describe('Collections migration baseline', () => {
       "data_type = 'timestamp with time zone' AND is_nullable = 'NO' AND column_default = 'now()'",
     )
     expect(sql).toContain('con.convalidated')
+    expect(await readFile(`${drizzleDir}/../../../docker-entrypoint.sh`, 'utf8')).toContain(
+      'collections:baseline --post-migration',
+    )
   })
 
   it('fails closed for hash, timestamp, partial schema, and validation mismatches', async () => {
