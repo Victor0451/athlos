@@ -24,7 +24,15 @@ const preview = {
   sourceSnapshot: { prices: [] },
 }
 const apps: FastifyInstance[] = []
-async function app(service = { preview: vi.fn().mockResolvedValue(preview), generate: vi.fn() }) {
+async function app(
+  service = {
+    preview: vi.fn().mockResolvedValue(preview),
+    executeRange: vi
+      .fn()
+      .mockResolvedValue({ createdObligationIds: ['ob-2'], periods: ['2026-02'] }),
+    generate: vi.fn(),
+  },
+) {
   const value = Fastify()
   const env = { ...mockEnv(), DUES_ASSESSMENT_ENABLED: true }
   value.decorate('container', {
@@ -81,6 +89,30 @@ describe('dues assessment preview route', () => {
     expect(response.statusCode).toBe(400)
     expect(service.preview).not.toHaveBeenCalled()
   })
+  it('executes only a reviewed range with a caller idempotency key', async () => {
+    const { value, service } = await app()
+    const response = await value.inject({
+      method: 'POST',
+      url: '/api/v1/dues/assessments/execute',
+      headers: { ...auth('ADMIN'), 'idempotency-key': 'range-execution-key' },
+      payload: {
+        socio_id: memberId,
+        from_period: '2026-01',
+        through_period: '2026-02',
+        preview_fingerprint: 'a'.repeat(64),
+      },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ created_obligation_ids: ['ob-2'], periods: ['2026-02'] })
+    expect(service.executeRange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        socioId: memberId,
+        previewFingerprint: 'a'.repeat(64),
+        callerKey: 'range-execution-key',
+      }),
+    )
+  })
+
   it('denies non-finance actors and never exposes an execution endpoint', async () => {
     const { value, service } = await app()
     const denied = await value.inject({
@@ -91,6 +123,6 @@ describe('dues assessment preview route', () => {
     })
     expect(denied.statusCode).toBe(403)
     expect(service.preview).not.toHaveBeenCalled()
-    expect(value.printRoutes()).not.toContain('/api/v1/dues/assessments/execute')
+    expect(value.printRoutes()).toContain('execute (POST)')
   })
 })

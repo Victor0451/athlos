@@ -315,6 +315,9 @@ export async function finalizeReceipt(
 export function lockPeriod(db: DuesDb, periodStart: string): Promise<unknown> {
   return db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${periodStart}))`)
 }
+export function lockRange(db: DuesDb, socioId: string): Promise<unknown> {
+  return db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${socioId}))`)
+}
 
 // prettier-ignore
 export type EligibleEnrollment = { id: string; disciplinaId: string; estado: string; fechaAlta: string; fechaBaja: string | null; eligibleFrom: string; eligibleTo: string }
@@ -461,8 +464,11 @@ async function insertObligationRows(db: DuesDb, input: ObligationInput) {
   )
   return { obligation, components }
 }
-export function insertObligation(db: DuesDb, input: ObligationInput) {
-  return db.transaction((tx) => insertObligationRows(tx, input))
+export function insertObligationInTransaction(db: DuesDb, input: ObligationInput) {
+  return insertObligationRows(db, input)
+}
+export function insertObligation(db: Db, input: ObligationInput) {
+  return db.transaction((tx) => insertObligationInTransaction(tx, input))
 }
 export async function findObligation(db: DuesDb, socioId: string, periodStart: string) {
   const obligation = rows<StoredObligation>(
