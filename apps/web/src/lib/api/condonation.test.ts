@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const apiFetchMock = vi.fn()
 vi.mock('@/lib/api', () => ({ apiFetch: apiFetchMock, ApiError: class ApiError extends Error {} }))
 
-const { createCondonationRequest, decideCondonationRequest, listCondonationLifecycle } =
-  await import('./condonation')
+const {
+  createCondonationRequest,
+  decideCondonationRequest,
+  executeCondonationRequest,
+  listCondonationLifecycle,
+} = await import('./condonation')
 
 describe('condonation client', () => {
   beforeEach(() => apiFetchMock.mockReset())
@@ -24,6 +28,37 @@ describe('condonation client', () => {
   it('fails closed when a successful response is malformed', async () => {
     apiFetchMock.mockResolvedValue({ id: 'request-1', status: 'forgiven' })
     await expect(createCondonationRequest({ member_id: 'member-1', obligation_ids: ['a'], context: 'Debt review', reason: 'Hardship', evidence: 'Minutes 12' }, 'request-key')).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+
+  it('posts only the persisted execution identity with its caller-owned idempotency key', async () => {
+    apiFetchMock.mockResolvedValue({
+      execution_id: '00000000-0000-4000-8000-000000000002',
+      approval_id: '00000000-0000-4000-8000-000000000001',
+      member_id: '00000000-0000-4000-8000-000000000003',
+      currency: 'ARS',
+      approved_amount_cents: 12500,
+      treatment_ids: ['00000000-0000-4000-8000-000000000004'],
+      status: 'replayed',
+    })
+    await expect(
+      executeCondonationRequest(
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002',
+        'execution-key',
+      ),
+    ).resolves.toMatchObject({ status: 'replayed' })
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000001/execution',
+      {
+        method: 'POST',
+        headers: { 'idempotency-key': 'execution-key' },
+        body: { execution_id: '00000000-0000-4000-8000-000000000002' },
+      },
+    )
+    apiFetchMock.mockResolvedValue({ execution_id: 'bad' })
+    await expect(
+      executeCondonationRequest('request', 'execution', 'execution-key'),
+    ).rejects.toMatchObject({ kind: 'partial_data' })
   })
 
   it('strictly decodes persisted lifecycle states and rejects unsafe fields', async () => {
