@@ -1,7 +1,7 @@
 import type { Db } from '@athlos/db'
 import { approvalTokens, type ApprovalToken } from '@athlos/db/schema'
 import { and, eq, gt, isNull } from 'drizzle-orm'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import { generateApprovalToken, hashApprovalToken } from './token.ts'
 
@@ -31,7 +31,6 @@ export interface CreateApprovalLinkRequest {
 export type ApprovalTokenRecord = ApprovalToken
 
 export interface CondonationSnapshot {
-  clubId: string
   memberId: string
   obligations: Array<{ obligationId: string; currency: string; outstandingAmountCents: number }>
 }
@@ -45,6 +44,7 @@ export interface CreateCondonationApprovalRequest {
   snapshot: CondonationSnapshot
   reason: string
   evidence: string
+  callerKey: string
   expiresInHours?: number
 }
 
@@ -60,7 +60,6 @@ function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {
   const ids = new Set(snapshot.obligations.map((obligation) => obligation.obligationId))
   const currencies = new Set(snapshot.obligations.map((obligation) => obligation.currency))
   if (
-    !snapshot.clubId ||
     !snapshot.memberId ||
     snapshot.obligations.length === 0 ||
     ids.size !== snapshot.obligations.length ||
@@ -77,35 +76,102 @@ function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {
   }
 }
 
+export function condonationRequestFingerprint(req: CreateCondonationApprovalRequest): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        requesterId: req.requesterId,
+        contextSummary: req.contextSummary,
+        approverChannel: req.approverChannel,
+        approverAddress: req.approverAddress,
+        snapshot: {
+          memberId: req.snapshot.memberId,
+          obligations: [...req.snapshot.obligations].sort((left, right) =>
+            left.obligationId.localeCompare(right.obligationId),
+          ),
+        },
+        reason: req.reason,
+        evidence: req.evidence,
+      }),
+    )
+    .digest('hex')
+}
+
+export async function findCondonationRequest(db: Db, requesterId: string, callerKey: string) {
+  const [row] = await db
+    .select()
+    .from(approvalTokens)
+    .where(
+      and(
+        eq(approvalTokens.actionType, 'dues.condonation'),
+        eq(approvalTokens.createdByOperatorId, requesterId),
+        eq(approvalTokens.callerKey, callerKey),
+      ),
+    )
+    .limit(1)
+  return row
+}
+
 /** Persist a financially inert, immutable condonation request in approval_tokens. */
 export async function createCondonationApprovalRequest(
   db: Db,
   req: CreateCondonationApprovalRequest,
-): Promise<{ raw: string; expiresAt: Date; record: ApprovalToken }> {
+): Promise<{ expiresAt: Date; record: ApprovalToken }> {
   assertCondonationSnapshot(req.snapshot)
-  if (!req.requestId || !req.contextSummary || !req.reason || !req.evidence) {
+  if (
+    !req.requestId ||
+    !req.contextSummary ||
+    !req.reason ||
+    !req.evidence ||
+    !req.callerKey.trim()
+  ) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Condonation request details are required')
   }
-  const { raw, hash } = generateApprovalToken()
+  const requestFingerprint = condonationRequestFingerprint(req)
+  const existing = await findCondonationRequest(db, req.requesterId, req.callerKey)
+  if (existing) {
+    if (existing.requestFingerprint !== requestFingerprint)
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different request',
+      )
+    return { expiresAt: existing.expiresAt, record: existing }
+  }
+  const { hash } = generateApprovalToken()
   const expiresAt = new Date(Date.now() + (req.expiresInHours ?? 48) * 60 * 60 * 1000)
-  const [row] = await db
-    .insert(approvalTokens)
-    .values({
-      tokenHash: hash,
-      actionType: 'dues.condonation',
-      actionId: req.requestId,
-      contextSummary: req.contextSummary,
-      createdByOperatorId: req.requesterId,
-      approverChannel: req.approverChannel,
-      approverAddress: req.approverAddress,
-      expiresAt,
-      condonationSnapshot: req.snapshot,
-      requestReason: req.reason,
-      requestEvidence: req.evidence,
-    })
-    .returning()
+  let row: ApprovalToken | undefined
+  try {
+    ;[row] = await db
+      .insert(approvalTokens)
+      .values({
+        tokenHash: hash,
+        actionType: 'dues.condonation',
+        actionId: req.requestId,
+        contextSummary: req.contextSummary,
+        createdByOperatorId: req.requesterId,
+        approverChannel: req.approverChannel,
+        approverAddress: req.approverAddress,
+        expiresAt,
+        condonationSnapshot: req.snapshot,
+        requestReason: req.reason,
+        requestEvidence: req.evidence,
+        callerKey: req.callerKey,
+        requestFingerprint,
+      })
+      .returning()
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error
+    const raced = await findCondonationRequest(db, req.requesterId, req.callerKey)
+    if (!raced) throw error
+    if (raced.requestFingerprint !== requestFingerprint)
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different request',
+      )
+    return { expiresAt: raced.expiresAt, record: raced }
+  }
   if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'approval_tokens insert returned no row')
-  return { raw, expiresAt, record: row }
+  return { expiresAt, record: row }
 }
 
 function isExactDecision(row: ApprovalToken, input: CondonationDecision): boolean {

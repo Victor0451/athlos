@@ -176,6 +176,16 @@ const APPROVAL_SQL_TO_JS: Record<string, keyof ApprovalTokenRow> = {
   expires_at: 'expiresAt',
   used_at: 'usedAt',
   status: 'status',
+  condonation_snapshot: 'condonationSnapshot',
+  request_reason: 'requestReason',
+  request_evidence: 'requestEvidence',
+  decided_by_operator_id: 'decidedByOperatorId',
+  decision_reason: 'decisionReason',
+  decision_evidence: 'decisionEvidence',
+  decided_at: 'decidedAt',
+  execution_id: 'executionId',
+  caller_key: 'callerKey',
+  request_fingerprint: 'requestFingerprint',
   created_at: 'createdAt',
 }
 
@@ -723,6 +733,17 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         expiresAt: v['expiresAt']!,
         usedAt: (v['usedAt'] as Date | null) ?? null,
         status: (v['status'] as ApprovalTokenRow['status']) ?? 'pending',
+        condonationSnapshot:
+          (v['condonationSnapshot'] as ApprovalTokenRow['condonationSnapshot']) ?? null,
+        requestReason: (v['requestReason'] as string | null) ?? null,
+        requestEvidence: (v['requestEvidence'] as string | null) ?? null,
+        decidedByOperatorId: (v['decidedByOperatorId'] as string | null) ?? null,
+        decisionReason: (v['decisionReason'] as string | null) ?? null,
+        decisionEvidence: (v['decisionEvidence'] as string | null) ?? null,
+        decidedAt: (v['decidedAt'] as Date | null) ?? null,
+        executionId: (v['executionId'] as string | null) ?? null,
+        callerKey: (v['callerKey'] as string | null) ?? null,
+        requestFingerprint: (v['requestFingerprint'] as string | null) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as ApprovalTokenRow
     }

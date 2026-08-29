@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { PricingPanel } from '@/components/collections/PricingPanel'
+import type { CurrentUser } from '@/lib/auth'
 import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
@@ -52,9 +53,17 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 
 describe('Collections navigation and direct access', () => {
   it('shows enabled ADMIN/TESORERO navigation and denies disabled or other roles', () => {
-    const admin = { role: 'ADMIN', permissions: { data_steward: false } } as never
-    const consulta = { role: 'CONSULTA', permissions: { data_steward: false } } as never
+    const admin: CurrentUser = {
+      operator_id: 'operator-1',
+      role: 'ADMIN',
+      username: 'admin',
+      permissions: { can_reprint: false, can_anulate: false, data_steward: false },
+    }
+    const consulta: CurrentUser = { ...admin, role: 'CONSULTA' }
     expect(visibleNavigation(admin, { collectionsEnabled: true })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ href: '/collections' })]),
+    )
+    expect(visibleNavigation({ ...admin, role: 'OPERADOR' }, { collectionsEnabled: true })).toEqual(
       expect.arrayContaining([expect.objectContaining({ href: '/collections' })]),
     )
     expect(visibleNavigation(consulta, { collectionsEnabled: true })).not.toEqual(
@@ -70,11 +79,11 @@ describe('Collections navigation and direct access', () => {
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
   })
 
-  it('denies direct access when disabled or unauthorized', () => {
+  it('denies direct access when disabled but admits OPERADOR to request-only Collections', () => {
     renderPage(false, 'ADMIN')
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
     renderPage(true, 'OPERADOR')
-    expect(screen.getByText('No tenés permiso para usar la cobranza.')).toBeInTheDocument()
+    expect(screen.getByRole('main', { name: /cobranza/i })).toBeInTheDocument()
   })
 
   it('requires both Collections Web and agreements flags for agreement actions', async () => {
@@ -358,7 +367,7 @@ describe('community-work evidence settlement', () => {
   // prettier-ignore
   const openForm = async () => { const user = userEvent.setup(); renderPage(true, 'ADMIN', true); await user.type(screen.getByLabelText('Buscar socio'), 'Ana'); await user.click(screen.getByRole('button', { name: 'Buscar socio' })); await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ })); await user.click(await screen.findByRole('button', { name: /registrar trabajo comunitario/i })); return user }
   // prettier-ignore
-  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada'); await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
+  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
 
   it('links the active agreement, reuses the draft key, and refreshes debt only after confirmation', async () => {
     prepare()
@@ -400,7 +409,7 @@ describe('community-work evidence settlement', () => {
         )
       }
       const user = await openForm()
-      const evidence = screen.getByLabelText(/evidencia/i)
+      const evidence = screen.getByLabelText('Evidencia del trabajo aceptado')
       await completeDraft(user)
 
       await waitFor(() =>

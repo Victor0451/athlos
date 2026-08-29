@@ -62,6 +62,8 @@ function seedApprovalToken(
     decisionEvidence: overrides.decisionEvidence ?? null,
     decidedAt: overrides.decidedAt ?? null,
     executionId: overrides.executionId ?? null,
+    callerKey: overrides.callerKey ?? null,
+    requestFingerprint: overrides.requestFingerprint ?? null,
     createdAt: overrides.createdAt ?? new Date(),
   })
   return standin.state.approvalTokens[standin.state.approvalTokens.length - 1]!

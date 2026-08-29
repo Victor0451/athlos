@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { createStandinDb } from '../test-standins/db.ts'
 import { buildServer } from '../server.ts'
 import type { FastifyInstance } from 'fastify'
@@ -6,6 +6,14 @@ import type { Env } from '@athlos/config'
 import type { Db } from '@athlos/db'
 import type { ApprovalToken } from '@athlos/db/schema'
 import { generateApprovalToken } from '@athlos/approval'
+import { signAccessToken } from '@athlos/auth'
+import { selectFullOutstanding } from '../modules/dues/allocations.ts'
+import type * as AllocationsModule from '../modules/dues/allocations.ts'
+
+vi.mock('../modules/dues/allocations.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof AllocationsModule>()),
+  selectFullOutstanding: vi.fn(),
+}))
 
 /**
  * HTTP-level tests for the approval routes.
@@ -82,9 +90,29 @@ function makeApprovalRow(overrides: Partial<ApprovalToken> = {}): ApprovalToken 
     decisionEvidence: null,
     decidedAt: null,
     executionId: null,
+    callerKey: null,
+    requestFingerprint: null,
     createdAt: new Date(),
     ...overrides,
   }
+}
+
+const memberId = '00000000-0000-4000-8000-000000000010'
+const obligationId = '00000000-0000-4000-8000-000000000020'
+const requesterId = '00000000-0000-4000-8000-000000000030'
+const approverId = '00000000-0000-4000-8000-000000000040'
+const auth = (role: 'ADMIN' | 'TESORERO' | 'OPERADOR', sub = requesterId) => ({
+  authorization: `Bearer ${signAccessToken(
+    { sub, role, permissions: { can_reprint: false, can_anulate: false } },
+    makeEnv(),
+  )}`,
+})
+const condonationPayload = {
+  member_id: memberId,
+  obligation_ids: [obligationId],
+  context: 'Verified hardship case',
+  reason: 'Documented hardship',
+  evidence: 'case-123',
 }
 
 describe('GET /api/v1/approval/:token', () => {
@@ -233,6 +261,125 @@ describe('POST /api/v1/approval/:token', () => {
         payload: { decision: 'approve' },
       })
       expect(second.statusCode).toBe(410)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('authenticated condonation requests and decisions', () => {
+  it('creates an inert, audited eligible request and replays the same caller key exactly', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue({
+      socioId: memberId,
+      currency: 'ARS',
+      totalCents: 12500,
+      allocations: [{ obligationId, amountCents: 12500 }],
+      fingerprint: 'a'.repeat(64),
+    })
+    const { app, standin } = await bootstrap()
+    try {
+      const request = {
+        method: 'POST' as const,
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-1' },
+        payload: condonationPayload,
+      }
+      const first = await app.inject(request)
+      const replay = await app.inject(request)
+
+      expect(first.statusCode).toBe(201)
+      expect(replay.statusCode).toBe(201)
+      expect(replay.json()).toEqual(first.json())
+      expect(standin.state.approvalTokens).toHaveLength(1)
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        actionType: 'dues.condonation',
+        createdByOperatorId: requesterId,
+        usedAt: null,
+        executionId: null,
+      })
+      expect(standin.state.auditEvents).toHaveLength(1)
+      expect(standin.state.auditEvents[0]).toMatchObject({
+        operatorId: requesterId,
+        action: 'CONDONATION_REQUEST_CREATED',
+        entityType: 'condonation_request',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects changed idempotency input and requires a separate Treasury actor for an audited decision', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue({
+      socioId: memberId,
+      currency: 'ARS',
+      totalCents: 12500,
+      allocations: [{ obligationId, amountCents: 12500 }],
+      fingerprint: 'a'.repeat(64),
+    })
+    const { app, standin } = await bootstrap()
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-2' },
+        payload: condonationPayload,
+      })
+      const { id } = created.json() as { id: string }
+      const conflict = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-2' },
+        payload: { ...condonationPayload, reason: 'Changed reason' },
+      })
+      const selfDecision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/condonation-requests/${id}/decision`,
+        headers: auth('TESORERO'),
+        payload: { decision: 'approved', reason: 'Approved', evidence: 'treasury-1' },
+      })
+      const decision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/condonation-requests/${id}/decision`,
+        headers: auth('TESORERO', approverId),
+        payload: { decision: 'rejected', reason: 'Insufficient evidence', evidence: 'treasury-2' },
+      })
+
+      expect(conflict.statusCode).toBe(409)
+      expect(selfDecision.statusCode).toBe(403)
+      expect(decision.statusCode).toBe(200)
+      expect(decision.json()).toMatchObject({ id, status: 'rejected' })
+      expect(decision.json()).not.toHaveProperty('execution_id')
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        status: 'rejected',
+        decidedByOperatorId: approverId,
+        usedAt: null,
+      })
+      expect(standin.state.auditEvents).toHaveLength(2)
+      expect(standin.state.auditEvents[1]).toMatchObject({
+        operatorId: approverId,
+        action: 'CONDONATION_DECISION_RECORDED',
+        entityType: 'condonation_request',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('does not allow a public token decision to consume a condonation request', async () => {
+    const { app, standin } = await bootstrap()
+    try {
+      const { raw, hash } = generateApprovalToken()
+      standin.state.approvalTokens.push(
+        makeApprovalRow({ actionType: 'dues.condonation', actionId: 'request-1', tokenHash: hash }),
+      )
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/approval/${raw}`,
+        payload: { decision: 'approve' },
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(standin.state.approvalTokens[0]?.usedAt).toBeNull()
     } finally {
       await app.close()
     }
