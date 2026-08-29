@@ -1,4 +1,5 @@
-import { index, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { operators } from './operators.ts'
 
 /**
@@ -39,10 +40,27 @@ export const approvalTokens = pgTable(
       .notNull()
       .default('pending')
       .$type<'pending' | 'approved' | 'rejected' | 'expired'>(),
+    condonationSnapshot: jsonb('condonation_snapshot'),
+    requestReason: text('request_reason'),
+    requestEvidence: text('request_evidence'),
+    decidedByOperatorId: uuid('decided_by_operator_id').references(() => operators.id, {
+      onDelete: 'restrict',
+    }),
+    decisionReason: text('decision_reason'),
+    decisionEvidence: text('decision_evidence'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    executionId: uuid('execution_id'),
+    callerKey: text('caller_key'),
+    requestFingerprint: text('request_fingerprint'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     actionIdx: index('approval_tokens_action_idx').on(table.actionType, table.actionId),
+    condonationRequestIdempotencyIdx: uniqueIndex(
+      'approval_tokens_condonation_request_idempotency_idx',
+    )
+      .on(table.createdByOperatorId, table.callerKey)
+      .where(sql`${table.actionType} = 'dues.condonation' AND ${table.callerKey} IS NOT NULL`),
   }),
 )
 

@@ -144,7 +144,7 @@ describe('dues services', () => {
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_generation_receipts WHERE caller_key = $1`, [auditInput.callerKey])).rows[0].count).toBe(0)
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1 AND period_start = $2`, [socioId, p.start])).rows[0].count).toBe(0)
     const persistenceInput = { ...context(), period: p }
-    const failingRepository = { ...repository, insertObligation: async () => { throw new Error('persistence failed') } }
+    const failingRepository = { ...repository, insertObligationInTransaction: async () => { throw new Error('persistence failed') } }
     const failedPersistence = new AssessmentService(db.db, { repository: failingRepository })
     await expect(failedPersistence.generate(persistenceInput)).rejects.toThrow('persistence failed')
     expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_generation_receipts WHERE caller_key = $1`, [persistenceInput.callerKey])).rows[0].count).toBe(0)
@@ -179,7 +179,42 @@ describe('dues services', () => {
     expect(audits.rows).toHaveLength(2)
   })
 
-  it('applies a family-targeted benefit only through an effective membership', async () => {
+  it('executes overlapping reviewed ranges causally and rolls back audit failure', async () => {
+    const p = period(2500, 1), q = period(2500, 2), range = { start: p.start, end: q.end }, socioId = await member()
+    await price(range, 'BASE', null, 10_000)
+    const service = new AssessmentService(db.db, { now: () => new Date('2600-01-01T00:00:00Z') })
+    const commands = [context(), context()].map((input) => ({ ...input, socioId, fromPeriod: '2500-01', throughPeriod: '2500-02' }))
+    const previews = await Promise.all(commands.map((input) => service.preview(input)))
+    const counts = async (keys: string[]) => Promise.all([
+      db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1`, [socioId]),
+      db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_generation_receipts WHERE caller_key = ANY($1)`, [keys]),
+      db.pool.query(`SELECT count(*)::int AS count FROM public.audit_events WHERE metadata ->> 'callerKey' = ANY($1)`, [keys]),
+      db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligation_components c JOIN tesoreria.dues_obligations o ON o.id = c.obligation_id WHERE o.socio_id = $1`, [socioId]),
+    ]).then((rows) => rows.map((row) => row.rows[0]?.count))
+    expect(await counts(commands.map(({ callerKey }) => callerKey))).toEqual([0, 0, 0, 0])
+    const outcomes = await Promise.allSettled(commands.map((input, index) => service.executeRange({ ...input, previewFingerprint: previews[index]!.fingerprint })))
+    const winnerIndex = outcomes.findIndex(({ status }) => status === 'fulfilled'), loserIndex = outcomes.findIndex(({ status }) => status === 'rejected')
+    expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1); expect(outcomes.filter(({ status }) => status === 'rejected')).toHaveLength(1)
+    const winner = outcomes[winnerIndex], loser = outcomes[loserIndex]
+    if (winner?.status !== 'fulfilled' || loser?.status !== 'rejected') throw new Error('expected one committed range and one stale preview conflict')
+    expect(winner.value).toMatchObject({ createdObligationIds: [expect.any(String), expect.any(String)], periods: ['2500-01', '2500-02'] })
+    expect(winner.value.createdObligationIds).toHaveLength(2); expect(loser.reason).toMatchObject({ code: 'CONFLICT', message: 'Los datos de la evaluación cambiaron; generá una nueva vista previa' })
+    expect(await counts(commands.map(({ callerKey }) => callerKey))).toEqual([2, 1, 1, 2])
+    const winning = commands[winnerIndex]!, beforeReplay = await counts(commands.map(({ callerKey }) => callerKey))
+    await expect(service.executeRange({ ...winning, previewFingerprint: previews[winnerIndex]!.fingerprint })).resolves.toEqual(winner.value)
+    expect(await counts(commands.map(({ callerKey }) => callerKey))).toEqual(beforeReplay)
+    const failedSocio = await member(), failed = { ...context(), socioId: failedSocio, fromPeriod: '2500-01', throughPeriod: '2500-02' }
+    const failedPreview = await service.preview(failed)
+    await expect(new AssessmentService(db.db, { audit: async () => { throw new Error('audit failed') }, now: () => new Date('2600-01-01T00:00:00Z') }).executeRange({ ...failed, previewFingerprint: failedPreview.fingerprint })).rejects.toThrow('audit failed')
+    const rollback = await Promise.all([
+      db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1`, [failedSocio]),
+      db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_generation_receipts WHERE caller_key = $1`, [failed.callerKey]),
+      db.pool.query(`SELECT count(*)::int AS count FROM public.audit_events WHERE metadata ->> 'callerKey' = $1`, [failed.callerKey]),
+    ])
+    expect(rollback.map((row) => row.rows[0]?.count)).toEqual([0, 0, 0])
+  })
+
+      it('applies a family-targeted benefit only through an effective membership', async () => {
     const p = period()
     const socioId = await member()
     const familyGroupId = randomUUID()
