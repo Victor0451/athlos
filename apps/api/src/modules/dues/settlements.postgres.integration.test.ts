@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm'
 import { AuditAction } from '@athlos/audit'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { insertObligation, claimReceipt, type ObligationInput } from './repository.ts'
-import { selectFullOutstanding } from './allocations.ts'
+import { insertAllocation, selectFullOutstanding } from './allocations.ts'
 import { SettlementService } from './settlements.ts'
 import { AgreementService } from './agreements.ts'
 import { CommunityWorkService } from './community-work.ts'
@@ -15,6 +15,8 @@ import { CashDeskService } from './cash-desk.ts'
 import type { AuditContext } from './service.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
+// The generated name must pass this allowlist before it is quoted as a PostgreSQL identifier.
+const isolatedDatabaseNamePattern = /^athlos_dues_settlement_[0-9a-f]{32}$/
 let db: ReturnType<typeof createDb>
 let admin: ReturnType<typeof createDb> | undefined
 let isolatedDatabaseName: string | undefined
@@ -106,12 +108,14 @@ const terms = (amountCents: number, installments = 3, firstDate = '2099-01-01') 
 beforeAll(async () => {
   if (!url) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
   isolatedDatabaseName = `athlos_dues_settlement_${randomUUID().replaceAll('-', '')}`
+  if (!isolatedDatabaseNamePattern.test(isolatedDatabaseName))
+    throw new Error('unsafe disposable database name')
   const adminUrl = new URL(url)
   adminUrl.pathname = '/postgres'
   const isolatedUrl = new URL(url)
   isolatedUrl.pathname = `/${isolatedDatabaseName}`
   admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
-  await admin.pool.query(`CREATE DATABASE "${isolatedDatabaseName}"`)
+  await admin.pool.query(['CREATE DATABASE "', isolatedDatabaseName, '"'].join(''))
   db = createDb({ connectionString: isolatedUrl.toString(), poolMax: 8 })
   operatorId = randomUUID()
   await db.pool.query(
@@ -139,6 +143,8 @@ beforeAll(async () => {
     '0056_cash_recovery_policy.sql',
     '0057_cash_lifecycle_boundaries.sql',
     '0058_dues_open_agreements.sql',
+    '0060_dues_settlement_reversal_unique.sql',
+    '0061_dues_cash_settlement_reversal_expense.sql',
   ]
   await db.pool.query(
     (
@@ -157,7 +163,7 @@ afterAll(async () => {
   await db?.pool.end()
   if (!admin || !isolatedDatabaseName) return
   try {
-    await admin.pool.query(`DROP DATABASE IF EXISTS "${isolatedDatabaseName}"`)
+    await admin.pool.query(['DROP DATABASE IF EXISTS "', isolatedDatabaseName, '"'].join(''))
   } finally {
     await admin.pool.end()
   }
@@ -182,6 +188,9 @@ it('keeps non-cash settlement out of cash income and replays idempotently',async
 // prettier-ignore
 it('reverses by compensation without deleting the original allocation',async()=>{const socioId=await member(),target=await obligation(socioId,6_000,period(2500,4)),service=new SettlementService(db.db),created=await payment(socioId,[target]),reversed=await service.reverse({...context(),settlementId:created.settlementId,allocationId:created.allocations[0]!.id,reason:'Incorrect allocation'}); expect(reversed).toMatchObject({kind:'MONETARY',amountCents:6_000}); expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1',[target])).rows[0].count).toBe(2); await expect(service.debt({role:'TESORERO',socioId})).resolves.toMatchObject({totalCents:6_000,obligations:[{id:target,outstandingCents:6_000}]})})
 
+// prettier-ignore
+it('rolls back every reversal write when compensation persistence fails',async()=>{const socioId=await member(),first=await obligation(socioId,1_000,period(2512,1)),second=await obligation(socioId,2_000,period(2512,2)),created=await payment(socioId,[first,second]),count=()=>db.pool.query(`SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations`,[socioId]);const before=await count();await expect(new SettlementService(db.db,{repository:{insertAllocation:async()=>{throw new Error('forced compensation failure')}}}).reverse({...context(),settlementId:created.settlementId,reason:'Rollback proof'})).rejects.toThrow('forced compensation failure');await expect(count()).resolves.toEqual(before)})
+
 it('serializes different-key allocations for one obligation', async () => {
   const socioId = await member()
   const target = await obligation(socioId, 10_000, period(2500, 5))
@@ -199,7 +208,7 @@ it('serializes different-key allocations for one obligation', async () => {
 })
 
 // prettier-ignore
-it('persists exactly the unique allocations selected across multiple obligations',async()=>{const socioId=await member(),first=await obligation(socioId,10_000,period(2501,1)),second=await obligation(socioId,12_000,period(2501,2)),created=await payment(socioId,[first,second]);expect(created.allocations.map(({obligationId,amountCents})=>({obligationId,amountCents}))).toEqual(expect.arrayContaining([{obligationId:first,amountCents:10_000},{obligationId:second,amountCents:12_000}]));const rows=(await db.pool.query('SELECT obligation_id,amount::text FROM tesoreria.dues_allocations WHERE settlement_id=$1',[created.settlementId])).rows;expect(rows).toHaveLength(2);expect(rows).toEqual(expect.arrayContaining([{obligation_id:first,amount:'100.00'},{obligation_id:second,amount:'120.00'}]))})
+it('persists exactly the unique allocations selected across multiple obligations',async()=>{const socioId=await member(),first=await obligation(socioId,10_000,period(2501,1)),second=await obligation(socioId,12_000,period(2501,2)),created=await payment(socioId,[first,second]),expected=new Map([[first,10_000],[second,12_000]]);expect(created.allocations).toHaveLength(2);expect(new Map(created.allocations.map(({obligationId,amountCents})=>[obligationId,amountCents]))).toEqual(expected);const rows=(await db.pool.query('SELECT obligation_id,amount::text FROM tesoreria.dues_allocations WHERE settlement_id=$1',[created.settlementId])).rows;expect(rows).toHaveLength(2);expect(new Map(rows.map(({obligation_id,amount})=>[obligation_id,amount]))).toEqual(new Map([[first,'100.00'],[second,'120.00']]))})
 
 it('maps concurrent different-key duplicate reversals to one success and one conflict', async () => {
   const socioId = await member()
@@ -660,6 +669,112 @@ it('persists redacted financial audit snapshots and reversal reasons', async () 
   expect(JSON.stringify(rows)).not.toContain('rawInternalEvidence')
 })
 
+it('projects one reversal expense, audits it once, and rolls every reversal row back on audit failure', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 4_000, period(2513, 1))
+  const created = await payment(socioId, [target])
+  const input = {
+    ...context(),
+    settlementId: created.settlementId,
+    reason: 'Reversal fixture',
+  }
+  const count = () =>
+    db.pool.query(
+      `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,(SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders,(SELECT count(*)::int FROM public.audit_events) audits`,
+      [socioId],
+    )
+  const reversed = await new SettlementService(db.db).reverse(input)
+  const beforeReplay = await count()
+  await expect(new SettlementService(db.db).reverse(input)).resolves.toEqual(reversed)
+  await expect(count()).resolves.toEqual(beforeReplay)
+  await expect(
+    db.pool.query(
+      `SELECT direction,tender,amount::text FROM tesoreria.dues_cash_tenders WHERE source_id=$1`,
+      [reversed.settlementId],
+    ),
+  ).resolves.toMatchObject({
+    rows: [{ direction: 'EXPENSE', tender: 'CASH', amount: '40.00' }],
+  })
+  await expect(
+    db.pool.query(`SELECT action FROM public.audit_events WHERE entity_id=ANY($1::text[])`, [
+      [reversed.settlementId, reversed.allocations[0]!.id],
+    ]),
+  ).resolves.toMatchObject({
+    rows: expect.arrayContaining([
+      { action: AuditAction.DUES_SETTLEMENT_REVERSED },
+      { action: AuditAction.DUES_ALLOCATION_COMPENSATED },
+    ]),
+  })
+  const retryTarget = await obligation(socioId, 1_000, period(2513, 2))
+  const retry = await payment(socioId, [retryTarget])
+  const before = await count()
+  await expect(
+    new SettlementService(db.db, {
+      audit: async () => {
+        throw new Error('forced reversal audit failure')
+      },
+    }).reverse({ ...context(), settlementId: retry.settlementId, reason: 'Rollback fixture' }),
+  ).rejects.toThrow('forced reversal audit failure')
+  await expect(count()).resolves.toEqual(before)
+  const noCashTarget = await obligation(socioId, 500, period(2513, 3))
+  const noCashSettlement = randomUUID()
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,evidence,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',5.00,'ARS','{}',$3,'{}',$4,$5)`,
+    [noCashSettlement, socioId, operatorId, `no-cash-${noCashSettlement}`, 'a'.repeat(64)],
+  )
+  await insertAllocation(db.db, {
+    settlementId: noCashSettlement,
+    socioId,
+    obligationId: noCashTarget,
+    amountCents: 500,
+  })
+  const beforeCashFailure = await count()
+  await expect(
+    new SettlementService(db.db).reverse({
+      ...context(),
+      settlementId: noCashSettlement,
+      reason: 'Cash failure fixture',
+    }),
+  ).rejects.toMatchObject({ code: 'CONFLICT' })
+  await expect(count()).resolves.toEqual(beforeCashFailure)
+})
+
+it('permits only correlated settlement reversal expenses in the cash policy', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 1_000, period(2513, 4))
+  const paid = await payment(socioId, [target])
+  const reversed = await new SettlementService(db.db).reverse({
+    ...context(),
+    settlementId: paid.settlementId,
+    reason: 'Policy fixture',
+  })
+  const source = reversed.settlementId
+  const shift = (
+    await db.pool.query(
+      `SELECT shift_id FROM tesoreria.dues_cash_tenders WHERE source_id=$1 AND direction='INCOME'`,
+      [paid.settlementId],
+    )
+  ).rows[0]!.shift_id
+  const insert = (id: string, amount: string, tender: string, settlementId = source) =>
+    db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_tenders (id,shift_id,direction,tender,amount,source_type,source_id,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,'EXPENSE',$3,$4,'SETTLEMENT',$5,$6,$7,repeat('a',64))`,
+      [id, shift, tender, amount, settlementId, operatorId, `policy-${id}`],
+    )
+  await expect(insert(randomUUID(), '10.01', 'CASH')).rejects.toMatchObject({ code: '55000' })
+  await expect(insert(randomUUID(), '10.00', 'DEBIT')).rejects.toMatchObject({ code: '55000' })
+  await expect(insert(randomUUID(), '10.00', 'CASH', paid.settlementId)).rejects.toMatchObject({
+    code: '55000',
+  })
+  const unlinked = randomUUID()
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,evidence,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',10.00,'ARS','{}',$3,'{}',$4,$5)`,
+    [unlinked, socioId, operatorId, `unlinked-${unlinked}`, 'a'.repeat(64)],
+  )
+  await expect(insert(randomUUID(), '10.00', 'CASH', unlinked)).rejects.toMatchObject({
+    code: '55000',
+  })
+})
+
 // prettier-ignore
 it('creates and revises negotiated agreements without moving debt or allocations', async () => {
   const socioId = await member(), target = await obligation(socioId, 9_000, period(2504, 1)), service = new AgreementService(db.db), negotiated = { narrative: 'El socio regularizará la deuda en cuotas conversadas.', commitments: [{ id: randomUUID(), title: 'Primera entrega', amountCents: 9_000, dueDate: '2099-02-01' }] }, createContext = context(`negotiated-create-${randomUUID()}`)
@@ -696,4 +811,68 @@ it('rejects cross-representation revisions and serializes negotiated revision ra
   expect(outcomes.filter((outcome) => outcome.status === 'rejected')[0]).toMatchObject({ reason: { code: 'CONFLICT', statusCode: 409 } })
   expect((await db.pool.query('SELECT status,count(*)::int AS count FROM tesoreria.dues_agreements WHERE obligation_id=$1 GROUP BY status ORDER BY status', [target])).rows).toEqual(expect.arrayContaining([{ status: 'ACTIVE', count: 1 }, { status: 'SUPERSEDED', count: 1 }]))
   expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=ANY($1::uuid[])', [[target, legacyTarget]])).rows[0].count).toBe(0)
+})
+
+it('commits each tender and rolls settlement allocation and tender rows back after audit failure', async () => {
+  const service = new SettlementService(db.db)
+  for (const tender of ['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'] as const) {
+    const socioId = await member(),
+      target = await obligation(socioId, 1250, period(2511, 1))
+    const shift = await new CashDeskService(db.db).open({
+      ...context(`payment-${tender}`),
+      deskId: `payment-${randomUUID()}`,
+      openingTenders: {},
+    })
+    const selected = await selectFullOutstanding(db.db, { socioId, obligationIds: [target] })
+    const input = {
+      ...context(`payment-${tender}`),
+      socioId,
+      obligationIds: [target],
+      shiftId: shift.id,
+      tender,
+      selectionFingerprint: selected.fingerprint,
+    }
+    const created = await service.create(input)
+    expect(
+      (
+        await db.pool.query(
+          'SELECT tender,source_type FROM tesoreria.dues_cash_tenders WHERE source_id=$1',
+          [created.settlementId],
+        )
+      ).rows,
+    ).toEqual([{ tender, source_type: 'SETTLEMENT' }])
+    expect(await service.create(input)).toEqual(created)
+    await expect(
+      service.create({ ...input, requestFingerprint: 'f'.repeat(64) }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  }
+  const socioId = await member(),
+    target = await obligation(socioId, 100, period(2511, 2))
+  const shift = await new CashDeskService(db.db).open({
+    ...context(),
+    deskId: `payment-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const selected = await selectFullOutstanding(db.db, { socioId, obligationIds: [target] })
+  const count = () =>
+    db.pool.query(
+      `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,(SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders`,
+      [socioId],
+    )
+  const before = await count()
+  await expect(
+    new SettlementService(db.db, {
+      audit: async () => {
+        throw new Error('forced audit failure')
+      },
+    }).create({
+      ...context(),
+      socioId,
+      obligationIds: [target],
+      shiftId: shift.id,
+      tender: 'CASH',
+      selectionFingerprint: selected.fingerprint,
+    }),
+  ).rejects.toThrow('forced audit failure')
+  await expect(count()).resolves.toEqual(before)
 })
