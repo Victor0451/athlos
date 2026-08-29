@@ -28,6 +28,18 @@ export interface DuesGenerationResult {
   obligation_ids: string[]
 }
 // prettier-ignore
+export interface AssessmentPreviewInput { socio_id:string; from_period:string; through_period:string }
+// prettier-ignore
+export interface AssessmentPreviewSegment { priceVersionId:string; amountCents:number; currency:string; from:string; to:string; rule:'FULL_MONTH'|'DAILY_PRORATED'|'NEXT_PERIOD'; eligibleDays:number; numerator:number }
+// prettier-ignore
+export interface AssessmentPreviewComponent { componentKey:string; kind:'BASE'|'SPORT'; eligibleFrom:string; eligibleTo:string; eligibleDays:number; calendarDays:number; segments:AssessmentPreviewSegment[]; numerator:number; remainder:number; amountCents:number; status:'PENDING'|'ZERO'|'CONFLICT'|'ALREADY_GENERATED' }
+// prettier-ignore
+export interface AssessmentPreviewPeriod { period:string; start:string; end:string; calendarDays:number; components:AssessmentPreviewComponent[]; existingObligationId:string|null; pendingAmountCents:number|null }
+// prettier-ignore
+export interface AssessmentPreviewIssue { code:'NEXT_PERIOD_CONFLICT'|'OVERFLOW'|'PRICE_GAP'|'PRICE_OVERLAP'; componentKey:string; from:string; to:string; period:string }
+// prettier-ignore
+export interface AssessmentPreview { socio_id:string; from_period:string; through_period:string; executable:boolean; currency:string|null; periods:AssessmentPreviewPeriod[]; issues:AssessmentPreviewIssue[]; fingerprint:string }
+// prettier-ignore
 export interface DebtComponent { id:string; kind:'BASE'|'SPORT'|'BENEFIT'|'ADJUSTMENT'; component_key:string; amount_cents:number }
 // prettier-ignore
 export interface DebtBenefit { id:string; component_key:string; amount_cents:number }
@@ -37,16 +49,23 @@ export interface DebtAllocation { id:string; settlement_id:string; settlement_ki
 export interface DebtObligation { id:string; period_start:string; period_end:string; original_amount_cents:number; outstanding_cents:number; currency:string; status:'OPEN'|'PAID'; components:DebtComponent[]; benefits:DebtBenefit[]; allocations:DebtAllocation[] }
 // prettier-ignore
 export interface DebtDetail { status:'ready'|'empty'|'not_found'; socio_id:string; currency:string|null; total_debt_cents:number; obligations:DebtObligation[] }
-export interface DuesSettlementInput {
+export interface FullSelectionPaymentInput {
   socio_id: string
-  kind: 'MONETARY'
+  obligation_ids: string[]
+  shift_id: string
+  tender: 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER'
+  selection_fingerprint: string
+}
+export interface FullSelectionPaymentResult {
+  settlement_id: string
   amount_cents: number
   currency: string
-  allocations: Array<{ obligation_id: string; amount_cents: number }>
+  allocations: Array<{ id: string; obligation_id: string; amount_cents: number }>
 }
-export interface DuesSettlementResult {
-  settlement_id: string
-  kind: 'MONETARY' | 'NON_CASH'
+export interface DuesSettlementReversalResult {
+  original_settlement_id: string
+  reversal_settlement_id: string
+  kind: 'MONETARY'
   amount_cents: number
   currency: string
   allocations: Array<{ id: string; obligation_id: string; amount_cents: number }>
@@ -96,6 +115,37 @@ function isString(value: unknown): value is string {
 }
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
+}
+// prettier-ignore
+function isNullableString(value: unknown): value is string | null { return value === null || isString(value) }
+// prettier-ignore
+function isOneOf<T extends string>(value: unknown, values: readonly T[]): value is T { return typeof value === 'string' && values.includes(value as T) }
+// prettier-ignore
+function decodePreviewSegment(value: unknown): AssessmentPreviewSegment | null {
+  if (!isRecord(value)) return null
+  const { priceVersionId, amountCents, currency, from, to, rule, eligibleDays, numerator } = value
+  return isString(priceVersionId) && isNumber(amountCents) && isString(currency) && isString(from) && isString(to) && isOneOf(rule, ['FULL_MONTH', 'DAILY_PRORATED', 'NEXT_PERIOD']) && isNumber(eligibleDays) && isNumber(numerator) ? { priceVersionId, amountCents, currency, from, to, rule, eligibleDays, numerator } : null
+}
+// prettier-ignore
+function decodePreviewComponent(value: unknown): AssessmentPreviewComponent | null {
+  if (!isRecord(value) || !Array.isArray(value.segments)) return null
+  const { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, numerator, remainder, amountCents, status } = value, segments = value.segments.map(decodePreviewSegment)
+  return isString(componentKey) && isOneOf(kind, ['BASE', 'SPORT']) && isString(eligibleFrom) && isString(eligibleTo) && isNumber(eligibleDays) && isNumber(calendarDays) && isNumber(numerator) && isNumber(remainder) && isNumber(amountCents) && isOneOf(status, ['PENDING', 'ZERO', 'CONFLICT', 'ALREADY_GENERATED']) && segments.every(Boolean) ? { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, segments: segments as AssessmentPreviewSegment[], numerator, remainder, amountCents, status } : null
+}
+// prettier-ignore
+function decodePreview(value: unknown): AssessmentPreview | null {
+  if (!isRecord(value) || !Array.isArray(value.periods) || !Array.isArray(value.issues)) return null
+  const { socio_id, from_period, through_period, executable, currency, fingerprint } = value
+  const periods = value.periods.map((period) => { if (!isRecord(period) || !Array.isArray(period.components)) return null; const { period: key, start, end, calendarDays, existingObligationId, pendingAmountCents } = period, components = period.components.map(decodePreviewComponent); return isString(key) && isString(start) && isString(end) && isNumber(calendarDays) && isNullableString(existingObligationId) && (isNumber(pendingAmountCents) || pendingAmountCents === null) && components.every(Boolean) ? { period: key, start, end, calendarDays, components: components as AssessmentPreviewComponent[], existingObligationId, pendingAmountCents } : null })
+  const issues = value.issues.map((issue) => { if (!isRecord(issue)) return null; const { code, componentKey, from, to, period } = issue; return isOneOf(code, ['NEXT_PERIOD_CONFLICT', 'OVERFLOW', 'PRICE_GAP', 'PRICE_OVERLAP']) && isString(componentKey) && isString(from) && isString(to) && isString(period) ? { code, componentKey, from, to, period } : null })
+  return isString(socio_id) && isString(from_period) && isString(through_period) && typeof executable === 'boolean' && isNullableString(currency) && isString(fingerprint) && periods.every(Boolean) && issues.every(Boolean) ? { socio_id, from_period, through_period, executable, currency, periods: periods as AssessmentPreviewPeriod[], issues: issues as AssessmentPreviewIssue[], fingerprint } : null
+}
+// prettier-ignore
+function decodeDebt(value: unknown): DebtDetail | null {
+  if (!isRecord(value) || !Array.isArray(value.obligations)) return null
+  const { status, socio_id, currency, total_debt_cents } = value
+  const obligations = value.obligations.map((obligation) => { if (!isRecord(obligation) || !Array.isArray(obligation.components) || !Array.isArray(obligation.benefits) || !Array.isArray(obligation.allocations)) return null; const { id, period_start, period_end, original_amount_cents, outstanding_cents, currency: obligationCurrency, status: obligationStatus } = obligation; const components = obligation.components.map((component) => isRecord(component) && isString(component.id) && isOneOf(component.kind, ['BASE', 'SPORT', 'BENEFIT', 'ADJUSTMENT']) && isString(component.component_key) && isNumber(component.amount_cents) ? { id: component.id, kind: component.kind, component_key: component.component_key, amount_cents: component.amount_cents } : null), benefits = obligation.benefits.map((benefit) => isRecord(benefit) && isString(benefit.id) && isString(benefit.component_key) && isNumber(benefit.amount_cents) ? { id: benefit.id, component_key: benefit.component_key, amount_cents: benefit.amount_cents } : null), allocations = obligation.allocations.map((allocation) => isRecord(allocation) && isString(allocation.id) && isString(allocation.settlement_id) && isOneOf(allocation.settlement_kind, ['MONETARY', 'NON_CASH']) && isNumber(allocation.settlement_amount_cents) && isString(allocation.currency) && isNumber(allocation.amount_cents) && isOneOf(allocation.kind, ['ALLOCATION', 'COMPENSATION']) && isNullableString(allocation.compensates_allocation_id) && typeof allocation.reversal_eligible === 'boolean' ? { id: allocation.id, settlement_id: allocation.settlement_id, settlement_kind: allocation.settlement_kind, settlement_amount_cents: allocation.settlement_amount_cents, currency: allocation.currency, amount_cents: allocation.amount_cents, kind: allocation.kind, compensates_allocation_id: allocation.compensates_allocation_id, reversal_eligible: allocation.reversal_eligible } : null); return isString(id) && isString(period_start) && isString(period_end) && isNumber(original_amount_cents) && isNumber(outstanding_cents) && isString(obligationCurrency) && isOneOf(obligationStatus, ['OPEN', 'PAID']) && components.every(Boolean) && benefits.every(Boolean) && allocations.every(Boolean) ? { id, period_start, period_end, original_amount_cents, outstanding_cents, currency: obligationCurrency, status: obligationStatus, components: components as DebtComponent[], benefits: benefits as DebtBenefit[], allocations: allocations as DebtAllocation[] } : null })
+  return isOneOf(status, ['ready', 'empty', 'not_found']) && isString(socio_id) && isNullableString(currency) && isNumber(total_debt_cents) && obligations.every(Boolean) ? { status, socio_id, currency, total_debt_cents, obligations: obligations as DebtObligation[] } : null
 }
 function decodeTerms(
   kind: DuesAgreement['kind'],
@@ -180,6 +230,63 @@ function decodeCommunityWork(value: unknown): CommunityWorkEvidenceResult | null
     replayed: value.replayed === true,
   }
 }
+function decodeSettlementReversal(value: unknown): DuesSettlementReversalResult | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.original_settlement_id) ||
+    !isString(value.reversal_settlement_id) ||
+    value.kind !== 'MONETARY' ||
+    !isNumber(value.amount_cents) ||
+    !isString(value.currency) ||
+    !Array.isArray(value.allocations) ||
+    !value.allocations.every(
+      (allocation) =>
+        isRecord(allocation) &&
+        isString(allocation.id) &&
+        isString(allocation.obligation_id) &&
+        isNumber(allocation.amount_cents),
+    )
+  )
+    return null
+  return {
+    original_settlement_id: value.original_settlement_id,
+    reversal_settlement_id: value.reversal_settlement_id,
+    kind: 'MONETARY',
+    amount_cents: value.amount_cents,
+    currency: value.currency,
+    allocations: value.allocations.map((allocation) => ({
+      id: allocation.id,
+      obligation_id: allocation.obligation_id,
+      amount_cents: allocation.amount_cents,
+    })),
+  }
+}
+function decodeFullSelectionPayment(value: unknown): FullSelectionPaymentResult | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.settlement_id) ||
+    !isNumber(value.amount_cents) ||
+    !isString(value.currency) ||
+    !Array.isArray(value.allocations)
+  )
+    return null
+  const allocations = value.allocations.map((item) =>
+    isRecord(item) &&
+    isString(item.id) &&
+    isString(item.obligation_id) &&
+    isNumber(item.amount_cents)
+      ? { id: item.id, obligation_id: item.obligation_id, amount_cents: item.amount_cents }
+      : null,
+  )
+  return allocations.every(Boolean)
+    ? {
+        settlement_id: value.settlement_id,
+        amount_cents: value.amount_cents,
+        currency: value.currency,
+        allocations: allocations as FullSelectionPaymentResult['allocations'],
+      }
+    : null
+}
 function mapError(error: unknown): DuesOperationError {
   if (error instanceof DuesOperationError) return error
   if (error instanceof ApiError || (isRecord(error) && typeof error.status === 'number')) {
@@ -237,8 +344,15 @@ export function generateDuesAssessments(period: string, key: string) {
   })
 }
 
+export function previewDuesAssessments(input: AssessmentPreviewInput) {
+  return duesOperation(
+    () => apiFetch('/api/v1/dues/assessments/preview', { method: 'POST', body: input }),
+    decodePreview,
+  )
+}
+
 export function getDebt(socioId: string) {
-  return apiFetch<DebtDetail>(`/api/v1/dues/debt/${socioId}`, { query: {} })
+  return duesOperation(() => apiFetch(`/api/v1/dues/debt/${socioId}`, { query: {} }), decodeDebt)
 }
 
 export function getObligationAgreements(obligationId: string) {
@@ -288,22 +402,30 @@ export function createCommunityWorkEvidence(input: CommunityWorkEvidenceInput, k
   )
 }
 
-export function createDuesSettlement(input: DuesSettlementInput, key: string) {
-  return apiFetch<DuesSettlementResult>('/api/v1/dues/settlements', {
-    method: 'POST',
-    headers: { 'idempotency-key': key },
-    body: input,
-  })
+export function createFullSelectionPayment(input: FullSelectionPaymentInput, key: string) {
+  return duesOperation(
+    () =>
+      apiFetch('/api/v1/dues/settlements', {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: input,
+      }),
+    decodeFullSelectionPayment,
+  )
 }
 
 export function reverseDuesSettlement(
   settlementId: string,
-  input: { allocation_id: string; reason: string },
+  input: { reason: string },
   key: string,
 ) {
-  return apiFetch<DuesSettlementResult>(`/api/v1/dues/settlements/${settlementId}/reverse`, {
-    method: 'POST',
-    headers: { 'idempotency-key': key },
-    body: input,
-  })
+  return duesOperation(
+    () =>
+      apiFetch(`/api/v1/dues/settlements/${settlementId}/reverse`, {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: input,
+      }),
+    decodeSettlementReversal,
+  )
 }

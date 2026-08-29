@@ -4,15 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
+import { CondonationActions } from '@/components/collections/CondonationActions'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
-import type { AllocationRequest, ReversalRequest } from '@/components/collections/SettlementActions'
-import {
-  GenerationPanel,
-  type GenerationPanelStatus,
-} from '@/components/collections/GenerationPanel'
+import type { ReversalRequest } from '@/components/collections/SettlementActions'
+import { AssessmentPreviewPanel } from '@/components/collections/AssessmentPreviewPanel'
 import {
   PricingPanel,
   type DisciplinePanelState,
@@ -21,9 +19,8 @@ import {
 import {
   createCommunityWorkEvidence,
   createDuesPrice,
-  createDuesSettlement,
+  createFullSelectionPayment,
   createNegotiatedAgreement,
-  generateDuesAssessments,
   getDebt,
   getDuesPrices,
   getObligationAgreements,
@@ -32,10 +29,21 @@ import {
   reverseDuesSettlement,
   DuesOperationError,
   type DebtDetail,
-  type DuesGenerationResult,
+  previewDuesAssessments,
+  type AssessmentPreview,
+  type AssessmentPreviewInput,
   type DuesPrice,
   type DuesPriceInput,
+  type FullSelectionPaymentInput,
 } from '@/lib/api/dues'
+import {
+  createCondonationRequest,
+  CondonationOperationError,
+  decideCondonationRequest,
+  type CondonationDecisionInput,
+  type CondonationRequestInput,
+} from '@/lib/api/condonation'
+import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
 import {
@@ -51,7 +59,7 @@ export function canAccessCollections(
   user: Pick<CurrentUser, 'role'> | null,
   collectionsEnabled: boolean,
 ) {
-  return collectionsEnabled && (user?.role === 'ADMIN' || user?.role === 'TESORERO')
+  return collectionsEnabled && ['ADMIN', 'TESORERO', 'OPERADOR'].includes(user?.role ?? '')
 }
 
 const errorText = (_reason: unknown, fallback: string) => fallback
@@ -61,8 +69,6 @@ const pricingErrorState = (reason: unknown): PricingPanelState =>
     : reason instanceof ApiError && (reason.status === 404 || reason.status >= 500)
       ? 'unavailable'
       : 'error'
-const generationErrorState = (reason: unknown): GenerationPanelStatus =>
-  reason instanceof ApiError && reason.status === 409 ? 'conflict' : 'error'
 
 export default function CollectionsPage() {
   const { user } = useAuth()
@@ -74,18 +80,22 @@ export default function CollectionsPage() {
   const [disciplines, setDisciplines] = useState<DisciplinaOption[]>([])
   const [disciplineState, setDisciplineState] = useState<DisciplinePanelState>('loading')
   const [disciplineError, setDisciplineError] = useState('')
-  const [generationStatus, setGenerationStatus] = useState<GenerationPanelStatus>('idle')
-  const [generationError, setGenerationError] = useState('')
-  const [generationResult, setGenerationResult] = useState<DuesGenerationResult | null>(null)
+  const [preview, setPreview] = useState<AssessmentPreview | null>(null)
+  const [previewStatus, setPreviewStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'empty' | 'blocked' | 'error'
+  >('idle')
+  const [previewError, setPreviewError] = useState('')
   const [socios, setSocios] = useState<Socio[]>([])
   const [selectedSocio, setSelectedSocio] = useState<DebtSocio | null>(null)
   const [debt, setDebt] = useState<DebtDetail | null>(null)
   const [debtStatus, setDebtStatus] = useState<DebtPanelStatus>('idle')
   const [debtError, setDebtError] = useState('')
+  const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
+  const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
 
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
@@ -187,29 +197,21 @@ export default function CollectionsPage() {
       revokeDuesPrice(id, reason),
       'No se pudo dar de baja la cuota. Intentá nuevamente.',
     )
-  const generate = async (selectedPeriod: string) => {
-    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
-    const input = {
-      operatorId: user!.operator_id,
-      action: 'generate-assessments',
-      draftFingerprint: `period:${selectedPeriod}`,
-    }
-    const replayed = Boolean(idempotency.current.peek(input))
-    const key = idempotency.current.getOrCreate(input)
-    setGenerationError('')
-    setGenerationResult(null)
-    setGenerationStatus('loading')
+  const loadPreview = async (input: AssessmentPreviewInput) => {
+    setPreviewError('')
+    setPreview(null)
+    setPreviewStatus('loading')
     try {
-      const result = await generateDuesAssessments(selectedPeriod, key)
-      idempotency.current.complete(input)
-      setGenerationResult(result)
-      setGenerationStatus(replayed ? 'replayed' : result.obligation_ids.length ? 'created' : 'zero')
+      const result = await previewDuesAssessments(input)
+      setPreview(result)
+      setPreviewStatus(result.periods.length ? (result.executable ? 'ready' : 'blocked') : 'empty')
     } catch (reason) {
-      setGenerationError(
-        errorText(reason, 'No se pudieron generar las deudas del período. Intentá nuevamente.'),
+      setPreviewError(
+        reason instanceof DuesOperationError && reason.kind === 'partial_data'
+          ? 'La vista previa contiene datos incompletos.'
+          : errorText(reason, 'No se pudo cargar la vista previa de evaluación.'),
       )
-      setGenerationStatus(generationErrorState(reason))
-      throw reason
+      setPreviewStatus('error')
     }
   }
   const searchSocios = async (term: string) => {
@@ -220,12 +222,16 @@ export default function CollectionsPage() {
   const selectSocio = async (socio: DebtSocio) => {
     setSelectedSocio(socio)
     setDebt(null)
+    setOpenShifts([])
     setDebtError('')
     setDebtStatus('loading')
     try {
       const result = await getDebt(socio.id)
       setDebt(result)
       setDebtStatus(result.status)
+      void getOpenCashShifts()
+        .then(setOpenShifts)
+        .catch(() => setOpenShifts([]))
       if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
       else setAgreementStates({})
     } catch (reason) {
@@ -324,6 +330,7 @@ export default function CollectionsPage() {
     action: string,
     draftFingerprint: string,
     request: (key: string) => Promise<T>,
+    retainOnConflict = false,
   ) => {
     if (!user || !selectedSocio)
       throw new DuesOperationError('permission', 'Authentication required')
@@ -333,17 +340,22 @@ export default function CollectionsPage() {
     const key = idempotency.current.getOrCreate(input)
     try {
       const result = await request(key)
-      idempotency.current.complete(input)
       if (!(await refreshDebt()))
         throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+      idempotency.current.complete(input)
       return {
         ...result,
         replayed: Boolean((result as { replayed?: boolean }).replayed) || replayed,
       }
     } catch (reason) {
-      if (reason instanceof DuesOperationError && reason.kind === 'conflict')
+      if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
         idempotency.current.abandon(input)
-      if (reason instanceof ApiError && reason.status === 409) {
+      if (
+        action === 'reverse-settlement' &&
+        !retainOnConflict &&
+        ((reason instanceof ApiError && reason.status === 409) ||
+          (reason instanceof DuesOperationError && reason.kind === 'conflict'))
+      ) {
         idempotency.current.abandon(input)
         await refreshDebt()
       }
@@ -377,25 +389,41 @@ export default function CollectionsPage() {
           key,
         ),
     )
-  const allocate = (input: AllocationRequest) =>
-    runSettlementMutation('allocate-settlement', JSON.stringify(input), (key) =>
-      createDuesSettlement(
-        {
-          socio_id: selectedSocio!.id,
-          kind: 'MONETARY',
-          currency: debt?.currency ?? 'ARS',
-          ...input,
-        },
-        key,
-      ),
+  const pay = async (draft: Omit<FullSelectionPaymentInput, 'socio_id'>) => {
+    if (!openShifts.some(({ id }) => id === draft.shift_id))
+      throw new DuesOperationError('conflict', 'Selected cash shift is not open')
+    const obligation_ids = [...draft.obligation_ids].sort()
+    return runSettlementMutation(
+      'full-selection-payment',
+      JSON.stringify({
+        socioId: selectedSocio!.id,
+        obligation_ids,
+        shift_id: draft.shift_id,
+        tender: draft.tender,
+        selection_fingerprint: draft.selection_fingerprint,
+      }),
+      (key) =>
+        createFullSelectionPayment({ ...draft, socio_id: selectedSocio!.id, obligation_ids }, key),
+      true,
     )
+  }
   const reverse = (input: ReversalRequest) =>
     runSettlementMutation('reverse-settlement', JSON.stringify(input), (key) =>
-      reverseDuesSettlement(
-        input.settlement_id,
-        { allocation_id: input.allocation_id, reason: input.reason },
-        key,
-      ),
+      reverseDuesSettlement(input.settlement_id, { reason: input.reason }, key),
+    )
+  // prettier-ignore
+  const condonation = <T extends object>(action: string, draft: object, request: (key: string) => Promise<T>) => {
+    if (!user) throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = { operatorId: user.operator_id, action, draftFingerprint: JSON.stringify(draft) }
+    const key = idempotency.current.getOrCreate(input)
+    return request(key).then((result) => { idempotency.current!.complete(input); return result }).catch((reason) => { if (reason instanceof CondonationOperationError && reason.kind === 'conflict') idempotency.current!.abandon(input); throw reason })
+  }
+  const requestCondonation = (input: CondonationRequestInput) =>
+    condonation('condonation-request', input, (key) => createCondonationRequest(input, key))
+  const decideCondonation = (id: string, input: CondonationDecisionInput) =>
+    condonation(`condonation-decision:${id}`, input, (key) =>
+      decideCondonationRequest(id, input, key),
     )
 
   return (
@@ -432,12 +460,12 @@ export default function CollectionsPage() {
               </p>
             </section>
           )}
-          <GenerationPanel
-            period={period}
-            status={generationStatus}
-            result={generationResult}
-            error={generationError}
-            onGenerate={generate}
+          <AssessmentPreviewPanel
+            socio={selectedSocio}
+            preview={preview}
+            status={previewStatus}
+            error={previewError}
+            onPreview={loadPreview}
           />
         </div>
       </section>
@@ -449,8 +477,8 @@ export default function CollectionsPage() {
         error={debtError}
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
-        onAllocate={allocate}
-        onReverse={reverse}
+        openShifts={openShifts}
+        {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
         agreementsEnabled={agreementWorkflowEnabled}
         agreementStates={agreementStates}
         onCreateAgreement={createAgreement}
@@ -458,6 +486,15 @@ export default function CollectionsPage() {
         onRecordCommunityWork={createCommunityWork}
         onRefreshAgreement={refreshAgreement}
       />
+      {selectedSocio && debt?.status === 'ready' && (
+        <CondonationActions
+          memberId={selectedSocio.id}
+          obligations={debt.obligations}
+          canDecide={canSettle}
+          onRequest={requestCondonation}
+          onDecision={decideCondonation}
+        />
+      )}
     </main>
   )
 }
