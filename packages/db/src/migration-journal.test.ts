@@ -16,7 +16,7 @@ describe('Drizzle migration journal', () => {
 
     expect(journal.entries.map((entry) => entry.tag)).toEqual(files)
     expect(journal.entries.map((entry) => entry.idx)).toEqual(files.map((_, index) => index))
-    expect(journal.entries.at(-1)?.tag).toBe('0061_dues_cash_settlement_reversal_expense')
+    expect(journal.entries.at(-1)?.tag).toBe('0063_approval_condonation_request_idempotency')
     expect(
       journal.entries.findIndex((entry) => entry.tag === '0036_padrones_inscription_lifecycle'),
     ).toBeLessThan(

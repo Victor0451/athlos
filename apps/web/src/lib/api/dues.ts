@@ -49,16 +49,15 @@ export interface DebtAllocation { id:string; settlement_id:string; settlement_ki
 export interface DebtObligation { id:string; period_start:string; period_end:string; original_amount_cents:number; outstanding_cents:number; currency:string; status:'OPEN'|'PAID'; components:DebtComponent[]; benefits:DebtBenefit[]; allocations:DebtAllocation[] }
 // prettier-ignore
 export interface DebtDetail { status:'ready'|'empty'|'not_found'; socio_id:string; currency:string|null; total_debt_cents:number; obligations:DebtObligation[] }
-export interface DuesSettlementInput {
+export interface FullSelectionPaymentInput {
   socio_id: string
-  kind: 'MONETARY'
-  amount_cents: number
-  currency: string
-  allocations: Array<{ obligation_id: string; amount_cents: number }>
+  obligation_ids: string[]
+  shift_id: string
+  tender: 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER'
+  selection_fingerprint: string
 }
-export interface DuesSettlementResult {
+export interface FullSelectionPaymentResult {
   settlement_id: string
-  kind: 'MONETARY' | 'NON_CASH'
   amount_cents: number
   currency: string
   allocations: Array<{ id: string; obligation_id: string; amount_cents: number }>
@@ -262,6 +261,32 @@ function decodeSettlementReversal(value: unknown): DuesSettlementReversalResult 
     })),
   }
 }
+function decodeFullSelectionPayment(value: unknown): FullSelectionPaymentResult | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.settlement_id) ||
+    !isNumber(value.amount_cents) ||
+    !isString(value.currency) ||
+    !Array.isArray(value.allocations)
+  )
+    return null
+  const allocations = value.allocations.map((item) =>
+    isRecord(item) &&
+    isString(item.id) &&
+    isString(item.obligation_id) &&
+    isNumber(item.amount_cents)
+      ? { id: item.id, obligation_id: item.obligation_id, amount_cents: item.amount_cents }
+      : null,
+  )
+  return allocations.every(Boolean)
+    ? {
+        settlement_id: value.settlement_id,
+        amount_cents: value.amount_cents,
+        currency: value.currency,
+        allocations: allocations as FullSelectionPaymentResult['allocations'],
+      }
+    : null
+}
 function mapError(error: unknown): DuesOperationError {
   if (error instanceof DuesOperationError) return error
   if (error instanceof ApiError || (isRecord(error) && typeof error.status === 'number')) {
@@ -377,12 +402,16 @@ export function createCommunityWorkEvidence(input: CommunityWorkEvidenceInput, k
   )
 }
 
-export function createDuesSettlement(input: DuesSettlementInput, key: string) {
-  return apiFetch<DuesSettlementResult>('/api/v1/dues/settlements', {
-    method: 'POST',
-    headers: { 'idempotency-key': key },
-    body: input,
-  })
+export function createFullSelectionPayment(input: FullSelectionPaymentInput, key: string) {
+  return duesOperation(
+    () =>
+      apiFetch('/api/v1/dues/settlements', {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: input,
+      }),
+    decodeFullSelectionPayment,
+  )
 }
 
 export function reverseDuesSettlement(

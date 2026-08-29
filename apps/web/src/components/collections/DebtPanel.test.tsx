@@ -92,7 +92,7 @@ describe('DebtPanel', () => {
         error=""
         onSearch={vi.fn()}
         onSelectSocio={vi.fn()}
-        onAllocate={vi.fn()}
+        onPayment={vi.fn()}
         onReverse={vi.fn()}
       />,
     )
