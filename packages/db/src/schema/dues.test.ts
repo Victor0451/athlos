@@ -56,9 +56,10 @@ function migrationSql() {
       '0052_dues_settlements.sql',
       '0053_dues_agreements_community_work.sql',
       '0058_dues_open_agreements.sql',
+      '0060_dues_settlement_reversal_unique.sql',
     ].map((file) => readFile(join(root, 'drizzle', file), 'utf8')),
-  ).then(([pricing, benefits, familyGroups, settlements, agreements, openAgreements]) =>
-    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}\n${agreements}\n${openAgreements}`
+  ).then(([pricing, benefits, familyGroups, settlements, agreements, openAgreements, reversal]) =>
+    `${pricing}\n${benefits}\n${familyGroups}\n${settlements}\n${agreements}\n${openAgreements}\n${reversal}`
       .replace('CREATE SCHEMA IF NOT EXISTS tesoreria', `CREATE SCHEMA IF NOT EXISTS ${q}`)
       .replaceAll('tesoreria.', `${q}.`)
       .replaceAll('deportes.', `${q}.`)
@@ -129,7 +130,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0058_dues_open_agreements',
+      tag: '0063_approval_condonation_request_idempotency',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
@@ -322,6 +323,10 @@ describe('dues pricing and obligation schema', () => {
         [secondSettlement.rows[0].id, obligationId],
       ),
     ).rejects.toMatchObject({ code: '23514' })
+    const reversalSettlement = await pool.query(
+      `INSERT INTO ${q}.dues_settlements (socio_id, kind, amount, reversal_of_settlement_id, reason, operator_id, caller_key, request_fingerprint) VALUES ($1, 'MONETARY', 100.00, $2, 'Fixture reversal', $3, gen_random_uuid()::text, repeat('r', 64)) RETURNING id`,
+      [socioId, settlement.rows[0].id, operatorId],
+    )
     await expect(
       pool.query(
         `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 50.00, $3, 'Wrong obligation')`,
@@ -331,13 +336,13 @@ describe('dues pricing and obligation schema', () => {
     await expect(
       pool.query(
         `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 50.00, $3, 'Wrong obligation')`,
-        [settlement.rows[0].id, obligationId, allocation.rows[0].id],
+        [reversalSettlement.rows[0].id, obligationId, allocation.rows[0].id],
       ),
     ).resolves.toBeTruthy()
     await expect(
       pool.query(
         `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 50.00, $3, 'Duplicate')`,
-        [settlement.rows[0].id, obligationId, allocation.rows[0].id],
+        [reversalSettlement.rows[0].id, obligationId, allocation.rows[0].id],
       ),
     ).rejects.toMatchObject({ code: '23505' })
   })
@@ -360,7 +365,12 @@ describe('dues pricing and obligation schema', () => {
       `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount) VALUES ($1, $2, 'ALLOCATION', 60.00) RETURNING id`,
       [originalSettlementId, obligationId],
     )
-    const reversalSettlementId = await settlement('60.00', 'h')
+    const reversalSettlementId = (
+      await pool.query(
+        `INSERT INTO ${q}.dues_settlements (socio_id, kind, amount, reversal_of_settlement_id, reason, operator_id, caller_key, request_fingerprint) VALUES ($1, 'MONETARY', 60.00, $2, 'Corrected allocation', $3, gen_random_uuid()::text, repeat('h', 64)) RETURNING id`,
+        [socioId, originalSettlementId, operatorId],
+      )
+    ).rows[0].id as string
     await pool.query(
       `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 60.00, $3, 'Corrected allocation')`,
       [reversalSettlementId, obligationId, original.rows[0].id],
@@ -381,6 +391,44 @@ describe('dues pricing and obligation schema', () => {
         [excessSettlementId, obligationId],
       ),
     ).rejects.toMatchObject({ code: '23514' })
+  })
+
+  it('links one reversal settlement to its original allocations', async () => {
+    await pool.query(
+      `TRUNCATE ${q}.dues_agreements, ${q}.dues_community_work, ${q}.dues_allocations, ${q}.dues_settlements, ${q}.dues_obligation_components, ${q}.dues_obligations, ${q}.dues_generation_receipts`,
+    )
+    const obligationId = await seedObligation()
+    const insertSettlement = (amount: string, key: string, reversalOfSettlementId?: string) =>
+      pool.query(
+        `INSERT INTO ${q}.dues_settlements (socio_id, kind, amount, reversal_of_settlement_id, reason, operator_id, caller_key, request_fingerprint) VALUES ($1, 'MONETARY', $2, $3::uuid, CASE WHEN $3::uuid IS NULL THEN NULL ELSE 'Corrected payment' END, $4, $5, repeat('r', 64)) RETURNING id`,
+        [socioId, amount, reversalOfSettlementId ?? null, operatorId, key],
+      )
+    const original = await insertSettlement('40.00', 'reversal-original')
+    const allocation = await pool.query(
+      `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount) VALUES ($1, $2, 'ALLOCATION', 40.00) RETURNING id`,
+      [original.rows[0].id, obligationId],
+    )
+    const unrelated = await insertSettlement('60.00', 'reversal-unrelated')
+    await pool.query(
+      `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount) VALUES ($1, $2, 'ALLOCATION', 60.00)`,
+      [unrelated.rows[0].id, obligationId],
+    )
+    const invalid = await insertSettlement('40.00', 'reversal-invalid', unrelated.rows[0].id)
+    await rejects(
+      pool.query(
+        `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 40.00, $3, 'Corrected payment')`,
+        [invalid.rows[0].id, obligationId, allocation.rows[0].id],
+      ),
+      '23514',
+    )
+    const reversal = await insertSettlement('40.00', 'reversal-valid', original.rows[0].id)
+    await expect(
+      pool.query(
+        `INSERT INTO ${q}.dues_allocations (settlement_id, obligation_id, kind, amount, compensates_allocation_id, reason) VALUES ($1, $2, 'COMPENSATION', 40.00, $3, 'Corrected payment')`,
+        [reversal.rows[0].id, obligationId, allocation.rows[0].id],
+      ),
+    ).resolves.toBeTruthy()
+    await rejects(insertSettlement('40.00', 'reversal-duplicate', original.rows[0].id), '23505')
   })
 
   it('rejects updates and deletes for settlement history', async () => {

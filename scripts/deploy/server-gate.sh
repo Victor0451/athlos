@@ -115,6 +115,7 @@ validate_beta_policy() {
 preflight() {
   docker info >/dev/null || die 'docker daemon is unavailable'
   ATHLOS_API_IMAGE="$api_image" ATHLOS_WEB_IMAGE="$web_image" "${compose[@]}" config --quiet || die 'compose configuration is invalid'
+  ATHLOS_API_IMAGE="$api_image" ATHLOS_WEB_IMAGE="$web_image" "${compose[@]}" run --rm --no-deps --entrypoint pnpm api --filter @athlos/db collections:baseline || die 'Collections baseline is unsupported'
   printf 'preflight ok api_image=%s web_image=%s\n' "$api_image" "$web_image"
 }
 

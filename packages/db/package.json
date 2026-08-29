@@ -17,6 +17,7 @@
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "migrate:status": "tsx src/scripts/status.ts",
+    "collections:baseline": "tsx src/scripts/collections-baseline.ts",
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
     "grant:data-steward": "tsx src/scripts/grant-data-steward.ts",
     "studio": "drizzle-kit studio",

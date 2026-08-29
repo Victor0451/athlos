@@ -67,6 +67,13 @@ teardown() {
   [[ "$calls" != *" up -d api"* ]]
 }
 
+@test "preflight classifies the Collections baseline before compose validation" {
+  run "$gate" preflight "$DIGEST" "$WEB_DIGEST"
+  [ "$status" -eq 0 ]
+  calls="$(<"$CALLS")"
+  [[ "$calls" == *"run --rm --no-deps --entrypoint pnpm api --filter @athlos/db collections:baseline"* ]]
+}
+
 @test "deploy pulls, starts, verifies readiness and exact digest" {
   run "$gate" deploy "$DIGEST" "$WEB_DIGEST"
   [ "$status" -eq 0 ]
