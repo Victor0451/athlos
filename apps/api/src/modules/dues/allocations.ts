@@ -18,6 +18,7 @@ export type AllocationInput = { settlementId:string; socioId:string; obligationI
 export type SettlementRecord = { id:string; socioId:string; kind:SettlementKind; amountCents:number; currency:string; reversalOfSettlementId:string|null }
 // prettier-ignore
 export type AllocationRecord = { id:string; settlementId:string; obligationId:string; kind:AllocationKind; amountCents:number; compensatesAllocationId:string|null }
+export type ReversibleSettlement = SettlementRecord & { allocations: AllocationRecord[] }
 // prettier-ignore
 export type SettlementClaim = { status:'claimed'; settlement:SettlementRecord } | { status:'replayed'; settlement:SettlementRecord; allocations:AllocationRecord[] }
 // prettier-ignore
@@ -59,6 +60,8 @@ const settlementFields = sql`id, socio_id AS "socioId", kind, amount::text, btri
 const allocationFields = sql`id, settlement_id AS "settlementId", obligation_id AS "obligationId", kind, amount::text, compensates_allocation_id AS "compensatesAllocationId"`
 // prettier-ignore
 export async function listAllocations(db:DuesDb, settlementId:string):Promise<AllocationRecord[]> { return rows<Parameters<typeof allocation>[0]>(await db.execute(sql`SELECT ${allocationFields} FROM tesoreria.dues_allocations WHERE settlement_id = ${settlementId} ORDER BY created_at, id`)).map(allocation) }
+// prettier-ignore
+export async function findReversibleSettlement(db:DuesDb,settlementId:string):Promise<ReversibleSettlement|null> { const original=rows<Parameters<typeof settlement>[0]>(await db.execute(sql`SELECT ${settlementFields} FROM tesoreria.dues_settlements WHERE id=${settlementId} FOR UPDATE`))[0]; if (!original) return null; const allocations=rows<Parameters<typeof allocation>[0]>(await db.execute(sql`SELECT ${allocationFields} FROM tesoreria.dues_allocations WHERE settlement_id=${settlementId} ORDER BY created_at,id FOR UPDATE`)).map(allocation); return {...settlement(original),allocations} }
 export async function selectFullOutstanding(
   db: DuesDb,
   input: FullOutstandingSelectionCommand,
@@ -108,6 +111,8 @@ export async function selectFullOutstanding(
     fingerprint,
   }
 }
+// prettier-ignore
+export async function findSettlementReplay(db:DuesDb, operatorId:string, callerKey:string, requestFingerprint:string):Promise<Extract<SettlementClaim,{status:'replayed'}>|undefined> { const existing=rows<Parameters<typeof settlement>[0]>(await db.execute(sql`SELECT ${settlementFields} FROM tesoreria.dues_settlements WHERE operator_id=${operatorId} AND caller_key=${callerKey}`))[0]; if (!existing) return undefined; const fingerprint=rows<{requestFingerprint:string}>(await db.execute(sql`SELECT request_fingerprint AS "requestFingerprint" FROM tesoreria.dues_settlements WHERE id=${existing.id}`))[0]?.requestFingerprint; if (fingerprint!==requestFingerprint) throw BusinessError(ErrorCode.CONFLICT,'Idempotency key was already used for a different settlement'); return {status:'replayed',settlement:settlement(existing),allocations:await listAllocations(db,existing.id)} }
 // prettier-ignore
 export async function claimSettlement(db:DuesDb, input:SettlementInput):Promise<SettlementClaim> { const inserted = rows<Parameters<typeof settlement>[0]>(await db.execute(sql`INSERT INTO tesoreria.dues_settlements (socio_id,kind,amount,currency,evidence,reason,reversal_of_settlement_id,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES (${input.socioId},${input.kind},${money(input.amountCents)},${input.currency},${JSON.stringify(input.evidence)}::jsonb,${input.reason ?? null},${input.reversalOfSettlementId ?? null},${input.operatorId},${JSON.stringify(input.authorizationEvidence)}::jsonb,${input.callerKey},${input.requestFingerprint}) ON CONFLICT (operator_id,caller_key) DO NOTHING RETURNING ${settlementFields}`))[0]; if (inserted) return { status:'claimed', settlement:settlement(inserted) }; const existing = rows<Parameters<typeof settlement>[0]>(await db.execute(sql`SELECT ${settlementFields} FROM tesoreria.dues_settlements WHERE operator_id = ${input.operatorId} AND caller_key = ${input.callerKey}`))[0]; if (!existing) throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Settlement claim is unavailable'); const fingerprint = rows<{requestFingerprint:string}>(await db.execute(sql`SELECT request_fingerprint AS "requestFingerprint" FROM tesoreria.dues_settlements WHERE id = ${existing.id}`))[0]?.requestFingerprint; if (fingerprint !== input.requestFingerprint) throw BusinessError(ErrorCode.CONFLICT, 'Idempotency key was already used for a different settlement'); return { status:'replayed', settlement:settlement(existing), allocations:await listAllocations(db, existing.id) } }
 // prettier-ignore
