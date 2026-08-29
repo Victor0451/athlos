@@ -1,11 +1,13 @@
 import {
   assertInteractiveNames,
   assertNoPageOverflow,
+  allowExpectedResponseFailure,
   expect,
   mockEmptyDisciplines,
   mockEmptyDuesPrices,
   test,
 } from './fixtures/authenticated-dashboard'
+import type { Locator } from '@playwright/test'
 
 const collectionsEnabled = process.env.NATIVE_COLLECTIONS_WEB_ENABLED === 'true'
 
@@ -211,4 +213,262 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
   )
 
   await assertNoPageOverflow(page)
+})
+
+const lifecycleId = '00000000-0000-4000-8000-000000000020'
+const executionId = '00000000-0000-4000-8000-000000000021'
+const operatorId = '00000000-0000-4000-8000-000000000001'
+const lifecycleItem = (state: string, executionStatus = 'executed') => ({
+  id: lifecycleId,
+  state,
+  expires_at: '2026-12-31T00:00:00.000Z',
+  decided_at: state === 'pending' ? null : '2026-08-01T00:00:00.000Z',
+  used_at: state === 'executed' ? '2026-08-02T00:00:00.000Z' : null,
+  execution_id: executionId,
+  execution_status: executionStatus,
+  snapshot: {
+    member_id: debtSocio.id,
+    obligations: [
+      {
+        obligation_id: '00000000-0000-4000-8000-000000000022',
+        currency: 'ARS',
+        outstanding_amount_cents: 10_000,
+      },
+    ],
+  },
+  requester: { operator_id: operatorId },
+  reason: 'Situación excepcional',
+  evidence: 'Acta 12',
+  decision: state === 'pending' ? null : { reason: 'Aprobada', evidence: 'Acta 13' },
+})
+
+async function mockSelectedDebt(
+  page: Parameters<typeof mockEmptyDuesPrices>[0],
+  debt = debtFixture,
+) {
+  await mockEmptyDuesPrices(page)
+  await mockEmptyDisciplines(page)
+  await page.route('**/api/v1/socios?*', (route) =>
+    route.fulfill({ json: { items: [debtSocio], page: 1, limit: 20, total: 1, has_more: false } }),
+  )
+  await page.route('**/api/v1/dues/debt/*', (route) => route.fulfill({ json: debt }))
+}
+
+async function selectDebt(page: Parameters<typeof mockEmptyDuesPrices>[0]) {
+  await page.getByRole('searchbox', { name: 'Buscar socio' }).fill('Gorriti')
+  await page.getByRole('button', { name: 'Buscar socio' }).click()
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  await expect(page.getByRole('heading', { name: 'Tratamientos de deuda' })).toBeVisible()
+}
+
+async function assertTouchTarget(locator: Locator) {
+  const box = await locator.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.width).toBeGreaterThanOrEqual(44)
+  expect(box!.height).toBeGreaterThanOrEqual(44)
+}
+
+test('premium collections shell preserves accessible treatments from mobile through wide layouts without CTActe', async ({
+  authenticatedPage: page,
+}) => {
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
+  const forbiddenRequests: string[] = []
+  page.on('request', (request) => {
+    if (/ctacte/i.test(request.url())) forbiddenRequests.push(request.url())
+  })
+  await mockSelectedDebt(page)
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'shift-1',
+            desk_id: 'desk-1',
+            status: 'OPEN',
+            business_date: '2026-01-01',
+            assigned_operator_id: 'operator-1',
+            opened_at: '2026-01-01T08:00:00.000Z',
+            closed_at: null,
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/v1/members/*/condonation-requests?*', (route) =>
+    route.fulfill({ json: { items: [lifecycleItem('executed')] } }),
+  )
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 768, height: 1024 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/collections')
+    await selectDebt(page)
+    const workspace = page.getByRole('region', { name: 'Tratamientos de deuda' })
+    await expect(workspace.getByRole('heading', { level: 3 })).toHaveText([
+      'Pago',
+      'Trabajo comunitario',
+      'Acuerdo',
+      'Condonación',
+    ])
+    await assertNoPageOverflow(page)
+    await assertInteractiveNames(page)
+    await expect(workspace).not.toContainText(/ctacte/i)
+    await expect(
+      page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('region', { name: 'Vista previa de evaluación' }).getByLabel('Desde'),
+    ).toBeVisible()
+    await expect(
+      page.getByText('Ejecutada: la deuda autorizada se redujo según el registro confirmado.'),
+    ).toBeVisible()
+    await expect(workspace.getByText('Ejecutada', { exact: true })).toBeVisible()
+
+    const context = page.getByLabel('Contexto de la solicitud')
+    const reason = page.getByLabel('Motivo de la solicitud')
+    const evidence = page.getByLabel('Evidencia de la solicitud')
+    const submit = page.getByRole('button', { name: 'Enviar solicitud de condonación' })
+    await context.focus()
+    await page.keyboard.press('Tab')
+    await expect(reason).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(evidence).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(submit).toBeFocused()
+    await expect(submit).toHaveCSS('outline-style', 'solid')
+    await expect(submit).toHaveCSS('outline-width', '2px')
+    await assertTouchTarget(page.getByRole('button', { name: 'Buscar socio' }))
+    await assertTouchTarget(submit)
+  }
+  expect(forbiddenRequests).toEqual([])
+})
+
+test('condonation lifecycle stays honest through reload, execution, replay recovery, and stale failure', async ({
+  authenticatedPage: page,
+}) => {
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
+  let state = 'pending'
+  let executionStatus = 'executed'
+  let debtRequests = 0
+  const executions: string[] = []
+  await mockSelectedDebt(page)
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'shift-1',
+            desk_id: 'desk-1',
+            status: 'OPEN',
+            business_date: '2026-01-01',
+            assigned_operator_id: 'operator-1',
+            opened_at: '2026-01-01T08:00:00.000Z',
+            closed_at: null,
+          },
+        ],
+      },
+    }),
+  )
+  await page.route('**/api/v1/dues/debt/*', (route) => {
+    debtRequests += 1
+    return route.fulfill({
+      json: { ...debtFixture, total_debt_cents: state === 'executed' ? 0 : 10_000 },
+    })
+  })
+  await page.route('**/api/v1/members/*/condonation-requests?*', (route) =>
+    route.fulfill({ json: { items: [lifecycleItem(state, executionStatus)] } }),
+  )
+  await page.route('**/api/v1/condonation-requests/*/execution', async (route) => {
+    executions.push(JSON.parse(route.request().postData() ?? '{}').execution_id)
+    if (state === 'approved_awaiting_execution' && executionStatus === 'recoverable')
+      return route.fulfill({ status: 409, json: {} })
+    state = 'executed'
+    return route.fulfill({
+      json: {
+        execution_id: executionId,
+        approval_id: lifecycleId,
+        member_id: debtSocio.id,
+        currency: 'ARS',
+        approved_amount_cents: 10_000,
+        treatment_ids: ['00000000-0000-4000-8000-000000000023'],
+        status: executionStatus === 'recoverable' ? 'replayed' : 'executed',
+      },
+    })
+  })
+  await page.goto('/collections')
+  await selectDebt(page)
+  await expect(page.getByText('Pendiente: la deuda no cambia.')).toBeVisible()
+  await page.reload()
+  await selectDebt(page)
+  await expect(page.getByText('Pendiente: la deuda no cambia.')).toBeVisible()
+  state = 'rejected'
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  await expect(page.getByText('Rechazada: la deuda no cambia.')).toBeVisible()
+  expect(debtRequests).toBeGreaterThan(2)
+
+  state = 'approved_awaiting_execution'
+  executionStatus = 'executed'
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  await expect(page.getByText('Aprobada, pero todavía no fue aplicada a la deuda.')).toBeVisible()
+  await page.getByRole('button', { name: 'Ejecutar condonación' }).click()
+  await expect(page.getByText(/Ejecutada: la deuda autorizada se redujo/)).toBeVisible()
+  await expect(
+    page
+      .getByLabel(/Resumen de deuda de Gorriti, Ana/)
+      .getByText('Deuda total pendiente: 0.00 ARS', { exact: true }),
+  ).toBeVisible()
+  expect(executions).toEqual([executionId])
+  await expect(page.getByRole('button', { name: /Ejecutar|Recuperar/ })).toHaveCount(0)
+
+  state = 'approved_awaiting_execution'
+  executionStatus = 'recoverable'
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  const recovery = page.getByRole('button', { name: 'Recuperar y ejecutar condonación' })
+  allowExpectedResponseFailure(page, {
+    url: `http://127.0.0.1:${process.env.PLAYWRIGHT_PORT ?? '3101'}/api/v1/condonation-requests/${lifecycleId}/execution`,
+    status: 409,
+    request: { method: 'POST', postData: JSON.stringify({ execution_id: executionId }) },
+    context: 'stale condonation execution',
+  })
+  await recovery.click()
+  await expect(
+    page.getByRole('region', { name: 'Estado de la condonación' }).getByRole('alert'),
+  ).toContainText(/requiere recuperación/i)
+  await expect(recovery).toBeFocused()
+  await expect(
+    page
+      .getByLabel(/Resumen de deuda de Gorriti, Ana/)
+      .getByText('Deuda total pendiente: 100.00 ARS', { exact: true }),
+  ).toBeVisible()
+  expect(executions).toEqual([executionId, executionId])
+})
+
+test('OPERADOR can inspect condonation without settlement, decision, or execution controls', async ({
+  authenticatedPage: page,
+}) => {
+  test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
+  await page.addInitScript(() => {
+    const state = JSON.parse(window.localStorage.getItem('athlos.auth')!) as {
+      currentUser: { role: string }
+    }
+    state.currentUser.role = 'OPERADOR'
+    window.localStorage.setItem('athlos.auth', JSON.stringify(state))
+  })
+  await mockSelectedDebt(page)
+  await page.route('**/api/v1/members/*/condonation-requests?*', (route) =>
+    route.fulfill({ json: { items: [lifecycleItem('approved_awaiting_execution')] } }),
+  )
+  await page.goto('/collections')
+  await selectDebt(page)
+  await expect(page.getByRole('heading', { name: 'Solicitud de condonación' })).toBeVisible()
+  await expect(
+    page.getByRole('button', {
+      name: /registrar pago|revertir|registrar decisión|ejecutar|recuperar/i,
+    }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('status').filter({ hasText: /No tenés permiso para registrar pagos/i }),
+  ).toBeVisible()
 })

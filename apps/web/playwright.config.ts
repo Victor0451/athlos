@@ -18,7 +18,7 @@ export default defineConfig({
   outputDir: 'test-results',
   webServer: {
     command: `pnpm exec next dev --hostname 127.0.0.1 --port ${port}`,
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${port}/login`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',

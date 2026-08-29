@@ -1,6 +1,12 @@
 import { expect, it, vi } from 'vitest'
 import { ErrorCode } from '@athlos/errors'
+import { emitAudit } from '@athlos/audit'
 import { CondonationExecutionService } from './condonations.ts'
+
+vi.mock('@athlos/audit', () => ({
+  AuditAction: { CONDONATION_EXECUTED: 'CONDONATION_EXECUTED' },
+  emitAudit: vi.fn().mockResolvedValue({ inserted: true, id: 'audit-1' }),
+}))
 
 const ids = {
   execution: '00000000-0000-4000-8000-000000000001',
@@ -30,12 +36,14 @@ const approval = {
   requestEvidence: 'case-1',
   decisionReason: 'Approved',
   decisionEvidence: 'note-1',
+  actionId: '00000000-0000-4000-8000-000000000006',
 }
 const selection = {
   memberId: ids.member,
   currency: 'ARS',
   treatments: [{ obligationId: ids.obligation, amountCents: 12500 }],
 }
+const treatmentIds = ['00000000-0000-4000-8000-000000000007']
 const receipt = {
   executionId: ids.execution,
   approvalId: ids.approval,
@@ -44,6 +52,10 @@ const receipt = {
   currency: 'ARS',
   totalAmountCents: 12500,
   treatments: selection.treatments,
+  treatmentIds: [],
+  snapshot: approval.condonationSnapshot,
+  reason: approval.requestReason,
+  evidence: approval.requestEvidence,
 }
 
 function setup() {
@@ -52,7 +64,7 @@ function setup() {
     lockApproval: vi.fn().mockResolvedValue(approval),
     lockOutstanding: vi.fn().mockResolvedValue(selection),
     appendReceipt: vi.fn().mockResolvedValue(receipt),
-    appendTreatments: vi.fn(),
+    appendTreatments: vi.fn().mockResolvedValue(treatmentIds),
     consumeApproval: vi.fn().mockResolvedValue(true),
   }
   const db = { transaction: vi.fn(async (work: (tx: unknown) => unknown) => work({})) } as never
@@ -61,17 +73,54 @@ function setup() {
 
 it('executes the immutable approved snapshot once and replays its exact receipt', async () => {
   const { repository, service } = setup()
-  await expect(service.execute(command)).resolves.toEqual({ ...receipt, status: 'executed' })
+  await expect(service.execute(command)).resolves.toEqual({
+    ...receipt,
+    treatmentIds,
+    status: 'executed',
+  })
   expect(repository.appendTreatments).toHaveBeenCalledWith(expect.anything(), {
     ...receipt,
-    snapshot: approval.condonationSnapshot,
-    reason: approval.requestReason,
-    evidence: approval.requestEvidence,
   })
-  repository.findReceipt.mockResolvedValue(receipt)
-  await expect(service.execute(command)).resolves.toEqual({ ...receipt, status: 'replayed' })
+  repository.findReceipt.mockResolvedValue({ ...receipt, treatmentIds })
+  await expect(service.execute(command)).resolves.toEqual({
+    ...receipt,
+    treatmentIds,
+    status: 'replayed',
+  })
+  expect(Object.hasOwn(receipt, 'totalAmount')).toBe(false)
   expect(repository.lockApproval).toHaveBeenCalledTimes(1)
   expect(repository.appendTreatments).toHaveBeenCalledTimes(1)
+})
+
+it('audits only the first successful approved execution without cash claims', async () => {
+  const { repository, service } = setup()
+  await expect(
+    service.executeApproved({
+      requestId: approval.actionId,
+      executionId: ids.execution,
+      actorId: ids.actor,
+      callerKey: 'condonation-execution-1',
+      sourceIp: '127.0.0.1',
+    }),
+  ).resolves.toEqual({ ...receipt, treatmentIds, status: 'executed' })
+  expect(emitAudit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      action: 'CONDONATION_EXECUTED',
+      oldValue: { debt_amount_cents: 12500 },
+      newValue: { debt_amount_cents: 0 },
+      callerKey: 'condonation-execution-1',
+    }),
+  )
+  repository.findReceipt.mockResolvedValue({ ...receipt, treatmentIds })
+  await service.executeApproved({
+    requestId: approval.actionId,
+    executionId: ids.execution,
+    actorId: ids.actor,
+    callerKey: 'condonation-execution-1',
+    sourceIp: '127.0.0.1',
+  })
+  expect(emitAudit).toHaveBeenCalledTimes(1)
 })
 
 it.each([
