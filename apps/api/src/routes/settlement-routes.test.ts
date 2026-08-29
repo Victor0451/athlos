@@ -25,11 +25,11 @@ const app = async (settlementService: NonNullable<DuesRouteOptions['settlementSe
 afterEach(async () => Promise.all(apps.splice(0).map((fastify) => fastify.close())))
 
 // prettier-ignore
-it('returns 404 for legacy settlement creation, including non-cash payloads',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'NON_CASH',amount_cents:5_000,evidence:{approval:'private'},allocations:[{obligation_id:'00000000-0000-4000-8000-000000000002',amount_cents:5_000}]}});expect(response.statusCode).toBe(404);expect(settlementService.create).not.toHaveBeenCalled()})
+it('rejects legacy settlement creation, including non-cash payloads',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'NON_CASH',amount_cents:5_000,evidence:{approval:'private'},allocations:[{obligation_id:'00000000-0000-4000-8000-000000000002',amount_cents:5_000}]}});expect(response.statusCode).toBe(400);expect(settlementService.create).not.toHaveBeenCalled()})
 // prettier-ignore
-it('returns 404 for legacy settlement creation before authorization',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('OPERADOR'),payload:{}});expect(response.statusCode).toBe(404);expect(settlementService.create).not.toHaveBeenCalled()})
+it('rejects legacy settlement creation before validation for unauthorized actors',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('OPERADOR'),payload:{}});expect(response.statusCode).toBe(403);expect(settlementService.create).not.toHaveBeenCalled()})
 
-it('returns 404 for oversized legacy settlement creation', async () => {
+it('rejects oversized legacy settlement creation', async () => {
   const settlementService = { create: vi.fn() }
   const fastify = await app(settlementService)
   const response = await fastify.inject({
@@ -43,11 +43,11 @@ it('returns 404 for oversized legacy settlement creation', async () => {
       allocations: [{ obligation_id: actorId, amount_cents: 99_999_999_999_999 + 1 }],
     },
   })
-  expect(response.statusCode).toBe(404)
+  expect(response.statusCode).toBe(400)
   expect(settlementService.create).not.toHaveBeenCalled()
 })
 
-it('returns 404 for in-range legacy settlement creation', async () => {
+it('rejects in-range legacy settlement creation', async () => {
   const maxCents = 99_999_999_999_999
   const settlementService = {
     create: vi.fn().mockResolvedValue({
@@ -70,7 +70,7 @@ it('returns 404 for in-range legacy settlement creation', async () => {
       allocations: [{ obligation_id: actorId, amount_cents: maxCents }],
     },
   })
-  expect(response.statusCode).toBe(404)
+  expect(response.statusCode).toBe(400)
   expect(settlementService.create).not.toHaveBeenCalled()
 })
 
@@ -88,7 +88,7 @@ it('returns 404 for legacy reversal', async () => {
 })
 
 // prettier-ignore
-it('returns 404 for stale legacy settlement creation',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'MONETARY',amount_cents:2_000,allocations:[{obligation_id:actorId,amount_cents:2_000}]}});expect(response.statusCode).toBe(404);expect(settlementService.create).not.toHaveBeenCalled()})
+it('rejects stale legacy settlement creation',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'MONETARY',amount_cents:2_000,allocations:[{obligation_id:actorId,amount_cents:2_000}]}});expect(response.statusCode).toBe(400);expect(settlementService.create).not.toHaveBeenCalled()})
 // prettier-ignore
 it('returns 404 for legacy reversal before validation',async()=>{const settlementService={create:vi.fn(),reverse:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:`/api/v1/dues/settlements/${actorId}/reverse`,headers:auth('TESORERO'),payload:{allocation_id:actorId,reason:'   '}});expect(response.statusCode).toBe(404);expect(settlementService.reverse).not.toHaveBeenCalled()})
 
