@@ -2,8 +2,14 @@
 
 import { useState } from 'react'
 import { DuesOperationError, type DebtDetail, type DuesAgreement } from '@/lib/api/dues'
+import { Badge } from '@/components/ui/Badge'
 import { CommunityWorkForm, type CommunityWorkDraft } from './CommunityWorkForm'
 import { AgreementForm, type AgreementDraft } from './AgreementForm'
+import {
+  collectionButtonClass,
+  collectionInlineStatusClass,
+  collectionSectionClass,
+} from './CollectionPrimitives'
 
 // prettier-ignore
 export type AgreementViewStatus = 'idle'|'loading'|'ready'|'permission'|'conflict'|'success'|'updated'|'replayed'|'partial_data'|'unavailable'|'error'
@@ -123,52 +129,61 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
   return (
     <section
       aria-labelledby={`agreement-title-${obligation.id}`}
-      className="space-y-3 rounded border p-3"
+      className={collectionSectionClass}
     >
-      <h4 id={`agreement-title-${obligation.id}`}>{treatment === 'community' ? 'Trabajo comunitario de la obligación' : 'Acuerdo de la obligación'}</h4>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 pb-3">
+        <h4 id={`agreement-title-${obligation.id}`} className="font-display text-base font-semibold text-ink-900">{treatment === 'community' ? 'Trabajo comunitario de la obligación' : 'Acuerdo de la obligación'}</h4>
+        <Badge variant="info">Obligación abierta</Badge>
+      </div>
       {showStatus && (
-        <p role={statusRole} aria-live={statusRole === 'alert' ? 'assertive' : 'polite'}>
+        <p role={statusRole} aria-live={statusRole === 'alert' ? 'assertive' : 'polite'} className={collectionInlineStatusClass(statusRole === 'alert' ? 'error' : 'neutral')}>
           {message}
         </p>
       )}
       {displayStatus === 'conflict' && !formOpen && (
-        <button type="button" onClick={() => void review()} disabled={busy}>
+        <button className={collectionButtonClass.secondary} type="button" onClick={() => void review()} disabled={busy}>
           Revisar acuerdo actualizado
         </button>
       )}
       {active && (
-        <div aria-label="Resumen del acuerdo activo" className="space-y-2">
-          <p>Acuerdo activo · revisión {active.revision_number}</p>
+        <div aria-label="Resumen del acuerdo activo" className="space-y-4 border border-ink-200 bg-surface-sunken p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 pb-3">
+            <p className="font-display text-sm font-semibold text-ink-900">Acuerdo activo · revisión <span className="font-mono tabular-nums">{active.revision_number}</span></p>
+            <Badge variant="success">Activo</Badge>
+          </div>
           {active.kind === 'NEGOTIATED' &&
             active.terms_version === 1 &&
             'narrative' in active.terms && <p>Narrativa: {active.terms.narrative}</p>}
-          <p>Motivo: {active.reason}</p>
-          <p>La deuda continúa abierta hasta que se registre una cancelación válida.</p>
+          <p className="border-t border-ink-200 pt-3 font-body text-sm text-ink-700">Motivo: {active.reason}</p>
+          <p className="font-body text-sm font-medium text-ink-900">La deuda continúa abierta hasta que se registre una cancelación válida.</p>
           {canRevise && (
-            <button type="button" onClick={openRevision} disabled={busy}>
+            <button className={collectionButtonClass.secondary} type="button" onClick={openRevision} disabled={busy}>
               Revisar acuerdo activo
             </button>
           )}
           // prettier-ignore
-          {treatment !== 'agreement' && active && active.kind === 'NEGOTIATED' && active.terms_version === 1 && onRecordCommunityWork && <button type="button" onClick={openCommunityWork} disabled={busy}>Registrar trabajo comunitario</button>}
+          {treatment !== 'agreement' && active && active.kind === 'NEGOTIATED' && active.terms_version === 1 && onRecordCommunityWork && <button className={collectionButtonClass.primary} type="button" onClick={openCommunityWork} disabled={busy}>Registrar trabajo comunitario</button>}
         </div>
       )}
       {treatment !== 'community' && active && (
-        <section>
-          <h5>Historial de revisiones</h5>
+        <section className="space-y-3 border-t border-ink-100 pt-4">
+          <h5 className="font-display text-sm font-semibold text-ink-900">Historial de revisiones</h5>
           {revisions.length ? (
             <ol aria-label="Historial de revisiones">
               {revisions.map((revision) => {
                 const current = revision.id === active.id || revision.status === 'ACTIVE'
                 return (
-                  <li key={revision.id}>
-                    <p>
-                      Revisión {revision.revision_number} · {current ? 'Actual' : 'Anterior'}
-                    </p>
+                  <li key={revision.id} className="space-y-2 border border-ink-200 bg-surface p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-body text-sm font-medium text-ink-900">
+                        Revisión <span className="font-mono tabular-nums">{revision.revision_number}</span> · {current ? 'Actual' : 'Anterior'}
+                      </p>
+                      <Badge variant={current ? 'success' : 'default'}>{current ? 'Actual' : 'Anterior'}</Badge>
+                    </div>
                     {revision.kind === 'NEGOTIATED' &&
                       revision.terms_version === 1 &&
                       'narrative' in revision.terms && <p>Narrativa: {revision.terms.narrative}</p>}
-                    <p>Motivo: {revision.reason}</p>
+                    <p className="border-t border-ink-100 pt-2 font-body text-sm text-ink-700">Motivo: {revision.reason}</p>
                     {revision.revision_reason && (
                       <p>Motivo de la revisión: {revision.revision_reason}</p>
                     )}
@@ -182,7 +197,7 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
         </section>
       )}
       {treatment !== 'community' && !active && ['idle', 'ready'].includes(displayStatus) && (
-        <button type="button" onClick={openForm} disabled={busy}>
+        <button className={collectionButtonClass.primary} type="button" onClick={openForm} disabled={busy}>
           Registrar acuerdo
         </button>
       )}
