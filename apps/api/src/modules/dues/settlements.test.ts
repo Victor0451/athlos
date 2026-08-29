@@ -115,51 +115,25 @@ it('persists privacy-safe snapshots and reversal reason through the emitter fiel
   expect(audit.records[0]?.metadata).not.toHaveProperty('evidence')
 })
 
-it('maps a duplicate different-key reversal to a domain conflict', async () => {
-  const repository = {
-    findAllocation: vi.fn().mockResolvedValue({
-      id: 'allocation-1',
-      settlementId: 'settlement-1',
-      obligationId: 'obligation-1',
-      socioId: 'socio-1',
-      settlementKind: 'MONETARY',
-      amountCents: 2_000,
-      currency: 'ARS',
-      kind: 'ALLOCATION',
-      compensatesAllocationId: null,
-    }),
-    claimSettlement: vi.fn().mockResolvedValue({
-      status: 'claimed',
-      settlement: {
-        id: 'reversal-1',
-        socioId: 'socio-1',
-        kind: 'NON_CASH',
-        amountCents: 2_000,
-        currency: 'ARS',
-      },
-    }),
-    insertAllocation: vi.fn().mockRejectedValue({
-      code: '23505',
-      constraint: 'dues_allocations_compensation_unique',
-    }),
-  }
-  const service = new SettlementService(db(), { repository, audit: auditLog().emit })
-
-  await expect(
-    service.reverse({
-      ...context,
-      settlementId: 'settlement-1',
-      allocationId: 'allocation-1',
-      reason: 'Duplicate correction',
-    }),
-  ).rejects.toMatchObject({ code: ErrorCode.CONFLICT, statusCode: 409 })
-})
+// prettier-ignore
+it('reverses every original allocation under one linked settlement',async()=>{const repository={findReversibleSettlement:vi.fn().mockResolvedValue({id:'settlement-1',socioId:'socio-1',kind:'MONETARY',amountCents:3_000,currency:'ARS',reversalOfSettlementId:null,allocations:[{id:'allocation-1',obligationId:'obligation-1',amountCents:1_000,kind:'ALLOCATION',compensatesAllocationId:null},{id:'allocation-2',obligationId:'obligation-2',amountCents:2_000,kind:'ALLOCATION',compensatesAllocationId:null}]}),claimSettlement:vi.fn().mockResolvedValue({status:'claimed',settlement:{id:'reversal-1',socioId:'socio-1',kind:'MONETARY',amountCents:3_000,currency:'ARS',reversalOfSettlementId:'settlement-1'}}),insertAllocation:vi.fn(async(_:unknown,input:{obligationId:string;amountCents:number;compensatesAllocationId:string})=>({id:`compensation-${input.obligationId}`,settlementId:'reversal-1',kind:'COMPENSATION',...input}))},service=new SettlementService(db(),{repository:repository as never,audit:auditLog().emit,cash:async()=>({}as never)});await expect(service.reverse({...context,role:'TESORERO',authorizationEvidence:{approval:'ticket-1'},settlementId:'settlement-1',reason:'Incorrect payment'} as never)).resolves.toMatchObject({settlementId:'reversal-1',amountCents:3_000,allocations:[{compensatesAllocationId:'allocation-1'},{compensatesAllocationId:'allocation-2'}]});expect(repository.insertAllocation).toHaveBeenCalledTimes(2)})
 
 // prettier-ignore
-it('requires a non-empty trimmed reversal reason before opening a transaction',async()=>{const repository={findAllocation:vi.fn(),claimSettlement:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.reverse({...context,settlementId:'settlement-1',allocationId:'allocation-1',reason:'   '})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(repository.findAllocation).not.toHaveBeenCalled()})
+it('emits redacted reversal and compensation audits after a claimed reversal',async()=>{const audit=auditLog(),repository={findReversibleSettlement:vi.fn().mockResolvedValue({id:'settlement-1',socioId:'socio-1',kind:'MONETARY',amountCents:100,currency:'ARS',reversalOfSettlementId:null,allocations:[{id:'allocation-1',obligationId:'obligation-1',amountCents:100,kind:'ALLOCATION',compensatesAllocationId:null}]}),claimSettlement:vi.fn().mockResolvedValue({status:'claimed',settlement:{id:'reversal-1',socioId:'socio-1',kind:'MONETARY',amountCents:100,currency:'ARS',reversalOfSettlementId:'settlement-1'}}),insertAllocation:vi.fn().mockResolvedValue({id:'compensation-1',settlementId:'reversal-1',obligationId:'obligation-1',amountCents:100,kind:'COMPENSATION',compensatesAllocationId:'allocation-1'})},service=new SettlementService(db(),{repository:repository as never,audit:audit.emit,cash:async()=>({}as never)});await service.reverse({...context,settlementId:'settlement-1',reason:'Correction'});expect(audit.records.map(({action})=>action)).toEqual([AuditAction.DUES_SETTLEMENT_REVERSED,AuditAction.DUES_ALLOCATION_COMPENSATED]);expect(JSON.stringify(audit.records)).not.toContain('reversalOfSettlementId')})
 
 // prettier-ignore
-it('appends one compensation allocation without changing the original',async()=>{const repository={findAllocation:vi.fn().mockResolvedValue({id:'allocation-1',settlementId:'settlement-1',obligationId:'obligation-1',socioId:'socio-1',settlementKind:'MONETARY',amountCents:2_000,currency:'ARS',kind:'ALLOCATION',compensatesAllocationId:null}),claimSettlement:vi.fn().mockResolvedValue({status:'claimed',settlement:{id:'reversal-1',socioId:'socio-1',kind:'MONETARY',amountCents:2_000,currency:'ARS'}}),insertAllocation:vi.fn().mockResolvedValue({id:'compensation-1',settlementId:'reversal-1',obligationId:'obligation-1',kind:'COMPENSATION',amountCents:2_000,compensatesAllocationId:'allocation-1'})},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.reverse({...context,settlementId:'settlement-1',allocationId:'allocation-1',reason:'Incorrect allocation'})).resolves.toMatchObject({allocations:[{kind:'COMPENSATION'}]});expect(repository.insertAllocation).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({kind:'COMPENSATION',compensatesAllocationId:'allocation-1',reason:'Incorrect allocation'}))})
+it.each([{role:'OPERADOR',authorizationEvidence:{approval:'ticket'},reason:'reason'},{role:'TESORERO',authorizationEvidence:{},reason:'reason'},{role:'TESORERO',authorizationEvidence:{approval:'ticket'},reason:'   '}])('rejects reversal without Treasury authority, evidence, or reason before persistence',async input=>{const repository={findReversibleSettlement:vi.fn()},service=new SettlementService(db(),{repository:repository as never,audit:auditLog().emit});await expect(service.reverse({...context,...input,settlementId:'settlement-1'} as never)).rejects.toMatchObject({code:input.role==='OPERADOR'?ErrorCode.INSUFFICIENT_PERMISSIONS:ErrorCode.VALIDATION_ERROR});expect(repository.findReversibleSettlement).not.toHaveBeenCalled()})
+
+// prettier-ignore
+it.each([null,{id:'settlement-1',socioId:'socio-1',kind:'NON_CASH',amountCents:100,currency:'ARS',reversalOfSettlementId:null,allocations:[]},{id:'settlement-1',socioId:'socio-1',kind:'MONETARY',amountCents:100,currency:'ARS',reversalOfSettlementId:'older',allocations:[{id:'a',obligationId:'o',amountCents:100,kind:'ALLOCATION',compensatesAllocationId:null}]}])('rejects an unknown or invalid original settlement',async original=>{const repository={findReversibleSettlement:vi.fn().mockResolvedValue(original),claimSettlement:vi.fn()},service=new SettlementService(db(),{repository:repository as never,audit:auditLog().emit});await expect(service.reverse({...context,settlementId:'settlement-1',reason:'reason'})).rejects.toMatchObject({code:original?ErrorCode.CONFLICT:ErrorCode.NOT_FOUND});expect(repository.claimSettlement).not.toHaveBeenCalled()})
+
+// prettier-ignore
+it.each([{status:'replayed',settlement:{id:'reversal-1',socioId:'socio-1',kind:'MONETARY',amountCents:100,currency:'ARS',reversalOfSettlementId:'settlement-1'},allocations:[{id:'c',settlementId:'reversal-1',obligationId:'o',amountCents:100,kind:'COMPENSATION',compensatesAllocationId:'a'}]},{error:{code:'23505',constraint:'dues_settlements_reversal_of_settlement_unique'}}])('replays matching reversal keys and conflicts for an already-reversed settlement',async outcome=>{const repository={findReversibleSettlement:vi.fn().mockResolvedValue({id:'settlement-1',socioId:'socio-1',kind:'MONETARY',amountCents:100,currency:'ARS',reversalOfSettlementId:null,allocations:[{id:'a',obligationId:'o',amountCents:100,kind:'ALLOCATION',compensatesAllocationId:null}]}),claimSettlement:vi.fn().mockImplementation(async()=>{if('error'in outcome)throw outcome.error;return outcome}),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository:repository as never,audit:auditLog().emit});const reversal=service.reverse({...context,settlementId:'settlement-1',reason:'reason'});if('error'in outcome)await expect(reversal).rejects.toMatchObject({code:ErrorCode.CONFLICT});else {await expect(reversal).resolves.toMatchObject({settlementId:'reversal-1'});expect(repository.insertAllocation).not.toHaveBeenCalled()}})
+
+// prettier-ignore
+it('requires a non-empty trimmed reversal reason before opening a transaction',async()=>{const repository={findReversibleSettlement:vi.fn(),claimSettlement:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.reverse({...context,settlementId:'settlement-1',reason:'   '})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(repository.findReversibleSettlement).not.toHaveBeenCalled()})
+
+// prettier-ignore
 
 it('prepares a full-selection payment command without monetary fields or writes', async () => {
   const selection = {
