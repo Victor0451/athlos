@@ -156,6 +156,70 @@ export const duesObligationComponents = tesoreriaSchema.table(
   }),
 )
 
+export const duesCondonationExecutions = tesoreriaSchema.table(
+  'dues_condonation_executions',
+  {
+    executionId: uuid('execution_id').primaryKey(),
+    approvalTokenId: uuid('approval_token_id').notNull().unique(),
+    socioId: uuid('socio_id')
+      .notNull()
+      .references(() => socios.id, { onDelete: 'restrict' }),
+    actorId: uuid('actor_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'restrict' }),
+    currency: char('currency', { length: 3 }).notNull(),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }).notNull(),
+    approvedSnapshot: jsonb('approved_snapshot').notNull(),
+    reason: text('reason').notNull(),
+    evidence: text('evidence').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    totalCheck: check('dues_condonation_executions_total_check', sql`${table.totalAmount} > 0`),
+    currencyCheck: check(
+      'dues_condonation_executions_currency_check',
+      sql`${table.currency} ~ '^[A-Z]{3}$'`,
+    ),
+  }),
+)
+
+export const duesCondonationTreatments = tesoreriaSchema.table(
+  'dues_condonation_treatments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    executionId: uuid('execution_id')
+      .notNull()
+      .references(() => duesCondonationExecutions.executionId, { onDelete: 'restrict' }),
+    approvalTokenId: uuid('approval_token_id').notNull(),
+    socioId: uuid('socio_id')
+      .notNull()
+      .references(() => socios.id, { onDelete: 'restrict' }),
+    obligationId: uuid('obligation_id')
+      .notNull()
+      .references(() => duesObligations.id, { onDelete: 'restrict' }),
+    actorId: uuid('actor_id')
+      .notNull()
+      .references(() => operators.id, { onDelete: 'restrict' }),
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    currency: char('currency', { length: 3 }).notNull(),
+    approvedSnapshot: jsonb('approved_snapshot').notNull(),
+    reason: text('reason').notNull(),
+    evidence: text('evidence').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    executionObligationUnique: uniqueIndex(
+      'dues_condonation_treatments_execution_obligation_unique',
+    ).on(table.executionId, table.obligationId),
+    obligationIdx: index('dues_condonation_treatments_obligation_idx').on(table.obligationId),
+    amountCheck: check('dues_condonation_treatments_amount_check', sql`${table.amount} > 0`),
+    currencyCheck: check(
+      'dues_condonation_treatments_currency_check',
+      sql`${table.currency} ~ '^[A-Z]{3}$'`,
+    ),
+  }),
+)
+
 export type DuesPriceVersion = typeof duesPriceVersions.$inferSelect
 export type NewDuesPriceVersion = typeof duesPriceVersions.$inferInsert
 export type DuesGenerationReceipt = typeof duesGenerationReceipts.$inferSelect
@@ -164,3 +228,5 @@ export type DuesObligation = typeof duesObligations.$inferSelect
 export type NewDuesObligation = typeof duesObligations.$inferInsert
 export type DuesObligationComponent = typeof duesObligationComponents.$inferSelect
 export type NewDuesObligationComponent = typeof duesObligationComponents.$inferInsert
+export type DuesCondonationExecution = typeof duesCondonationExecutions.$inferSelect
+export type DuesCondonationTreatment = typeof duesCondonationTreatments.$inferSelect

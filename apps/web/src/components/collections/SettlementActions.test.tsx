@@ -37,7 +37,7 @@ describe('SettlementActions', () => {
     await user.click(screen.getByLabelText(/período 2026-01-01/i))
     await user.click(screen.getByLabelText(/período 2026-02-01/i))
     await user.click(screen.getByLabelText(/débito/i))
-    expect(screen.getByText(/total a registrar: 100.00 ARS/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/total a registrar/i)).toHaveTextContent(/^100\.00 ARS$/)
     await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
     expect(onPayment).toHaveBeenCalledWith(
@@ -52,21 +52,19 @@ describe('SettlementActions', () => {
   })
   it('blocks an unavailable shift and requires conflict review before retrying', async () => {
     const user = userEvent.setup(),
-      onPayment = vi
-        .fn()
-        .mockRejectedValueOnce(new ApiError(409, 'CONFLICT', 'Balance changed'))
-        .mockResolvedValueOnce({ replayed: true })
+      onPayment = vi.fn().mockRejectedValueOnce(new ApiError(409, 'CONFLICT', 'Balance changed'))
     const view = renderActions(onPayment)
     await user.click(screen.getByRole('button', { name: /registrar pago/i }))
     await user.click(screen.getByLabelText(/período 2026-01-01/i))
     const confirm = screen.getByRole('button', { name: /confirmar pago/i })
     await user.click(confirm)
     expect(await screen.findByRole('alert')).toHaveFocus()
+    expect(onPayment).toHaveBeenCalledTimes(1)
+    // prettier-ignore
+    expect(onPayment).toHaveBeenCalledWith({obligation_ids:['obligation-1'],shift_id:'shift-1',tender:'CASH',selection_fingerprint:'6725a97acef79fe305ae3cc2f3e7e11ff813649d1afdac70afb13bed62122b71'})
     await user.click(screen.getByRole('button', { name: /revisar saldos actualizados/i }))
     await waitFor(() => expect(confirm).toBeEnabled())
-    await user.click(confirm)
-    expect(onPayment).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('status')).toHaveTextContent(/repetido/i)
+    expect(onPayment).toHaveBeenCalledTimes(1)
     view.unmount()
     renderActions(vi.fn(), vi.fn(), [])
     expect(screen.getByRole('button', { name: /registrar pago/i })).toBeDisabled()

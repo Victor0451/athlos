@@ -71,7 +71,7 @@ export async function selectFullOutstanding(
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'La selección debe indicar obligaciones únicas')
   const locked = rows<{ id: string; socioId: string; currency: string; outstanding: string }>(
     await db.execute(
-      sql`SELECT o.id,o.socio_id AS "socioId",COALESCE(NULLIF(o.snapshot #>> '{inputs,currency}',''),'ARS') AS currency,(o.amount-COALESCE((SELECT SUM(CASE WHEN a.kind='ALLOCATION' THEN a.amount ELSE -a.amount END) FROM tesoreria.dues_allocations a WHERE a.obligation_id=o.id),0))::text AS outstanding FROM tesoreria.dues_obligations o WHERE o.id IN (${sql.join(
+      sql`SELECT o.id,o.socio_id AS "socioId",COALESCE(NULLIF(o.snapshot #>> '{inputs,currency}',''),'ARS') AS currency,GREATEST(o.amount-COALESCE((SELECT SUM(CASE WHEN a.kind='ALLOCATION' THEN a.amount ELSE -a.amount END) FROM tesoreria.dues_allocations a WHERE a.obligation_id=o.id),0)-COALESCE((SELECT SUM(t.amount) FROM tesoreria.dues_condonation_treatments t WHERE t.obligation_id=o.id),0),0)::text AS outstanding FROM tesoreria.dues_obligations o WHERE o.id IN (${sql.join(
         ids.map((id) => sql`${id}`),
         sql`,`,
       )}) ORDER BY o.id FOR UPDATE`,
@@ -130,7 +130,7 @@ export async function getDebt(db: DuesDb, socioId: string): Promise<DebtDetail> 
       return { status: 'not_found', socioId, currency: null, totalCents: 0, obligations: [] }
     const result = await db.execute(sql`
       SELECT o.id, o.period_start AS "periodStart", o.period_end AS "periodEnd", o.amount::text,
-        (o.amount - COALESCE(SUM(CASE WHEN a.kind = 'ALLOCATION' THEN a.amount ELSE -a.amount END), 0))::text AS outstanding,
+        GREATEST(o.amount - COALESCE(SUM(CASE WHEN a.kind = 'ALLOCATION' THEN a.amount ELSE -a.amount END), 0) - COALESCE((SELECT SUM(t.amount) FROM tesoreria.dues_condonation_treatments t WHERE t.obligation_id = o.id), 0), 0)::text AS outstanding,
         COALESCE(NULLIF(o.snapshot #>> '{inputs,currency}', ''), 'ARS') AS currency,
         COALESCE((SELECT jsonb_agg(jsonb_build_object('id', c.id, 'kind', c.kind, 'componentKey', c.component_key, 'amount', c.amount::text) ORDER BY c.component_key, c.id)
           FROM tesoreria.dues_obligation_components c WHERE c.obligation_id = o.id), '[]'::jsonb) AS components,

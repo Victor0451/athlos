@@ -100,15 +100,15 @@ export function Modal({
       <div
         className={`flex max-h-[calc(100vh-2rem)] w-full ${SIZE_CLASS[size]} flex-col overflow-hidden rounded-lg border border-ink-100 bg-surface shadow-2xl ${panelClassName}`}
       >
-        <header className="shrink-0 border-b border-ink-100 px-8 py-5">
+        <header className="shrink-0 border-b border-ink-100 px-5 py-4 sm:px-8 sm:py-5">
           <h2 id={titleId} className="font-display text-lg font-semibold text-ink-900">
             {title}
           </h2>
         </header>
-        <div className="flex-1 overflow-y-auto px-8 py-6">{children}</div>
+        <div className="min-w-0 flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6">{children}</div>
         {footer ? (
           <footer
-            className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-ink-100 bg-surface px-8 py-4"
+            className="flex shrink-0 flex-wrap justify-end gap-3 border-t border-ink-100 bg-surface px-5 py-4 sm:px-8"
             data-testid={dataTestid ? `${dataTestid}-footer` : undefined}
           >
             {footer}

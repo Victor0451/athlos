@@ -17,6 +17,7 @@ export {
   createCondonationApprovalRequest,
   decideCondonationApproval,
   findCondonationRequest,
+  listCondonationLifecycle,
   getApprovalToken,
   consumeApprovalToken,
 } from './service.ts'
@@ -24,6 +25,8 @@ export type {
   ApprovalTokenRecord,
   CondonationDecision,
   CondonationSnapshot,
+  CondonationLifecycle,
+  ListCondonationLifecycleInput,
   CreateApprovalLinkRequest,
   CreateCondonationApprovalRequest,
 } from './service.ts'
