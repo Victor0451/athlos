@@ -41,7 +41,9 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
   await expect(
     page.getByRole('heading', { name: 'Configuración de cuotas', exact: true }),
   ).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Generación mensual', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('main').getByText(/ctacte|reconciliation/i)).toHaveCount(0)
   await assertNoPageOverflow(page)
   await assertInteractiveNames(page)
@@ -57,7 +59,7 @@ test('enabled ADMIN can navigate Collections and recover keyboard focus', async 
   await expect(trigger).toBeFocused()
 })
 
-test('enabled TESORERO can generate without pricing controls or projection requests', async ({
+test('enabled TESORERO can preview assessments without pricing controls or projection requests', async ({
   authenticatedPage: page,
 }) => {
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
@@ -77,7 +79,9 @@ test('enabled TESORERO can generate without pricing controls or projection reque
   await mockEmptyDisciplines(page)
   await page.goto('/collections')
 
-  await expect(page.getByRole('heading', { name: 'Generación mensual', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Guardar cuota' })).toHaveCount(0)
 
   expect(projectionRequests).toEqual([])
@@ -121,7 +125,7 @@ test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
   await page.getByRole('button', { name: 'Buscar socio' }).click()
   await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
   await expect(page.getByRole('list', { name: 'Obligaciones de deuda' })).toBeVisible()
-  await expect(page.getByText(/Pago settlement-1/)).toBeVisible()
+  await expect(page.getByText(/settlement-1 · MONETARY: 25.00 ARS/)).toBeVisible()
 
   await assertNoPageOverflow(page)
   await assertInteractiveNames(page)
@@ -138,6 +142,23 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
     route.fulfill({ json: { items: [debtSocio], page: 1, limit: 20, total: 1, has_more: false } }),
   )
   await page.route('**/api/v1/dues/debt/*', (route) => route.fulfill({ json: debtFixture }))
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'shift-1',
+            desk_id: 'desk-1',
+            status: 'OPEN',
+            business_date: '2026-01-01',
+            assigned_operator_id: 'operator-1',
+            opened_at: '2026-01-01T08:00:00.000Z',
+            closed_at: null,
+          },
+        ],
+      },
+    }),
+  )
   await page.route('**/api/v1/dues/settlements', (route) => {
     attempts += 1
     return route.fulfill({
@@ -155,7 +176,8 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
     route.fulfill({
       status: 201,
       json: {
-        settlement_id: 'reversal-1',
+        original_settlement_id: 'settlement-1',
+        reversal_settlement_id: 'reversal-1',
         kind: 'MONETARY',
         amount_cents: 2_500,
         currency: 'ARS',
@@ -169,12 +191,18 @@ test('enabled ADMIN records an allocation and appends a keyboard reversal on mob
   await page.getByRole('button', { name: 'Buscar socio' }).click()
   await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
   await page.getByRole('button', { name: /registrar pago/i }).click()
-  await page.getByLabel(/importe del período 2026-01-01/i).fill('2000')
+  await page.getByRole('checkbox', { name: /^Período 2026-01-01:/i }).check()
   await page.getByRole('button', { name: /confirmar pago/i }).click()
   await expect(page.getByRole('status').filter({ hasText: /pago registrado/i })).toBeVisible()
-  await page.getByRole('button', { name: /revertir allocation-1/i }).click()
-  await page.getByLabel(/motivo de reversión/i).fill('Asignación incorrecta')
-  await page.getByRole('button', { name: /confirmar reversión/i }).click()
+  const reversal = page.getByRole('button', { name: /revertir liquidación settlement-1/i })
+  await reversal.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('list', { name: 'Asignaciones afectadas' })).toContainText(
+    /obligación 2026-01-01/i,
+  )
+  await page.keyboard.insertText('Asignación incorrecta')
+  await page.getByRole('button', { name: /confirmar reversión/i }).focus()
+  await page.keyboard.press('Enter')
 
   await expect(page.getByRole('status').filter({ hasText: /compensación/i })).toBeVisible()
   expect(attempts).toBe(1)

@@ -54,6 +54,16 @@ function seedApprovalToken(
     expiresAt: overrides.expiresAt ?? new Date(),
     usedAt: overrides.usedAt ?? null,
     status: overrides.status ?? 'pending',
+    condonationSnapshot: overrides.condonationSnapshot ?? null,
+    requestReason: overrides.requestReason ?? null,
+    requestEvidence: overrides.requestEvidence ?? null,
+    decidedByOperatorId: overrides.decidedByOperatorId ?? null,
+    decisionReason: overrides.decisionReason ?? null,
+    decisionEvidence: overrides.decisionEvidence ?? null,
+    decidedAt: overrides.decidedAt ?? null,
+    executionId: overrides.executionId ?? null,
+    callerKey: overrides.callerKey ?? null,
+    requestFingerprint: overrides.requestFingerprint ?? null,
     createdAt: overrides.createdAt ?? new Date(),
   })
   return standin.state.approvalTokens[standin.state.approvalTokens.length - 1]!
