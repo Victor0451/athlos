@@ -180,6 +180,9 @@ const settlementPaymentBodySchema = z
     selection_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict()
+const settlementReversalBodySchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
+  .strict()
 
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
@@ -508,6 +511,42 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
         })),
       })
     })
+    fastify.post<{ Params: { id: string } }>(
+      '/api/v1/dues/settlements/:id/reverse',
+      FINANCE_GATE,
+      async (request, reply) => {
+        enabled(container)
+        if (
+          request.body !== null &&
+          typeof request.body === 'object' &&
+          'allocation_id' in request.body
+        )
+          throw BusinessError(
+            ErrorCode.NOT_FOUND,
+            'Legacy settlement reversal route is unavailable',
+          )
+        const params = throwIfInvalid(idParamSchema, request.params, 'params')
+        const body = throwIfInvalid(settlementReversalBodySchema, request.body ?? {}, 'body')
+        const key = callerKey(request, true)
+        const result = await settlementService.reverse!({
+          ...context(request, key, body, 'dues-settlement-reversal'),
+          settlementId: params.id,
+          reason: body.reason,
+        })
+        return reply.code(200).send({
+          original_settlement_id: params.id,
+          reversal_settlement_id: result.settlementId,
+          kind: result.kind,
+          amount_cents: result.amountCents,
+          currency: result.currency,
+          allocations: result.allocations.map((allocation) => ({
+            id: allocation.id,
+            obligation_id: allocation.obligationId,
+            amount_cents: allocation.amountCents,
+          })),
+        })
+      },
+    )
   }
 
   if (container.env.DUES_AGREEMENTS_ENABLED) {
