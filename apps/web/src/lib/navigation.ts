@@ -32,7 +32,7 @@ export const navigation: NavigationItem[] = [
     label: 'Collections',
     icon: Wallet,
     section: 'Operations',
-    roles: ['ADMIN', 'TESORERO'],
+    roles: ['ADMIN', 'TESORERO', 'OPERADOR'],
   },
   {
     href: '/admin/scheduler',
