@@ -53,6 +53,9 @@ const receipt = {
   totalAmountCents: 12500,
   treatments: selection.treatments,
   treatmentIds: [],
+  snapshot: approval.condonationSnapshot,
+  reason: approval.requestReason,
+  evidence: approval.requestEvidence,
 }
 
 function setup() {
@@ -77,9 +80,6 @@ it('executes the immutable approved snapshot once and replays its exact receipt'
   })
   expect(repository.appendTreatments).toHaveBeenCalledWith(expect.anything(), {
     ...receipt,
-    snapshot: approval.condonationSnapshot,
-    reason: approval.requestReason,
-    evidence: approval.requestEvidence,
   })
   repository.findReceipt.mockResolvedValue({ ...receipt, treatmentIds })
   await expect(service.execute(command)).resolves.toEqual({
@@ -87,6 +87,7 @@ it('executes the immutable approved snapshot once and replays its exact receipt'
     treatmentIds,
     status: 'replayed',
   })
+  expect(Object.hasOwn(receipt, 'totalAmount')).toBe(false)
   expect(repository.lockApproval).toHaveBeenCalledTimes(1)
   expect(repository.appendTreatments).toHaveBeenCalledTimes(1)
 })

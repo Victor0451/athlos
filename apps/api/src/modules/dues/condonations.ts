@@ -14,6 +14,12 @@ type Receipt = {
   totalAmountCents: number
   treatments: Treatment[]
   treatmentIds: string[]
+  snapshot: {
+    memberId: string
+    obligations: Array<{ obligationId: string; currency: string; outstandingAmountCents: number }>
+  }
+  reason: string
+  evidence: string
 }
 type Approval = {
   id: string
@@ -51,22 +57,8 @@ export type CondonationRepository = {
   findReceipt(db: DuesDb, executionId: string): Promise<Receipt | null>
   lockApproval(db: DuesDb, executionId: string): Promise<Approval | null>
   lockOutstanding(db: DuesDb, command: CondonationExecutionCommand): Promise<Current>
-  appendReceipt(
-    db: DuesDb,
-    receipt: Receipt & {
-      snapshot: Approval['condonationSnapshot']
-      reason: string
-      evidence: string
-    },
-  ): Promise<Receipt>
-  appendTreatments(
-    db: DuesDb,
-    receipt: Receipt & {
-      snapshot: Approval['condonationSnapshot']
-      reason: string
-      evidence: string
-    },
-  ): Promise<string[]>
+  appendReceipt(db: DuesDb, receipt: Receipt): Promise<Receipt>
+  appendTreatments(db: DuesDb, receipt: Receipt): Promise<string[]>
   consumeApproval(db: DuesDb, approvalId: string): Promise<boolean>
 }
 
@@ -89,19 +81,28 @@ async function findReceipt(db: DuesDb, executionId: string): Promise<Receipt | n
     currency: string
     totalAmount: string
     treatments: Array<Treatment & { treatmentId: string }>
+    snapshot: Receipt['snapshot']
+    reason: string
+    evidence: string
   }>(
     await db.execute(
-      sql`SELECT e.execution_id AS "executionId",e.approval_token_id AS "approvalId",e.socio_id AS "memberId",e.actor_id AS "actorId",btrim(e.currency) AS currency,e.total_amount::text AS "totalAmount",COALESCE(jsonb_agg(jsonb_build_object('treatmentId',t.id,'obligationId',t.obligation_id,'amountCents',(t.amount*100)::integer) ORDER BY t.obligation_id) FILTER (WHERE t.id IS NOT NULL),'[]'::jsonb) AS treatments FROM tesoreria.dues_condonation_executions e LEFT JOIN tesoreria.dues_condonation_treatments t ON t.execution_id=e.execution_id WHERE e.execution_id=${executionId} GROUP BY e.execution_id,e.approval_token_id,e.socio_id,e.actor_id,e.currency,e.total_amount`,
+      sql`SELECT e.execution_id AS "executionId",e.approval_token_id AS "approvalId",e.socio_id AS "memberId",e.actor_id AS "actorId",btrim(e.currency) AS currency,e.total_amount::text AS "totalAmount",e.approved_snapshot AS snapshot,e.reason,e.evidence,COALESCE(jsonb_agg(jsonb_build_object('treatmentId',t.id,'obligationId',t.obligation_id,'amountCents',(t.amount*100)::integer) ORDER BY t.obligation_id) FILTER (WHERE t.id IS NOT NULL),'[]'::jsonb) AS treatments FROM tesoreria.dues_condonation_executions e LEFT JOIN tesoreria.dues_condonation_treatments t ON t.execution_id=e.execution_id WHERE e.execution_id=${executionId} GROUP BY e.execution_id,e.approval_token_id,e.socio_id,e.actor_id,e.currency,e.total_amount,e.approved_snapshot,e.reason,e.evidence`,
     ),
   )[0]
-  return row
-    ? {
-        ...row,
-        totalAmountCents: Math.round(Number(row.totalAmount) * 100),
-        treatments: row.treatments.map(({ treatmentId: _id, ...treatment }) => treatment),
-        treatmentIds: row.treatments.map((treatment) => treatment.treatmentId),
-      }
-    : null
+  if (!row) return null
+  return {
+    executionId: row.executionId,
+    approvalId: row.approvalId,
+    memberId: row.memberId,
+    actorId: row.actorId,
+    currency: row.currency,
+    totalAmountCents: Math.round(Number(row.totalAmount) * 100),
+    treatments: row.treatments.map(({ treatmentId: _id, ...treatment }) => treatment),
+    treatmentIds: row.treatments.map((treatment) => treatment.treatmentId),
+    snapshot: row.snapshot,
+    reason: row.reason,
+    evidence: row.evidence,
+  }
 }
 async function lockApproval(db: DuesDb, executionId: string): Promise<Approval | null> {
   return (
@@ -123,14 +124,7 @@ async function lockOutstanding(db: DuesDb, command: CondonationExecutionCommand)
     treatments: selected.allocations,
   }
 }
-async function appendReceipt(
-  db: DuesDb,
-  receipt: Receipt & {
-    snapshot: Approval['condonationSnapshot']
-    reason: string
-    evidence: string
-  },
-) {
+async function appendReceipt(db: DuesDb, receipt: Receipt) {
   const inserted = rows<{ executionId: string }>(
     await db.execute(
       sql`INSERT INTO tesoreria.dues_condonation_executions (execution_id,approval_token_id,socio_id,actor_id,currency,total_amount,approved_snapshot,reason,evidence) VALUES (${receipt.executionId},${receipt.approvalId},${receipt.memberId},${receipt.actorId},${receipt.currency},${money(receipt.totalAmountCents)},${JSON.stringify(receipt.snapshot)}::jsonb,${receipt.reason},${receipt.evidence}) RETURNING execution_id AS "executionId"`,
@@ -139,14 +133,7 @@ async function appendReceipt(
   if (!inserted) conflict('Condonation execution receipt was not created')
   return receipt
 }
-async function appendTreatments(
-  db: DuesDb,
-  receipt: Receipt & {
-    snapshot: Approval['condonationSnapshot']
-    reason: string
-    evidence: string
-  },
-) {
+async function appendTreatments(db: DuesDb, receipt: Receipt) {
   return rows<{ treatmentId: string }>(
     await db.execute(
       sql`INSERT INTO tesoreria.dues_condonation_treatments (execution_id,approval_token_id,socio_id,obligation_id,actor_id,amount,currency,approved_snapshot,reason,evidence) VALUES ${sql.join(

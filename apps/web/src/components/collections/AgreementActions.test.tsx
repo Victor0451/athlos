@@ -83,6 +83,17 @@ describe('AgreementActions', () => {
 
     expect(screen.getByText('No hay revisiones anteriores.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Revisar acuerdo activo' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Resumen del acuerdo activo')).toHaveClass('bg-surface-sunken')
+    expect(screen.getByText('Activo')).toHaveClass('bg-accent-soft')
+  })
+
+  it('preserves debt-neutral active-agreement wording and accessible action names', () => {
+    renderActions({ state: state({ active: agreement }), onRevise: vi.fn() })
+
+    expect(
+      screen.getByText('La deuda continúa abierta hasta que se registre una cancelación válida.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Revisar acuerdo activo' })).toHaveClass('min-h-11')
   })
 
   it('renders a long history completely after sorting it by revision number', () => {

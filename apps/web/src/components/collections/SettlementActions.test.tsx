@@ -37,7 +37,7 @@ describe('SettlementActions', () => {
     await user.click(screen.getByLabelText(/período 2026-01-01/i))
     await user.click(screen.getByLabelText(/período 2026-02-01/i))
     await user.click(screen.getByLabelText(/débito/i))
-    expect(screen.getByText(/total a registrar: 100.00 ARS/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/total a registrar/i)).toHaveTextContent(/^100\.00 ARS$/)
     await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
     expect(onPayment).toHaveBeenCalledWith(
