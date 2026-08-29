@@ -7,6 +7,7 @@ import {
   mockEmptyDuesPrices,
   test,
 } from './fixtures/authenticated-dashboard'
+import type { Locator } from '@playwright/test'
 
 const collectionsEnabled = process.env.NATIVE_COLLECTIONS_WEB_ENABLED === 'true'
 
@@ -260,7 +261,14 @@ async function selectDebt(page: Parameters<typeof mockEmptyDuesPrices>[0]) {
   await expect(page.getByRole('heading', { name: 'Tratamientos de deuda' })).toBeVisible()
 }
 
-test('treatments preserve four named keyboard-accessible sections from narrow to wide without CTActe', async ({
+async function assertTouchTarget(locator: Locator) {
+  const box = await locator.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.width).toBeGreaterThanOrEqual(44)
+  expect(box!.height).toBeGreaterThanOrEqual(44)
+}
+
+test('premium collections shell preserves accessible treatments from mobile through wide layouts without CTActe', async ({
   authenticatedPage: page,
 }) => {
   test.skip(!collectionsEnabled, 'Run with NATIVE_COLLECTIONS_WEB_ENABLED=true.')
@@ -269,11 +277,32 @@ test('treatments preserve four named keyboard-accessible sections from narrow to
     if (/ctacte/i.test(request.url())) forbiddenRequests.push(request.url())
   })
   await mockSelectedDebt(page)
-  await page.route('**/api/v1/members/*/condonation-requests?*', (route) =>
-    route.fulfill({ json: { items: [] } }),
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'shift-1',
+            desk_id: 'desk-1',
+            status: 'OPEN',
+            business_date: '2026-01-01',
+            assigned_operator_id: 'operator-1',
+            opened_at: '2026-01-01T08:00:00.000Z',
+            closed_at: null,
+          },
+        ],
+      },
+    }),
   )
-  for (const width of [320, 1280]) {
-    await page.setViewportSize({ width, height: 900 })
+  await page.route('**/api/v1/members/*/condonation-requests?*', (route) =>
+    route.fulfill({ json: { items: [lifecycleItem('executed')] } }),
+  )
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 768, height: 1024 },
+    { width: 1440, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport)
     await page.goto('/collections')
     await selectDebt(page)
     const workspace = page.getByRole('region', { name: 'Tratamientos de deuda' })
@@ -286,10 +315,32 @@ test('treatments preserve four named keyboard-accessible sections from narrow to
     await assertNoPageOverflow(page)
     await assertInteractiveNames(page)
     await expect(workspace).not.toContainText(/ctacte/i)
-    await page.getByRole('button', { name: 'Enviar solicitud de condonación' }).focus()
     await expect(
-      page.getByRole('button', { name: 'Enviar solicitud de condonación' }),
-    ).toBeFocused()
+      page.getByRole('heading', { name: 'Vista previa de evaluación', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('region', { name: 'Vista previa de evaluación' }).getByLabel('Desde'),
+    ).toBeVisible()
+    await expect(
+      page.getByText('Ejecutada: la deuda autorizada se redujo según el registro confirmado.'),
+    ).toBeVisible()
+    await expect(workspace.getByText('Ejecutada', { exact: true })).toBeVisible()
+
+    const context = page.getByLabel('Contexto de la solicitud')
+    const reason = page.getByLabel('Motivo de la solicitud')
+    const evidence = page.getByLabel('Evidencia de la solicitud')
+    const submit = page.getByRole('button', { name: 'Enviar solicitud de condonación' })
+    await context.focus()
+    await page.keyboard.press('Tab')
+    await expect(reason).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(evidence).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(submit).toBeFocused()
+    await expect(submit).toHaveCSS('outline-style', 'solid')
+    await expect(submit).toHaveCSS('outline-width', '2px')
+    await assertTouchTarget(page.getByRole('button', { name: 'Buscar socio' }))
+    await assertTouchTarget(submit)
   }
   expect(forbiddenRequests).toEqual([])
 })

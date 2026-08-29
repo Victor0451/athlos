@@ -320,8 +320,11 @@ describe('Collections navigation and direct access', () => {
 
   it('exposes labelled landmarks for an authorized operator', () => {
     renderPage(true, 'TESORERO')
-    expect(screen.getByRole('main', { name: /cobranza/i })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /^cobranza$/i })).toBeInTheDocument()
+    expect(screen.getByRole('main', { name: /cobranza/i })).toHaveClass(
+      'min-w-0',
+      'bg-surface-page',
+    )
+    expect(screen.getByRole('heading', { name: /^cobranza$/i })).toHaveClass('font-display')
     expect(
       screen.getByRole('region', { name: /espacio de trabajo de cobranzas/i }),
     ).toBeInTheDocument()
