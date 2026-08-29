@@ -18,6 +18,7 @@ export type AllocationInput = { settlementId:string; socioId:string; obligationI
 export type SettlementRecord = { id:string; socioId:string; kind:SettlementKind; amountCents:number; currency:string; reversalOfSettlementId:string|null }
 // prettier-ignore
 export type AllocationRecord = { id:string; settlementId:string; obligationId:string; kind:AllocationKind; amountCents:number; compensatesAllocationId:string|null }
+export type ReversibleSettlement = SettlementRecord & { allocations: AllocationRecord[] }
 // prettier-ignore
 export type SettlementClaim = { status:'claimed'; settlement:SettlementRecord } | { status:'replayed'; settlement:SettlementRecord; allocations:AllocationRecord[] }
 // prettier-ignore
@@ -59,6 +60,8 @@ const settlementFields = sql`id, socio_id AS "socioId", kind, amount::text, btri
 const allocationFields = sql`id, settlement_id AS "settlementId", obligation_id AS "obligationId", kind, amount::text, compensates_allocation_id AS "compensatesAllocationId"`
 // prettier-ignore
 export async function listAllocations(db:DuesDb, settlementId:string):Promise<AllocationRecord[]> { return rows<Parameters<typeof allocation>[0]>(await db.execute(sql`SELECT ${allocationFields} FROM tesoreria.dues_allocations WHERE settlement_id = ${settlementId} ORDER BY created_at, id`)).map(allocation) }
+// prettier-ignore
+export async function findReversibleSettlement(db:DuesDb,settlementId:string):Promise<ReversibleSettlement|null> { const original=rows<Parameters<typeof settlement>[0]>(await db.execute(sql`SELECT ${settlementFields} FROM tesoreria.dues_settlements WHERE id=${settlementId} FOR UPDATE`))[0]; if (!original) return null; const allocations=rows<Parameters<typeof allocation>[0]>(await db.execute(sql`SELECT ${allocationFields} FROM tesoreria.dues_allocations WHERE settlement_id=${settlementId} ORDER BY created_at,id FOR UPDATE`)).map(allocation); return {...settlement(original),allocations} }
 export async function selectFullOutstanding(
   db: DuesDb,
   input: FullOutstandingSelectionCommand,
