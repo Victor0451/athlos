@@ -17,12 +17,13 @@ const {
   DuesOperationError,
   createCommunityWorkEvidence,
   createDuesPrice,
-  createDuesSettlement,
+  createFullSelectionPayment,
   createNegotiatedAgreement,
   generateDuesAssessments,
   getDuesPrices,
   getDebt,
   getObligationAgreements,
+  previewDuesAssessments,
   reviseNegotiatedAgreement,
   reverseDuesSettlement,
   revokeDuesPrice,
@@ -104,14 +105,58 @@ describe('typed native dues client', () => {
   })
 
   it('uses the typed debt detail read for the selected socio', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      status: 'empty',
+      socio_id: 'socio-1',
+      currency: null,
+      total_debt_cents: 0,
+      obligations: [],
+    })
     await getDebt('socio-1')
     expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/debt/socio-1', { query: {} })
   })
 
   // prettier-ignore
-  it('sends explicit monetary allocations with a stable key',async()=>{await createDuesSettlement({socio_id:'socio-1',kind:'MONETARY',amount_cents:5_000,currency:'ARS',allocations:[{obligation_id:'obligation-1',amount_cents:2_000},{obligation_id:'obligation-2',amount_cents:3_000}]},'settlement-key-1');expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements',{method:'POST',headers:{'idempotency-key':'settlement-key-1'},body:expect.objectContaining({amount_cents:5_000})})})
+  it('maps a preview request and rejects malformed nested preview data', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01', executable: true,
+      currency: 'ARS', fingerprint: 'fingerprint', periods: [{ period: '2026-01', start: '2026-01-01', end: '2026-02-01', calendarDays: 31, existingObligationId: null, pendingAmountCents: 1000, components: [{ componentKey: 'base', kind: 'BASE', eligibleFrom: '2026-01-01', eligibleTo: '2026-02-01', eligibleDays: 31, calendarDays: 31, segments: [{ priceVersionId: 'price-1', amountCents: 1000, currency: 'ARS', from: '2026-01-01', to: '2026-02-01', rule: 'FULL_MONTH', eligibleDays: 31, numerator: 31000 }], numerator: 31000, remainder: 0, amountCents: 1000, status: 'PENDING' }], }], issues: [],
+    })
+    await expect(previewDuesAssessments({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' })).resolves.toMatchObject({ executable: true, periods: [{ components: [{ status: 'PENDING' }] }] })
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/assessments/preview', { method: 'POST', body: { socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' } })
+    apiFetchMock.mockResolvedValueOnce({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01', executable: true, currency: 'ARS', fingerprint: 'fingerprint', periods: [{ components: [] }], issues: [] })
+    await expect(previewDuesAssessments({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' })).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+
   // prettier-ignore
-  it('sends a selected allocation reversal reason with a stable key',async()=>{await reverseDuesSettlement('settlement-1',{allocation_id:'allocation-1',reason:'Incorrect allocation'},'reversal-key-1');expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements/settlement-1/reverse',{method:'POST',headers:{'idempotency-key':'reversal-key-1'},body:{allocation_id:'allocation-1',reason:'Incorrect allocation'}})})
+  it('rejects malformed nested debt data instead of casting it', async () => {
+    apiFetchMock.mockResolvedValueOnce({ status: 'ready', socio_id: 'socio-1', currency: 'ARS', total_debt_cents: 1000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 1000, outstanding_cents: 1000, currency: 'ARS', status: 'OPEN', components: [], benefits: [], allocations: [{ id: 'allocation-1', settlement_id: 'settlement-1', settlement_kind: 'MONETARY', settlement_amount_cents: 1000, currency: 'ARS', amount_cents: 1000, kind: 'ALLOCATION', compensates_allocation_id: null, reversal_eligible: 'true' }] }] })
+    await expect(getDebt('socio-1')).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+
+  // prettier-ignore
+  it('posts only strict full-selection payment fields and rejects an incomplete committed response',async()=>{const input={socio_id:'socio-1',obligation_ids:['obligation-2','obligation-1'],shift_id:'shift-1',tender:'CASH' as const,selection_fingerprint:'fingerprint'};apiFetchMock.mockResolvedValueOnce({settlement_id:'settlement-1',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-1',obligation_id:'obligation-1',amount_cents:2_000}]});await expect(createFullSelectionPayment(input,'payment-key-1')).resolves.toMatchObject({settlement_id:'settlement-1'});expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements',{method:'POST',headers:{'idempotency-key':'payment-key-1'},body:input});apiFetchMock.mockResolvedValueOnce({settlement_id:'settlement-1',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-1',obligation_id:'obligation-1',amount_cents:'2_000'}]});await expect(createFullSelectionPayment(input,'payment-key-1')).rejects.toMatchObject({kind:'partial_data'})})
+  // prettier-ignore
+  it('sends only a settlement-level reversal reason and decodes the committed response',async()=>{apiFetchMock.mockResolvedValueOnce({original_settlement_id:'settlement-1',reversal_settlement_id:'settlement-2',kind:'MONETARY',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-2',obligation_id:'obligation-1',amount_cents:5_000}]});await expect(reverseDuesSettlement('settlement-1',{reason:'Incorrect allocation'},'reversal-key-1')).resolves.toMatchObject({original_settlement_id:'settlement-1',reversal_settlement_id:'settlement-2'});expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements/settlement-1/reverse',{method:'POST',headers:{'idempotency-key':'reversal-key-1'},body:{reason:'Incorrect allocation'}})})
+  it('rejects an incomplete reversal response instead of reporting a reversal as confirmed', async () => {
+    apiFetchMock.mockResolvedValueOnce({ reversal_settlement_id: 'settlement-2' })
+    await expect(
+      reverseDuesSettlement('settlement-1', { reason: 'Correction' }, 'reversal-key-2'),
+    ).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+  it('rejects a reversal response with an invalid allocation', async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      original_settlement_id: 'settlement-1',
+      reversal_settlement_id: 'settlement-2',
+      kind: 'MONETARY',
+      amount_cents: 5_000,
+      currency: 'ARS',
+      allocations: [{ id: 'allocation-2', obligation_id: 'obligation-1', amount_cents: '5_000' }],
+    })
+    await expect(
+      reverseDuesSettlement('settlement-1', { reason: 'Correction' }, 'reversal-key-3'),
+    ).rejects.toMatchObject({ kind: 'partial_data' })
+  })
 })
 
 describe('negotiated agreement client contract', () => {
