@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
-import { CondonationActions } from '@/components/collections/CondonationActions'
+import { collectionSectionClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
+import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
@@ -96,6 +97,16 @@ export default function CollectionsPage() {
   const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
+  const [executionFeedback, setExecutionFeedback] = useState<{
+    id: string
+    status:
+      | 'idle'
+      | 'executing'
+      | 'replayed'
+      | 'recoverable_error'
+      | 'denied'
+      | 'transactional_error'
+  } | null>(null)
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
@@ -227,6 +238,7 @@ export default function CollectionsPage() {
   const selectSocio = async (socio: DebtSocio) => {
     setSelectedSocio(socio)
     setLifecycle([])
+    setExecutionFeedback(null)
     setDebt(null)
     setOpenShifts([])
     setDebtError('')
@@ -471,7 +483,7 @@ export default function CollectionsPage() {
       draftFingerprint: executionId,
     }
     const key = idempotency.current.getOrCreate(input)
-    await executeCondonationRequest(id, executionId, key)
+    const result = await executeCondonationRequest(id, executionId, key)
     const refreshed = await refreshLifecycle(selectedSocio.id)
     if (
       !refreshed.some(
@@ -482,26 +494,60 @@ export default function CollectionsPage() {
     if (!(await refreshDebt()))
       throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
     idempotency.current.complete(input)
+    return result
   }
 
-  const executionLifecycle = lifecycle.find((item) => item.state === 'approved_awaiting_execution')
-  const pendingLifecycle = lifecycle.find((item) => item.state === 'pending')
+  const presentExecution = async (item: CondonationLifecycle) => {
+    setExecutionFeedback({ id: item.id, status: 'executing' })
+    try {
+      const result = await executeCondonation(item.id, item.execution_id!)
+      setExecutionFeedback({
+        id: item.id,
+        status: result.status === 'replayed' ? 'replayed' : 'idle',
+      })
+      return result
+    } catch (cause) {
+      const kind = cause instanceof CondonationOperationError ? cause.kind : 'unavailable'
+      setExecutionFeedback({
+        id: item.id,
+        status:
+          kind === 'permission'
+            ? 'denied'
+            : kind === 'conflict'
+              ? 'recoverable_error'
+              : 'transactional_error',
+      })
+      throw cause
+    }
+  }
 
   return (
-    <main aria-labelledby="collections-title" className="space-y-6">
-      <header>
-        <h1 id="collections-title" className="font-display text-2xl font-bold text-ink-900">
+    <main
+      aria-labelledby="collections-title"
+      className="min-w-0 space-y-8 bg-surface-page p-4 sm:p-6"
+    >
+      <header className="space-y-2 border-b border-ink-200 pb-6">
+        <p className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-accent">
+          Gestión operativa
+        </p>
+        <h1
+          id="collections-title"
+          className="font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl"
+        >
           Cobranza
         </h1>
+        <p className="max-w-2xl font-body text-sm leading-6 text-ink-500">
+          Configurá cuotas y consultá evaluaciones antes de gestionar la deuda de cada socio.
+        </p>
       </header>
-      <section aria-labelledby="collections-workspace-title">
+      <section aria-labelledby="collections-workspace-title" className="space-y-4">
         <h2
           id="collections-workspace-title"
-          className="font-display text-lg font-semibold text-ink-900"
+          className="font-display text-xl font-semibold text-ink-900"
         >
           Espacio de trabajo de cobranzas
         </h2>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
           {user?.role === 'ADMIN' ? (
             <PricingPanel
               prices={prices}
@@ -514,11 +560,16 @@ export default function CollectionsPage() {
               onRevoke={revokePrice}
             />
           ) : (
-            <section aria-labelledby="pricing-readonly-title">
-              <h3 id="pricing-readonly-title">Configuración de cuotas</h3>
-              <p role="status">
+            <section aria-labelledby="pricing-readonly-title" className={collectionSectionClass}>
+              <h3
+                id="pricing-readonly-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Configuración de cuotas
+              </h3>
+              <CollectionStatus>
                 La administración de cuotas está disponible solo para operadores ADMIN.
-              </p>
+              </CollectionStatus>
             </section>
           )}
           <AssessmentPreviewPanel
@@ -538,36 +589,27 @@ export default function CollectionsPage() {
         error={debtError}
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
-        openShifts={openShifts}
-        {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
-        agreementsEnabled={agreementWorkflowEnabled}
-        agreementStates={agreementStates}
-        onCreateAgreement={createAgreement}
-        onReviseAgreement={reviseAgreement}
-        onRecordCommunityWork={createCommunityWork}
-        onRefreshAgreement={refreshAgreement}
       />
       {selectedSocio && debt?.status === 'ready' && (
-        <CondonationActions
-          key={selectedSocio.id}
+        <TreatmentWorkspace
           memberId={selectedSocio.id}
-          obligations={debt.obligations}
-          canDecide={canSettle}
-          canExecute={canSettle}
-          {...(executionLifecycle ? { lifecycle: executionLifecycle } : {})}
-          {...(pendingLifecycle
-            ? {
-                request: {
-                  id: pendingLifecycle.id,
-                  status: 'pending' as const,
-                  expires_at: pendingLifecycle.expires_at,
-                  decided_at: null,
-                },
-              }
-            : {})}
-          onRequest={requestCondonation}
-          onDecision={decideCondonation}
-          onExecute={executeCondonation}
+          debt={debt}
+          role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
+          canSettle={canSettle}
+          canRequestCondonation
+          agreementsEnabled={agreementWorkflowEnabled}
+          agreementStates={agreementStates}
+          shifts={openShifts}
+          lifecycle={lifecycle}
+          {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+          onCreateAgreement={createAgreement}
+          onReviseAgreement={reviseAgreement}
+          onRecordCommunityWork={createCommunityWork}
+          onRefreshAgreement={refreshAgreement}
+          onRequestCondonation={requestCondonation}
+          onDecideCondonation={decideCondonation}
+          onExecuteCondonation={presentExecution}
+          executionFeedback={executionFeedback}
         />
       )}
     </main>
