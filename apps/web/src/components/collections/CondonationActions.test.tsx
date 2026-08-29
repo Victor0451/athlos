@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { CondonationActions } from './CondonationActions'
@@ -32,5 +32,59 @@ describe('CondonationActions', () => {
     await user.click(screen.getByRole('button', { name: 'Registrar decisión' }))
     expect(decide).toHaveBeenCalledWith('request-1', expect.objectContaining({ decision: 'approved' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo registrar la decisión/i)
+  })
+
+  it('does not duplicate lifecycle execution controls', () => {
+    render(
+      <CondonationActions
+        memberId="member-1"
+        obligations={obligations}
+        canDecide={false}
+        onRequest={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /ejecutar|recuperar/i })).not.toBeInTheDocument()
+  })
+
+  it('uses shared premium fields and prevents duplicate request submission while busy', async () => {
+    let resolveRequest: (value: {
+      id: string
+      status: 'pending'
+      expires_at: string
+      decided_at: null
+    }) => void
+    const request = vi.fn(
+      () =>
+        new Promise<{ id: string; status: 'pending'; expires_at: string; decided_at: null }>(
+          (resolve) => {
+            resolveRequest = resolve
+          },
+        ),
+    )
+    const user = userEvent.setup()
+    render(
+      <CondonationActions
+        memberId="member-1"
+        obligations={obligations}
+        canDecide={false}
+        onRequest={request}
+      />,
+    )
+    const context = screen.getByLabelText('Contexto de la solicitud')
+    expect(context).toHaveClass('min-h-11', 'border-ink-300')
+    await user.type(context, 'Debt review')
+    await user.type(screen.getByLabelText('Motivo de la solicitud'), 'Hardship')
+    await user.type(screen.getByLabelText('Evidencia de la solicitud'), 'Minutes 12')
+    await user.click(screen.getByRole('button', { name: 'Enviar solicitud de condonación' }))
+    expect(screen.getByRole('button', { name: 'Enviando solicitud…' })).toBeDisabled()
+    expect(context).toBeDisabled()
+    await act(async () => {
+      resolveRequest!({
+        id: 'request-1',
+        status: 'pending',
+        expires_at: '2026-09-01',
+        decided_at: null,
+      })
+    })
   })
 })

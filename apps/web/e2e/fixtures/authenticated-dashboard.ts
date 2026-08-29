@@ -1,6 +1,18 @@
 import { expect, test as base, type Page } from '@playwright/test'
 
 type ConsoleErrorGuard = void
+type ExpectedResponseFailure = {
+  url: string
+  status: number
+  request: { method: string; postData: string }
+  context: string
+}
+
+const expectedResponseFailures = new WeakMap<Page, ExpectedResponseFailure[]>()
+
+export function allowExpectedResponseFailure(page: Page, failure: ExpectedResponseFailure) {
+  expectedResponseFailures.set(page, [...(expectedResponseFailures.get(page) ?? []), failure])
+}
 
 const authState = {
   accessToken: 'playwright-test-token',
@@ -20,11 +32,47 @@ export const test = base.extend<{
   consoleErrorGuard: [
     async ({ page }, use) => {
       const errors: string[] = []
+      const responses: { url: string; status: number; method: string; postData: string | null }[] =
+        []
       page.on('console', (message) => {
         if (message.type() === 'error') errors.push(message.text())
       })
+      page.on('response', (response) => {
+        responses.push({
+          url: response.url(),
+          status: response.status(),
+          method: response.request().method(),
+          postData: response.request().postData(),
+        })
+      })
 
       await use()
+
+      for (const failure of expectedResponseFailures.get(page) ?? []) {
+        const matches = responses.filter(
+          (response) =>
+            response.url === failure.url &&
+            response.status === failure.status &&
+            response.method === failure.request.method &&
+            response.postData === failure.request.postData,
+        )
+        if (matches.length !== 1) {
+          errors.push(
+            `Expected exactly one ${failure.status} response for ${failure.context}; received ${matches.length}.`,
+          )
+          continue
+        }
+        const consoleError = errors.findIndex(
+          (error) =>
+            error ===
+            `Failed to load resource: the server responded with a status of ${failure.status} (Conflict)`,
+        )
+        if (consoleError === -1) {
+          errors.push(`Expected browser console error for ${failure.context} was not observed.`)
+          continue
+        }
+        errors.splice(consoleError, 1)
+      }
 
       if (errors.length > 0) {
         throw new Error(`Browser console errors detected:\n${errors.join('\n')}`)

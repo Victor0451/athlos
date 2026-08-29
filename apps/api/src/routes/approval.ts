@@ -9,12 +9,14 @@ import {
   createCondonationApprovalRequest,
   decideCondonationApproval,
   findCondonationRequest,
+  listCondonationLifecycle,
   getApprovalToken,
   type CondonationSnapshot,
   type ApprovalTokenRecord,
 } from '@athlos/approval'
 import type { AppContainer } from '../container.ts'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
+import { CondonationExecutionService } from '../modules/dues/condonations.ts'
 import { validateIdempotencyKey } from '../lib/idempotency.ts'
 import { randomUUID } from 'node:crypto'
 
@@ -63,6 +65,11 @@ const condonationDecisionSchema = z
   })
   .strict()
 const condonationIdSchema = z.object({ id: z.string().uuid() })
+const condonationMemberSchema = z.object({ memberId: z.string().uuid() }).strict()
+const condonationHistoryQuerySchema = z
+  .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
+  .strict()
+const condonationExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
 const CONDONATION_REQUEST_GATE = { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') }
 const CONDONATION_DECISION_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
 
@@ -94,6 +101,47 @@ function condonationDto(row: ApprovalTokenRecord) {
     status: row.status,
     expires_at: row.expiresAt.toISOString(),
     decided_at: row.decidedAt?.toISOString() ?? null,
+  }
+}
+function condonationLifecycleDto(
+  row: Awaited<ReturnType<typeof listCondonationLifecycle>>[number],
+  includeApprover: boolean,
+) {
+  const snapshot = row.condonationSnapshot as CondonationSnapshot
+  const executed = row.executionReceiptId !== null
+  const expired = row.expiresAt <= new Date()
+  const state = executed
+    ? 'executed'
+    : expired
+      ? 'expired'
+      : row.status === 'rejected'
+        ? 'rejected'
+        : row.status === 'pending'
+          ? 'pending'
+          : 'approved_awaiting_execution'
+  return {
+    id: row.actionId,
+    state,
+    expires_at: row.expiresAt.toISOString(),
+    decided_at: row.decidedAt?.toISOString() ?? null,
+    used_at: row.usedAt?.toISOString() ?? null,
+    execution_id: row.executionId,
+    execution_status: executed ? 'executed' : row.executionId ? 'recoverable' : 'unavailable',
+    snapshot: {
+      member_id: snapshot.memberId,
+      obligations: snapshot.obligations.map((item) => ({
+        obligation_id: item.obligationId,
+        currency: item.currency,
+        outstanding_amount_cents: item.outstandingAmountCents,
+      })),
+    },
+    requester: { operator_id: row.createdByOperatorId },
+    ...(includeApprover && row.decidedByOperatorId
+      ? { approver: { operator_id: row.decidedByOperatorId } }
+      : {}),
+    reason: row.requestReason,
+    evidence: row.requestEvidence,
+    decision: row.decidedAt ? { reason: row.decisionReason, evidence: row.decisionEvidence } : null,
   }
 }
 
@@ -136,6 +184,25 @@ function toContextResponse(row: ApprovalTokenRecord): ApprovalContextResponse {
 
 export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container = fastify.container
+
+  fastify.get<{ Params: { memberId: string }; Querystring: unknown }>(
+    '/api/v1/members/:memberId/condonation-requests',
+    { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') },
+    async (request, reply) => {
+      if (!request.operator) return
+      const { memberId } = throwIfInvalid(condonationMemberSchema, request.params, 'params')
+      const { limit } = throwIfInvalid(condonationHistoryQuerySchema, request.query, 'query')
+      const treasury = request.operator.role === 'ADMIN' || request.operator.role === 'TESORERO'
+      const rows = await listCondonationLifecycle(container.db, {
+        memberId,
+        limit: limit ?? 25,
+        ...(treasury ? {} : { requesterId: request.operator.sub }),
+      })
+      return reply
+        .code(200)
+        .send({ items: rows.map((row) => condonationLifecycleDto(row, treasury)) })
+    },
+  )
 
   // GET /api/v1/approval/:token
   // No auth: the token in the URL is the authorization. Returns the
@@ -301,6 +368,36 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         return decided
       })
       return reply.code(200).send(condonationDto(result))
+    },
+  )
+
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/condonation-requests/:id/execution',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      const { id } = throwIfInvalid(condonationIdSchema, request.params, 'params')
+      const { execution_id: executionId } = throwIfInvalid(
+        condonationExecutionSchema,
+        request.body,
+        'body',
+      )
+      const result = await new CondonationExecutionService(container.db).executeApproved({
+        requestId: id,
+        executionId,
+        actorId: request.operator.sub,
+        callerKey: callerKey(request),
+        sourceIp: request.ip ?? null,
+      })
+      return reply.code(200).send({
+        execution_id: result.executionId,
+        approval_id: result.approvalId,
+        member_id: result.memberId,
+        currency: result.currency,
+        approved_amount_cents: result.totalAmountCents,
+        treatment_ids: result.treatmentIds,
+        status: result.status,
+      })
     },
   )
 
