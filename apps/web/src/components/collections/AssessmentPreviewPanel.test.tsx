@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { AssessmentPreviewPanel } from './AssessmentPreviewPanel'
@@ -18,11 +18,14 @@ describe('AssessmentPreviewPanel', () => {
     expect(screen.getByText(/Gorriti, Ana/)).toBeInTheDocument()
     expect(screen.getByText('abc123')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Período 2026-01' })).toBeInTheDocument()
-    expect(screen.getByRole('list', { name: /componentes/i })).toHaveTextContent(
-      'Cuota base: 125.00 ARS',
-    )
+    const components = screen.getByRole('list', { name: 'Componentes del período 2026-01' })
+    const baseDues = within(components).getByRole('listitem')
+    expect(baseDues).toHaveTextContent('Cuota base')
+    expect(baseDues).toHaveTextContent('125.00 ARS')
     expect(screen.getByText('Total del período: 125.00 ARS')).toBeInTheDocument()
     expect(screen.getByText('Total del rango: 125.00 ARS')).toBeInTheDocument()
+    expect(screen.getByLabelText('Desde')).toHaveClass('min-h-11')
+    expect(screen.getByText('abc123')).toHaveClass('font-mono', 'break-all')
     expect(
       screen.queryByRole('button', { name: /ejecutar|generar|confirmar|pagar|revertir/i }),
     ).not.toBeInTheDocument()

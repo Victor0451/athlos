@@ -9,6 +9,8 @@ import { generateApprovalToken } from '@athlos/approval'
 import { signAccessToken } from '@athlos/auth'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import type * as AllocationsModule from '../modules/dues/allocations.ts'
+import { listCondonationLifecycle } from '@athlos/approval'
+import type * as ApprovalModule from '@athlos/approval'
 
 const executeApproved = vi.fn()
 
@@ -20,6 +22,10 @@ vi.mock('../modules/dues/condonations.ts', () => ({
   CondonationExecutionService: class {
     executeApproved = executeApproved
   },
+}))
+vi.mock('@athlos/approval', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApprovalModule>()),
+  listCondonationLifecycle: vi.fn(),
 }))
 
 /**
@@ -453,6 +459,57 @@ describe('authenticated condonation requests and decisions', () => {
 
       expect(response.statusCode).toBe(403)
       expect(standin.state.approvalTokens[0]?.usedAt).toBeNull()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('reads a bounded member lifecycle from persisted approval and execution facts', async () => {
+    vi.mocked(listCondonationLifecycle).mockResolvedValueOnce([
+      {
+        actionId: '00000000-0000-4000-8000-000000000060',
+        status: 'approved',
+        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+        decidedAt: new Date('2026-08-27T00:00:00.000Z'),
+        usedAt: null,
+        executionId: '00000000-0000-4000-8000-000000000061',
+        createdAt: new Date('2026-08-26T00:00:00.000Z'),
+        createdByOperatorId: requesterId,
+        decidedByOperatorId: approverId,
+        condonationSnapshot: {
+          memberId,
+          obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+        },
+        requestReason: 'Hardship',
+        requestEvidence: 'case-123',
+        decisionReason: 'Approved',
+        decisionEvidence: 'treasury-1',
+        executionReceiptId: null,
+      },
+    ])
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/members/${memberId}/condonation-requests?limit=1`,
+        headers: auth('OPERADOR'),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        items: [
+          expect.objectContaining({
+            id: '00000000-0000-4000-8000-000000000060',
+            state: 'approved_awaiting_execution',
+            execution_status: 'recoverable',
+            execution_id: '00000000-0000-4000-8000-000000000061',
+          }),
+        ],
+      })
+      expect(listCondonationLifecycle).toHaveBeenCalledWith(expect.anything(), {
+        memberId,
+        requesterId,
+        limit: 1,
+      })
     } finally {
       await app.close()
     }
