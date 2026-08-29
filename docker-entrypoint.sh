@@ -5,9 +5,10 @@
 # 1. Wait for Postgres to be ready (pg_isready loop, max 60s).
 # 2. If BACKUP_BEFORE_MIGRATE=true, run scripts/backup.sh to $BACKUP_DIR.
 #    Exits with code 2 on backup failure (compose will restart unless-stopped).
-# 3. If RUN_MIGRATIONS=true, run pnpm --filter @athlos/db migrate.
+# 3. Verify the guarded Collections baseline before and after migrations.
+# 4. If RUN_MIGRATIONS=true, run pnpm --filter @athlos/db migrate.
 #    Exits with code 3 on migration failure.
-# 4. exec "$@" — replaces the shell, so Node becomes PID 1 and receives
+# 5. exec "$@" — replaces the shell, so Node becomes PID 1 and receives
 #    SIGTERM directly from Docker stop (graceful shutdown via Fastify).
 
 set -euo pipefail
@@ -40,6 +41,11 @@ fi
 
 log INFO "Database is ready."
 
+if ! pnpm --filter @athlos/db collections:baseline; then
+  log_error "Collections baseline is unsupported."
+  exit 5
+fi
+
 # Optional pre-migration backup
 if [ "${BACKUP_BEFORE_MIGRATE:-false}" = "true" ]; then
   log INFO "BACKUP_BEFORE_MIGRATE=true — running backup.sh..."
@@ -58,6 +64,11 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
     exit 3
   fi
   log INFO "Migrations complete."
+fi
+
+if ! pnpm --filter @athlos/db collections:baseline --post-migration; then
+  log_error "Collections post-migration baseline is not compatible."
+  exit 6
 fi
 
 log INFO "Starting API: $*"
