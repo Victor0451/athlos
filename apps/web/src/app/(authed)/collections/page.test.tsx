@@ -2,8 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
-import { GenerationPanel } from '@/components/collections/GenerationPanel'
 import { PricingPanel } from '@/components/collections/PricingPanel'
+import type { CurrentUser } from '@/lib/auth'
 import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
@@ -12,7 +12,7 @@ const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
   revokeDuesPrice: vi.fn(),
-  generateDuesAssessments: vi.fn(),
+  previewDuesAssessments: vi.fn(),
   getDebt: vi.fn(),
   getObligationAgreements: vi.fn(),
   createNegotiatedAgreement: vi.fn(),
@@ -53,9 +53,17 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 
 describe('Collections navigation and direct access', () => {
   it('shows enabled ADMIN/TESORERO navigation and denies disabled or other roles', () => {
-    const admin = { role: 'ADMIN', permissions: { data_steward: false } } as never
-    const consulta = { role: 'CONSULTA', permissions: { data_steward: false } } as never
+    const admin: CurrentUser = {
+      operator_id: 'operator-1',
+      role: 'ADMIN',
+      username: 'admin',
+      permissions: { can_reprint: false, can_anulate: false, data_steward: false },
+    }
+    const consulta: CurrentUser = { ...admin, role: 'CONSULTA' }
     expect(visibleNavigation(admin, { collectionsEnabled: true })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ href: '/collections' })]),
+    )
+    expect(visibleNavigation({ ...admin, role: 'OPERADOR' }, { collectionsEnabled: true })).toEqual(
       expect.arrayContaining([expect.objectContaining({ href: '/collections' })]),
     )
     expect(visibleNavigation(consulta, { collectionsEnabled: true })).not.toEqual(
@@ -71,11 +79,11 @@ describe('Collections navigation and direct access', () => {
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
   })
 
-  it('denies direct access when disabled or unauthorized', () => {
+  it('denies direct access when disabled but admits OPERADOR to request-only Collections', () => {
     renderPage(false, 'ADMIN')
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
     renderPage(true, 'OPERADOR')
-    expect(screen.getByText('No tenés permiso para usar la cobranza.')).toBeInTheDocument()
+    expect(screen.getByRole('main', { name: /cobranza/i })).toBeInTheDocument()
   })
 
   it('requires both Collections Web and agreements flags for agreement actions', async () => {
@@ -206,15 +214,45 @@ describe('Collections navigation and direct access', () => {
     ).toBeInTheDocument()
   })
 
-  it('keeps generation available to TESORERO while withholding ADMIN pricing controls', () => {
+  it('keeps read-only assessment preview available to TESORERO while withholding ADMIN pricing controls', () => {
     renderPage(true, 'TESORERO')
-    expect(screen.getByRole('heading', { name: /generación mensual/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /vista previa de evaluación/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Guardar cuota' })).not.toBeInTheDocument()
     expect(screen.getByRole('main')).not.toHaveTextContent(/ctacte|reconciliation/i)
   })
+
+  it('requests a selected member preview and announces malformed responses without execution controls', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({ status: 'empty', obligations: [] })
+    duesMocks.previewDuesAssessments.mockRejectedValue(
+      new duesMocks.DuesOperationError('partial_data', 'malformed preview'),
+    )
+
+    renderPage(true, 'TESORERO')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.type(screen.getByLabelText('Desde'), '2026-01')
+    await user.type(screen.getByLabelText('Hasta'), '2026-02')
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+
+    await waitFor(() =>
+      expect(duesMocks.previewDuesAssessments).toHaveBeenCalledWith({
+        socio_id: 'socio-1',
+        from_period: '2026-01',
+        through_period: '2026-02',
+      }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(/datos incompletos/i)
+    expect(
+      screen.queryByRole('button', { name: /ejecutar|generar|confirmar/i }),
+    ).not.toBeInTheDocument()
+  })
 })
 
-describe('Collections pricing and generation panels', () => {
+describe('Collections pricing panel', () => {
   it('retains the pricing draft and announces an overlap conflict', async () => {
     const user = userEvent.setup()
     const onCreate = vi
@@ -244,16 +282,6 @@ describe('Collections pricing and generation panels', () => {
     ['success', 'Cuota guardada.'],
   ] as const)('renders the pricing %s state', (state, message) => {
     render(<PricingPanel prices={[]} state={state} onCreate={vi.fn()} />)
-    expect(screen.getByText(message)).toBeInTheDocument()
-  })
-
-  it.each([
-    ['created', 'Se generaron las deudas del período.'],
-    ['replayed', 'El período ya estaba generado.'],
-    ['zero', 'No se generaron deudas.'],
-    ['conflict', 'La generación requiere revisión.'],
-  ] as const)('renders the generation %s state', (status, message) => {
-    render(<GenerationPanel status={status} onGenerate={vi.fn()} />)
     expect(screen.getByText(message)).toBeInTheDocument()
   })
 
@@ -324,22 +352,6 @@ describe('Collections pricing and generation panels', () => {
     )
     expect(screen.getByText(message)).toBeInTheDocument()
   })
-
-  it('shows generation evidence and a direct continuation to debt detail', () => {
-    render(
-      <GenerationPanel
-        status="created"
-        result={{ period: '2026-01', obligation_ids: ['deuda-1', 'deuda-2'] }}
-        onGenerate={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText(/2 obligaciones/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /ver detalle de deudas/i })).toHaveAttribute(
-      'href',
-      '#debt-title',
-    )
-  })
 })
 
 describe('community-work evidence settlement', () => {
@@ -355,7 +367,7 @@ describe('community-work evidence settlement', () => {
   // prettier-ignore
   const openForm = async () => { const user = userEvent.setup(); renderPage(true, 'ADMIN', true); await user.type(screen.getByLabelText('Buscar socio'), 'Ana'); await user.click(screen.getByRole('button', { name: 'Buscar socio' })); await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ })); await user.click(await screen.findByRole('button', { name: /registrar trabajo comunitario/i })); return user }
   // prettier-ignore
-  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada'); await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
+  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
 
   it('links the active agreement, reuses the draft key, and refreshes debt only after confirmation', async () => {
     prepare()
@@ -397,7 +409,7 @@ describe('community-work evidence settlement', () => {
         )
       }
       const user = await openForm()
-      const evidence = screen.getByLabelText(/evidencia/i)
+      const evidence = screen.getByLabelText('Evidencia del trabajo aceptado')
       await completeDraft(user)
 
       await waitFor(() =>

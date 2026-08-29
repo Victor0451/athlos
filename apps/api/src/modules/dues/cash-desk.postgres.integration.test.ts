@@ -3,9 +3,15 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CashDeskService, businessDateForOpening, recordExpenseCompensation } from './cash-desk.ts'
+import {
+  CashDeskService,
+  businessDateForOpening,
+  recordExpenseCompensation,
+  recordSettlementTenderInTransaction,
+} from './cash-desk.ts'
 import type { AuditContext } from './service.ts'
 import { assertGastoMutable } from '../../routes/admin/gastos.ts'
+import { disposableCashDatabase, dropDisposableCashDatabase } from './postgres-test-database.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let db: ReturnType<typeof createDb>
@@ -50,7 +56,7 @@ beforeAll(async () => {
   const isolatedUrl = new URL(url)
   isolatedUrl.pathname = `/${isolatedDatabaseName}`
   admin = createDb({ connectionString: adminUrl.toString(), poolMax: 2 })
-  await admin.pool.query(`CREATE DATABASE "${isolatedDatabaseName}"`)
+  await disposableCashDatabase(admin.pool, isolatedDatabaseName)
   db = createDb({ connectionString: isolatedUrl.toString(), poolMax: 8 })
   operatorId = randomUUID()
   secondOperatorId = randomUUID()
@@ -102,11 +108,25 @@ afterAll(async () => {
   await db?.pool.end()
   if (!admin || !isolatedDatabaseName) return
   try {
-    await admin.pool.query(`DROP DATABASE IF EXISTS "${isolatedDatabaseName}"`)
+    await dropDisposableCashDatabase(admin.pool, isolatedDatabaseName)
   } finally {
     await admin.pool.end()
   }
 })
+
+async function openSettlement(service: CashDeskService, tender: string, amount = '12.50') {
+  const shift = await service.open({
+    ...context(`seam-open-${tender}-${randomUUID()}`),
+    deskId: `desk-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const settlement = randomUUID()
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',$3,'ARS',$4,$5,$6)`,
+    [settlement, socioId, amount, operatorId, randomUUID(), 'a'.repeat(64)],
+  )
+  return { settlement, shift }
+}
 
 describe('cash desk PostgreSQL policy', () => {
   it('closes with an inclusive interval, retains businessDate, replays, and excludes NON_CASH', async () => {
@@ -203,6 +223,52 @@ describe('cash desk PostgreSQL policy', () => {
         [second.id, randomUUID(), operatorId, randomUUID(), 'e'.repeat(64)],
       ),
     ).rejects.toMatchObject({ code: '55000' })
+  })
+
+  it('records every settlement tender in a caller transaction and rolls it back with the outer transaction', async () => {
+    const service = new CashDeskService(db.db)
+    for (const tender of ['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'] as const) {
+      const { settlement, shift } = await openSettlement(service, tender)
+      await db.db.transaction((tx) =>
+        recordSettlementTenderInTransaction(tx, {
+          ...context(`seam-${tender}-${randomUUID()}`),
+          shiftId: shift.id,
+          settlementId: settlement,
+          tender,
+        }),
+      )
+      const persisted = await db.pool.query(
+        `SELECT tender,direction,amount::text,source_type,source_id FROM tesoreria.dues_cash_tenders WHERE source_id=$1`,
+        [settlement],
+      )
+      expect(persisted.rows[0]).toMatchObject({
+        tender,
+        direction: 'INCOME',
+        amount: '12.50',
+        source_type: 'SETTLEMENT',
+        source_id: settlement,
+      })
+    }
+    const { settlement, shift } = await openSettlement(service, 'CASH', '1.00')
+    await expect(
+      db.db.transaction(async (tx) => {
+        await recordSettlementTenderInTransaction(tx, {
+          ...context(`seam-rollback-${randomUUID()}`),
+          shiftId: shift.id,
+          settlementId: settlement,
+          tender: 'CASH',
+        })
+        throw new Error('forced outer rollback')
+      }),
+    ).rejects.toThrow('forced outer rollback')
+    expect(
+      (
+        await db.pool.query(
+          `SELECT count(*)::int AS count FROM tesoreria.dues_cash_tenders WHERE source_id=$1`,
+          [settlement],
+        )
+      ).rows,
+    ).toEqual([{ count: 0 }])
   })
 
   it('serializes close against update, delete, and anular, and blocks direct bypasses', async () => {
