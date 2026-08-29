@@ -2,6 +2,11 @@ import { AuditAction, emitAudit, type AuditRecord, type EmitAuditResult } from '
 import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import * as allocations from './allocations.ts'
+import {
+  recordReversalSettlementTenderInTransaction,
+  recordSettlementTenderInTransaction,
+  validateSettlementShiftInTransaction,
+} from './cash-desk.ts'
 import type { AuditContext } from './service.ts'
 
 export { MAX_MONEY_CENTS } from './allocations.ts'
@@ -12,10 +17,21 @@ type AuditEmitter = (db: DuesDb, record: AuditRecord) => Promise<EmitAuditResult
 type Repository = Partial<
   Pick<
     typeof allocations,
-    'claimSettlement' | 'insertAllocation' | 'findAllocation' | 'getDebt' | 'selectFullOutstanding'
+    | 'claimSettlement'
+    | 'findSettlementReplay'
+    | 'findReversibleSettlement'
+    | 'insertAllocation'
+    | 'findAllocation'
+    | 'getDebt'
+    | 'selectFullOutstanding'
   >
 >
-type Dependencies = { repository?: Repository; audit?: AuditEmitter; now?: () => Date }
+type Dependencies = {
+  repository?: Repository
+  audit?: AuditEmitter
+  now?: () => Date
+  cash?: typeof recordReversalSettlementTenderInTransaction
+}
 
 export type SettlementCommand = AuditContext & {
   socioId: string
@@ -40,8 +56,8 @@ export type FullSelectionPaymentPreparation = {
 }
 export type ReverseSettlementCommand = AuditContext & {
   settlementId: string
-  allocationId: string
   reason: string
+  allocationId?: string
 }
 export type DebtCommand = Pick<AuditContext, 'role'> & { socioId: string }
 export type SettlementResult = {
@@ -124,6 +140,7 @@ export class SettlementService {
   private readonly repository: Repository
   private readonly audit: AuditEmitter
   private readonly now: () => Date
+  private readonly cash: typeof recordReversalSettlementTenderInTransaction
 
   constructor(
     private readonly db: Db,
@@ -132,9 +149,13 @@ export class SettlementService {
     this.repository = dependencies.repository ?? {}
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
+    this.cash = dependencies.cash ?? recordReversalSettlementTenderInTransaction
   }
 
-  async create(input: SettlementCommand): Promise<SettlementResult> {
+  async create(input: SettlementCommand | FullSelectionPaymentCommand): Promise<SettlementResult> {
+    if ('tender' in input) return this.createFullSelectionPayment(input)
+    if (input.kind === 'MONETARY')
+      throw BusinessError(ErrorCode.NOT_FOUND, 'Monetary settlement creation is unavailable')
     authorize(input.role)
     if (
       !Number.isSafeInteger(input.amountCents) ||
@@ -229,6 +250,117 @@ export class SettlementService {
     })
   }
 
+  private async createFullSelectionPayment(
+    input: FullSelectionPaymentCommand,
+  ): Promise<SettlementResult> {
+    const allowed = new Set([
+      'actorId',
+      'role',
+      'permissions',
+      'sourceIp',
+      'callerKey',
+      'requestFingerprint',
+      'authorizationEvidence',
+      'socioId',
+      'obligationIds',
+      'shiftId',
+      'tender',
+      'selectionFingerprint',
+    ])
+    if (
+      Object.keys(input).some((key) => !allowed.has(key)) ||
+      !uuidPattern.test(input.socioId) ||
+      !uuidPattern.test(input.shiftId) ||
+      !/^[a-f0-9]{64}$/.test(input.selectionFingerprint) ||
+      !fullSelectionTenders.has(input.tender) ||
+      !input.obligationIds.length ||
+      input.obligationIds.some((id) => !uuidPattern.test(id)) ||
+      new Set(input.obligationIds).size !== input.obligationIds.length
+    )
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Full selection payment command is invalid')
+    authorize(input.role)
+    const command = { ...input, obligationIds: [...input.obligationIds].sort() }
+    return this.db.transaction(async (tx) => {
+      const replay = await (
+        this.repository.findSettlementReplay ?? allocations.findSettlementReplay
+      )(tx, command.actorId, command.callerKey, command.requestFingerprint)
+      if (replay) return result(replay.settlement, replay.allocations)
+      const selection = await (
+        this.repository.selectFullOutstanding ?? allocations.selectFullOutstanding
+      )(tx, {
+        socioId: command.socioId,
+        obligationIds: command.obligationIds,
+        selectionFingerprint: command.selectionFingerprint,
+      })
+      await validateSettlementShiftInTransaction(tx, command)
+      const claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
+        operatorId: command.actorId,
+        socioId: command.socioId,
+        kind: 'MONETARY',
+        amountCents: selection.totalCents,
+        currency: selection.currency,
+        evidence: {
+          shiftId: command.shiftId,
+          tender: command.tender,
+          selectionFingerprint: command.selectionFingerprint,
+        },
+        callerKey: command.callerKey,
+        requestFingerprint: command.requestFingerprint,
+        authorizationEvidence: command.authorizationEvidence,
+      })
+      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
+      const created: allocations.AllocationRecord[] = []
+      for (const allocation of selection.allocations)
+        created.push(
+          await (this.repository.insertAllocation ?? allocations.insertAllocation)(tx, {
+            settlementId: claim.settlement.id,
+            socioId: command.socioId,
+            obligationId: allocation.obligationId,
+            amountCents: allocation.amountCents,
+          }),
+        )
+      await recordSettlementTenderInTransaction(tx, {
+        ...command,
+        settlementId: claim.settlement.id,
+      })
+      const now = this.now().toISOString()
+      await record(
+        this.audit,
+        tx,
+        command,
+        AuditAction.DUES_SETTLEMENT_CREATED,
+        'dues_settlement',
+        claim.settlement.id,
+        null,
+        {
+          settlementId: claim.settlement.id,
+          kind: 'MONETARY',
+          amountCents: selection.totalCents,
+          currency: selection.currency,
+        },
+        now,
+      )
+      for (const allocation of created)
+        await record(
+          this.audit,
+          tx,
+          command,
+          AuditAction.DUES_ALLOCATION_CREATED,
+          'dues_allocation',
+          allocation.id,
+          null,
+          {
+            allocationId: allocation.id,
+            settlementId: claim.settlement.id,
+            obligationId: allocation.obligationId,
+            amountCents: allocation.amountCents,
+          },
+          now,
+        )
+      return result(claim.settlement, created)
+    })
+  }
+
   async prepareFullSelectionPayment(
     input: FullSelectionPaymentCommand,
   ): Promise<FullSelectionPaymentPreparation> {
@@ -274,53 +406,71 @@ export class SettlementService {
 
   async reverse(input: ReverseSettlementCommand): Promise<SettlementResult> {
     authorize(input.role)
-    if (!input.reason.trim())
+    if (!input.reason.trim() || !Object.keys(input.authorizationEvidence ?? {}).length)
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A settlement reversal reason is required')
 
     return this.db.transaction(async (tx) => {
-      const original = await (this.repository.findAllocation ?? allocations.findAllocation)(
-        tx,
-        input.allocationId,
-      )
-      if (!original) throw BusinessError(ErrorCode.NOT_FOUND, 'Allocation not found')
-      if (original.settlementId !== input.settlementId || original.kind !== 'ALLOCATION')
-        throw BusinessError(ErrorCode.CONFLICT, 'Allocation does not belong to the settlement')
-
-      const claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
-        operatorId: input.actorId,
-        socioId: original.socioId,
-        kind: original.settlementKind,
-        amountCents: original.amountCents,
-        currency: original.currency,
-        evidence: { compensatesAllocationId: input.allocationId },
-        reason: input.reason,
-        reversalOfSettlementId: input.settlementId,
-        callerKey: input.callerKey,
-        requestFingerprint: input.requestFingerprint,
-        authorizationEvidence: input.authorizationEvidence,
-      })
-      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
-
-      let compensation: allocations.AllocationRecord
-      try {
-        compensation = await (this.repository.insertAllocation ?? allocations.insertAllocation)(
-          tx,
-          {
-            settlementId: claim.settlement.id,
-            socioId: original.socioId,
-            obligationId: original.obligationId,
-            amountCents: original.amountCents,
-            kind: 'COMPENSATION',
-            compensatesAllocationId: original.id,
-            reason: input.reason,
-          },
+      const original = await (
+        this.repository.findReversibleSettlement ?? allocations.findReversibleSettlement
+      )(tx, input.settlementId)
+      if (!original) throw BusinessError(ErrorCode.NOT_FOUND, 'Settlement not found')
+      const total = original.allocations.reduce((sum, item) => sum + item.amountCents, 0)
+      if (
+        original.kind !== 'MONETARY' ||
+        original.reversalOfSettlementId ||
+        !original.allocations.length ||
+        total !== original.amountCents ||
+        original.allocations.some(
+          (item) => item.kind !== 'ALLOCATION' || item.compensatesAllocationId,
         )
+      )
+        throw BusinessError(ErrorCode.CONFLICT, 'Settlement is not eligible for reversal')
+      let claim: allocations.SettlementClaim
+      try {
+        claim = await (this.repository.claimSettlement ?? allocations.claimSettlement)(tx, {
+          operatorId: input.actorId,
+          socioId: original.socioId,
+          kind: original.kind,
+          amountCents: original.amountCents,
+          currency: original.currency,
+          evidence: { reversalOfSettlementId: original.id },
+          reason: input.reason,
+          reversalOfSettlementId: original.id,
+          callerKey: input.callerKey,
+          requestFingerprint: input.requestFingerprint,
+          authorizationEvidence: input.authorizationEvidence,
+        })
       } catch (error) {
-        if (isConstraint(error, 'dues_allocations_compensation_unique'))
-          throw BusinessError(ErrorCode.CONFLICT, 'Allocation was already reversed')
+        if (isConstraint(error, 'dues_settlements_reversal_of_settlement_unique'))
+          throw BusinessError(ErrorCode.CONFLICT, 'Settlement was already reversed')
         throw error
       }
+      if (claim.status === 'replayed') return result(claim.settlement, claim.allocations)
 
+      const compensations: allocations.AllocationRecord[] = []
+      try {
+        for (const originalAllocation of original.allocations)
+          compensations.push(
+            await (this.repository.insertAllocation ?? allocations.insertAllocation)(tx, {
+              settlementId: claim.settlement.id,
+              socioId: original.socioId,
+              obligationId: originalAllocation.obligationId,
+              amountCents: originalAllocation.amountCents,
+              kind: 'COMPENSATION',
+              compensatesAllocationId: originalAllocation.id,
+              reason: input.reason,
+            }),
+          )
+      } catch (error) {
+        if (isConstraint(error, 'dues_allocations_compensation_unique'))
+          throw BusinessError(ErrorCode.CONFLICT, 'Settlement was already reversed')
+        throw error
+      }
+      await this.cash(tx, {
+        ...input,
+        settlementId: claim.settlement.id,
+        originalSettlementId: original.id,
+      })
       const now = this.now().toISOString()
       await record(
         this.audit,
@@ -329,39 +479,33 @@ export class SettlementService {
         AuditAction.DUES_SETTLEMENT_REVERSED,
         'dues_settlement',
         claim.settlement.id,
-        { settlementId: input.settlementId, allocationId: original.id },
+        null,
         {
           settlementId: claim.settlement.id,
-          reversalOfSettlementId: input.settlementId,
-          kind: claim.settlement.kind,
           amountCents: claim.settlement.amountCents,
           currency: claim.settlement.currency,
         },
         now,
         { reason: input.reason },
       )
-      await record(
-        this.audit,
-        tx,
-        input,
-        AuditAction.DUES_ALLOCATION_COMPENSATED,
-        'dues_allocation',
-        compensation.id,
-        {
-          allocationId: original.id,
-          obligationId: original.obligationId,
-          amountCents: original.amountCents,
-        },
-        {
-          allocationId: compensation.id,
-          compensatesAllocationId: original.id,
-          obligationId: original.obligationId,
-          amountCents: compensation.amountCents,
-        },
-        now,
-        { reason: input.reason },
-      )
-      return result(claim.settlement, [compensation])
+      for (const compensation of compensations)
+        await record(
+          this.audit,
+          tx,
+          input,
+          AuditAction.DUES_ALLOCATION_COMPENSATED,
+          'dues_allocation',
+          compensation.id,
+          null,
+          {
+            allocationId: compensation.id,
+            settlementId: claim.settlement.id,
+            obligationId: compensation.obligationId,
+            amountCents: compensation.amountCents,
+          },
+          now,
+        )
+      return result(claim.settlement, compensations)
     })
   }
 

@@ -29,6 +29,16 @@ function services(): DuesRouteOptions {
         obligationIds: ['ob-1'],
       }),
     },
+    settlementService: {
+      create: vi.fn(),
+      reverse: vi.fn().mockResolvedValue({
+        settlementId: '00000000-0000-4000-8000-000000000041',
+        kind: 'MONETARY',
+        amountCents: 5000,
+        currency: 'ARS',
+        allocations: [{ id: 'allocation-1', obligationId: 'obligation-1', amountCents: 5000 }],
+      }),
+    },
     listEffectivePrices: vi.fn().mockResolvedValue({ base: [price], sports: [] }),
     // prettier-ignore
     benefitService: {
@@ -278,5 +288,91 @@ describe('dues assessment routes', () => {
         familyGroupId: '00000000-0000-4000-8000-000000000030',
       }),
     )
+  })
+})
+
+describe('dues settlement reversal route', () => {
+  const settlementId = '00000000-0000-4000-8000-000000000040'
+
+  it('accepts only a settlement-level reason and returns the committed reversal DTO', async () => {
+    const options = services(),
+      app = await buildApp(true, options)
+    const request = {
+      method: 'POST',
+      url: `/api/v1/dues/settlements/${settlementId}/reverse`,
+      headers: auth('TESORERO', 'reverse-1'),
+      payload: { reason: 'Cobro duplicado' },
+    } as const
+    const response = await app.inject(request)
+    const replay = await app.inject(request)
+    const committed = {
+      original_settlement_id: settlementId,
+      reversal_settlement_id: '00000000-0000-4000-8000-000000000041',
+      kind: 'MONETARY',
+      amount_cents: 5000,
+      currency: 'ARS',
+      allocations: [{ id: 'allocation-1', obligation_id: 'obligation-1', amount_cents: 5000 }],
+    }
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(committed)
+    expect(replay.json()).toEqual(committed)
+    expect(options.settlementService?.reverse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settlementId,
+        reason: 'Cobro duplicado',
+        callerKey: 'reverse-1',
+        role: 'TESORERO',
+        authorizationEvidence: { role: 'TESORERO', permissions: [] },
+      }),
+    )
+  })
+
+  it.each([
+    ['missing idempotency key', auth('ADMIN'), { reason: 'Corrección' }, 400],
+    ['blank reason', auth('ADMIN', 'reverse-2'), { reason: '  ' }, 400],
+    [
+      'legacy allocation payload',
+      auth('ADMIN', 'reverse-3'),
+      { reason: 'Corrección', allocation_id: 'allocation-1' },
+      404,
+    ],
+    [
+      'caller amount payload',
+      auth('ADMIN', 'reverse-4'),
+      { reason: 'Corrección', amount_cents: 1 },
+      400,
+    ],
+    ['unauthorized role', auth('OPERADOR', 'reverse-5'), { reason: 'Corrección' }, 403],
+  ])('rejects %s without calling reversal service', async (_name, headers, payload, status) => {
+    const options = services(),
+      app = await buildApp(true, options)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/dues/settlements/${settlementId}/reverse`,
+      headers,
+      payload,
+    })
+    expect(response.statusCode).toBe(status)
+    expect(options.settlementService?.reverse).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [ErrorCode.CONFLICT, 409],
+    [ErrorCode.NOT_FOUND, 404],
+    [ErrorCode.SERVICE_UNAVAILABLE, 503],
+  ])('preserves %s reversal errors', async (code, status) => {
+    const options = services()
+    vi.mocked(options.settlementService!.reverse!).mockRejectedValueOnce(
+      BusinessError(code, 'reversal failed'),
+    )
+    const app = await buildApp(true, options)
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/dues/settlements/${settlementId}/reverse`,
+      headers: auth('ADMIN', `reverse-${status}`),
+      payload: { reason: 'Corrección' },
+    })
+    expect(response.statusCode).toBe(status)
+    expect(response.json()).toMatchObject({ error: code })
   })
 })

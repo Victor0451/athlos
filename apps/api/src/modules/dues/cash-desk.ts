@@ -10,7 +10,6 @@ type CashDb = Db | Parameters<Parameters<Db['transaction']>[0]>[0]
 type Direction = 'INCOME' | 'EXPENSE'
 type Tender = { tender: string; direction: Direction; amountCents: number }
 type Totals = Record<string, number>
-
 type Row = {
   id: string
   desk_id: string
@@ -163,6 +162,10 @@ export type SettlementTenderInput = CashCommand & {
   settlementId: string
   tender: 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER'
 }
+export type ReversalSettlementTenderInput = CashCommand & {
+  settlementId: string
+  originalSettlementId: string
+}
 export type CloseCashCommand = CashCommand & {
   shiftId: string
   countedTenders: Totals
@@ -171,6 +174,28 @@ export type CloseCashCommand = CashCommand & {
 }
 
 const settlementTenders = new Set(['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'])
+
+export async function validateSettlementShiftInTransaction(
+  db: CashDb,
+  input: Pick<SettlementTenderInput, 'shiftId' | 'actorId' | 'role'>,
+) {
+  const shift = rows(
+    await db.execute(
+      sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE id = ${input.shiftId} FOR UPDATE`,
+    ),
+  )[0]
+  if (!shift) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
+  if (shift.status !== 'OPEN')
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
+  if (shift.assigned_operator_id !== input.actorId && input.role !== 'ADMIN')
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Cash shift responsibility does not match the operator',
+    )
+  const openedAt = new Date(shift.opened_at)
+  if (Date.now() < openedAt.getTime() || Date.now() > openedAt.getTime() + 24 * 60 * 60 * 1000)
+    throw BusinessError(ErrorCode.CONFLICT, 'Cash shifts cannot remain open longer than 24 hours')
+}
 
 export async function recordSettlementTenderInTransaction(
   db: CashDb,
@@ -194,24 +219,7 @@ export async function recordSettlementTenderInTransaction(
     }
     return responseTender(replay)
   }
-  const shift = rows(
-    await db.execute(
-      sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE id = ${input.shiftId} FOR UPDATE`,
-    ),
-  )[0]
-  if (!shift) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
-  if (shift.status !== 'OPEN')
-    throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
-  if (shift.assigned_operator_id !== input.actorId && input.role !== 'ADMIN') {
-    throw BusinessError(
-      ErrorCode.INSUFFICIENT_PERMISSIONS,
-      'Cash shift responsibility does not match the operator',
-    )
-  }
-  const openedAt = new Date(shift.opened_at)
-  if (Date.now() < openedAt.getTime() || Date.now() > openedAt.getTime() + 24 * 60 * 60 * 1000) {
-    throw BusinessError(ErrorCode.CONFLICT, 'Cash shifts cannot remain open longer than 24 hours')
-  }
+  await validateSettlementShiftInTransaction(db, input)
   const settlement = rows(
     await db.execute(
       sql`SELECT kind,amount::text FROM tesoreria.dues_settlements WHERE id = ${input.settlementId}`,
@@ -259,6 +267,27 @@ export async function recordSettlementTenderInTransaction(
       sourceType: 'SETTLEMENT',
     },
   })
+  return responseTender(inserted)
+}
+
+export async function recordReversalSettlementTenderInTransaction(
+  db: CashDb,
+  input: ReversalSettlementTenderInput,
+) {
+  const original = rows(
+    await db.execute(
+      sql`SELECT tender.shift_id,tender.tender,tender.amount::text FROM tesoreria.dues_cash_tenders AS tender WHERE tender.source_type='SETTLEMENT' AND tender.direction='INCOME' AND tender.source_id=${input.originalSettlementId} ORDER BY tender.created_at,tender.id FOR UPDATE`,
+    ),
+  )[0]
+  if (!original) throw BusinessError(ErrorCode.CONFLICT, 'Settlement has no cash tender to reverse')
+  await validateSettlementShiftInTransaction(db, { ...input, shiftId: original.shift_id })
+  const inserted = rows(
+    await db.execute(
+      sql`INSERT INTO tesoreria.dues_cash_tenders (shift_id,direction,tender,amount,source_type,source_id,operator_id,caller_key,request_fingerprint) VALUES (${original.shift_id},'EXPENSE',${original.tender},${original.amount},'SETTLEMENT',${input.settlementId},${input.actorId},${input.callerKey},${input.requestFingerprint}) RETURNING *`,
+    ),
+  )[0]
+  if (!inserted)
+    throw BusinessError(ErrorCode.INTERNAL_ERROR, 'Settlement reversal tender was not recorded')
   return responseTender(inserted)
 }
 
