@@ -65,7 +65,7 @@ describe('SettlementActions', () => {
     await user.click(screen.getByRole('button', { name: /revisar saldos actualizados/i }))
     await waitFor(() => expect(confirm).toBeEnabled())
     await user.click(confirm)
-    expect(onPayment).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(onPayment).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('status')).toHaveTextContent(/repetido/i)
     view.unmount()
     renderActions(vi.fn(), vi.fn(), [])
