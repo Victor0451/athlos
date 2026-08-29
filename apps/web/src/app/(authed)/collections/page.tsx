@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
+import { CondonationActions } from '@/components/collections/CondonationActions'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
@@ -35,6 +36,13 @@ import {
   type DuesPriceInput,
   type FullSelectionPaymentInput,
 } from '@/lib/api/dues'
+import {
+  createCondonationRequest,
+  CondonationOperationError,
+  decideCondonationRequest,
+  type CondonationDecisionInput,
+  type CondonationRequestInput,
+} from '@/lib/api/condonation'
 import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocios, type Socio } from '@/lib/api/socios'
@@ -51,7 +59,7 @@ export function canAccessCollections(
   user: Pick<CurrentUser, 'role'> | null,
   collectionsEnabled: boolean,
 ) {
-  return collectionsEnabled && (user?.role === 'ADMIN' || user?.role === 'TESORERO')
+  return collectionsEnabled && ['ADMIN', 'TESORERO', 'OPERADOR'].includes(user?.role ?? '')
 }
 
 const errorText = (_reason: unknown, fallback: string) => fallback
@@ -87,6 +95,7 @@ export default function CollectionsPage() {
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
+  const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
 
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
@@ -341,7 +350,12 @@ export default function CollectionsPage() {
     } catch (reason) {
       if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
         idempotency.current.abandon(input)
-      if (!retainOnConflict && reason instanceof ApiError && reason.status === 409) {
+      if (
+        action === 'reverse-settlement' &&
+        !retainOnConflict &&
+        ((reason instanceof ApiError && reason.status === 409) ||
+          (reason instanceof DuesOperationError && reason.kind === 'conflict'))
+      ) {
         idempotency.current.abandon(input)
         await refreshDebt()
       }
@@ -397,6 +411,20 @@ export default function CollectionsPage() {
     runSettlementMutation('reverse-settlement', JSON.stringify(input), (key) =>
       reverseDuesSettlement(input.settlement_id, { reason: input.reason }, key),
     )
+  // prettier-ignore
+  const condonation = <T extends object>(action: string, draft: object, request: (key: string) => Promise<T>) => {
+    if (!user) throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = { operatorId: user.operator_id, action, draftFingerprint: JSON.stringify(draft) }
+    const key = idempotency.current.getOrCreate(input)
+    return request(key).then((result) => { idempotency.current!.complete(input); return result }).catch((reason) => { if (reason instanceof CondonationOperationError && reason.kind === 'conflict') idempotency.current!.abandon(input); throw reason })
+  }
+  const requestCondonation = (input: CondonationRequestInput) =>
+    condonation('condonation-request', input, (key) => createCondonationRequest(input, key))
+  const decideCondonation = (id: string, input: CondonationDecisionInput) =>
+    condonation(`condonation-decision:${id}`, input, (key) =>
+      decideCondonationRequest(id, input, key),
+    )
 
   return (
     <main aria-labelledby="collections-title" className="space-y-6">
@@ -450,8 +478,7 @@ export default function CollectionsPage() {
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
         openShifts={openShifts}
-        onPayment={pay}
-        onReverse={reverse}
+        {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
         agreementsEnabled={agreementWorkflowEnabled}
         agreementStates={agreementStates}
         onCreateAgreement={createAgreement}
@@ -459,6 +486,15 @@ export default function CollectionsPage() {
         onRecordCommunityWork={createCommunityWork}
         onRefreshAgreement={refreshAgreement}
       />
+      {selectedSocio && debt?.status === 'ready' && (
+        <CondonationActions
+          memberId={selectedSocio.id}
+          obligations={debt.obligations}
+          canDecide={canSettle}
+          onRequest={requestCondonation}
+          onDecision={decideCondonation}
+        />
+      )}
     </main>
   )
 }
