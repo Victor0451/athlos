@@ -2,6 +2,12 @@
 
 import { useEffect, useRef } from 'react'
 import type { CondonationLifecycle as Lifecycle } from '@/lib/api/condonation'
+import { Badge, type BadgeVariant } from '@/components/ui/Badge'
+import {
+  collectionButtonClass,
+  collectionInlineStatusClass,
+  collectionSectionClass,
+} from './CollectionPrimitives'
 
 type Role = 'ADMIN' | 'TESORERO' | 'OPERADOR'
 type ActionStatus =
@@ -16,6 +22,7 @@ type Props = {
   role: Role
   actionStatus?: ActionStatus
   onExecute?: () => Promise<unknown>
+  headingLevel?: 3 | 4
 }
 
 const stateCopy: Record<Lifecycle['state'], string> = {
@@ -24,6 +31,13 @@ const stateCopy: Record<Lifecycle['state'], string> = {
   expired: 'Vencida: la deuda no cambia.',
   approved_awaiting_execution: 'Aprobada, pero todavía no fue aplicada a la deuda.',
   executed: 'Ejecutada: la deuda autorizada se redujo según el registro confirmado.',
+}
+const stateBadge: Record<Lifecycle['state'], { label: string; variant: BadgeVariant }> = {
+  pending: { label: 'Pendiente', variant: 'warning' },
+  rejected: { label: 'Rechazada', variant: 'danger' },
+  expired: { label: 'Vencida', variant: 'warning' },
+  approved_awaiting_execution: { label: 'Aprobada: pendiente de ejecución', variant: 'info' },
+  executed: { label: 'Ejecutada', variant: 'success' },
 }
 const actionCopy: Partial<Record<ActionStatus, string>> = {
   replayed: 'Se recuperó un resultado ya confirmado; no se trató por segunda vez.',
@@ -34,7 +48,13 @@ const actionCopy: Partial<Record<ActionStatus, string>> = {
 }
 const amount = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency}`
 
-export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', onExecute }: Props) {
+export function CondonationLifecycle({
+  lifecycle,
+  role,
+  actionStatus = 'idle',
+  onExecute,
+  headingLevel = 3,
+}: Props) {
   const action = useRef<HTMLButtonElement>(null)
   const section = useRef<HTMLElement>(null)
   const executable =
@@ -44,6 +64,12 @@ export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', o
     lifecycle.execution_status !== 'unavailable' &&
     onExecute
   const feedback = actionCopy[actionStatus]
+  const executionBadge =
+    actionStatus === 'replayed'
+      ? 'Resultado recuperado'
+      : lifecycle.execution_status === 'recoverable'
+        ? 'Recuperación requerida'
+        : null
   useEffect(() => {
     if (feedback) (action.current ?? section.current)?.focus()
   }, [feedback])
@@ -53,41 +79,65 @@ export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', o
       ref={section}
       tabIndex={-1}
       aria-labelledby={`condonation-lifecycle-${lifecycle.id}`}
-      className="space-y-3 rounded-lg border p-4"
+      className={collectionSectionClass}
     >
-      <h3 id={`condonation-lifecycle-${lifecycle.id}`} className="text-lg font-semibold">
-        Estado de la condonación
-      </h3>
-      <p>{stateCopy[lifecycle.state]}</p>
-      <dl className="grid gap-2 sm:grid-cols-2">
-        <div>
+      {headingLevel === 3 ? (
+        <h3
+          id={`condonation-lifecycle-${lifecycle.id}`}
+          className="font-display text-lg font-semibold text-ink-900"
+        >
+          Estado de la condonación
+        </h3>
+      ) : (
+        <h4
+          id={`condonation-lifecycle-${lifecycle.id}`}
+          className="font-display text-lg font-semibold text-ink-900"
+        >
+          Estado de la condonación
+        </h4>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={stateBadge[lifecycle.state].variant}>
+          {stateBadge[lifecycle.state].label}
+        </Badge>
+        {executionBadge && (
+          <Badge variant={actionStatus === 'replayed' ? 'success' : 'warning'}>
+            {executionBadge}
+          </Badge>
+        )}
+      </div>
+      <p className="font-body text-sm text-ink-700">{stateCopy[lifecycle.state]}</p>
+      <dl className="grid gap-px border border-ink-200 bg-ink-200 sm:grid-cols-2">
+        <div className="bg-surface px-3 py-2">
           <dt>Solicitó</dt>
-          <dd>{lifecycle.requester.operator_id}</dd>
+          <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.requester.operator_id}</dd>
         </div>
         {lifecycle.approver && (
-          <div>
+          <div className="bg-surface px-3 py-2">
             <dt>Aprobó</dt>
-            <dd>{lifecycle.approver.operator_id}</dd>
+            <dd className="mt-1 font-mono text-xs text-ink-700">
+              {lifecycle.approver.operator_id}
+            </dd>
           </div>
         )}
-        <div>
+        <div className="bg-surface px-3 py-2">
           <dt>Vence</dt>
-          <dd>{lifecycle.expires_at}</dd>
+          <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.expires_at}</dd>
         </div>
         {lifecycle.decided_at && (
-          <div>
+          <div className="bg-surface px-3 py-2">
             <dt>Decidida el</dt>
-            <dd>{lifecycle.decided_at}</dd>
+            <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.decided_at}</dd>
           </div>
         )}
         {lifecycle.used_at && (
-          <div>
+          <div className="bg-surface px-3 py-2">
             <dt>Ejecutada el</dt>
-            <dd>{lifecycle.used_at}</dd>
+            <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.used_at}</dd>
           </div>
         )}
       </dl>
-      <dl>
+      <dl className="grid gap-3 border-t border-ink-200 pt-4 font-body text-sm">
         {lifecycle.reason && (
           <>
             <dt>Motivo de la solicitud</dt>
@@ -113,21 +163,31 @@ export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', o
           </>
         )}
       </dl>
-      <ul aria-label="Obligaciones seleccionadas">
+      <ul
+        aria-label="Obligaciones seleccionadas"
+        className="grid gap-2 border-t border-ink-200 pt-4"
+      >
         {lifecycle.snapshot.obligations.map((obligation) => (
-          <li key={obligation.obligation_id}>
-            Obligación {obligation.obligation_id}: importe al solicitar{' '}
-            {amount(obligation.outstanding_amount_cents, obligation.currency)}
+          <li
+            key={obligation.obligation_id}
+            className="grid gap-1 bg-surface-sunken px-3 py-2 font-body text-sm sm:grid-cols-[1fr_auto] sm:items-center"
+          >
+            <span>
+              Obligación <span className="font-mono text-xs">{obligation.obligation_id}</span>
+            </span>
+            <span className="font-mono tabular-nums text-ink-900">
+              {amount(obligation.outstanding_amount_cents, obligation.currency)}
+            </span>
           </li>
         ))}
       </ul>
       {actionStatus === 'replayed' && (
-        <p role="status" aria-live="polite">
+        <p role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>
           {feedback}
         </p>
       )}
       {feedback && actionStatus !== 'replayed' && (
-        <p role="alert" aria-live="assertive">
+        <p role="alert" aria-live="assertive" className={collectionInlineStatusClass('error')}>
           {feedback}
         </p>
       )}
@@ -137,6 +197,7 @@ export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', o
           type="button"
           disabled={actionStatus === 'executing'}
           onClick={() => void onExecute().catch(() => undefined)}
+          className={`${collectionButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-60`}
         >
           {lifecycle.execution_status === 'recoverable'
             ? 'Recuperar y ejecutar condonación'

@@ -63,4 +63,23 @@ describe('AgreementForm', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/no se pudo guardar/i)
     expect(narrative).toHaveValue('Borrador conservado')
   })
+
+  it('keeps footer associations and premium field classes stable', () => {
+    render(
+      <AgreementForm
+        open
+        busy={false}
+        formId="create-agreement"
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Guardar acuerdo' })).toHaveAttribute(
+      'form',
+      'create-agreement',
+    )
+    expect(screen.getByLabelText(/narrativa del acuerdo/i)).toHaveClass('min-h-11', 'min-h-28')
+    expect(screen.getByLabelText(/motivo del acuerdo/i)).toHaveClass('min-h-11', 'min-h-24')
+  })
 })
