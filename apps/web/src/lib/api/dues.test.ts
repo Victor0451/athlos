@@ -17,7 +17,7 @@ const {
   DuesOperationError,
   createCommunityWorkEvidence,
   createDuesPrice,
-  createDuesSettlement,
+  createFullSelectionPayment,
   createNegotiatedAgreement,
   generateDuesAssessments,
   getDuesPrices,
@@ -135,7 +135,7 @@ describe('typed native dues client', () => {
   })
 
   // prettier-ignore
-  it('sends explicit monetary allocations with a stable key',async()=>{await createDuesSettlement({socio_id:'socio-1',kind:'MONETARY',amount_cents:5_000,currency:'ARS',allocations:[{obligation_id:'obligation-1',amount_cents:2_000},{obligation_id:'obligation-2',amount_cents:3_000}]},'settlement-key-1');expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements',{method:'POST',headers:{'idempotency-key':'settlement-key-1'},body:expect.objectContaining({amount_cents:5_000})})})
+  it('posts only strict full-selection payment fields and rejects an incomplete committed response',async()=>{const input={socio_id:'socio-1',obligation_ids:['obligation-2','obligation-1'],shift_id:'shift-1',tender:'CASH' as const,selection_fingerprint:'fingerprint'};apiFetchMock.mockResolvedValueOnce({settlement_id:'settlement-1',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-1',obligation_id:'obligation-1',amount_cents:2_000}]});await expect(createFullSelectionPayment(input,'payment-key-1')).resolves.toMatchObject({settlement_id:'settlement-1'});expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements',{method:'POST',headers:{'idempotency-key':'payment-key-1'},body:input});apiFetchMock.mockResolvedValueOnce({settlement_id:'settlement-1',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-1',obligation_id:'obligation-1',amount_cents:'2_000'}]});await expect(createFullSelectionPayment(input,'payment-key-1')).rejects.toMatchObject({kind:'partial_data'})})
   // prettier-ignore
   it('sends only a settlement-level reversal reason and decodes the committed response',async()=>{apiFetchMock.mockResolvedValueOnce({original_settlement_id:'settlement-1',reversal_settlement_id:'settlement-2',kind:'MONETARY',amount_cents:5_000,currency:'ARS',allocations:[{id:'allocation-2',obligation_id:'obligation-1',amount_cents:5_000}]});await expect(reverseDuesSettlement('settlement-1',{reason:'Incorrect allocation'},'reversal-key-1')).resolves.toMatchObject({original_settlement_id:'settlement-1',reversal_settlement_id:'settlement-2'});expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/settlements/settlement-1/reverse',{method:'POST',headers:{'idempotency-key':'reversal-key-1'},body:{reason:'Incorrect allocation'}})})
   it('rejects an incomplete reversal response instead of reporting a reversal as confirmed', async () => {
