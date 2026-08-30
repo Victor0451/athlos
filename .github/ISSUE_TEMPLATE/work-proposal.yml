@@ -1,0 +1,107 @@
+name: Work proposal
+description: Propose a bug fix, behavior change, or maintenance task for maintainer review.
+title: ''
+labels: []
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe one reviewable work unit. Submitting this form does not grant approval.
+
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: Work type
+      description: This selection is informational and does not apply a pull request label.
+      options:
+        - Bug fix
+        - Feature or behavior change
+        - Maintenance or tooling
+        - Documentation
+        - Refactor
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: Explain the current behavior and why work is needed.
+      placeholder: Describe the observed behavior and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current behavior and evidence
+      description: Include reproducible steps, commands, logs, or screenshots after removing secrets.
+      placeholder: |
+        1. Starting state
+        2. Commands or actions
+        3. Observed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State the behavior that should exist after the work is complete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Identify affected components and explicit non-goals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that would make this work complete.
+      placeholder: |
+        - [ ] First observable condition
+        - [ ] Second observable condition
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Explain how the result can be tested or inspected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and rollback
+      description: Describe data-loss, deployment, compatibility, and rollback concerns.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add related issues, documentation, or diagrams if useful.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched open and closed issues for an equivalent proposal.
+          required: true
+        - label: I removed credentials, private infrastructure details, and other secrets from this report.
+          required: true
+        - label: I understand that a maintainer must review and approve this proposal separately.
+          required: true
