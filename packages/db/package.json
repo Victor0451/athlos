@@ -25,6 +25,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:disposable-postgres": "../../scripts/lib/disposable-postgres.sh run --caller db-tests -- pnpm test:run --",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {
