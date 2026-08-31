@@ -213,6 +213,26 @@ jobs:
       - name: actionlint workflow files
         run: actionlint .github/workflows/deploy.yml .github/workflows/test.yml
 
+  disposable-postgres-integration:
+    name: Disposable PostgreSQL lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bats and ShellCheck
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats shellcheck
+      - name: Static shell checks
+        run: |
+          shellcheck scripts/lib/disposable-postgres.sh scripts/tests/disposable-postgres.integration.bats
+      - name: Real-Docker lifecycle neutrality
+        env:
+          ATHLOS_REQUIRE_DOCKER: '1'
+        run: bats scripts/tests/disposable-postgres.integration.bats
+
   docker-build-smoke:
     name: Docker build smoke
     runs-on: ubuntu-latest
