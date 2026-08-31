@@ -103,8 +103,10 @@ SH
   run run_lifecycle 4444444444444444 true
   [ "$status" -eq 0 ]
   assert_baseline
-  run ! grep -Eq 'system[[:space:]]+prune|volume[[:space:]]+prune' "$lifecycle"
-  [ "$status" -eq 0 ]
+  if grep -Eq 'system[[:space:]]+prune|volume[[:space:]]+prune' "$lifecycle"; then
+    echo 'unscoped Docker prune detected' >&2
+    return 1
+  fi
 }
 
 @test "partial docker start failure removes the exact real volume" {
