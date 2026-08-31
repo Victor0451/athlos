@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031 # Bats keeps each test and its teardown in the same subshell.
 # Real-Docker contract tests: every created fixture is removed by its exact ID/name.
 
 setup() {
@@ -95,9 +96,9 @@ exec "$REAL_DOCKER" "$@"
 SH
   chmod +x "$shim/docker"
   run env REAL_DOCKER="$real_docker" PATH="$shim:$PATH" ATHLOS_DP_RANDOM=3333333333333333 \
-    ATHLOS_DP_READY_TIMEOUT=0 "$lifecycle" run --caller integration-test -- true 2>>"$evidence"
+    ATHLOS_DP_READY_TIMEOUT=0 "$lifecycle" run --caller integration-test -- true
   [ "$status" -ne 0 ]
-  grep -F '"event":"absence"' "$evidence"
+  [[ "$output" == *'"event":"absence"'* ]]
   assert_baseline
   run run_lifecycle 4444444444444444 true
   [ "$status" -eq 0 ]
@@ -125,9 +126,12 @@ SH
 @test "SIGKILL residue is recovered conservatively by a later owner" {
   old_boot='crashed-boot'
   # shellcheck disable=SC2016 # The child expands PPID to the lifecycle parent at runtime.
-  ATHLOS_DP_BOOT_ID="$old_boot" ATHLOS_DP_RANDOM=6666666666666666 ATHLOS_DP_READY_TIMEOUT=15 \
+  ATHLOS_DP_BOOT_ID="$old_boot" ATHLOS_DP_CLOCK=1000000000 ATHLOS_DP_RANDOM=6666666666666666 ATHLOS_DP_READY_TIMEOUT=15 \
     "$lifecycle" run --caller integration-test -- bash -c 'kill -KILL "$PPID"; sleep 1' >/dev/null 2>>"$evidence" &
   crashed_pid=$!
+  crashed_run="1000000000-$crashed_pid-6666666666666666"
+  fixture_containers+=("athlos-dp-pg-$crashed_run")
+  fixture_volumes+=("athlos-dp-pgdata-$crashed_run")
   wait "$crashed_pid" || [ "$?" -eq 137 ]
   [ "$(owned_inventory)" != "$baseline" ]
   run run_lifecycle 7777777777777777 true
