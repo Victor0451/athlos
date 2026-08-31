@@ -16,6 +16,7 @@ type Props = {
   role: Role
   actionStatus?: ActionStatus
   onExecute?: () => Promise<unknown>
+  headingLevel?: 3 | 4
 }
 
 const stateCopy: Record<Lifecycle['state'], string> = {
@@ -34,7 +35,13 @@ const actionCopy: Partial<Record<ActionStatus, string>> = {
 }
 const amount = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency}`
 
-export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', onExecute }: Props) {
+export function CondonationLifecycle({
+  lifecycle,
+  role,
+  actionStatus = 'idle',
+  onExecute,
+  headingLevel = 3,
+}: Props) {
   const action = useRef<HTMLButtonElement>(null)
   const section = useRef<HTMLElement>(null)
   const executable =
@@ -55,9 +62,15 @@ export function CondonationLifecycle({ lifecycle, role, actionStatus = 'idle', o
       aria-labelledby={`condonation-lifecycle-${lifecycle.id}`}
       className="space-y-3 rounded-lg border p-4"
     >
-      <h3 id={`condonation-lifecycle-${lifecycle.id}`} className="text-lg font-semibold">
-        Estado de la condonación
-      </h3>
+      {headingLevel === 3 ? (
+        <h3 id={`condonation-lifecycle-${lifecycle.id}`} className="text-lg font-semibold">
+          Estado de la condonación
+        </h3>
+      ) : (
+        <h4 id={`condonation-lifecycle-${lifecycle.id}`} className="text-lg font-semibold">
+          Estado de la condonación
+        </h4>
+      )}
       <p>{stateCopy[lifecycle.state]}</p>
       <dl className="grid gap-2 sm:grid-cols-2">
         <div>

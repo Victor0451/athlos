@@ -15,6 +15,7 @@ type Props = {
   request?: CondonationRequest
   onRequest: (input: CondonationRequestInput) => Promise<CondonationRequest>
   onDecision?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
+  headingLevel?: 3 | 4
 }
 const failure = (cause: unknown, decision = false) => {
   const kind = (cause as { kind?: unknown })?.kind
@@ -35,6 +36,7 @@ export function CondonationActions({
   request: initial,
   onRequest,
   onDecision,
+  headingLevel = 3,
 }: Props) {
   const eligible = obligations
     .filter(({ outstanding_cents }) => outstanding_cents > 0)
@@ -84,7 +86,7 @@ export function CondonationActions({
   }
   // prettier-ignore
   return <section aria-labelledby="condonation-title" className="space-y-4 rounded-lg border p-4">
-    <h3 id="condonation-title" className="text-lg font-semibold">Solicitud de condonación</h3>
+    {headingLevel === 3 ? <h3 id="condonation-title" className="text-lg font-semibold">Solicitud de condonación</h3> : <h4 id="condonation-title" className="text-lg font-semibold">Solicitud de condonación</h4>}
     <p>Incluye todas las obligaciones pendientes seleccionadas; esta solicitud no perdona ni modifica la deuda.</p>
     <ul aria-label="Obligaciones incluidas">{eligible.map(({ id, period_start }) => <li key={id}>Período {period_start}</li>)}</ul>
     {message && <p role="status" aria-live="polite">{message}</p>}
