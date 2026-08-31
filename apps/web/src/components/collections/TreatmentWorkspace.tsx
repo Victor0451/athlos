@@ -16,6 +16,8 @@ import { AgreementActions, type AgreementViewState } from './AgreementActions'
 import type { AgreementDraft } from './AgreementForm'
 import { CondonationActions } from './CondonationActions'
 import { CondonationLifecycle as CondonationLifecyclePresenter } from './CondonationLifecycle'
+import { Badge } from '@/components/ui/Badge'
+import { collectionSurfaceClass } from './CollectionPrimitives'
 import type { CommunityWorkDraft } from './CommunityWorkForm'
 import { SettlementActions, type ReversalRequest } from './SettlementActions'
 
@@ -105,18 +107,16 @@ export function TreatmentWorkspace({
     onRefresh: () => onRefreshAgreement!(obligation.id),
   })
   const agreementsAvailable = agreementsEnabled && onCreateAgreement && onRefreshAgreement
+  // prettier-ignore
   return (
-    <section aria-labelledby="treatment-workspace-title" className="space-y-4">
-      <h2 id="treatment-workspace-title" className="text-lg font-semibold">
-        Tratamientos de deuda
-      </h2>
-      <div className="grid gap-4 lg:grid-cols-2">
+    <section aria-labelledby="treatment-workspace-title" className="min-w-0 space-y-4">
+      <div className="min-w-0 border-b border-ink-200 pb-4"><h2 id="treatment-workspace-title" className="font-display text-xl font-semibold text-ink-900">Tratamientos de deuda</h2><p className="mt-1 max-w-3xl font-body text-sm text-ink-700">Revisá el efecto de cada tratamiento antes de iniciar una acción.</p></div>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         <section
           aria-labelledby="treatment-payment-title"
-          className="space-y-3 rounded-lg border p-4"
+          className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-700`}
         >
-          <h3 id="treatment-payment-title">Pago</h3>
-          <p>El pago reduce la deuda mediante una liquidación confirmada.</p>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-payment-title" className="font-display text-lg font-semibold text-ink-900">Pago</h3><p className="mt-1 font-body text-sm text-ink-700">El pago reduce la deuda mediante una liquidación confirmada.</p></div><Badge variant="info">Efecto: liquidación confirmada</Badge></div>
           {canSettle && onPayment && onReverse ? (
             <SettlementActions
               debt={debt}
@@ -131,10 +131,9 @@ export function TreatmentWorkspace({
         </section>
         <section
           aria-labelledby="treatment-community-title"
-          className="space-y-3 rounded-lg border p-4"
+          className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <h3 id="treatment-community-title">Trabajo comunitario</h3>
-          <p>Solo reduce la deuda después de registrar un comando aceptado.</p>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-community-title" className="font-display text-lg font-semibold text-ink-900">Trabajo comunitario</h3><p className="mt-1 font-body text-sm text-ink-700">Solo reduce la deuda después de registrar un comando aceptado.</p></div><Badge>Reducción diferida</Badge></div>
           {agreementsAvailable ? (
             debt.obligations.map((obligation) => (
               <AgreementActions
@@ -149,10 +148,9 @@ export function TreatmentWorkspace({
         </section>
         <section
           aria-labelledby="treatment-agreement-title"
-          className="space-y-3 rounded-lg border p-4"
+          className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <h3 id="treatment-agreement-title">Acuerdo</h3>
-          <p>Un acuerdo no reduce la deuda.</p>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-agreement-title" className="font-display text-lg font-semibold text-ink-900">Acuerdo</h3><p className="mt-1 font-body text-sm text-ink-700">Un acuerdo no reduce la deuda.</p></div><Badge variant="warning">Efecto: sin reducción</Badge></div>
           {agreementsAvailable ? (
             debt.obligations.map((obligation) => (
               <AgreementActions
@@ -167,10 +165,9 @@ export function TreatmentWorkspace({
         </section>
         <section
           aria-labelledby="treatment-condonation-title"
-          className="space-y-3 rounded-lg border p-4"
+          className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <h3 id="treatment-condonation-title">Condonación</h3>
-          <p>Solo reduce la deuda después de una ejecución aprobada.</p>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-condonation-title" className="font-display text-lg font-semibold text-ink-900">Condonación</h3><p className="mt-1 font-body text-sm text-ink-700">Solo reduce la deuda después de una ejecución aprobada.</p></div><Badge variant="info">Efecto: condonación autorizada</Badge></div>
           {canRequestCondonation && onRequestCondonation && (
             <CondonationActions
               memberId={memberId}
