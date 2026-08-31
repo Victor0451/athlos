@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import type {
   CondonationDecisionInput,
+  CondonationLifecycle,
   CondonationRequest,
   CondonationRequestInput,
 } from '@/lib/api/condonation'
@@ -12,9 +13,12 @@ type Props = {
   memberId: string
   obligations: Obligation[]
   canDecide: boolean
+  canExecute?: boolean
+  lifecycle?: Pick<CondonationLifecycle, 'id' | 'state' | 'execution_id'>
   request?: CondonationRequest
   onRequest: (input: CondonationRequestInput) => Promise<CondonationRequest>
   onDecision?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
+  onExecute?: (id: string, executionId: string) => Promise<void>
 }
 const failure = (cause: unknown, decision = false) => {
   const kind = (cause as { kind?: unknown })?.kind
@@ -32,14 +36,17 @@ export function CondonationActions({
   memberId,
   obligations,
   canDecide,
+  canExecute = false,
+  lifecycle,
   request: initial,
   onRequest,
   onDecision,
+  onExecute,
 }: Props) {
   const eligible = obligations
     .filter(({ outstanding_cents }) => outstanding_cents > 0)
     .sort((a, b) => a.id.localeCompare(b.id))
-  const [request, setRequest] = useState(initial)
+  const request = initial
   const [context, setContext] = useState('')
   const [reason, setReason] = useState('')
   const [evidence, setEvidence] = useState('')
@@ -54,14 +61,13 @@ export function CondonationActions({
     setError('')
     setMessage('')
     try {
-      const result = await onRequest({
+      await onRequest({
         member_id: memberId,
         obligation_ids: eligible.map(({ id }) => id),
         context: context.trim(),
         reason: reason.trim(),
         evidence: evidence.trim(),
       })
-      setRequest(result)
       setMessage('Solicitud pendiente. No modifica la deuda ni ejecuta una condonación.')
     } catch (cause) {
       setError(failure(cause))
@@ -73,13 +79,23 @@ export function CondonationActions({
     setError('')
     setMessage('')
     try {
-      const result = await onDecision(request.id, {
+      await onDecision(request.id, {
         decision,
         reason: decisionReason.trim(),
         evidence: decisionEvidence.trim(),
       })
-      setRequest(result)
       setMessage('Decisión registrada. No modifica la deuda ni ejecuta una condonación.')
+    } catch (cause) {
+      setError(failure(cause, true))
+    }
+  }
+  const execute = async () => {
+    if (!lifecycle || !onExecute) return
+    setError('')
+    setMessage('')
+    try {
+      await onExecute(lifecycle.id, lifecycle.execution_id!)
+      setMessage('Ejecución confirmada al recargar el estado y la deuda.')
     } catch (cause) {
       setError(failure(cause, true))
     }
@@ -103,5 +119,6 @@ export function CondonationActions({
       <label>Evidencia de la decisión<textarea value={decisionEvidence} onChange={(event) => setDecisionEvidence(event.target.value)} required /></label>
       <button type="submit">Registrar decisión</button>
     </form>}
+    {canExecute && lifecycle?.state === 'approved_awaiting_execution' && lifecycle.execution_id && onExecute && <button type="button" onClick={() => void execute()}>Ejecutar condonación</button>}
   </section>
 }
