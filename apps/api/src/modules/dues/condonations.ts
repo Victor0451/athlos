@@ -124,7 +124,14 @@ async function lockOutstanding(db: DuesDb, command: CondonationExecutionCommand)
     treatments: selected.allocations,
   }
 }
-async function appendReceipt(db: DuesDb, receipt: Receipt) {
+async function appendReceipt(
+  db: DuesDb,
+  receipt: Receipt & {
+    snapshot: Approval['condonationSnapshot']
+    reason: string
+    evidence: string
+  },
+) {
   const inserted = rows<{ executionId: string }>(
     await db.execute(
       sql`INSERT INTO tesoreria.dues_condonation_executions (execution_id,approval_token_id,socio_id,actor_id,currency,total_amount,approved_snapshot,reason,evidence) VALUES (${receipt.executionId},${receipt.approvalId},${receipt.memberId},${receipt.actorId},${receipt.currency},${money(receipt.totalAmountCents)},${JSON.stringify(receipt.snapshot)}::jsonb,${receipt.reason},${receipt.evidence}) RETURNING execution_id AS "executionId"`,
@@ -133,7 +140,14 @@ async function appendReceipt(db: DuesDb, receipt: Receipt) {
   if (!inserted) conflict('Condonation execution receipt was not created')
   return receipt
 }
-async function appendTreatments(db: DuesDb, receipt: Receipt) {
+async function appendTreatments(
+  db: DuesDb,
+  receipt: Receipt & {
+    snapshot: Approval['condonationSnapshot']
+    reason: string
+    evidence: string
+  },
+) {
   return rows<{ treatmentId: string }>(
     await db.execute(
       sql`INSERT INTO tesoreria.dues_condonation_treatments (execution_id,approval_token_id,socio_id,obligation_id,actor_id,amount,currency,approved_snapshot,reason,evidence) VALUES ${sql.join(

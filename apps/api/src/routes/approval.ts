@@ -9,8 +9,8 @@ import {
   createCondonationApprovalRequest,
   decideCondonationApproval,
   findCondonationRequest,
-  listCondonationLifecycle,
   getApprovalToken,
+  listCondonationLifecycle,
   type CondonationSnapshot,
   type ApprovalTokenRecord,
 } from '@athlos/approval'
@@ -103,9 +103,9 @@ function condonationDto(row: ApprovalTokenRecord) {
     decided_at: row.decidedAt?.toISOString() ?? null,
   }
 }
+
 function condonationLifecycleDto(
   row: Awaited<ReturnType<typeof listCondonationLifecycle>>[number],
-  includeApprover: boolean,
 ) {
   const snapshot = row.condonationSnapshot as CondonationSnapshot
   const executed = row.executionReceiptId !== null
@@ -124,7 +124,6 @@ function condonationLifecycleDto(
     state,
     expires_at: row.expiresAt.toISOString(),
     decided_at: row.decidedAt?.toISOString() ?? null,
-    used_at: row.usedAt?.toISOString() ?? null,
     execution_id: row.executionId,
     execution_status: executed ? 'executed' : row.executionId ? 'recoverable' : 'unavailable',
     snapshot: {
@@ -135,13 +134,6 @@ function condonationLifecycleDto(
         outstanding_amount_cents: item.outstandingAmountCents,
       })),
     },
-    requester: { operator_id: row.createdByOperatorId },
-    ...(includeApprover && row.decidedByOperatorId
-      ? { approver: { operator_id: row.decidedByOperatorId } }
-      : {}),
-    reason: row.requestReason,
-    evidence: row.requestEvidence,
-    decision: row.decidedAt ? { reason: row.decisionReason, evidence: row.decisionEvidence } : null,
   }
 }
 
@@ -198,9 +190,7 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         limit: limit ?? 25,
         ...(treasury ? {} : { requesterId: request.operator.sub }),
       })
-      return reply
-        .code(200)
-        .send({ items: rows.map((row) => condonationLifecycleDto(row, treasury)) })
+      return reply.code(200).send({ items: rows.map(condonationLifecycleDto) })
     },
   )
 

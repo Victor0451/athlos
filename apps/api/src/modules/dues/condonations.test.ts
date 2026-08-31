@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { ErrorCode } from '@athlos/errors'
 import { emitAudit } from '@athlos/audit'
 import { CondonationExecutionService } from './condonations.ts'
@@ -14,6 +14,7 @@ const ids = {
   member: '00000000-0000-4000-8000-000000000003',
   actor: '00000000-0000-4000-8000-000000000004',
   obligation: '00000000-0000-4000-8000-000000000005',
+  otherObligation: '00000000-0000-4000-8000-000000000008',
 }
 const command = {
   executionId: ids.execution,
@@ -44,6 +45,8 @@ const selection = {
   treatments: [{ obligationId: ids.obligation, amountCents: 12500 }],
 }
 const treatmentIds = ['00000000-0000-4000-8000-000000000007']
+beforeEach(() => vi.mocked(emitAudit).mockClear())
+
 const receipt = {
   executionId: ids.execution,
   approvalId: ids.approval,
@@ -78,18 +81,44 @@ it('executes the immutable approved snapshot once and replays its exact receipt'
     treatmentIds,
     status: 'executed',
   })
-  expect(repository.appendTreatments).toHaveBeenCalledWith(expect.anything(), {
-    ...receipt,
-  })
+  expect(repository.appendTreatments).toHaveBeenCalledWith(expect.anything(), receipt)
   repository.findReceipt.mockResolvedValue({ ...receipt, treatmentIds })
   await expect(service.execute(command)).resolves.toEqual({
     ...receipt,
     treatmentIds,
     status: 'replayed',
   })
-  expect(Object.hasOwn(receipt, 'totalAmount')).toBe(false)
   expect(repository.lockApproval).toHaveBeenCalledTimes(1)
   expect(repository.appendTreatments).toHaveBeenCalledTimes(1)
+})
+
+it('reconstructs approved receipt metadata from durable replay storage', async () => {
+  const db = {
+    transaction: vi.fn(async (work: (tx: unknown) => unknown) => work(db)),
+    execute: vi.fn().mockResolvedValue({
+      rows: [
+        {
+          executionId: ids.execution,
+          approvalId: ids.approval,
+          memberId: ids.member,
+          actorId: ids.actor,
+          currency: 'ARS',
+          totalAmount: '125.00',
+          treatments: [{ ...selection.treatments[0], treatmentId: treatmentIds[0] }],
+          snapshot: approval.condonationSnapshot,
+          reason: approval.requestReason,
+          evidence: approval.requestEvidence,
+        },
+      ],
+    }),
+  } as never
+  const service = new CondonationExecutionService(db)
+
+  await expect(service.execute(command)).resolves.toEqual({
+    ...receipt,
+    treatmentIds,
+    status: 'replayed',
+  })
 })
 
 it('audits only the first successful approved execution without cash claims', async () => {
@@ -125,6 +154,7 @@ it('audits only the first successful approved execution without cash claims', as
 
 it.each([
   ['pending', { ...approval, status: 'pending' as const }],
+  ['rejected', { ...approval, status: 'rejected' as const }],
   ['expired', { ...approval, expiresAt: new Date(Date.now() - 1) }],
   ['used', { ...approval, usedAt: new Date() }],
   [
@@ -140,16 +170,26 @@ it.each([
   expect(repository.appendReceipt).not.toHaveBeenCalled()
   expect(repository.appendTreatments).not.toHaveBeenCalled()
   expect(repository.consumeApproval).not.toHaveBeenCalled()
+  expect(emitAudit).not.toHaveBeenCalled()
 })
 
-it('rejects conflicting replay identity or targets without any new treatment', async () => {
+it('rejects a lost approval claim', async () => {
+  const { repository, service } = setup()
+  repository.consumeApproval.mockResolvedValue(false)
+  await expect(service.execute(command)).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+})
+
+it('rejects conflicting replay identity or targets without writes', async () => {
   const { repository, service } = setup()
   repository.findReceipt.mockResolvedValue(receipt)
   await expect(service.execute({ ...command, actorId: ids.member })).rejects.toMatchObject({
     code: ErrorCode.CONFLICT,
   })
-  await expect(service.execute({ ...command, obligationIds: [] })).rejects.toMatchObject({
-    code: ErrorCode.CONFLICT,
-  })
+  await expect(
+    service.execute({ ...command, obligationIds: [ids.otherObligation] }),
+  ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+  expect(repository.appendReceipt).not.toHaveBeenCalled()
   expect(repository.appendTreatments).not.toHaveBeenCalled()
+  expect(repository.consumeApproval).not.toHaveBeenCalled()
+  expect(emitAudit).not.toHaveBeenCalled()
 })

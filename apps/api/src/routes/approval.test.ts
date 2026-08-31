@@ -5,12 +5,11 @@ import type { FastifyInstance } from 'fastify'
 import type { Env } from '@athlos/config'
 import type { Db } from '@athlos/db'
 import type { ApprovalToken } from '@athlos/db/schema'
-import { generateApprovalToken } from '@athlos/approval'
+import { generateApprovalToken, listCondonationLifecycle } from '@athlos/approval'
+import type * as ApprovalModule from '@athlos/approval'
 import { signAccessToken } from '@athlos/auth'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import type * as AllocationsModule from '../modules/dues/allocations.ts'
-import { listCondonationLifecycle } from '@athlos/approval'
-import type * as ApprovalModule from '@athlos/approval'
 
 const executeApproved = vi.fn()
 
@@ -283,7 +282,7 @@ describe('POST /api/v1/approval/:token', () => {
 describe('authenticated condonation requests and decisions', () => {
   beforeEach(() => executeApproved.mockReset())
 
-  it('executes only an approved Treasury execution identity once and audits only its first success', async () => {
+  it('executes only an approved Treasury execution identity once', async () => {
     executeApproved.mockResolvedValue({
       executionId: '00000000-0000-4000-8000-000000000050',
       approvalId: '00000000-0000-4000-8000-000000000051',
@@ -471,19 +470,11 @@ describe('authenticated condonation requests and decisions', () => {
         status: 'approved',
         expiresAt: new Date('2099-09-01T00:00:00.000Z'),
         decidedAt: new Date('2026-08-27T00:00:00.000Z'),
-        usedAt: null,
         executionId: '00000000-0000-4000-8000-000000000061',
-        createdAt: new Date('2026-08-26T00:00:00.000Z'),
-        createdByOperatorId: requesterId,
-        decidedByOperatorId: approverId,
         condonationSnapshot: {
           memberId,
           obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
         },
-        requestReason: 'Hardship',
-        requestEvidence: 'case-123',
-        decisionReason: 'Approved',
-        decisionEvidence: 'treasury-1',
         executionReceiptId: null,
       },
     ])
@@ -497,18 +488,49 @@ describe('authenticated condonation requests and decisions', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json()).toEqual({
         items: [
-          expect.objectContaining({
+          {
             id: '00000000-0000-4000-8000-000000000060',
             state: 'approved_awaiting_execution',
-            execution_status: 'recoverable',
+            expires_at: '2026-09-01T00:00:00.000Z',
+            decided_at: '2026-08-27T00:00:00.000Z',
             execution_id: '00000000-0000-4000-8000-000000000061',
-          }),
+            execution_status: 'recoverable',
+            snapshot: {
+              member_id: memberId,
+              obligations: [
+                {
+                  obligation_id: obligationId,
+                  currency: 'ARS',
+                  outstanding_amount_cents: 12500,
+                },
+              ],
+            },
+          },
         ],
       })
       expect(listCondonationLifecycle).toHaveBeenCalledWith(expect.anything(), {
         memberId,
         requesterId,
         limit: 1,
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('lets Treasury read an authorized member lifecycle without requester filtering', async () => {
+    vi.mocked(listCondonationLifecycle).mockResolvedValueOnce([])
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/members/${memberId}/condonation-requests`,
+        headers: auth('ADMIN', approverId),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(listCondonationLifecycle).toHaveBeenCalledWith(expect.anything(), {
+        memberId,
+        limit: 25,
       })
     } finally {
       await app.close()
