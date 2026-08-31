@@ -42,9 +42,9 @@ const stateBadge: Record<Lifecycle['state'], { label: string; variant: BadgeVari
 const actionCopy: Partial<Record<ActionStatus, string>> = {
   replayed: 'Se recuperó un resultado ya confirmado; no se trató por segunda vez.',
   recoverable_error:
-    'La ejecución quedó desactualizada o requiere recuperación. La deuda no cambió.',
-  denied: 'El servidor denegó la ejecución. La deuda no cambió.',
-  transactional_error: 'No se confirmó la ejecución; la deuda no cambió.',
+    'No se pudo ejecutar la condonación. La deuda no cambió. Recargá y revisá el ciclo de vida antes de reintentar.',
+  denied: 'El servidor no te permite ejecutar esta condonación. La deuda no cambió.',
+  transactional_error: 'No se pudo ejecutar la condonación. La deuda no cambió.',
 }
 const amount = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency}`
 
@@ -57,6 +57,7 @@ export function CondonationLifecycle({
 }: Props) {
   const action = useRef<HTMLButtonElement>(null)
   const section = useRef<HTMLElement>(null)
+  const inFlight = useRef(false)
   const executable =
     (role === 'ADMIN' || role === 'TESORERO') &&
     lifecycle.state === 'approved_awaiting_execution' &&
@@ -70,9 +71,20 @@ export function CondonationLifecycle({
       : lifecycle.execution_status === 'recoverable'
         ? 'Recuperación requerida'
         : null
+
   useEffect(() => {
     if (feedback) (action.current ?? section.current)?.focus()
   }, [feedback])
+
+  const execute = async () => {
+    if (!onExecute || inFlight.current) return
+    inFlight.current = true
+    try {
+      await onExecute()
+    } finally {
+      inFlight.current = false
+    }
+  }
 
   return (
     <section
@@ -123,14 +135,12 @@ export function CondonationLifecycle({
         aria-label="Obligaciones seleccionadas"
         className="grid gap-2 border-t border-ink-200 pt-4"
       >
-        {lifecycle.snapshot.obligations.map((obligation) => (
+        {lifecycle.snapshot.obligations.map((obligation, index) => (
           <li
             key={obligation.obligation_id}
             className="grid gap-1 bg-surface-sunken px-3 py-2 font-body text-sm sm:grid-cols-[1fr_auto] sm:items-center"
           >
-            <span>
-              Obligación <span className="font-mono text-xs">{obligation.obligation_id}</span>
-            </span>
+            <span>Obligación {index + 1}: importe al solicitar</span>
             <span className="font-mono tabular-nums text-ink-900">
               {amount(obligation.outstanding_amount_cents, obligation.currency)}
             </span>
@@ -152,7 +162,7 @@ export function CondonationLifecycle({
           ref={action}
           type="button"
           disabled={actionStatus === 'executing'}
-          onClick={() => void onExecute().catch(() => undefined)}
+          onClick={() => void execute().catch(() => undefined)}
           className={`${collectionButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-60`}
         >
           {lifecycle.execution_status === 'recoverable'

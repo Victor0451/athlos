@@ -5,7 +5,6 @@ import { CondonationActions } from './CondonationActions'
 
 // prettier-ignore
 const obligations = [{ id: 'b', period_start: '2026-02-01', outstanding_cents: 2000, currency: 'ARS' }, { id: 'a', period_start: '2026-01-01', outstanding_cents: 1000, currency: 'ARS' }]
-
 describe('CondonationActions', () => {
   // prettier-ignore
   it('submits the complete canonical eligible selection and only reports a pending request', async () => {
@@ -46,8 +45,8 @@ describe('CondonationActions', () => {
     expect(screen.queryByRole('button', { name: /ejecutar|recuperar/i })).not.toBeInTheDocument()
   })
 
-  it('uses shared premium fields and prevents duplicate request submission while busy', async () => {
-    let resolveRequest: (value: {
+  it('uses premium responsive fields and prevents duplicate requests while busy', async () => {
+    let resolveRequest!: (value: {
       id: string
       status: 'pending'
       expires_at: string
@@ -78,8 +77,10 @@ describe('CondonationActions', () => {
     await user.click(screen.getByRole('button', { name: 'Enviar solicitud de condonación' }))
     expect(screen.getByRole('button', { name: 'Enviando solicitud…' })).toBeDisabled()
     expect(context).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Enviando solicitud…' }))
+    expect(request).toHaveBeenCalledTimes(1)
     await act(async () => {
-      resolveRequest!({
+      resolveRequest({
         id: 'request-1',
         status: 'pending',
         expires_at: '2026-09-01',

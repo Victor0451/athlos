@@ -42,8 +42,16 @@ describe('CondonationLifecycle', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
+  it('shows obligation ordinals without exposing raw identifiers', () => {
+    render(<CondonationLifecycle lifecycle={lifecycle()} role="OPERADOR" />)
+    expect(screen.getByRole('list', { name: /obligaciones seleccionadas/i })).toHaveTextContent(
+      'Obligación 1',
+    )
+    expect(screen.queryByText('00000000-0000-4000-8000-000000000004')).not.toBeInTheDocument()
+  })
+
   it('offers recovery only to treasury roles for an authoritative recoverable lifecycle', async () => {
-    const execute = vi.fn().mockResolvedValue({ status: 'replayed' })
+    const execute = vi.fn().mockResolvedValue(undefined)
     const user = userEvent.setup()
     render(
       <CondonationLifecycle
@@ -54,20 +62,25 @@ describe('CondonationLifecycle', () => {
     )
     await user.click(screen.getByRole('button', { name: /recuperar y ejecutar condonación/i }))
     expect(execute).toHaveBeenCalled()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('announces explicit execution failures without claiming an execution', () => {
+  it.each([
+    [
+      'recoverable_error',
+      /no se pudo ejecutar la condonación.*deuda no cambió.*recargá.*revisá.*ciclo de vida/i,
+    ],
+    ['denied', /servidor no te permite ejecutar.*deuda no cambió/i],
+    ['transactional_error', /no se pudo ejecutar la condonación.*deuda no cambió/i],
+  ] as const)('uses operation-aware execution copy for %s', (actionStatus, copy) => {
     render(
       <CondonationLifecycle
         lifecycle={lifecycle('approved_awaiting_execution')}
         role="ADMIN"
-        actionStatus="transactional_error"
+        actionStatus={actionStatus}
       />,
     )
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      /no se confirmó la ejecución.*deuda no cambió/i,
-    )
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/decisión|decidir/i)
   })
 
   it('announces a replay supplied by the explicit action-status seam', () => {
@@ -81,6 +94,31 @@ describe('CondonationLifecycle', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       /resultado ya confirmado.*no se trató por segunda vez/i,
     )
+  })
+
+  it('contains rejected execution at the event boundary and unlocks exactly once for retry', async () => {
+    let rejectExecution!: (error: Error) => void
+    const execute = vi.fn(
+      () => new Promise<never>((_resolve, reject) => (rejectExecution = reject)),
+    )
+    const user = userEvent.setup()
+    render(
+      <CondonationLifecycle
+        lifecycle={lifecycle('approved_awaiting_execution')}
+        role="TESORERO"
+        onExecute={execute}
+      />,
+    )
+
+    const action = screen.getByRole('button', { name: /recuperar y ejecutar condonación/i })
+    await user.click(action)
+    await user.click(action)
+    expect(execute).toHaveBeenCalledTimes(1)
+    rejectExecution(new Error('Condonation operation failed'))
+    await Promise.resolve()
+    expect(action).toBeEnabled()
+    await user.click(action)
+    expect(execute).toHaveBeenCalledTimes(2)
   })
 
   it('disables execution while an asynchronous recovery is in flight', async () => {
@@ -138,7 +176,7 @@ describe('CondonationLifecycle', () => {
     expect(screen.getByRole('region', { name: /estado de la condonación/i })).toHaveFocus()
   })
 
-  it('uses explicit badges and premium snapshot styling without relying on color alone', () => {
+  it('uses explicit status hierarchy and premium snapshot styling without exposing identifiers', () => {
     render(
       <CondonationLifecycle lifecycle={lifecycle('approved_awaiting_execution')} role="OPERADOR" />,
     )
@@ -146,5 +184,6 @@ describe('CondonationLifecycle', () => {
     expect(screen.getByText('Recuperación requerida')).toBeInTheDocument()
     expect(screen.getByText('12.50 ARS')).toHaveClass('font-mono', 'tabular-nums')
     expect(screen.getByText('12.50 ARS').closest('li')).toHaveClass('bg-surface-sunken')
+    expect(screen.queryByText('00000000-0000-4000-8000-000000000004')).not.toBeInTheDocument()
   })
 })

@@ -23,14 +23,24 @@ type Props = {
   onDecision?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
   headingLevel?: 3 | 4
 }
-const failure = (cause: unknown, decision = false) => {
+type Operation = 'request' | 'decision' | 'execution'
+
+const failure = (cause: unknown, operation: Operation) => {
   const kind = (cause as { kind?: unknown })?.kind
-  if (kind === 'permission') return 'El servidor no te permite realizar esta acción.'
-  if (kind === 'conflict')
-    return decision
-      ? 'El servidor no permite decidir esta solicitud.'
-      : 'La solicitud cambió. Revisá antes de reenviarla.'
-  return decision
+  if (kind === 'permission') {
+    if (operation === 'execution')
+      return 'El servidor no te permite ejecutar esta condonación. La deuda no cambió.'
+    if (operation === 'decision') return 'El servidor no te permite decidir esta solicitud.'
+    return 'El servidor no te permite enviar esta solicitud.'
+  }
+  if (kind === 'conflict') {
+    if (operation === 'execution')
+      return 'No se pudo ejecutar la condonación. La deuda no cambió. Recargá y revisá el ciclo de vida antes de reintentar.'
+    if (operation === 'decision') return 'El servidor no permite decidir esta solicitud.'
+    return 'La solicitud cambió. Revisá antes de reenviarla.'
+  }
+  if (operation === 'execution') return 'No se pudo ejecutar la condonación. La deuda no cambió.'
+  return operation === 'decision'
     ? 'No se pudo registrar la decisión. La deuda no cambió.'
     : 'No se pudo enviar la solicitud. La deuda no cambió.'
 }
@@ -73,7 +83,7 @@ export function CondonationActions({
       })
       setMessage('Solicitud pendiente. No modifica la deuda ni ejecuta una condonación.')
     } catch (cause) {
-      setError(failure(cause))
+      setError(failure(cause, 'request'))
     } finally {
       setIsSubmitting(false)
     }
@@ -92,12 +102,13 @@ export function CondonationActions({
       })
       setMessage('Decisión registrada. No modifica la deuda ni ejecuta una condonación.')
     } catch (cause) {
-      setError(failure(cause, true))
+      setError(failure(cause, 'decision'))
     } finally {
       setIsSubmitting(false)
     }
   }
   const fieldClass = `${collectionFieldClass} mt-1 block resize-y disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-ink-500`
+  const title = 'Solicitud de condonación'
   return (
     <section
       aria-labelledby="condonation-title"
@@ -106,11 +117,11 @@ export function CondonationActions({
     >
       {headingLevel === 3 ? (
         <h3 id="condonation-title" className="font-display text-lg font-semibold text-ink-900">
-          Solicitud de condonación
+          {title}
         </h3>
       ) : (
         <h4 id="condonation-title" className="font-display text-lg font-semibold text-ink-900">
-          Solicitud de condonación
+          {title}
         </h4>
       )}
       <p className="font-body text-sm text-ink-700">
