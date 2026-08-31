@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
@@ -211,6 +211,36 @@ describe('Collections navigation and direct access', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Registrar acuerdo' })).toBeInTheDocument(),
     )
+  })
+
+  it('renders one treatment workspace for ready debt without duplicating its controls in the debt detail', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [],
+    })
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+
+    renderPage(true, 'ADMIN', true)
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(await screen.findAllByRole('region', { name: 'Tratamientos de deuda' })).toHaveLength(1)
+    const debtDetail = screen.getByRole('region', { name: 'Detalle de deuda' })
+    expect(
+      within(debtDetail).queryByRole('button', { name: 'Registrar pago' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(debtDetail).queryByRole('button', { name: 'Registrar acuerdo' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(debtDetail).queryByRole('button', { name: 'Solicitar condonación' }),
+    ).not.toBeInTheDocument()
   })
 
   it('refreshes lineage and debt after a stale revision and resubmits with a new key', async () => {
