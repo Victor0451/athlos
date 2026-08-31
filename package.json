@@ -17,6 +17,8 @@
     "test": "vitest",
     "test:run": "pnpm -r --workspace-concurrency=1 test:run",
     "test:coverage": "vitest run --coverage",
+    "test:disposable-postgres": "scripts/lib/disposable-postgres.sh run --caller db-tests -- pnpm --filter @athlos/db test:run --",
+    "test:disposable-postgres:integration": "pnpm test:disposable-postgres -- --config vitest.integration.config.ts",
     "db:generate": "pnpm --filter @athlos/db generate",
     "db:migrate": "pnpm --filter @athlos/db migrate",
     "db:migrate:status": "pnpm --filter @athlos/db migrate:status",
