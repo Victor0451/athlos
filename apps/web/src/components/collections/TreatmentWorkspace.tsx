@@ -107,16 +107,38 @@ export function TreatmentWorkspace({
     onRefresh: () => onRefreshAgreement!(obligation.id),
   })
   const agreementsAvailable = agreementsEnabled && onCreateAgreement && onRefreshAgreement
-  // prettier-ignore
   return (
     <section aria-labelledby="treatment-workspace-title" className="min-w-0 space-y-4">
-      <div className="min-w-0 border-b border-ink-200 pb-4"><h2 id="treatment-workspace-title" className="font-display text-xl font-semibold text-ink-900">Tratamientos de deuda</h2><p className="mt-1 max-w-3xl font-body text-sm text-ink-700">Revisá el efecto de cada tratamiento antes de iniciar una acción.</p></div>
+      <div className="min-w-0 border-b border-ink-200 pb-4">
+        <h2
+          id="treatment-workspace-title"
+          className="font-display text-xl font-semibold text-ink-900"
+        >
+          Tratamientos de deuda
+        </h2>
+        <p className="mt-1 max-w-3xl font-body text-sm text-ink-700">
+          Revisá el efecto de cada tratamiento antes de iniciar una acción.
+        </p>
+      </div>
       <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         <section
           aria-labelledby="treatment-payment-title"
           className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-700`}
         >
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-payment-title" className="font-display text-lg font-semibold text-ink-900">Pago</h3><p className="mt-1 font-body text-sm text-ink-700">El pago reduce la deuda mediante una liquidación confirmada.</p></div><Badge variant="info">Efecto: liquidación confirmada</Badge></div>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3
+                id="treatment-payment-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Pago
+              </h3>
+              <p className="mt-1 font-body text-sm text-ink-700">
+                El pago reduce la deuda mediante una liquidación confirmada.
+              </p>
+            </div>
+            <Badge variant="info">Efecto: liquidación confirmada</Badge>
+          </div>
           {canSettle && onPayment && onReverse ? (
             <SettlementActions
               debt={debt}
@@ -133,15 +155,24 @@ export function TreatmentWorkspace({
           aria-labelledby="treatment-community-title"
           className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-community-title" className="font-display text-lg font-semibold text-ink-900">Trabajo comunitario</h3><p className="mt-1 font-body text-sm text-ink-700">Solo reduce la deuda después de registrar un comando aceptado.</p></div><Badge>Reducción diferida</Badge></div>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3
+                id="treatment-community-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Trabajo comunitario
+              </h3>
+              <p className="mt-1 font-body text-sm text-ink-700">
+                Solo reduce la deuda después de registrar un comando aceptado.
+              </p>
+            </div>
+            <Badge>Reducción diferida</Badge>
+          </div>
           {agreementsAvailable ? (
-            debt.obligations.map((obligation) => (
-              <AgreementActions
-                key={obligation.id}
-                {...agreementProps(obligation)}
-                treatment="community"
-              />
-            ))
+            <p role="status">
+              El trabajo comunitario se registra desde el acuerdo activo de cada obligación.
+            </p>
           ) : (
             <p role="status">El flujo de trabajo comunitario no está habilitado.</p>
           )}
@@ -150,14 +181,21 @@ export function TreatmentWorkspace({
           aria-labelledby="treatment-agreement-title"
           className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-agreement-title" className="font-display text-lg font-semibold text-ink-900">Acuerdo</h3><p className="mt-1 font-body text-sm text-ink-700">Un acuerdo no reduce la deuda.</p></div><Badge variant="warning">Efecto: sin reducción</Badge></div>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3
+                id="treatment-agreement-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Acuerdo
+              </h3>
+              <p className="mt-1 font-body text-sm text-ink-700">Un acuerdo no reduce la deuda.</p>
+            </div>
+            <Badge variant="warning">Efecto: sin reducción</Badge>
+          </div>
           {agreementsAvailable ? (
             debt.obligations.map((obligation) => (
-              <AgreementActions
-                key={obligation.id}
-                {...agreementProps(obligation)}
-                treatment="agreement"
-              />
+              <AgreementActions key={obligation.id} {...agreementProps(obligation)} />
             ))
           ) : (
             <p role="status">El flujo de acuerdos no está habilitado.</p>
@@ -167,7 +205,20 @@ export function TreatmentWorkspace({
           aria-labelledby="treatment-condonation-title"
           className={`${collectionSurfaceClass} space-y-4 border-l-4 border-l-ink-400`}
         >
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 id="treatment-condonation-title" className="font-display text-lg font-semibold text-ink-900">Condonación</h3><p className="mt-1 font-body text-sm text-ink-700">Solo reduce la deuda después de una ejecución aprobada.</p></div><Badge variant="info">Efecto: condonación autorizada</Badge></div>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3
+                id="treatment-condonation-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Condonación
+              </h3>
+              <p className="mt-1 font-body text-sm text-ink-700">
+                Solo reduce la deuda después de una ejecución aprobada.
+              </p>
+            </div>
+            <Badge variant="info">Efecto: condonación autorizada</Badge>
+          </div>
           {canRequestCondonation && onRequestCondonation && (
             <CondonationActions
               memberId={memberId}
@@ -185,7 +236,6 @@ export function TreatmentWorkspace({
                 : {})}
               onRequest={onRequestCondonation}
               {...(onDecideCondonation ? { onDecision: onDecideCondonation } : {})}
-              headingLevel={4}
             />
           )}
           {lifecycle.map((item) => (
@@ -193,7 +243,6 @@ export function TreatmentWorkspace({
               key={item.id}
               lifecycle={item}
               role={role}
-              headingLevel={4}
               {...(executionFeedback?.id === item.id
                 ? { actionStatus: executionFeedback.status }
                 : {})}

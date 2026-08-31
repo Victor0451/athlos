@@ -52,10 +52,17 @@ describe('TreatmentWorkspace', () => {
     const workspace = screen.getByRole('region', { name: /tratamientos de deuda/i })
     expect(workspace).toHaveClass('min-w-0')
     expect(workspace.firstElementChild?.nextElementSibling).toHaveClass('lg:grid-cols-2')
-    for (const heading of ['Pago', 'Trabajo comunitario', 'Acuerdo', 'Condonación']) {
-      expect(screen.getByRole('heading', { name: heading }).closest('section')).toHaveClass(
-        'border-l-4',
-      )
+    for (const [heading, tone] of [
+      ['Pago', 'border-l-ink-700'],
+      ['Trabajo comunitario', 'border-l-ink-400'],
+      ['Acuerdo', 'border-l-ink-400'],
+      ['Condonación', 'border-l-ink-400'],
+    ] as const) {
+      const treatment = screen.getByRole('heading', { name: heading }).closest('section')
+      expect(treatment).toHaveClass('border-l-4', tone)
     }
+    expect(
+      screen.queryByRole('button', { name: 'Enviar solicitud de condonación' }),
+    ).not.toBeInTheDocument()
   })
 })

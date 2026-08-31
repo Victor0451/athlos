@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { PricingPanel } from '@/components/collections/PricingPanel'
 import type { CurrentUser } from '@/lib/auth'
@@ -70,18 +70,118 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 }
 
 describe('Collections navigation and direct access', () => {
-  it('loads lifecycle per selected member and refreshes it before debt after a replayed execution', async () => {
+  beforeEach(() => {
+    condonationMocks.listCondonationLifecycle.mockReset()
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
+  })
+
+  it('shows lifecycle loading for the selected member', async () => {
     const user = userEvent.setup()
-    const first = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
-    const second = { id: 'socio-2', nombre: 'Beto', apellido: 'Luna', numero_socio: '43' }
-    const debt = (socio_id: string) => ({
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({ status: 'ready', socio_id: socio.id, obligations: [] })
+    condonationMocks.listCondonationLifecycle.mockImplementation(() => new Promise(() => undefined))
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(
+      await screen.findByRole('status', { name: 'Estado del historial de condonaciones' }),
+    ).toHaveTextContent('Cargando historial de condonaciones.')
+  })
+
+  it('shows an authoritative empty lifecycle result as ready', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({ status: 'ready', socio_id: socio.id, obligations: [] })
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(
+      await screen.findByRole('status', { name: 'Estado del historial de condonaciones' }),
+    ).toHaveTextContent('No hay solicitudes de condonación para este socio.')
+  })
+
+  it('shows a lifecycle failure alert with a member-safe retry that does not refresh debt', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({ status: 'ready', socio_id: socio.id, obligations: [] })
+    condonationMocks.listCondonationLifecycle
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ items: [] })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No se pudo cargar el historial de condonaciones.',
+    )
+
+    const debtCalls = duesMocks.getDebt.mock.calls.length
+    await user.click(screen.getByRole('button', { name: 'Reintentar historial de condonaciones' }))
+    await waitFor(() => expect(condonationMocks.listCondonationLifecycle).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status', { name: 'Estado del historial de condonaciones' }),
+      ).toHaveTextContent('No hay solicitudes de condonación para este socio.'),
+    )
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(debtCalls)
+  })
+
+  it('does not let a stale lifecycle failure overwrite the newer selected member', async () => {
+    const user = userEvent.setup()
+    let rejectFirst!: (reason?: unknown) => void
+    const first = new Promise<CondonationLifecyclePage>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    const ana = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [ana, beto] })
+    duesMocks.getDebt.mockResolvedValue({ status: 'ready', socio_id: ana.id, obligations: [] })
+    condonationMocks.listCondonationLifecycle
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce({ items: [] })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'a')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    await screen.findByRole('status', { name: 'Estado del historial de condonaciones' })
+    rejectFirst(new Error('stale offline'))
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('status', { name: 'Estado del historial de condonaciones' }),
+      ).toHaveTextContent('No hay solicitudes de condonación para este socio.'),
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('refreshes lifecycle before debt only after its approved execution becomes executed', async () => {
+    const user = userEvent.setup()
+    const memberId = '00000000-0000-4000-8000-000000000003'
+    const requestId = '00000000-0000-4000-8000-000000000001'
+    const executionId = '00000000-0000-4000-8000-000000000002'
+    const obligationId = '00000000-0000-4000-8000-000000000004'
+    const socio = { id: memberId, nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    const debt = {
       status: 'ready',
-      socio_id,
+      socio_id: memberId,
       currency: 'ARS',
       total_debt_cents: 100,
       obligations: [
         {
-          id: 'obligation-1',
+          id: obligationId,
           period_start: '2026-01-01',
           period_end: '2026-02-01',
           original_amount_cents: 100,
@@ -93,41 +193,45 @@ describe('Collections navigation and direct access', () => {
           allocations: [],
         },
       ],
-    })
-    const awaiting: CondonationLifecyclePage['items'][number] = {
-      id: 'request-1',
+    }
+    const lifecycle: CondonationLifecyclePage['items'][number] = {
+      id: requestId,
       state: 'approved_awaiting_execution',
       expires_at: '2026-02-01T00:00:00.000Z',
       decided_at: '2026-01-31T00:00:00.000Z',
-      execution_id: 'execution-1',
+      execution_id: executionId,
       execution_status: 'recoverable',
-      snapshot: { member_id: second.id, obligations: [] },
+      snapshot: {
+        member_id: memberId,
+        obligations: [
+          { obligation_id: obligationId, currency: 'ARS', outstanding_amount_cents: 100 },
+        ],
+      },
     }
-    sociosMocks.getSocios.mockResolvedValue({ items: [first, second] })
-    duesMocks.getDebt
-      .mockResolvedValueOnce(debt(first.id))
-      .mockResolvedValueOnce(debt(second.id))
-      .mockResolvedValueOnce(debt(second.id))
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue(debt)
     condonationMocks.listCondonationLifecycle
-      .mockResolvedValueOnce({ items: [awaiting] })
-      .mockResolvedValueOnce({ items: [awaiting] })
-      .mockResolvedValueOnce({ items: [{ ...awaiting, state: 'executed' }] })
+      .mockResolvedValueOnce({ items: [lifecycle] })
+      .mockResolvedValueOnce({
+        items: [{ ...lifecycle, state: 'executed', execution_status: 'executed' }],
+      })
     condonationMocks.executeCondonationRequest.mockResolvedValue({ status: 'replayed' })
+
+    const debtCalls = duesMocks.getDebt.mock.calls.length
     renderPage(true, 'ADMIN')
-    await user.type(screen.getByLabelText('Buscar socio'), 'a')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
     await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
-    await user.click(await screen.findByRole('button', { name: /Luna, Beto/ }))
     await user.click(await screen.findByRole('button', { name: /ejecutar condonación/i }))
+
     await waitFor(() =>
       expect(condonationMocks.executeCondonationRequest).toHaveBeenCalledWith(
-        'request-1',
-        'execution-1',
+        requestId,
+        executionId,
         expect.any(String),
       ),
     )
-    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
-    expect(condonationMocks.listCondonationLifecycle).toHaveBeenCalledWith('socio-2')
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(debtCalls + 2))
   })
 
   it('shows enabled ADMIN/TESORERO navigation and denies disabled or other roles', () => {
