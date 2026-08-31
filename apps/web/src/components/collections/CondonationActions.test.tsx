@@ -34,16 +34,15 @@ describe('CondonationActions', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo registrar la decisión/i)
   })
 
-  it('only exposes persisted approved execution to Treasury roles', () => {
-    const lifecycle = {
-      id: 'request-1',
-      state: 'approved_awaiting_execution' as const,
-      execution_id: 'execution-1',
-    }
-    const props = { memberId: 'member-1', obligations, onRequest: vi.fn(), lifecycle }
-    const { rerender } = render(<CondonationActions {...props} canDecide={false} />)
-    expect(screen.queryByRole('button', { name: /ejecutar condonación/i })).not.toBeInTheDocument()
-    rerender(<CondonationActions {...props} canDecide canExecute onExecute={vi.fn()} />)
-    expect(screen.getByRole('button', { name: /ejecutar condonación/i })).toBeInTheDocument()
+  it('does not duplicate lifecycle execution controls', () => {
+    render(
+      <CondonationActions
+        memberId="member-1"
+        obligations={obligations}
+        canDecide={false}
+        onRequest={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /ejecutar|recuperar/i })).not.toBeInTheDocument()
   })
 })
