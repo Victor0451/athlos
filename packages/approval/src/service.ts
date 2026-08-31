@@ -55,30 +55,19 @@ export interface CondonationDecision {
   reason: string
   evidence: string
 }
+
 export type CondonationLifecycle = Pick<
   ApprovalToken,
-  | 'actionId'
-  | 'status'
-  | 'expiresAt'
-  | 'decidedAt'
-  | 'usedAt'
-  | 'executionId'
-  | 'createdAt'
-  | 'createdByOperatorId'
-  | 'decidedByOperatorId'
-  | 'condonationSnapshot'
-  | 'requestReason'
-  | 'requestEvidence'
-  | 'decisionReason'
-  | 'decisionEvidence'
+  'actionId' | 'status' | 'expiresAt' | 'decidedAt' | 'executionId' | 'condonationSnapshot'
 > & { executionReceiptId: string | null }
+
 export type ListCondonationLifecycleInput = {
   memberId: string
   requesterId?: string
   limit: number
 }
 
-/** Read persisted approval rows joined to execution receipts; this never infers execution from approval. */
+/** Read persisted approval rows joined to execution receipts; approval alone never implies execution. */
 export async function listCondonationLifecycle(
   db: Db,
   input: ListCondonationLifecycleInput,
@@ -104,7 +93,15 @@ export async function listCondonationLifecycle(
         (row.approval.condonationSnapshot as CondonationSnapshot | null)?.memberId ===
         input.memberId,
     )
-    .map(({ approval, executionReceiptId }) => ({ ...approval, executionReceiptId }))
+    .map(({ approval, executionReceiptId }) => ({
+      actionId: approval.actionId,
+      status: approval.status,
+      expiresAt: approval.expiresAt,
+      decidedAt: approval.decidedAt,
+      executionId: approval.executionId,
+      condonationSnapshot: approval.condonationSnapshot,
+      executionReceiptId,
+    }))
 }
 
 function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {

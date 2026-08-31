@@ -24,8 +24,8 @@ export {
 export type {
   ApprovalTokenRecord,
   CondonationDecision,
-  CondonationSnapshot,
   CondonationLifecycle,
+  CondonationSnapshot,
   ListCondonationLifecycleInput,
   CreateApprovalLinkRequest,
   CreateCondonationApprovalRequest,

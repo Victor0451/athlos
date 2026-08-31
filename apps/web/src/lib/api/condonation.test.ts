@@ -30,38 +30,44 @@ describe('condonation client', () => {
     await expect(createCondonationRequest({ member_id: 'member-1', obligation_ids: ['a'], context: 'Debt review', reason: 'Hardship', evidence: 'Minutes 12' }, 'request-key')).rejects.toMatchObject({ kind: 'partial_data' })
   })
 
-  it('posts only the persisted execution identity with its caller-owned idempotency key', async () => {
+  it('executes only the persisted execution identity with its caller-owned idempotency key', async () => {
+    const requestId = '00000000-0000-4000-8000-000000000001'
+    const executionId = '00000000-0000-4000-8000-000000000002'
+    const memberId = '00000000-0000-4000-8000-000000000003'
     apiFetchMock.mockResolvedValue({
-      execution_id: '00000000-0000-4000-8000-000000000002',
-      approval_id: '00000000-0000-4000-8000-000000000001',
-      member_id: '00000000-0000-4000-8000-000000000003',
+      execution_id: executionId,
+      approval_id: requestId,
+      member_id: memberId,
       currency: 'ARS',
-      approved_amount_cents: 12500,
+      approved_amount_cents: 12_500,
       treatment_ids: ['00000000-0000-4000-8000-000000000004'],
       status: 'replayed',
     })
+
     await expect(
-      executeCondonationRequest(
-        '00000000-0000-4000-8000-000000000001',
-        '00000000-0000-4000-8000-000000000002',
-        'execution-key',
-      ),
-    ).resolves.toMatchObject({ status: 'replayed' })
+      executeCondonationRequest(requestId, executionId, 'execution-key'),
+    ).resolves.toMatchObject({
+      status: 'replayed',
+    })
     expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000001/execution',
+      `/api/v1/condonation-requests/${requestId}/execution`,
       {
         method: 'POST',
         headers: { 'idempotency-key': 'execution-key' },
-        body: { execution_id: '00000000-0000-4000-8000-000000000002' },
+        body: { execution_id: executionId },
       },
     )
+
     apiFetchMock.mockResolvedValue({ execution_id: 'bad' })
     await expect(
-      executeCondonationRequest('request', 'execution', 'execution-key'),
-    ).rejects.toMatchObject({ kind: 'partial_data' })
+      executeCondonationRequest(requestId, executionId, 'execution-key'),
+    ).rejects.toMatchObject({
+      kind: 'partial_data',
+    })
   })
 
   it('strictly decodes persisted lifecycle states and rejects unsafe fields', async () => {
+    const memberId = '00000000-0000-4000-8000-000000000003'
     apiFetchMock.mockResolvedValueOnce({
       items: [
         {
@@ -69,11 +75,10 @@ describe('condonation client', () => {
           state: 'executed',
           expires_at: '2026-09-01T00:00:00.000Z',
           decided_at: '2026-08-27T00:00:00.000Z',
-          used_at: '2026-08-27T01:00:00.000Z',
           execution_id: '00000000-0000-4000-8000-000000000002',
           execution_status: 'executed',
           snapshot: {
-            member_id: '00000000-0000-4000-8000-000000000003',
+            member_id: memberId,
             obligations: [
               {
                 obligation_id: '00000000-0000-4000-8000-000000000004',
@@ -82,20 +87,26 @@ describe('condonation client', () => {
               },
             ],
           },
-          requester: { operator_id: '00000000-0000-4000-8000-000000000005' },
-          approver: { operator_id: '00000000-0000-4000-8000-000000000006' },
-          reason: 'Hardship',
-          evidence: 'case-1',
-          decision: { reason: 'Approved', evidence: 'minutes-1' },
         },
       ],
     })
-    await expect(
-      listCondonationLifecycle('00000000-0000-4000-8000-000000000003'),
-    ).resolves.toMatchObject({ items: [{ state: 'executed' }] })
-    apiFetchMock.mockResolvedValueOnce({ items: [{ id: 'bad' }] })
-    await expect(
-      listCondonationLifecycle('00000000-0000-4000-8000-000000000003'),
-    ).rejects.toMatchObject({ kind: 'partial_data' })
+    await expect(listCondonationLifecycle(memberId)).resolves.toMatchObject({
+      items: [{ state: 'executed' }],
+    })
+    apiFetchMock.mockResolvedValueOnce({
+      items: [
+        {
+          id: '00000000-0000-4000-8000-000000000001',
+          state: 'executed',
+          expires_at: '2026-09-01T00:00:00.000Z',
+          decided_at: '2026-08-27T00:00:00.000Z',
+          execution_id: '00000000-0000-4000-8000-000000000002',
+          execution_status: 'executed',
+          snapshot: { member_id: memberId, obligations: [] },
+          evidence: 'must not reach the UI',
+        },
+      ],
+    })
+    await expect(listCondonationLifecycle(memberId)).rejects.toMatchObject({ kind: 'partial_data' })
   })
 })
