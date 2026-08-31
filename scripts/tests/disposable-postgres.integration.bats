@@ -9,6 +9,7 @@ setup() {
   fixture_containers=()
   fixture_volumes=()
   evidence="$BATS_TEST_TMPDIR/evidence"
+  [ "${ATHLOS_REQUIRE_DOCKER:-0}" = 1 ] || skip 'Real Docker suite is opt-in; set ATHLOS_REQUIRE_DOCKER=1 to run it'
   command -v docker >/dev/null || unavailable_docker
   docker info >/dev/null 2>&1 || unavailable_docker
   baseline="$(owned_inventory)"
