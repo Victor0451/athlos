@@ -49,27 +49,49 @@ run_lifecycle() {
 assert_baseline() { [ "$(owned_inventory)" = "$baseline" ]; }
 
 create_fixture() {
-  local kind=$1 name="$fixture_prefix-$1" volume="$fixture_prefix-$1-data" run_id=$1 machine
-  shift 2 || true
+  local kind=$1 fixture_lifecycle owner_pid random machine run_id name volume
+  fixture_lifecycle=disposable-postgres
   machine="$(printf 'fixture-machine' | sha256sum | awk '{print $1}')"
-  if [ "$kind" = foreign-machine ]; then
-    run_id=1000000000-999999-aaaaaaaaaaaaaaaa
+  case "$kind" in
+  production)
+    fixture_lifecycle=production
+    owner_pid=999991
+    random=1111111111111111
+    ;;
+  beta)
+    fixture_lifecycle=beta
+    owner_pid=999992
+    random=2222222222222222
+    ;;
+  persistent)
+    fixture_lifecycle=persistent
+    owner_pid=999993
+    random=3333333333333333
+    ;;
+  foreign-machine)
+    owner_pid=999994
+    random=4444444444444444
     machine="$(printf 'foreign-machine' | sha256sum | awk '{print $1}')"
-  fi
+    ;;
+  *) return 2 ;;
+  esac
+  run_id="1000000000-$owner_pid-$random"
+  name="athlos-dp-pg-$run_id"
+  volume="athlos-dp-pgdata-$run_id"
   local -a labels=(
     --label com.athlos.repository=athlos
-    --label com.athlos.lifecycle=disposable-postgres
+    --label "com.athlos.lifecycle=$fixture_lifecycle"
     --label "com.athlos.run=$run_id"
     --label com.athlos.caller=integration-test
     --label com.athlos.created-at=1000000000
     --label "com.athlos.owner-machine=$machine"
     --label com.athlos.owner-boot="$(printf 'fixture-boot' | sha256sum | awk '{print $1}')"
-    --label com.athlos.owner-pid=999999
+    --label "com.athlos.owner-pid=$owner_pid"
     --label com.athlos.owner-start=1
   )
-  docker volume create "${labels[@]}" "$@" --name "$volume" >/dev/null
+  docker volume create "${labels[@]}" --name "$volume" >/dev/null
   docker create --name "$name" --mount "type=volume,src=$volume,dst=/var/lib/postgresql/data" \
-    "${labels[@]}" "$@" postgres:16-alpine >/dev/null
+    "${labels[@]}" postgres:16-alpine >/dev/null
   fixture_containers+=("$name")
   fixture_volumes+=("$volume")
 }
@@ -109,7 +131,7 @@ SH
   fi
 }
 
-@test "partial docker start failure removes the exact real volume" {
+@test "partial start and teardown failures use exact real-Docker cleanup" {
   shim="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$shim"
   real_docker="$(command -v docker)"
@@ -123,6 +145,21 @@ SH
     "$lifecycle" run --caller integration-test -- true
   [ "$status" -ne 0 ]
   assert_baseline
+
+  fail_once="$BATS_TEST_TMPDIR/fail-rm-once"
+  cat >"$shim/docker" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = rm ] && [ ! -e "$FAIL_ONCE" ]; then touch "$FAIL_ONCE"; exit 42; fi
+exec "$REAL_DOCKER" "$@"
+SH
+  cleanup_run=1000000000-999990-bbbbbbbbbbbbbbbb
+  fixture_containers+=("athlos-dp-pg-$cleanup_run")
+  fixture_volumes+=("athlos-dp-pgdata-$cleanup_run")
+  run env REAL_DOCKER="$real_docker" FAIL_ONCE="$fail_once" PATH="$shim:$PATH" \
+    ATHLOS_DP_CLOCK=1000000000 ATHLOS_DP_PID=999990 ATHLOS_DP_PROC_START=1 \
+    ATHLOS_DP_RANDOM=bbbbbbbbbbbbbbbb "$lifecycle" run --caller integration-test -- true
+  [ "$status" -ne 0 ]
+  [ "$(owned_inventory)" != "$baseline" ]
 }
 
 @test "SIGKILL residue is recovered conservatively by a later owner" {
@@ -139,7 +176,7 @@ SH
   run run_lifecycle 7777777777777777 true
   [ "$status" -eq 0 ]
   assert_baseline
-  grep -F '"event":"stale-decision"' "$evidence"
+  grep -Eq '"event":"stale-decision","owner":"athlos","run":"1000000000-[0-9]+-6666666666666666".*"outcome":"stale"' "$evidence"
 }
 
 @test "concurrent owners remain distinct and do not delete each other" {
@@ -159,10 +196,10 @@ SH
 }
 
 @test "excluded fixture inventories are byte-for-byte unchanged and cleanup is exact" {
-  create_fixture production fixture-machine --label com.athlos.lifecycle=production
-  create_fixture beta fixture-machine --label com.athlos.lifecycle=beta
-  create_fixture persistent fixture-machine
-  create_fixture foreign-machine foreign-machine
+  create_fixture production
+  create_fixture beta
+  create_fixture persistent
+  create_fixture foreign-machine
   unlabeled_volume="$fixture_prefix-unlabeled-data"
   docker volume create --name "$unlabeled_volume" >/dev/null
   unlabeled_container="$(docker create --name "$fixture_prefix-unlabeled" --mount "type=volume,src=$unlabeled_volume,dst=/var/lib/postgresql/data" postgres:16-alpine)"
