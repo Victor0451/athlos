@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031,SC2155 # Bats test cases intentionally scope fixture exports.
 
 setup() {
   workspace="$BATS_TEST_TMPDIR/workspace"
@@ -12,11 +13,33 @@ case "${1:-}" in
   volume)
     [ "${2:-}" = create ] && { [ "${FAKE_DOCKER_FAIL_VOLUME:-0}" = 1 ] && exit 41; printf 'volume-id\n'; exit 0; }
     [ "${2:-}" = rm ] && { [ "${FAKE_DOCKER_ABSENT_VOLUME:-0}" = 1 ] && exit 1; exit 0; }
-    [ "${2:-}" = inspect ] && exit 1
+    [ "${2:-}" = ls ] && { printf '%s\n' "${FAKE_DOCKER_STALE_VOLUME:-}"; exit 0; }
+        [ "${2:-}" = inspect ] && {
+          if [ "${3:-}" = --format ]; then
+            labels=${FAKE_DOCKER_STALE_LABELS:-}
+            if [ -n "${FAKE_DOCKER_LABEL_FILE:-}" ]; then
+              name=${!#}; labels=$(awk -F '\t' -v name="$name" '$1 == name { print $2 }' "$FAKE_DOCKER_LABEL_FILE")
+            fi
+            printf '%s\n' "$labels"
+          else [ "${FAKE_DOCKER_PRESENT_VOLUME:-0}" = 1 && exit 0; exit 1; fi
+        }
     ;;
   container) [ "${2:-}" = inspect ] && { [ "${FAKE_DOCKER_PRESENT_CONTAINER:-0}" = 1 ] && exit 0; exit 1; } ;;
+  ps) printf '%s\n' "${FAKE_DOCKER_STALE_CONTAINER:-}" ;;
   run) [ "${FAKE_DOCKER_FAIL_RUN:-0}" = 1 ] && exit 42; printf 'container-id\n' ;;
-  inspect) [ "${FAKE_DOCKER_FAIL_INSPECT:-0}" = 1 ] && exit 43; printf '["inspect-result","49152"]\n' >> "${FAKE_DOCKER_TRANSCRIPT:?}"; printf '49152\n' ;;
+      inspect)
+        [ "${FAKE_DOCKER_FAIL_INSPECT:-0}" = 1 ] && exit 43
+        if [[ "${3:-}" == *'owner-start'* ]]; then
+              labels=${FAKE_DOCKER_STALE_LABELS:-}
+              if [ -n "${FAKE_DOCKER_LABEL_FILE:-}" ]; then
+              name=${!#}; labels=$(awk -F '\t' -v name="$name" '$1 == name { print $2 }' "$FAKE_DOCKER_LABEL_FILE")
+            fi
+              printf '%s\n' "$labels"
+        else
+          printf '["inspect-result","49152"]\n' >> "${FAKE_DOCKER_TRANSCRIPT:?}"
+          printf '49152\n'
+        fi
+        ;;
   exec) [ "${FAKE_DOCKER_FAIL_READY:-0}" = 1 ] && exit 1; exit 0 ;;
   rm) [ "${FAKE_DOCKER_ABSENT_CONTAINER:-0}" = 1 ] && exit 1; exit 0 ;;
 esac
@@ -129,6 +152,190 @@ invoke_lifecycle() {
   [ "$status" -eq 0 ]
 }
 
+@test "recovers only a complete, old, same-machine dead run before creating its own resources" {
+  stale_run='1699970000-99-fedcba9876543210'
+  FAKE_DOCKER_STALE_CONTAINER="athlos-dp-pg-$stale_run"
+  FAKE_DOCKER_STALE_VOLUME="athlos-dp-pgdata-$stale_run"
+  FAKE_DOCKER_STALE_LABELS="athlos|disposable-postgres|$stale_run|recovery-test|1699970000|$(printf machine-fixture | sha256sum | awk '{print $1}')|$(printf different-boot | sha256sum | awk '{print $1}')|99|1"
+  export FAKE_DOCKER_STALE_CONTAINER FAKE_DOCKER_STALE_VOLUME FAKE_DOCKER_STALE_LABELS
+
+  run invoke_lifecycle run --caller recovery-test -- true
+
+  [ "$status" -eq 0 ]
+  run grep -F '["ps","-a","--filter","label=com.athlos.repository=athlos","--filter","label=com.athlos.lifecycle=disposable-postgres"' "$transcript"
+  [ "$status" -eq 0 ]
+  run grep -F "athlos-dp-pg-$stale_run" "$transcript"
+  [ "$status" -eq 0 ]
+  run grep -F "athlos-dp-pgdata-$stale_run" "$transcript"
+  [ "$status" -eq 0 ]
+  run grep -F '"event":"stale-decision"' "$evidence"
+  [ "$status" -eq 0 ]
+}
+
+@test "stops before creation when stale recovery cannot confirm final absence" {
+  stale_run='1699970000-99-fedcba9876543210'
+  machine=$(printf machine-fixture | sha256sum | awk '{print $1}')
+  stale_labels="athlos|disposable-postgres|$stale_run|recovery-test|1699970000|$machine|$(printf different-boot | sha256sum | awk '{print $1}')|99|1"
+  export FAKE_DOCKER_STALE_CONTAINER="athlos-dp-pg-$stale_run"
+  export FAKE_DOCKER_STALE_VOLUME="athlos-dp-pgdata-$stale_run"
+  export FAKE_DOCKER_STALE_LABELS="$stale_labels"
+  export FAKE_DOCKER_PRESENT_CONTAINER=1
+
+  run invoke_lifecycle run --caller recovery-test -- true
+
+  [ "$status" -ne 0 ]
+  run grep -F '"event":"stale-decision"' "$evidence"
+  [ "$status" -eq 0 ]
+  run grep -F '"resource":"container","outcome":"present"' "$evidence"
+  [ "$status" -eq 0 ]
+  run grep -q '^\["volume","create"' "$transcript"
+  [ "$status" -ne 0 ]
+  run grep -q '^\["run"' "$transcript"
+  [ "$status" -ne 0 ]
+}
+
+@test "protects live and foreign stale candidates without adopting their resources" {
+  stale_run='1699970000-99-fedcba9876543210'
+  FAKE_DOCKER_STALE_CONTAINER="athlos-dp-pg-$stale_run"
+  FAKE_DOCKER_STALE_VOLUME="athlos-dp-pgdata-$stale_run"
+  ATHLOS_DP_PROC_EVIDENCE=12345
+  FAKE_DOCKER_STALE_LABELS="athlos|disposable-postgres|$stale_run|recovery-test|1699970000|$(printf machine-fixture | sha256sum | awk '{print $1}')|$(printf boot-fixture | sha256sum | awk '{print $1}')|4242|12345"
+  export FAKE_DOCKER_STALE_CONTAINER FAKE_DOCKER_STALE_VOLUME ATHLOS_DP_PROC_EVIDENCE FAKE_DOCKER_STALE_LABELS
+
+  run invoke_lifecycle run --caller recovery-test -- true
+
+  [ "$status" -eq 0 ]
+  run grep -F '"event":"stale-decision"' "$evidence"
+  [ "$status" -eq 0 ]
+  run grep -F '"outcome":"active"' "$evidence"
+  [ "$status" -eq 0 ]
+  run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale_run\"" "$transcript"
+  [ "$status" -ne 0 ]
+
+  : >"$transcript"
+  export FAKE_DOCKER_STALE_LABELS="athlos|disposable-postgres|$stale_run|recovery-test|1699970000|foreign-machine|$(printf different-boot | sha256sum | awk '{print $1}')|99|1"
+  run invoke_lifecycle run --caller recovery-test -- true
+  [ "$status" -eq 0 ]
+  run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale_run\"" "$transcript"
+  [ "$status" -ne 0 ]
+
+  : >"$transcript"
+  export ATHLOS_DP_PROC_EVIDENCE=''
+  FAKE_DOCKER_STALE_LABELS="athlos|disposable-postgres|$stale_run|recovery-test|1699970000|$(printf machine-fixture | sha256sum | awk '{print $1}')|$(printf boot-fixture | sha256sum | awk '{print $1}')|4242|12345"
+  export FAKE_DOCKER_STALE_LABELS
+  run invoke_lifecycle run --caller recovery-test -- true
+  [ "$status" -eq 0 ]
+  run grep -F '"outcome":"uncertain"' "$evidence"
+  [ "$status" -eq 0 ]
+  run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale_run\"" "$transcript"
+  [ "$status" -ne 0 ]
+}
+
+@test "recovers a crash residue before creation while synchronized active and excluded owners remain isolated" {
+  stale='1699970000-99-fedcba9876543210'
+  active_a='1699970001-98-0123456789abcdef'
+  active_b='1699970002-97-abcdef0123456789'
+  machine=$(printf machine-fixture | sha256sum | awk '{print $1}')
+  boot=$(printf boot-fixture | sha256sum | awk '{print $1}')
+  labels="$workspace/labels.tsv"
+  cat >"$labels" <<EOF
+athlos-dp-pg-$stale	athlos|disposable-postgres|$stale|recovery-test|1699970000|$machine|$(printf crash-boot | sha256sum | awk '{print $1}')|99|1
+athlos-dp-pgdata-$stale	athlos|disposable-postgres|$stale|recovery-test|1699970000|$machine|$(printf crash-boot | sha256sum | awk '{print $1}')|99|1
+athlos-dp-pg-$active_a	athlos|disposable-postgres|$active_a|recovery-test|1699970001|$machine|$boot|4242|12345
+athlos-dp-pgdata-$active_a	athlos|disposable-postgres|$active_a|recovery-test|1699970001|$machine|$boot|4242|12345
+athlos-dp-pg-$active_b	athlos|disposable-postgres|$active_b|recovery-test|1699970002|$machine|$boot|4242|12345
+athlos-dp-pgdata-$active_b	athlos|disposable-postgres|$active_b|recovery-test|1699970002|$machine|$boot|4242|12345
+athlos-dp-pg-production	production|postgres|x|ops|1|$machine|$boot|1|1
+athlos-dp-pg-beta	athlos|beta|x|ops|1|$machine|$boot|1|1
+athlos-dp-pg-persistent	athlos|disposable-postgres|x|ops|1|$machine|$boot|1|1
+EOF
+  export FAKE_DOCKER_LABEL_FILE="$labels" ATHLOS_DP_PROC_EVIDENCE=12345
+  export FAKE_DOCKER_STALE_CONTAINER="athlos-dp-pg-$stale
+athlos-dp-pg-$active_a
+athlos-dp-pg-$active_b
+athlos-dp-pg-production
+athlos-dp-pg-beta
+athlos-dp-pg-persistent
+unlabeled"
+  export FAKE_DOCKER_STALE_VOLUME="athlos-dp-pgdata-$stale
+athlos-dp-pgdata-$active_a
+athlos-dp-pgdata-$active_b"
+
+  run invoke_lifecycle run --caller recovery-test -- true
+  [ "$status" -eq 0 ]
+  run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale\"" "$transcript"
+  [ "$status" -eq 0 ]
+  for run_id in "$active_a" "$active_b" production beta persistent; do
+    run grep -Fq "[\"rm\",\"-f\",\"athlos-dp-pg-$run_id\"" "$transcript"
+    [ "$status" -ne 0 ]
+  done
+  for run_id in "$active_a" "$active_b"; do
+    run grep -Fq "[\"volume\",\"rm\",\"athlos-dp-pgdata-$run_id\"" "$transcript"
+    [ "$status" -ne 0 ]
+  done
+  stale_rm=$(grep -n "^\[\"rm\",\"-f\",\"athlos-dp-pg-$stale\"" "$transcript" | cut -d: -f1)
+  new_volume=$(grep -n '^\["volume","create"' "$transcript" | cut -d: -f1)
+  [ "$stale_rm" -lt "$new_volume" ]
+  run grep -F '"event":"stale-decision"' "$evidence"
+  [ "$status" -eq 0 ]
+}
+
+@test "cleans up once and preserves SIGTERM exit status" {
+  # shellcheck disable=SC2016 # The consumer shell must expand PPID at runtime.
+  run invoke_lifecycle run --caller recovery-test -- bash -c 'kill -TERM "$PPID"; sleep 1'
+
+  [ "$status" -eq 143 ]
+  run grep -F '["rm","-f","athlos-dp-pg-1700000000-4242-0123456789abcdef"]' "$transcript"
+  [ "$status" -eq 0 ]
+  run grep -F '["volume","rm","athlos-dp-pgdata-1700000000-4242-0123456789abcdef"]' "$transcript"
+  [ "$status" -eq 0 ]
+}
+
+@test "recovers only complete correlated old dead ownership and fails closed at the six-hour boundary" {
+  stale_run='1699978399-99-fedcba9876543210'
+  machine=$(printf machine-fixture | sha256sum | awk '{print $1}')
+  boot=$(printf boot-fixture | sha256sum | awk '{print $1}')
+  foreign_boot=$(printf different-boot | sha256sum | awk '{print $1}')
+  complete="athlos|disposable-postgres|$stale_run|recovery-test|1699978399|$machine|$foreign_boot|99|1"
+  export FAKE_DOCKER_STALE_CONTAINER="athlos-dp-pg-$stale_run"
+  export FAKE_DOCKER_STALE_VOLUME="athlos-dp-pgdata-$stale_run"
+  export FAKE_DOCKER_STALE_LABELS="$complete"
+
+  run invoke_lifecycle run --caller recovery-test -- true
+  [ "$status" -eq 0 ]
+  run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale_run\"" "$transcript"
+  [ "$status" -eq 0 ]
+  run grep -F "[\"volume\",\"rm\",\"athlos-dp-pgdata-$stale_run\"" "$transcript"
+  [ "$status" -eq 0 ]
+
+  for invalid in \
+    "athlos|disposable-postgres|${stale_run}|recovery-test|1699978400|$machine|$boot|99|1" \
+    "athlos|disposable-postgres|${stale_run}|bad caller|1699978399|$machine|$boot|99|1" \
+    "athlos|disposable-postgres|${stale_run}|recovery-test|bad|$machine|$boot|99|1" \
+    "athlos|disposable-postgres|${stale_run}|recovery-test|1699978399|foreign-machine|$boot|99|1"; do
+    : >"$transcript"
+    export FAKE_DOCKER_STALE_LABELS="$invalid"
+    run invoke_lifecycle run --caller recovery-test -- true
+    [ "$status" -eq 0 ]
+    run grep -F "[\"rm\",\"-f\",\"athlos-dp-pg-$stale_run\"" "$transcript"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "preserves SIGINT after exact awaited cleanup without recursive trap cleanup" {
+  # shellcheck disable=SC2016
+  run invoke_lifecycle run --caller recovery-test -- bash -c 'kill -INT "$PPID"; sleep 1'
+
+  [ "$status" -eq 130 ]
+  removals=$(grep -nE '^\["rm"|^\["volume","rm"' "$transcript")
+  [ "$(printf '%s\n' "$removals" | wc -l)" -eq 2 ]
+  [[ "$removals" == *$'1:["rm"'* || "$removals" == *$'2:["rm"'* || "$removals" == *'["rm","-f"'* ]]
+  [ "$(printf '%s\n' "$removals" | sed -n '1p' | cut -d: -f2- | cut -c1-5)" = '["rm"' ]
+  [ "$(printf '%s\n' "$removals" | sed -n '2p' | cut -d: -f2- | cut -c1-14)" = '["volume","rm"' ]
+  run grep -F '"event":"absence","owner":"athlos"' "$evidence"
+  [ "$status" -eq 0 ]
+}
+
 @test "uses distinct deterministic names for sequential fixture identities" {
   run invoke_lifecycle run --caller recovery-test -- true
   [ "$status" -eq 0 ]
@@ -202,8 +409,8 @@ invoke_lifecycle() {
   run bash -c 'cd "$1" && "$2" run --caller db-tests -- bash -c '\''printf "%s|%s|%s" "$ATHLOS_DP_REPOSITORY_ROOT" "$PWD" "$0"'\'' "$3"' bash "$foreign_cwd" "$library" "$selector"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == */Athlos-worktrees/docker-resource-lifecycle-pr2* ]]
-  [[ "$output" == *"$foreign_cwd"* ]]
-  [[ "$output" == *"$selector"* ]]
+  expected_root="$(cd -- "$(dirname -- "$library")/../.." && pwd -P)"
+  actual_root_line=$(printf '%s\n' "$output" | grep -F "$expected_root|" || true)
+  [[ "$actual_root_line" == "$expected_root|$foreign_cwd|$selector"* ]]
   [ ! -e "$foreign_cwd/should-not-exist" ]
 }
