@@ -470,11 +470,19 @@ describe('authenticated condonation requests and decisions', () => {
         status: 'approved',
         expiresAt: new Date('2099-09-01T00:00:00.000Z'),
         decidedAt: new Date('2026-08-27T00:00:00.000Z'),
+        usedAt: null,
         executionId: '00000000-0000-4000-8000-000000000061',
+        createdAt: new Date('2026-08-26T00:00:00.000Z'),
+        createdByOperatorId: requesterId,
+        decidedByOperatorId: approverId,
         condonationSnapshot: {
           memberId,
           obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
         },
+        requestReason: 'Hardship',
+        requestEvidence: 'case-123',
+        decisionReason: 'Approved',
+        decisionEvidence: 'treasury-1',
         executionReceiptId: null,
       },
     ])
@@ -491,7 +499,7 @@ describe('authenticated condonation requests and decisions', () => {
           {
             id: '00000000-0000-4000-8000-000000000060',
             state: 'approved_awaiting_execution',
-            expires_at: '2026-09-01T00:00:00.000Z',
+            expires_at: '2099-09-01T00:00:00.000Z',
             decided_at: '2026-08-27T00:00:00.000Z',
             execution_id: '00000000-0000-4000-8000-000000000061',
             execution_status: 'recoverable',
