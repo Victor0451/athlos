@@ -17,6 +17,7 @@
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "migrate:status": "tsx src/scripts/status.ts",
+    "collections:baseline": "tsx src/scripts/collections-baseline.ts",
     "bootstrap-admin": "tsx src/scripts/bootstrap-admin.ts",
     "grant:data-steward": "tsx src/scripts/grant-data-steward.ts",
     "studio": "drizzle-kit studio",
@@ -24,6 +25,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:disposable-postgres": "../../scripts/lib/disposable-postgres.sh run --caller db-tests -- pnpm test:run --",
     "lint": "eslint src --ext .ts"
   },
   "dependencies": {

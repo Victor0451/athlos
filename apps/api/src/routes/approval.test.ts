@@ -1,11 +1,31 @@
-import { describe, it, expect } from 'vitest'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { createStandinDb } from '../test-standins/db.ts'
 import { buildServer } from '../server.ts'
 import type { FastifyInstance } from 'fastify'
 import type { Env } from '@athlos/config'
 import type { Db } from '@athlos/db'
 import type { ApprovalToken } from '@athlos/db/schema'
-import { generateApprovalToken } from '@athlos/approval'
+import { generateApprovalToken, listCondonationLifecycle } from '@athlos/approval'
+import type * as ApprovalModule from '@athlos/approval'
+import { signAccessToken } from '@athlos/auth'
+import { selectFullOutstanding } from '../modules/dues/allocations.ts'
+import type * as AllocationsModule from '../modules/dues/allocations.ts'
+
+const executeApproved = vi.fn()
+
+vi.mock('../modules/dues/allocations.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof AllocationsModule>()),
+  selectFullOutstanding: vi.fn(),
+}))
+vi.mock('../modules/dues/condonations.ts', () => ({
+  CondonationExecutionService: class {
+    executeApproved = executeApproved
+  },
+}))
+vi.mock('@athlos/approval', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApprovalModule>()),
+  listCondonationLifecycle: vi.fn(),
+}))
 
 /**
  * HTTP-level tests for the approval routes.
@@ -74,9 +94,37 @@ function makeApprovalRow(overrides: Partial<ApprovalToken> = {}): ApprovalToken 
     expiresAt: new Date(Date.now() + 60_000),
     usedAt: null,
     status: 'pending',
+    condonationSnapshot: null,
+    requestReason: null,
+    requestEvidence: null,
+    decidedByOperatorId: null,
+    decisionReason: null,
+    decisionEvidence: null,
+    decidedAt: null,
+    executionId: null,
+    callerKey: null,
+    requestFingerprint: null,
     createdAt: new Date(),
     ...overrides,
   }
+}
+
+const memberId = '00000000-0000-4000-8000-000000000010'
+const obligationId = '00000000-0000-4000-8000-000000000020'
+const requesterId = '00000000-0000-4000-8000-000000000030'
+const approverId = '00000000-0000-4000-8000-000000000040'
+const auth = (role: 'ADMIN' | 'TESORERO' | 'OPERADOR', sub = requesterId) => ({
+  authorization: `Bearer ${signAccessToken(
+    { sub, role, permissions: { can_reprint: false, can_anulate: false } },
+    makeEnv(),
+  )}`,
+})
+const condonationPayload = {
+  member_id: memberId,
+  obligation_ids: [obligationId],
+  context: 'Verified hardship case',
+  reason: 'Documented hardship',
+  evidence: 'case-123',
 }
 
 describe('GET /api/v1/approval/:token', () => {
@@ -225,6 +273,265 @@ describe('POST /api/v1/approval/:token', () => {
         payload: { decision: 'approve' },
       })
       expect(second.statusCode).toBe(410)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('authenticated condonation requests and decisions', () => {
+  beforeEach(() => executeApproved.mockReset())
+
+  it('executes only an approved Treasury execution identity once', async () => {
+    executeApproved.mockResolvedValue({
+      executionId: '00000000-0000-4000-8000-000000000050',
+      approvalId: '00000000-0000-4000-8000-000000000051',
+      memberId,
+      currency: 'ARS',
+      totalAmountCents: 12500,
+      treatmentIds: ['00000000-0000-4000-8000-000000000052'],
+      status: 'executed',
+    })
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        headers: { ...auth('TESORERO', approverId), 'idempotency-key': 'condonation-execution-1' },
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        execution_id: '00000000-0000-4000-8000-000000000050',
+        approval_id: '00000000-0000-4000-8000-000000000051',
+        member_id: memberId,
+        currency: 'ARS',
+        approved_amount_cents: 12500,
+        treatment_ids: ['00000000-0000-4000-8000-000000000052'],
+        status: 'executed',
+      })
+      expect(executeApproved).toHaveBeenCalledWith({
+        requestId: '00000000-0000-4000-8000-000000000053',
+        executionId: '00000000-0000-4000-8000-000000000050',
+        actorId: approverId,
+        callerKey: 'condonation-execution-1',
+        sourceIp: '127.0.0.1',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('denies unauthenticated and OPERADOR execution before invoking the executor', async () => {
+    const { app } = await bootstrap()
+    try {
+      const unauthenticated = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+      const operator = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests/00000000-0000-4000-8000-000000000053/execution',
+        headers: auth('OPERADOR'),
+        payload: { execution_id: '00000000-0000-4000-8000-000000000050' },
+      })
+
+      expect(unauthenticated.statusCode).toBe(401)
+      expect(operator.statusCode).toBe(403)
+      expect(executeApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('creates an inert, audited eligible request and replays the same caller key exactly', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue({
+      socioId: memberId,
+      currency: 'ARS',
+      totalCents: 12500,
+      allocations: [{ obligationId, amountCents: 12500 }],
+      fingerprint: 'a'.repeat(64),
+    })
+    const { app, standin } = await bootstrap()
+    try {
+      const request = {
+        method: 'POST' as const,
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-1' },
+        payload: condonationPayload,
+      }
+      const first = await app.inject(request)
+      const replay = await app.inject(request)
+
+      expect(first.statusCode).toBe(201)
+      expect(replay.statusCode).toBe(201)
+      expect(replay.json()).toEqual(first.json())
+      expect(standin.state.approvalTokens).toHaveLength(1)
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        actionType: 'dues.condonation',
+        createdByOperatorId: requesterId,
+        usedAt: null,
+        executionId: null,
+      })
+      expect(standin.state.auditEvents).toHaveLength(1)
+      expect(standin.state.auditEvents[0]).toMatchObject({
+        operatorId: requesterId,
+        action: 'CONDONATION_REQUEST_CREATED',
+        entityType: 'condonation_request',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects changed idempotency input and requires a separate Treasury actor for an audited decision', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue({
+      socioId: memberId,
+      currency: 'ARS',
+      totalCents: 12500,
+      allocations: [{ obligationId, amountCents: 12500 }],
+      fingerprint: 'a'.repeat(64),
+    })
+    const { app, standin } = await bootstrap()
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-2' },
+        payload: condonationPayload,
+      })
+      const { id } = created.json() as { id: string }
+      const conflict = await app.inject({
+        method: 'POST',
+        url: '/api/v1/condonation-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'condonation-request-2' },
+        payload: { ...condonationPayload, reason: 'Changed reason' },
+      })
+      const selfDecision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/condonation-requests/${id}/decision`,
+        headers: auth('TESORERO'),
+        payload: { decision: 'approved', reason: 'Approved', evidence: 'treasury-1' },
+      })
+      const decision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/condonation-requests/${id}/decision`,
+        headers: auth('TESORERO', approverId),
+        payload: { decision: 'rejected', reason: 'Insufficient evidence', evidence: 'treasury-2' },
+      })
+
+      expect(conflict.statusCode).toBe(409)
+      expect(selfDecision.statusCode).toBe(403)
+      expect(decision.statusCode).toBe(200)
+      expect(decision.json()).toMatchObject({ id, status: 'rejected' })
+      expect(decision.json()).not.toHaveProperty('execution_id')
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        status: 'rejected',
+        decidedByOperatorId: approverId,
+        usedAt: null,
+      })
+      expect(standin.state.auditEvents).toHaveLength(2)
+      expect(standin.state.auditEvents[1]).toMatchObject({
+        operatorId: approverId,
+        action: 'CONDONATION_DECISION_RECORDED',
+        entityType: 'condonation_request',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('does not allow a public token decision to consume a condonation request', async () => {
+    const { app, standin } = await bootstrap()
+    try {
+      const { raw, hash } = generateApprovalToken()
+      standin.state.approvalTokens.push(
+        makeApprovalRow({ actionType: 'dues.condonation', actionId: 'request-1', tokenHash: hash }),
+      )
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/approval/${raw}`,
+        payload: { decision: 'approve' },
+      })
+
+      expect(response.statusCode).toBe(403)
+      expect(standin.state.approvalTokens[0]?.usedAt).toBeNull()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('reads a bounded member lifecycle from persisted approval and execution facts', async () => {
+    vi.mocked(listCondonationLifecycle).mockResolvedValueOnce([
+      {
+        actionId: '00000000-0000-4000-8000-000000000060',
+        status: 'approved',
+        expiresAt: new Date('2099-09-01T00:00:00.000Z'),
+        decidedAt: new Date('2026-08-27T00:00:00.000Z'),
+        executionId: '00000000-0000-4000-8000-000000000061',
+        condonationSnapshot: {
+          memberId,
+          obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+        },
+        executionReceiptId: null,
+      },
+    ])
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/members/${memberId}/condonation-requests?limit=1`,
+        headers: auth('OPERADOR'),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        items: [
+          {
+            id: '00000000-0000-4000-8000-000000000060',
+            state: 'approved_awaiting_execution',
+            expires_at: '2099-09-01T00:00:00.000Z',
+            decided_at: '2026-08-27T00:00:00.000Z',
+            execution_id: '00000000-0000-4000-8000-000000000061',
+            execution_status: 'recoverable',
+            snapshot: {
+              member_id: memberId,
+              obligations: [
+                {
+                  obligation_id: obligationId,
+                  currency: 'ARS',
+                  outstanding_amount_cents: 12500,
+                },
+              ],
+            },
+          },
+        ],
+      })
+      expect(listCondonationLifecycle).toHaveBeenCalledWith(expect.anything(), {
+        memberId,
+        requesterId,
+        limit: 1,
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('lets Treasury read an authorized member lifecycle without requester filtering', async () => {
+    vi.mocked(listCondonationLifecycle).mockResolvedValueOnce([])
+    const { app } = await bootstrap()
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/members/${memberId}/condonation-requests`,
+        headers: auth('ADMIN', approverId),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(listCondonationLifecycle).toHaveBeenCalledWith(expect.anything(), {
+        memberId,
+        limit: 25,
+      })
     } finally {
       await app.close()
     }

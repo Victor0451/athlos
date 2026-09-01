@@ -12,5 +12,21 @@
  * The approval routes (PR 3b) sit on top of this service.
  */
 export { generateApprovalToken, hashApprovalToken } from './token.ts'
-export { createApprovalToken, getApprovalToken, consumeApprovalToken } from './service.ts'
-export type { CreateApprovalLinkRequest, ApprovalTokenRecord } from './service.ts'
+export {
+  createApprovalToken,
+  createCondonationApprovalRequest,
+  decideCondonationApproval,
+  findCondonationRequest,
+  listCondonationLifecycle,
+  getApprovalToken,
+  consumeApprovalToken,
+} from './service.ts'
+export type {
+  ApprovalTokenRecord,
+  CondonationDecision,
+  CondonationLifecycle,
+  CondonationSnapshot,
+  ListCondonationLifecycleInput,
+  CreateApprovalLinkRequest,
+  CreateCondonationApprovalRequest,
+} from './service.ts'
