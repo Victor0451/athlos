@@ -469,7 +469,7 @@ describe('authenticated condonation requests and decisions', () => {
       {
         actionId: '00000000-0000-4000-8000-000000000060',
         status: 'approved',
-        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+        expiresAt: new Date('2099-09-01T00:00:00.000Z'),
         decidedAt: new Date('2026-08-27T00:00:00.000Z'),
         usedAt: null,
         executionId: '00000000-0000-4000-8000-000000000061',
