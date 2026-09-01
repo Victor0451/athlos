@@ -55,4 +55,22 @@ describe('CommunityWorkForm', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/deuda.*solo.*confirm/i)
     expect(screen.getByRole('button', { name: /confirmando trabajo comunitario/i })).toBeDisabled()
   })
+
+  it('keeps acceptance gated and its responsive field contract stable', () => {
+    renderForm({ formId: 'accepted-work' })
+
+    expect(screen.getByRole('status')).toHaveTextContent(/solo después de confirmar/i)
+    expect(screen.getByRole('button', { name: 'Confirmar trabajo comunitario' })).toHaveAttribute(
+      'form',
+      'accepted-work',
+    )
+    expect(screen.getByLabelText(/valor aprobado/i)).toHaveClass(
+      'min-h-11',
+      'font-mono',
+      'tabular-nums',
+    )
+    expect(screen.getByLabelText(/valor aprobado/i).parentElement?.parentElement).toHaveClass(
+      'sm:grid-cols-2',
+    )
+  })
 })

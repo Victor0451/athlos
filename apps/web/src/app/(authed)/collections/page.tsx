@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
-import { CondonationActions } from '@/components/collections/CondonationActions'
+import { collectionSectionClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel, type DebtPanelStatus } from '@/components/collections/DebtPanel'
+import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
@@ -40,7 +41,10 @@ import {
   createCondonationRequest,
   CondonationOperationError,
   decideCondonationRequest,
+  executeCondonationRequest,
+  listCondonationLifecycle,
   type CondonationDecisionInput,
+  type CondonationLifecycle,
   type CondonationRequestInput,
 } from '@/lib/api/condonation'
 import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
@@ -92,7 +96,24 @@ export default function CollectionsPage() {
   const [debtError, setDebtError] = useState('')
   const [openShifts, setOpenShifts] = useState<CashShift[]>([])
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
+  const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
+  const [lifecycleStatus, setLifecycleStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
+    'idle',
+  )
+  const [executionFeedback, setExecutionFeedback] = useState<{
+    id: string
+    status:
+      | 'idle'
+      | 'executing'
+      | 'replayed'
+      | 'recoverable_error'
+      | 'denied'
+      | 'transactional_error'
+  } | null>(null)
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
+  const selectedMember = useRef<string | null>(null)
+  const debtLoad = useRef(0)
+  const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
@@ -220,21 +241,33 @@ export default function CollectionsPage() {
     setSocios(result.items)
   }
   const selectSocio = async (socio: DebtSocio) => {
+    selectedMember.current = socio.id
     setSelectedSocio(socio)
+    setLifecycle([])
+    setLifecycleStatus('loading')
+    setExecutionFeedback(null)
     setDebt(null)
     setOpenShifts([])
     setDebtError('')
     setDebtStatus('loading')
+    const debtRequest = ++debtLoad.current
+    void refreshLifecycle(socio.id)
     try {
       const result = await getDebt(socio.id)
+      if (debtRequest !== debtLoad.current) return
       setDebt(result)
       setDebtStatus(result.status)
       void getOpenCashShifts()
-        .then(setOpenShifts)
-        .catch(() => setOpenShifts([]))
+        .then((shifts) => {
+          if (debtRequest === debtLoad.current) setOpenShifts(shifts)
+        })
+        .catch(() => {
+          if (debtRequest === debtLoad.current) setOpenShifts([])
+        })
       if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
       else setAgreementStates({})
     } catch (reason) {
+      if (debtRequest !== debtLoad.current) return
       if (reason instanceof ApiError && reason.status === 404) {
         setDebtError('No se encontró el detalle de deuda de este socio.')
         setDebtStatus('not_found')
@@ -248,8 +281,25 @@ export default function CollectionsPage() {
     }
   }
   // prettier-ignore
-  const refreshDebt=async()=>{if(!selectedSocio)return false;setDebtStatus('loading');try{const result=await getDebt(selectedSocio.id);setDebt(result);setDebtStatus(result.status);setDebtError('');return true}catch(reason){setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error');return false}}
-  // prettier-ignore
+  const refreshDebt=async()=>{if(!selectedSocio||selectedMember.current!==selectedSocio.id)return false;const memberId=selectedSocio.id;const load=++debtLoad.current;setDebtStatus('loading');try{const result=await getDebt(memberId);if(load!==debtLoad.current||selectedMember.current!==memberId)return false;setDebt(result);setDebtStatus(result.status);setDebtError('');return true}catch(reason){if(load!==debtLoad.current||selectedMember.current!==memberId)return false;setDebtError(errorText(reason,'No se pudo actualizar el detalle de deuda.'));setDebtStatus('error');return false}}
+  const refreshLifecycle = async (memberId: string) => {
+    if (selectedMember.current !== memberId) return []
+    const load = ++lifecycleLoad.current
+    setLifecycleStatus('loading')
+    try {
+      const { items } = await listCondonationLifecycle(memberId)
+      if (load !== lifecycleLoad.current || selectedMember.current !== memberId) return []
+      setLifecycle(items)
+      setLifecycleStatus('ready')
+      return items
+    } catch {
+      if (load === lifecycleLoad.current && selectedMember.current === memberId) {
+        setLifecycle([])
+        setLifecycleStatus('error')
+      }
+      return []
+    }
+  }
   const refreshAgreement = (obligationId: string) => loadAgreement(obligationId)
   const createAgreement = async (obligationId: string, draft: AgreementDraft) => {
     if (!user || !selectedSocio)
@@ -420,27 +470,102 @@ export default function CollectionsPage() {
     return request(key).then((result) => { idempotency.current!.complete(input); return result }).catch((reason) => { if (reason instanceof CondonationOperationError && reason.kind === 'conflict') idempotency.current!.abandon(input); throw reason })
   }
   const requestCondonation = (input: CondonationRequestInput) =>
-    condonation('condonation-request', input, (key) => createCondonationRequest(input, key))
+    condonation('condonation-request', input, (key) => createCondonationRequest(input, key)).then(
+      async (result) => {
+        await refreshLifecycle(input.member_id)
+        return result
+      },
+    )
   const decideCondonation = (id: string, input: CondonationDecisionInput) =>
     condonation(`condonation-decision:${id}`, input, (key) =>
       decideCondonationRequest(id, input, key),
+    ).then(async (result) => {
+      if (selectedSocio) await refreshLifecycle(selectedSocio.id)
+      return result
+    })
+  const executeCondonation = async (id: string, executionId: string) => {
+    if (!user || !selectedSocio || selectedMember.current !== selectedSocio.id || !canSettle)
+      throw new DuesOperationError('permission', 'Authentication required')
+    const memberId = selectedSocio.id
+    const current = lifecycle.find(
+      (item) =>
+        item.id === id &&
+        item.state === 'approved_awaiting_execution' &&
+        item.execution_id === executionId,
     )
+    if (!current) throw new CondonationOperationError('conflict')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const input = {
+      operatorId: user.operator_id,
+      action: `condonation-execution:${id}`,
+      draftFingerprint: executionId,
+    }
+    const key = idempotency.current.getOrCreate(input)
+    const result = await executeCondonationRequest(id, executionId, key)
+    const refreshed = await refreshLifecycle(memberId)
+    if (
+      selectedMember.current !== memberId ||
+      !refreshed.some(
+        (item) => item.id === id && item.execution_id === executionId && item.state === 'executed',
+      )
+    )
+      throw new CondonationOperationError('unavailable')
+    if (!(await refreshDebt()))
+      throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+    idempotency.current.complete(input)
+    return result
+  }
+  const presentExecution = async (item: CondonationLifecycle) => {
+    setExecutionFeedback({ id: item.id, status: 'executing' })
+    try {
+      const result = await executeCondonation(item.id, item.execution_id!)
+      setExecutionFeedback({
+        id: item.id,
+        status: result.status === 'replayed' ? 'replayed' : 'idle',
+      })
+      return result
+    } catch (cause) {
+      const kind = cause instanceof CondonationOperationError ? cause.kind : 'unavailable'
+      setExecutionFeedback({
+        id: item.id,
+        status:
+          kind === 'permission'
+            ? 'denied'
+            : kind === 'conflict'
+              ? 'recoverable_error'
+              : 'transactional_error',
+      })
+      throw cause
+    }
+  }
 
   return (
-    <main aria-labelledby="collections-title" className="space-y-6">
-      <header>
-        <h1 id="collections-title" className="font-display text-2xl font-bold text-ink-900">
+    <main
+      aria-labelledby="collections-title"
+      className="min-w-0 space-y-8 bg-surface-page p-4 sm:p-6"
+    >
+      <header className="space-y-2 border-b border-ink-200 pb-6">
+        <p className="font-display text-xs font-semibold uppercase tracking-[0.18em] text-accent">
+          Gestión operativa
+        </p>
+        <h1
+          id="collections-title"
+          className="font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl"
+        >
           Cobranza
         </h1>
+        <p className="max-w-2xl font-body text-sm leading-6 text-ink-500">
+          Configurá cuotas y consultá evaluaciones antes de gestionar la deuda de cada socio.
+        </p>
       </header>
-      <section aria-labelledby="collections-workspace-title">
+      <section aria-labelledby="collections-workspace-title" className="space-y-4">
         <h2
           id="collections-workspace-title"
-          className="font-display text-lg font-semibold text-ink-900"
+          className="font-display text-xl font-semibold text-ink-900"
         >
           Espacio de trabajo de cobranzas
         </h2>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
           {user?.role === 'ADMIN' ? (
             <PricingPanel
               prices={prices}
@@ -453,11 +578,16 @@ export default function CollectionsPage() {
               onRevoke={revokePrice}
             />
           ) : (
-            <section aria-labelledby="pricing-readonly-title">
-              <h3 id="pricing-readonly-title">Configuración de cuotas</h3>
-              <p role="status">
+            <section aria-labelledby="pricing-readonly-title" className={collectionSectionClass}>
+              <h3
+                id="pricing-readonly-title"
+                className="font-display text-lg font-semibold text-ink-900"
+              >
+                Configuración de cuotas
+              </h3>
+              <CollectionStatus>
                 La administración de cuotas está disponible solo para operadores ADMIN.
-              </p>
+              </CollectionStatus>
             </section>
           )}
           <AssessmentPreviewPanel
@@ -477,23 +607,48 @@ export default function CollectionsPage() {
         error={debtError}
         onSearch={searchSocios}
         onSelectSocio={selectSocio}
-        openShifts={openShifts}
-        {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
-        agreementsEnabled={agreementWorkflowEnabled}
-        agreementStates={agreementStates}
-        onCreateAgreement={createAgreement}
-        onReviseAgreement={reviseAgreement}
-        onRecordCommunityWork={createCommunityWork}
-        onRefreshAgreement={refreshAgreement}
       />
       {selectedSocio && debt?.status === 'ready' && (
-        <CondonationActions
-          memberId={selectedSocio.id}
-          obligations={debt.obligations}
-          canDecide={canSettle}
-          onRequest={requestCondonation}
-          onDecision={decideCondonation}
-        />
+        <>
+          {lifecycleStatus === 'loading' && (
+            <p role="status" aria-label="Estado del historial de condonaciones">
+              Cargando historial de condonaciones.
+            </p>
+          )}
+          {lifecycleStatus === 'ready' && !lifecycle.length && (
+            <p role="status" aria-label="Estado del historial de condonaciones">
+              No hay solicitudes de condonación para este socio.
+            </p>
+          )}
+          {lifecycleStatus === 'error' && (
+            <div role="alert">
+              <p>No se pudo cargar el historial de condonaciones.</p>
+              <button type="button" onClick={() => void refreshLifecycle(selectedSocio.id)}>
+                Reintentar historial de condonaciones
+              </button>
+            </div>
+          )}
+          <TreatmentWorkspace
+            memberId={selectedSocio.id}
+            debt={debt}
+            role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
+            canSettle={canSettle}
+            canRequestCondonation
+            agreementsEnabled={agreementWorkflowEnabled}
+            agreementStates={agreementStates}
+            shifts={openShifts}
+            lifecycle={lifecycle}
+            {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+            onCreateAgreement={createAgreement}
+            onReviseAgreement={reviseAgreement}
+            onRecordCommunityWork={createCommunityWork}
+            onRefreshAgreement={refreshAgreement}
+            onRequestCondonation={requestCondonation}
+            onDecideCondonation={decideCondonation}
+            onExecuteCondonation={presentExecution}
+            executionFeedback={executionFeedback}
+          />
+        </>
       )}
     </main>
   )
