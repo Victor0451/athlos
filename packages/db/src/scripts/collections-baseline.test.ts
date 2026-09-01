@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('pg', () => ({ default: { Pool: class {} } }))
 import {
   acceptsCollectionsBaseline,
   classifyCollectionsBaseline,
@@ -16,15 +18,25 @@ const sparseTags =
 
 async function fixture(
   kind: 'sparse' | 'compatible',
-  ledger = 'contiguous',
+  ledger: 'contiguous' | 'sparse' | 'contiguous-post' | 'sparse-post' = 'contiguous',
 ): Promise<BaselineInput> {
   const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
     entries: Array<{ tag: string; when: number }>
   }
+  const compatibilityIndex = journal.entries.findIndex(
+    (entry) => entry.tag === '0059_collections_inscription_compatibility',
+  )
+  const predecessor = journal.entries.slice(0, compatibilityIndex)
+  const sparsePredecessor = predecessor.filter((entry) => sparseTags.includes(entry.tag))
+  const suffix = journal.entries.slice(compatibilityIndex)
   const entries =
     ledger === 'sparse'
-      ? journal.entries.filter((entry) => sparseTags.includes(entry.tag))
-      : journal.entries.slice(0, -1)
+      ? sparsePredecessor
+      : ledger === 'contiguous-post'
+        ? [...predecessor, ...suffix]
+        : ledger === 'sparse-post'
+          ? [...sparsePredecessor, ...suffix]
+          : predecessor
   const applied = entries.map(({ tag, when }) => ({ createdAt: when, hash: tag }))
   const columns =
     kind === 'sparse'
@@ -73,9 +85,13 @@ describe('Collections migration baseline', () => {
       expect(classifyCollectionsBaseline(await fixture('sparse', ledger)).kind).toBe('forward'),
   )
 
-  it('accepts only the exact compatible predecessor', async () => {
-    expect(classifyCollectionsBaseline(await fixture('compatible')).kind).toBe('compatible')
-  })
+  it.each(['contiguous', 'contiguous-post', 'sparse-post'] as const)(
+    'accepts the exact compatible %s lineage',
+    async (ledger) =>
+      expect(classifyCollectionsBaseline(await fixture('compatible', ledger)).kind).toBe(
+        'compatible',
+      ),
+  )
 
   it('requires a compatible baseline after migration', async () => {
     expect(
@@ -108,6 +124,21 @@ describe('Collections migration baseline', () => {
     const timestamp = await fixture('sparse')
     timestamp.applied[0]!.createdAt += 1
     expect(classifyCollectionsBaseline(timestamp).kind).toBe('unsupported')
+    const partialSuffix = await fixture('compatible', 'sparse-post')
+    partialSuffix.applied.splice(sparseTags.length + 1, 1)
+    expect(classifyCollectionsBaseline(partialSuffix).kind).toBe('unsupported')
+    const reorderedSuffix = await fixture('compatible', 'sparse-post')
+    ;[reorderedSuffix.applied[sparseTags.length], reorderedSuffix.applied[sparseTags.length + 1]] =
+      [reorderedSuffix.applied[sparseTags.length + 1]!, reorderedSuffix.applied[sparseTags.length]!]
+    expect(classifyCollectionsBaseline(reorderedSuffix).kind).toBe('unsupported')
+    const extraSuffix = await fixture('compatible', 'sparse-post')
+    extraSuffix.applied.push({ createdAt: 0, hash: 'unexpected_suffix' })
+    expect(classifyCollectionsBaseline(extraSuffix).kind).toBe('unsupported')
+    const missingCompatibility = await fixture('sparse')
+    missingCompatibility.journal.entries = missingCompatibility.journal.entries.filter(
+      (entry) => entry.tag !== '0059_collections_inscription_compatibility',
+    )
+    expect(classifyCollectionsBaseline(missingCompatibility).kind).toBe('unsupported')
     const schema = await fixture('compatible')
     schema.columns[0]!.type = 'timestamp without time zone'
     expect(classifyCollectionsBaseline(schema).kind).toBe('unsupported')

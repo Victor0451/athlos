@@ -53,22 +53,24 @@ export const acceptsCollectionsBaseline = (
 
 export function classifyCollectionsBaseline(input: BaselineInput): BaselineResult {
   const local = input.journal.entries
-  const predecessor = local.slice(0, -1)
-  const sparse = local.filter((entry) => sparseTags.includes(entry.tag))
+  const compatibilityIndex = local.findIndex(
+    (entry) => entry.tag === '0059_collections_inscription_compatibility',
+  )
+  if (compatibilityIndex < 0)
+    return { kind: 'unsupported', reason: 'no existe la migración de compatibilidad 0059' }
+  const predecessor = local.slice(0, compatibilityIndex)
+  const sparsePredecessor = predecessor.filter((entry) => sparseTags.includes(entry.tag))
+  const suffix = local.slice(compatibilityIndex)
   const applied = input.applied
-  const supportedPredecessor = [predecessor, sparse].some((entries) =>
+  const matches = (entries: typeof local) =>
     equal(
       applied,
       entries.map((entry) => ({ hash: entry.tag, createdAt: entry.when })),
-    ),
-  )
-  const supportedHead = [predecessor, sparse].some((entries) => {
-    const head = [...entries, local.at(-1)!]
-    return equal(
-      applied,
-      head.map((entry) => ({ hash: entry.tag, createdAt: entry.when })),
     )
-  })
+  const supportedPredecessor = [predecessor, sparsePredecessor].some(matches)
+  const supportedHead = [predecessor, sparsePredecessor].some((entries) =>
+    matches([...entries, ...suffix]),
+  )
   if (!supportedPredecessor && !supportedHead)
     return { kind: 'unsupported', reason: 'ledger no coincide con una línea soportada' }
   const expectedColumns = new Set(['fecha_baja', 'baja_motivo', 'updated_at'])
