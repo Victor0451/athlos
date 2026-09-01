@@ -99,14 +99,9 @@ describe('Collections navigation and direct access', () => {
       state: 'approved_awaiting_execution',
       expires_at: '2026-02-01T00:00:00.000Z',
       decided_at: '2026-01-31T00:00:00.000Z',
-      used_at: null,
       execution_id: 'execution-1',
       execution_status: 'recoverable',
       snapshot: { member_id: second.id, obligations: [] },
-      requester: { operator_id: 'operator-1' },
-      reason: null,
-      evidence: null,
-      decision: null,
     }
     sociosMocks.getSocios.mockResolvedValue({ items: [first, second] })
     duesMocks.getDebt

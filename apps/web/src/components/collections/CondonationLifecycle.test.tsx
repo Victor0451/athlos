@@ -10,7 +10,6 @@ const lifecycle = (state: Lifecycle['state'] = 'pending'): Lifecycle => ({
   state,
   expires_at: '2026-02-01T00:00:00.000Z',
   decided_at: '2026-01-31T00:00:00.000Z',
-  used_at: state === 'executed' ? '2026-02-01T01:00:00.000Z' : null,
   execution_id: '00000000-0000-4000-8000-000000000002',
   execution_status: state === 'approved_awaiting_execution' ? 'recoverable' : 'executed',
   snapshot: {
@@ -23,11 +22,6 @@ const lifecycle = (state: Lifecycle['state'] = 'pending'): Lifecycle => ({
       },
     ],
   },
-  requester: { operator_id: '00000000-0000-4000-8000-000000000005' },
-  approver: { operator_id: '00000000-0000-4000-8000-000000000006' },
-  reason: 'Situación excepcional',
-  evidence: 'Acta 12',
-  decision: { reason: 'Aprobada', evidence: 'Acta 13' },
 })
 
 describe('CondonationLifecycle', () => {
@@ -45,8 +39,6 @@ describe('CondonationLifecycle', () => {
     expect(screen.getByRole('list', { name: /obligaciones seleccionadas/i })).toHaveTextContent(
       '12.50 ARS',
     )
-    expect(screen.getByText('Solicitó')).toBeInTheDocument()
-    expect(screen.getByText('Aprobó')).toBeInTheDocument()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 

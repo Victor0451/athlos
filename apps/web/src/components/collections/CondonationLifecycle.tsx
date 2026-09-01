@@ -109,18 +109,6 @@ export function CondonationLifecycle({
       <p className="font-body text-sm text-ink-700">{stateCopy[lifecycle.state]}</p>
       <dl className="grid gap-px border border-ink-200 bg-ink-200 sm:grid-cols-2">
         <div className="bg-surface px-3 py-2">
-          <dt>Solicitó</dt>
-          <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.requester.operator_id}</dd>
-        </div>
-        {lifecycle.approver && (
-          <div className="bg-surface px-3 py-2">
-            <dt>Aprobó</dt>
-            <dd className="mt-1 font-mono text-xs text-ink-700">
-              {lifecycle.approver.operator_id}
-            </dd>
-          </div>
-        )}
-        <div className="bg-surface px-3 py-2">
           <dt>Vence</dt>
           <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.expires_at}</dd>
         </div>
@@ -129,38 +117,6 @@ export function CondonationLifecycle({
             <dt>Decidida el</dt>
             <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.decided_at}</dd>
           </div>
-        )}
-        {lifecycle.used_at && (
-          <div className="bg-surface px-3 py-2">
-            <dt>Ejecutada el</dt>
-            <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.used_at}</dd>
-          </div>
-        )}
-      </dl>
-      <dl className="grid gap-3 border-t border-ink-200 pt-4 font-body text-sm">
-        {lifecycle.reason && (
-          <>
-            <dt>Motivo de la solicitud</dt>
-            <dd>{lifecycle.reason}</dd>
-          </>
-        )}
-        {lifecycle.evidence && (
-          <>
-            <dt>Evidencia de la solicitud</dt>
-            <dd>{lifecycle.evidence}</dd>
-          </>
-        )}
-        {lifecycle.decision?.reason && (
-          <>
-            <dt>Motivo de la decisión</dt>
-            <dd>{lifecycle.decision.reason}</dd>
-          </>
-        )}
-        {lifecycle.decision?.evidence && (
-          <>
-            <dt>Evidencia de la decisión</dt>
-            <dd>{lifecycle.decision.evidence}</dd>
-          </>
         )}
       </dl>
       <ul
