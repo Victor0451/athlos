@@ -21,7 +21,7 @@ export type CreatePriceCommand = AuditContext & Omit<repository.PriceInput, 'cre
 // prettier-ignore
 export type RevokePriceCommand = AuditContext & Omit<repository.PriceRevocationInput, 'revokedBy'>
 // prettier-ignore
-export type GenerateAssessmentCommand = AuditContext & { period: repository.Period; currency?: string; planFingerprint?: string }
+export type GenerateAssessmentCommand = AuditContext & { period: repository.Period; currency?: string; planFingerprint: string }
 export type PlanGenerationCommand = { role: Role; period: repository.Period; currency?: string }
 export type PreviewAssessmentCommand = AuditContext & {
   socioId: string
@@ -35,7 +35,6 @@ export type GenerationResult = {
   retainedExistingCount: number
   reviewCount: number
   generatedTotalCents: number
-  obligationIds?: string[]
 }
 export type RangeExecutionResult = { createdObligationIds: string[]; periods: string[] }
 // prettier-ignore
