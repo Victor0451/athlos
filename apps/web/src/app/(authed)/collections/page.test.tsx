@@ -89,6 +89,35 @@ describe('Collections navigation and direct access', () => {
     treasuryMocks.getOpenCashShifts.mockResolvedValue([])
   })
 
+  it('opens on Cobranza and lets authorized users switch workspaces', async () => {
+    const user = userEvent.setup()
+    renderPage(true, 'ADMIN')
+
+    expect(screen.getByRole('tablist', { name: 'Secciones de cobranza' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Cobranza' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('heading', { name: 'Detalle de deuda' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Generación de deudas' }))
+    expect(screen.getByRole('heading', { name: 'Generación mensual' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Detalle de deuda' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: 'Cobranza' }))
+    expect(screen.getByRole('heading', { name: 'Detalle de deuda' })).toBeInTheDocument()
+  })
+
+  it('shows generation to TESORERO but keeps it hidden from OPERADOR', async () => {
+    const user = userEvent.setup()
+    const treasurer = renderPage(true, 'TESORERO')
+
+    await user.click(screen.getByRole('tab', { name: 'Generación de deudas' }))
+    expect(screen.getByRole('heading', { name: 'Generación mensual' })).toBeInTheDocument()
+
+    treasurer.unmount()
+    renderPage(true, 'OPERADOR')
+    expect(screen.getByRole('heading', { name: 'Detalle de deuda' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Generación de deudas' })).not.toBeInTheDocument()
+  })
+
   it('shows lifecycle loading for the selected member', async () => {
     const user = userEvent.setup()
     const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }

@@ -4,8 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
-import { collectionSectionClass } from '@/components/collections/CollectionPrimitives'
+import {
+  collectionButtonClass,
+  collectionSectionClass,
+} from '@/components/collections/CollectionPrimitives'
 import { DebtPanel } from '@/components/collections/DebtPanel'
+import { CollectionsGenerationWorkspace } from '@/components/collections/CollectionsGenerationWorkspace'
 import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
@@ -70,6 +74,7 @@ export default function CollectionsPage() {
   const { user } = useAuth()
   const { collectionsEnabled, agreementsEnabled } = useFeatureConfig()
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
+  const [activeTab, setActiveTab] = useState<'collections' | 'generation'>('collections')
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
   const [pricingError, setPricingError] = useState('')
@@ -99,6 +104,10 @@ export default function CollectionsPage() {
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const generationUser =
+    user?.role === 'ADMIN' || user?.role === 'TESORERO'
+      ? (user as Pick<CurrentUser, 'operator_id'> & { role: 'ADMIN' | 'TESORERO' })
+      : null
   const {
     debt,
     debtError,
@@ -484,91 +493,137 @@ export default function CollectionsPage() {
           Configurá cuotas y gestioná la deuda de cada socio.
         </p>
       </header>
-      <section aria-labelledby="collections-workspace-title" className="space-y-4">
-        <h2
-          id="collections-workspace-title"
-          className="font-display text-xl font-semibold text-ink-900"
-        >
-          Espacio de trabajo de cobranzas
-        </h2>
-        <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
-          {user?.role === 'ADMIN' ? (
-            <PricingPanel
-              prices={prices}
-              state={pricingState}
-              error={pricingError}
-              disciplines={disciplines}
-              disciplineState={disciplineState}
-              disciplineError={disciplineError}
-              onCreate={createPrice}
-              onRevoke={revokePrice}
-            />
-          ) : (
-            <section aria-labelledby="pricing-readonly-title" className={collectionSectionClass}>
-              <h3
-                id="pricing-readonly-title"
-                className="font-display text-lg font-semibold text-ink-900"
-              >
-                Configuración de cuotas
-              </h3>
-              <CollectionStatus>
-                La administración de cuotas está disponible solo para operadores ADMIN.
-              </CollectionStatus>
-            </section>
+      <div className="border-b border-ink-200 pb-3">
+        <div role="tablist" aria-label="Secciones de cobranza" className="flex gap-2">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'collections'}
+            onClick={() => setActiveTab('collections')}
+            className={
+              activeTab === 'collections'
+                ? collectionButtonClass.primary
+                : collectionButtonClass.secondary
+            }
+          >
+            Cobranza
+          </button>
+          {generationUser && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'generation'}
+              onClick={() => setActiveTab('generation')}
+              className={
+                activeTab === 'generation'
+                  ? collectionButtonClass.primary
+                  : collectionButtonClass.secondary
+              }
+            >
+              Generación de deudas
+            </button>
           )}
         </div>
-      </section>
-      <DebtPanel
-        socio={selectedSocio}
-        socios={socios}
-        status={debtStatus}
-        debt={debt}
-        error={debtError}
-        onSearch={searchSocios}
-        onSelectSocio={selectSocio}
-      />
-      {selectedSocio && debt?.status === 'ready' && (
+      </div>
+      {activeTab === 'generation' && generationUser && (
+        <CollectionsGenerationWorkspace
+          period={period}
+          user={generationUser}
+          onGoToCollections={() => setActiveTab('collections')}
+        />
+      )}
+      {activeTab === 'collections' && (
         <>
-          {lifecycleStatus === 'loading' && (
-            <p role="status" aria-label="Estado del historial de condonaciones">
-              Cargando historial de condonaciones.
-            </p>
-          )}
-          {lifecycleStatus === 'ready' && !lifecycle.length && (
-            <p role="status" aria-label="Estado del historial de condonaciones">
-              No hay solicitudes de condonación para este socio.
-            </p>
-          )}
-          {lifecycleStatus === 'error' && (
-            <div role="alert">
-              <p>No se pudo cargar el historial de condonaciones.</p>
-              <button type="button" onClick={() => void refreshLifecycle(selectedSocio.id)}>
-                Reintentar historial de condonaciones
-              </button>
+          <section aria-labelledby="collections-workspace-title" className="space-y-4">
+            <h2
+              id="collections-workspace-title"
+              className="font-display text-xl font-semibold text-ink-900"
+            >
+              Espacio de trabajo de cobranzas
+            </h2>
+            <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
+              {user?.role === 'ADMIN' ? (
+                <PricingPanel
+                  prices={prices}
+                  state={pricingState}
+                  error={pricingError}
+                  disciplines={disciplines}
+                  disciplineState={disciplineState}
+                  disciplineError={disciplineError}
+                  onCreate={createPrice}
+                  onRevoke={revokePrice}
+                />
+              ) : (
+                <section
+                  aria-labelledby="pricing-readonly-title"
+                  className={collectionSectionClass}
+                >
+                  <h3
+                    id="pricing-readonly-title"
+                    className="font-display text-lg font-semibold text-ink-900"
+                  >
+                    Configuración de cuotas
+                  </h3>
+                  <CollectionStatus>
+                    La administración de cuotas está disponible solo para operadores ADMIN.
+                  </CollectionStatus>
+                </section>
+              )}
             </div>
-          )}
-          <TreatmentWorkspace
-            memberId={selectedSocio.id}
+          </section>
+          <DebtPanel
+            socio={selectedSocio}
+            socios={socios}
+            status={debtStatus}
             debt={debt}
-            role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
-            canSettle={canSettle}
-            canRequestCondonation
-            agreementsEnabled={agreementWorkflowEnabled}
-            agreementStates={agreementStates}
-            shifts={openShifts}
-            shiftAvailability={openShiftAvailability}
-            lifecycle={lifecycle}
-            {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
-            onRefreshDebt={refreshPaymentContext}
-            onCreateAgreement={createAgreement}
-            onReviseAgreement={reviseAgreement}
-            onRecordCommunityWork={createCommunityWork}
-            onRefreshAgreement={refreshAgreement}
-            onRequestCondonation={requestCondonation}
-            onDecideCondonation={decideCondonation}
-            onExecuteCondonation={presentExecution}
-            executionFeedback={executionFeedback}
+            error={debtError}
+            onSearch={searchSocios}
+            onSelectSocio={selectSocio}
           />
+          {selectedSocio && debt?.status === 'ready' && (
+            <>
+              {lifecycleStatus === 'loading' && (
+                <p role="status" aria-label="Estado del historial de condonaciones">
+                  Cargando historial de condonaciones.
+                </p>
+              )}
+              {lifecycleStatus === 'ready' && !lifecycle.length && (
+                <p role="status" aria-label="Estado del historial de condonaciones">
+                  No hay solicitudes de condonación para este socio.
+                </p>
+              )}
+              {lifecycleStatus === 'error' && (
+                <div role="alert">
+                  <p>No se pudo cargar el historial de condonaciones.</p>
+                  <button type="button" onClick={() => void refreshLifecycle(selectedSocio.id)}>
+                    Reintentar historial de condonaciones
+                  </button>
+                </div>
+              )}
+              <TreatmentWorkspace
+                memberId={selectedSocio.id}
+                debt={debt}
+                role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
+                canSettle={canSettle}
+                canRequestCondonation
+                agreementsEnabled={agreementWorkflowEnabled}
+                agreementStates={agreementStates}
+                shifts={openShifts}
+                shiftAvailability={openShiftAvailability}
+                lifecycle={lifecycle}
+                {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+                onRefreshDebt={refreshPaymentContext}
+                onCreateAgreement={createAgreement}
+                onReviseAgreement={reviseAgreement}
+                onRecordCommunityWork={createCommunityWork}
+                onRefreshAgreement={refreshAgreement}
+                onRequestCondonation={requestCondonation}
+                onDecideCondonation={decideCondonation}
+                onExecuteCondonation={presentExecution}
+                executionFeedback={executionFeedback}
+              />
+            </>
+          )}
         </>
       )}
     </main>
