@@ -4,16 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
-import {
-  collectionButtonClass,
-  collectionSectionClass,
-} from '@/components/collections/CollectionPrimitives'
+import { collectionButtonClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel } from '@/components/collections/DebtPanel'
-import { CollectionsGenerationWorkspace } from '@/components/collections/CollectionsGenerationWorkspace'
 import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
+import { CollectionsGenerationWorkspace } from '@/components/collections/CollectionsGenerationWorkspace'
 import {
   PricingPanel,
   type DisciplinePanelState,
@@ -50,6 +47,7 @@ import {
 } from '@/lib/collections-idempotency'
 import { useFeatureConfig } from '@/lib/features'
 import { useAuth } from '@/lib/use-auth'
+import { Modal } from '@/components/ui/Modal'
 import {
   useCollectionsPayments,
   type DebtSocio,
@@ -75,6 +73,7 @@ export default function CollectionsPage() {
   const { collectionsEnabled, agreementsEnabled } = useFeatureConfig()
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
   const [activeTab, setActiveTab] = useState<'collections' | 'generation'>('collections')
+  const [pricingOpen, setPricingOpen] = useState(false)
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
   const [pricingError, setPricingError] = useState('')
@@ -99,15 +98,13 @@ export default function CollectionsPage() {
       | 'transactional_error'
   } | null>(null)
   const idempotency = useRef<CollectionsIdempotencyStore | null>(null)
+  const pricingTrigger = useRef<HTMLButtonElement>(null)
+  const restorePricingTrigger = useRef(false)
   const selectedMember = useRef<string | null>(null)
   const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
-  const generationUser =
-    user?.role === 'ADMIN' || user?.role === 'TESORERO'
-      ? (user as Pick<CurrentUser, 'operator_id'> & { role: 'ADMIN' | 'TESORERO' })
-      : null
   const {
     debt,
     debtError,
@@ -121,6 +118,10 @@ export default function CollectionsPage() {
     selectSocio: selectPaymentSocio,
     selectedSocio,
   } = useCollectionsPayments({ user, idempotency })
+  const generationUser =
+    user?.role === 'ADMIN' || user?.role === 'TESORERO'
+      ? (user as Pick<CurrentUser, 'operator_id'> & { role: 'ADMIN' | 'TESORERO' })
+      : null
 
   const loadPrices = async () => {
     const response = await getDuesPrices(period)
@@ -168,6 +169,34 @@ export default function CollectionsPage() {
       ),
     )
     await Promise.all(openObligations.map(({ id }) => loadAgreement(id)))
+  }
+
+  useEffect(() => {
+    if (pricingOpen) {
+      document.querySelector<HTMLElement>('[role="dialog"] select')?.focus()
+      return
+    }
+    if (restorePricingTrigger.current) {
+      pricingTrigger.current?.focus()
+      restorePricingTrigger.current = false
+    }
+  }, [pricingOpen])
+
+  useEffect(() => {
+    if (!pricingOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      restorePricingTrigger.current = true
+      setPricingOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [pricingOpen])
+
+  const closePricing = () => {
+    restorePricingTrigger.current = true
+    setPricingOpen(false)
   }
 
   useEffect(() => {
@@ -490,10 +519,11 @@ export default function CollectionsPage() {
           Cobranza
         </h1>
         <p className="max-w-2xl font-body text-sm leading-6 text-ink-500">
-          Configurá cuotas y gestioná la deuda de cada socio.
+          Configurá las cuotas, revisá la generación del período y registrá los pagos desde un único
+          lugar.
         </p>
       </header>
-      <div className="border-b border-ink-200 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 pb-3">
         <div role="tablist" aria-label="Secciones de cobranza" className="flex gap-2">
           <button
             type="button"
@@ -524,6 +554,16 @@ export default function CollectionsPage() {
             </button>
           )}
         </div>
+        {user?.role === 'ADMIN' && (
+          <button
+            ref={pricingTrigger}
+            type="button"
+            onClick={() => setPricingOpen(true)}
+            className={collectionButtonClass.secondary}
+          >
+            Configurar cuotas
+          </button>
+        )}
       </div>
       {activeTab === 'generation' && generationUser && (
         <CollectionsGenerationWorkspace
@@ -532,45 +572,28 @@ export default function CollectionsPage() {
           onGoToCollections={() => setActiveTab('collections')}
         />
       )}
+      <Modal
+        open={pricingOpen && user?.role === 'ADMIN'}
+        title="Configuración de cuotas"
+        footer={
+          <button type="button" onClick={closePricing} className={collectionButtonClass.secondary}>
+            Cancelar
+          </button>
+        }
+      >
+        <PricingPanel
+          prices={prices}
+          state={pricingState}
+          error={pricingError}
+          disciplines={disciplines}
+          disciplineState={disciplineState}
+          disciplineError={disciplineError}
+          onCreate={createPrice}
+          onRevoke={revokePrice}
+        />
+      </Modal>
       {activeTab === 'collections' && (
         <>
-          <section aria-labelledby="collections-workspace-title" className="space-y-4">
-            <h2
-              id="collections-workspace-title"
-              className="font-display text-xl font-semibold text-ink-900"
-            >
-              Espacio de trabajo de cobranzas
-            </h2>
-            <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
-              {user?.role === 'ADMIN' ? (
-                <PricingPanel
-                  prices={prices}
-                  state={pricingState}
-                  error={pricingError}
-                  disciplines={disciplines}
-                  disciplineState={disciplineState}
-                  disciplineError={disciplineError}
-                  onCreate={createPrice}
-                  onRevoke={revokePrice}
-                />
-              ) : (
-                <section
-                  aria-labelledby="pricing-readonly-title"
-                  className={collectionSectionClass}
-                >
-                  <h3
-                    id="pricing-readonly-title"
-                    className="font-display text-lg font-semibold text-ink-900"
-                  >
-                    Configuración de cuotas
-                  </h3>
-                  <CollectionStatus>
-                    La administración de cuotas está disponible solo para operadores ADMIN.
-                  </CollectionStatus>
-                </section>
-              )}
-            </div>
-          </section>
           <DebtPanel
             socio={selectedSocio}
             socios={socios}
