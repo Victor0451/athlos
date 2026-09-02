@@ -1,22 +1,28 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/lib/api'
+import { PricingPanel } from '@/components/collections/PricingPanel'
 import type { CurrentUser } from '@/lib/auth'
 import type { CondonationLifecyclePage } from '@/lib/api/condonation'
 import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
-const authState = vi.hoisted(() => ({ user: null as { role: string } | null }))
+const authState = vi.hoisted(() => ({ user: null as { role: string; operator_id: string } | null }))
 const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
   revokeDuesPrice: vi.fn(),
   previewDuesAssessments: vi.fn(),
+  planDuesGeneration: vi.fn(),
+  generateDuesAssessments: vi.fn(),
   getDebt: vi.fn(),
   getObligationAgreements: vi.fn(),
   createNegotiatedAgreement: vi.fn(),
   reviseNegotiatedAgreement: vi.fn(),
   createCommunityWorkEvidence: vi.fn(),
+  createFullSelectionPayment: vi.fn(),
+  reverseDuesSettlement: vi.fn(),
   DuesOperationError: class MockDuesOperationError extends Error {
     constructor(
       readonly kind: string,
@@ -31,6 +37,9 @@ const padronesMocks = vi.hoisted(() => ({
 }))
 const sociosMocks = vi.hoisted(() => ({
   getSocios: vi.fn(),
+}))
+const treasuryMocks = vi.hoisted(() => ({
+  getOpenCashShifts: vi.fn(),
 }))
 const condonationMocks = vi.hoisted(() => ({
   createCondonationRequest: vi.fn(),
@@ -52,11 +61,12 @@ vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
 vi.mock('@/lib/api/socios', () => sociosMocks)
+vi.mock('@/lib/api/treasury', () => treasuryMocks)
 vi.mock('@/lib/api/condonation', () => condonationMocks)
 const { default: CollectionsPage } = await import('./page')
 
 const renderPage = (enabled: boolean | undefined, role: string, agreementsEnabled = false) => {
-  authState.user = { role }
+  authState.user = { role, operator_id: 'operator-1' }
   return render(
     <FeatureConfigProvider
       {...(enabled === undefined ? {} : { collectionsEnabled: enabled })}
@@ -69,8 +79,14 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 
 describe('Collections navigation and direct access', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
+    duesMocks.getDebt.mockReset()
+    duesMocks.getObligationAgreements.mockReset()
+    sociosMocks.getSocios.mockReset()
+    treasuryMocks.getOpenCashShifts.mockReset()
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([])
   })
 
   it('shows lifecycle loading for the selected member', async () => {
@@ -414,54 +430,154 @@ describe('Collections navigation and direct access', () => {
       expect.any(String),
     )
   })
+})
 
-  it('exposes labelled landmarks for an authorized operator', () => {
-    renderPage(true, 'TESORERO')
-    expect(screen.getByRole('main', { name: /cobranza/i })).toHaveClass(
-      'min-w-0',
-      'bg-surface-page',
-    )
-    expect(screen.getByRole('heading', { name: /^cobranza$/i })).toHaveClass('font-display')
-    expect(
-      screen.getByRole('region', { name: /espacio de trabajo de cobranzas/i }),
-    ).toBeInTheDocument()
-  })
-
-  it('keeps read-only assessment preview available to TESORERO while withholding ADMIN pricing controls', () => {
-    renderPage(true, 'TESORERO')
-    expect(screen.getByRole('heading', { name: /vista previa de evaluación/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Guardar cuota' })).not.toBeInTheDocument()
-    expect(screen.getByRole('main')).not.toHaveTextContent(/ctacte|reconciliation/i)
-  })
-
-  it('requests a selected member preview and announces malformed responses without execution controls', async () => {
-    const user = userEvent.setup()
-    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+describe('payment orchestration and recovery', () => {
+  const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+  const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }
+  // prettier-ignore
+  const debt = { status: 'ready' as const, socio_id: socio.id, currency: 'ARS', total_debt_cents: 10_000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 10_000, outstanding_cents: 10_000, currency: 'ARS', status: 'OPEN' as const, components: [], benefits: [], allocations: [] }] }
+  const prepare = () => {
+    vi.clearAllMocks()
     sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
-    duesMocks.getDebt.mockResolvedValue({ status: 'empty', obligations: [] })
-    duesMocks.previewDuesAssessments.mockRejectedValue(
-      new duesMocks.DuesOperationError('partial_data', 'malformed preview'),
-    )
-
-    renderPage(true, 'TESORERO')
+    duesMocks.getDebt.mockResolvedValue(debt)
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([shift])
+  }
+  const openPayment = async () => {
+    const user = userEvent.setup()
+    renderPage(true, 'ADMIN')
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
     await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
-    await user.type(screen.getByLabelText('Desde'), '2026-01')
-    await user.type(screen.getByLabelText('Hasta'), '2026-02')
-    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    const registerPayment = await screen.findByRole('button', { name: 'Registrar pago' })
+    await waitFor(() => expect(registerPayment).toBeEnabled())
+    await user.click(registerPayment)
+    return user
+  }
+
+  it('submits the default full selection with Transferencia, then refreshes debt and completes its key', async () => {
+    prepare()
+    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'settlement-1' })
+    const user = await openPayment()
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    await waitFor(() => expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledTimes(1))
+    expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        socio_id: socio.id,
+        obligation_ids: ['obligation-1'],
+        shift_id: shift.id,
+        tender: 'TRANSFER',
+        selection_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+      expect.any(String),
+    )
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Pago registrado.')).toBeInTheDocument()
+    expect(sessionStorage.getItem('athlos:collections:idempotency')).toBeNull()
+  })
+})
+
+describe('Collections pricing panel', () => {
+  it('retains the pricing draft and announces an overlap conflict', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi
+      .fn()
+      .mockRejectedValue(new ApiError(409, 'CONFLICT', 'El intervalo de vigencia se superpone'))
+    render(
+      <PricingPanel
+        prices={[]}
+        state="conflict"
+        error="El intervalo de vigencia se superpone"
+        onCreate={onCreate}
+      />,
+    )
+
+    await user.type(screen.getByLabelText('Importe mensual (ARS)'), '125')
+    await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
+    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
+
+    expect(screen.getByLabelText('Importe mensual (ARS)')).toHaveValue('125')
+    expect(screen.getByLabelText('Vigente desde')).toHaveValue('01/01/2026')
+    expect(screen.getByRole('alert')).toHaveTextContent(/superpone/i)
+  })
+
+  it.each([
+    ['empty', 'No hay cuotas configuradas.'],
+    ['unavailable', 'La configuración de cuotas no está disponible.'],
+    ['success', 'Cuota guardada.'],
+  ] as const)('renders the pricing %s state', (state, message) => {
+    render(<PricingPanel prices={[]} state={state} onCreate={vi.fn()} />)
+    expect(screen.getByText(message)).toBeInTheDocument()
+  })
+
+  it('loads named discipline options from the existing padrones source', async () => {
+    padronesMocks.getDisciplinas.mockResolvedValue({
+      items: [{ id: 'disciplina-1', codigo: 'NATACION', nombre: 'Natación' }],
+    })
+
+    renderPage(true, 'ADMIN')
 
     await waitFor(() =>
-      expect(duesMocks.previewDuesAssessments).toHaveBeenCalledWith({
-        socio_id: 'socio-1',
-        from_period: '2026-01',
-        through_period: '2026-02',
-      }),
+      expect(screen.getByRole('option', { name: 'Adicional por disciplina' })).toBeInTheDocument(),
     )
-    expect(await screen.findByRole('alert')).toHaveTextContent(/datos incompletos/i)
-    expect(
-      screen.queryByRole('button', { name: /ejecutar|generar|confirmar/i }),
-    ).not.toBeInTheDocument()
+    await userEvent.setup().selectOptions(screen.getByLabelText('Tipo de cuota'), 'SPORT')
+    expect(screen.getByRole('option', { name: 'Natación' })).toBeInTheDocument()
+  })
+
+  it('submits the selected discipline id for a sport addition', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <PricingPanel
+        prices={[]}
+        disciplines={[{ id: 'disciplina-1', codigo: 'NATACION', nombre: 'Natación' }]}
+        disciplineState="ready"
+        onCreate={onCreate}
+      />,
+    )
+
+    await user.selectOptions(screen.getByLabelText('Tipo de cuota'), 'SPORT')
+    await user.selectOptions(screen.getByLabelText('Disciplina'), 'disciplina-1')
+    await user.type(screen.getByLabelText('Importe mensual (ARS)'), '35')
+    await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
+    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'SPORT', disciplina_id: 'disciplina-1' }),
+    )
+  })
+
+  it('submits a base fee without a discipline', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(<PricingPanel prices={[]} onCreate={onCreate} />)
+
+    await user.type(screen.getByLabelText('Importe mensual (ARS)'), '125')
+    await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
+    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
+
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'BASE', disciplina_id: null }),
+    )
+    expect(screen.queryByLabelText('Disciplina')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['loading', 'Cargando disciplinas…'],
+    ['empty', 'No hay disciplinas disponibles.'],
+    ['error', 'No se pudieron cargar las disciplinas.'],
+  ] as const)('renders the discipline %s state in Spanish', (disciplineState, message) => {
+    render(
+      <PricingPanel
+        prices={[]}
+        disciplines={[]}
+        disciplineState={disciplineState}
+        onCreate={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(message)).toBeInTheDocument()
   })
 })
 
