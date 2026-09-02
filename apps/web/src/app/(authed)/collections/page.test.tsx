@@ -603,7 +603,7 @@ describe('community-work evidence settlement', () => {
       expect.any(String),
     )
     expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
-    expect(screen.getByText('Deuda total pendiente: 75.00 ARS')).toBeInTheDocument()
+    expect(screen.getByText('Deuda total pendiente: $ 75,00')).toBeInTheDocument()
   })
 
   it.each([
