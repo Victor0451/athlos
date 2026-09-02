@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AuditAction, type AuditRecord } from '@athlos/audit'
 import { ErrorCode } from '@athlos/errors'
-import { AssessmentService, PricingService, type AuditContext } from './service.ts'
+import {
+  AssessmentService,
+  PricingService,
+  type AuditContext,
+  type PlanGenerationCommand,
+} from './service.ts'
 import { BenefitService } from './dues-benefits.ts'
 
 const context: AuditContext = {
@@ -182,4 +187,60 @@ const result = await service.preview({ ...context, role: 'TESORERO', socioId: 'm
 expect(result).toMatchObject({ executable: false, issues: expect.arrayContaining([expect.objectContaining({ code: expected })]) })
 expect(result.periods).toHaveLength(2)
   })
+
+  it('returns an authorized generation presentation without transactions, receipts, locks, or audit', async () => {
+    const audit = auditLog()
+    const database = db()
+    const repository = generationRepository()
+    const loadPlan = vi.fn().mockResolvedValue(generationPlan())
+    const service = new AssessmentService(database, { repository, audit: audit.emit, loadPlan } as never)
+    const command: PlanGenerationCommand = { role: 'TESORERO', period }
+
+    await expect(service.planGeneration(command)).resolves.toEqual({
+      ...generationPlan().presentation,
+      fingerprint: 'f'.repeat(64),
+      canGenerate: true,
+    })
+    await expect(service.planGeneration({ ...command, role: 'ADMIN' })).resolves.toEqual({
+      ...generationPlan().presentation,
+      fingerprint: 'f'.repeat(64),
+      canGenerate: true,
+    })
+    await expect(service.planGeneration({ role: 'OPERADOR', period })).rejects.toMatchObject({
+      code: ErrorCode.INSUFFICIENT_PERMISSIONS,
+    })
+
+    expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled()
+    expect(repository.claimReceipt).not.toHaveBeenCalled()
+    expect(repository.lockPeriod).not.toHaveBeenCalled()
+    expect(audit.records).toEqual([])
+  })
+})
+
+const period = { start: '2026-02-01', end: '2026-03-01' }
+const generationPlan = () => ({
+  internal: { fingerprint: 'f'.repeat(64), entries: [] },
+  presentation: {
+    period: '2026-02',
+    currency: 'ARS',
+    summary: {
+      memberCount: 0,
+      readyCount: 0,
+      reviewCount: 0,
+      conflictCount: 0,
+      estimatedNewTotalCents: 0,
+    },
+    members: [],
+  },
+})
+const generationRepository = () => ({
+  claimReceipt: vi.fn(),
+  finalizeReceipt: vi.fn(),
+  lockPeriod: vi.fn(),
+  lockRange: vi.fn(),
+  listEligibleMembers: vi.fn(),
+  listEffectivePrices: vi.fn(),
+  findObligation: vi.fn(),
+  insertObligation: vi.fn(),
+  insertObligationInTransaction: vi.fn(),
 })

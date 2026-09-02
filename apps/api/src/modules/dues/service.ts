@@ -5,6 +5,7 @@ import { BusinessError, ErrorCode } from '@athlos/errors'
 // prettier-ignore
 import { calculateAssessment, type AssessmentInput, type AssessmentResult as CalculationResult, type SportInput } from './calculator.ts'
 import { applyBenefits, type AppliedBenefit, type BenefitComponent } from './benefits.ts'
+import { loadGenerationPlan } from './generation-plan-loader.ts'
 import { planAssessmentRange } from './range-planner.ts'
 import * as repository from './repository.ts'
 import { resolveBenefitRuleCandidates as resolveBenefitRuleCandidatesDefault } from './repository.ts'
@@ -28,6 +29,7 @@ export type CreatePriceCommand = AuditContext & Omit<repository.PriceInput, 'cre
 export type RevokePriceCommand = AuditContext & Omit<repository.PriceRevocationInput, 'revokedBy'>
 // prettier-ignore
 export type GenerateAssessmentCommand = AuditContext & { period: repository.Period; currency?: string }
+export type PlanGenerationCommand = { role: Role; period: repository.Period; currency?: string }
 export type PreviewAssessmentCommand = AuditContext & {
   socioId: string
   fromPeriod: string
@@ -39,8 +41,16 @@ export type RangeExecutionResult = { createdObligationIds: string[]; periods: st
 // prettier-ignore
 export type PricingRepository = Pick<typeof repository, 'createPrice' | 'revokePrice'>
 // prettier-ignore
-export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'lockRange' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation' | 'insertObligationInTransaction'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates' | 'listAssessmentFacts'>>
-type Dependencies<T> = { repository?: T; audit?: AuditEmitter; now?: Clock }
+export type AssessmentRepository = Pick<typeof repository, 'claimReceipt' | 'finalizeReceipt' | 'lockPeriod' | 'lockRange' | 'listEligibleMembers' | 'listEffectivePrices' | 'findObligation' | 'insertObligation' | 'insertObligationInTransaction'> & Partial<Pick<typeof repository, 'resolveBenefitRuleCandidates' | 'listAssessmentFacts' | 'listGenerationMembers' | 'listGenerationPrices'>>
+type Dependencies<T> = {
+  repository?: T
+  audit?: AuditEmitter
+  now?: Clock
+  loadPlan?: (
+    db: DuesDb,
+    input: { period: repository.Period; currency: string },
+  ) => ReturnType<typeof loadGenerationPlan>
+}
 
 const CALCULATOR_VERSION = 'dues-calculator-v1'
 const ROUNDING = 'nearest-cent-half-up'
@@ -131,10 +141,16 @@ export class AssessmentService {
   private readonly repository: AssessmentRepository
   private readonly audit: AuditEmitter
   private readonly now: Clock
+  private readonly loadPlan: NonNullable<Dependencies<AssessmentRepository>['loadPlan']>
   constructor(private readonly db: Db, dependencies: Dependencies<AssessmentRepository> = {}) {
     this.repository = dependencies.repository ?? { ...repository, resolveBenefitRuleCandidates: repository.resolveBenefitRuleCandidates }
     this.audit = dependencies.audit ?? emitAudit
     this.now = dependencies.now ?? (() => new Date())
+    this.loadPlan = dependencies.loadPlan ?? ((db, input) => loadGenerationPlan({
+      listGenerationMembers: (period) => (this.repository.listGenerationMembers ?? repository.listGenerationMembers)(db, period),
+      listGenerationPrices: (period) => (this.repository.listGenerationPrices ?? repository.listGenerationPrices)(db, period),
+      resolveBenefitRuleCandidates: (input) => (this.repository.resolveBenefitRuleCandidates ?? repository.resolveBenefitRuleCandidates)(db, input),
+    }, input))
   }
   async preview(input: PreviewAssessmentCommand) {
     return this.plan(input, this.db)
@@ -183,6 +199,11 @@ export class AssessmentService {
       await this.repository.finalizeReceipt(tx, claim.receipt.id, result)
       return result
     })
+  }
+  async planGeneration(input: PlanGenerationCommand) {
+    authorize(input.role, ['ADMIN', 'TESORERO'])
+    const plan = await this.loadPlan(this.db, { period: input.period, currency: input.currency ?? 'ARS' })
+    return { ...plan.presentation, fingerprint: plan.internal.fingerprint, canGenerate: !plan.internal.entries.some((entry) => entry.status === 'CONFLICT') }
   }
   async generate(input: GenerateAssessmentCommand): Promise<GenerationResult> {
     authorize(input.role, ['ADMIN', 'TESORERO'])
