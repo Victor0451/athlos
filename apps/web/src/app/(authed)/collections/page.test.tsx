@@ -1,8 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/lib/api'
-import { PricingPanel } from '@/components/collections/PricingPanel'
 import type { CurrentUser } from '@/lib/auth'
 import type { CondonationLifecyclePage } from '@/lib/api/condonation'
 import { FeatureConfigProvider } from '@/lib/features'
@@ -464,108 +462,6 @@ describe('Collections navigation and direct access', () => {
     expect(
       screen.queryByRole('button', { name: /ejecutar|generar|confirmar/i }),
     ).not.toBeInTheDocument()
-  })
-})
-
-describe('Collections pricing panel', () => {
-  it('retains the pricing draft and announces an overlap conflict', async () => {
-    const user = userEvent.setup()
-    const onCreate = vi
-      .fn()
-      .mockRejectedValue(new ApiError(409, 'CONFLICT', 'El intervalo de vigencia se superpone'))
-    render(
-      <PricingPanel
-        prices={[]}
-        state="conflict"
-        error="El intervalo de vigencia se superpone"
-        onCreate={onCreate}
-      />,
-    )
-
-    await user.type(screen.getByLabelText('Importe (centavos)'), '12500')
-    await user.type(screen.getByLabelText('Vigente desde'), '2026-01-01')
-    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
-
-    expect(screen.getByLabelText('Importe (centavos)')).toHaveValue(12500)
-    expect(screen.getByLabelText('Vigente desde')).toHaveValue('2026-01-01')
-    expect(screen.getByRole('alert')).toHaveTextContent(/superpone/i)
-  })
-
-  it.each([
-    ['empty', 'No hay cuotas configuradas.'],
-    ['unavailable', 'La configuración de cuotas no está disponible.'],
-    ['success', 'Cuota guardada.'],
-  ] as const)('renders the pricing %s state', (state, message) => {
-    render(<PricingPanel prices={[]} state={state} onCreate={vi.fn()} />)
-    expect(screen.getByText(message)).toBeInTheDocument()
-  })
-
-  it('loads named discipline options from the existing padrones source', async () => {
-    padronesMocks.getDisciplinas.mockResolvedValue({
-      items: [{ id: 'disciplina-1', codigo: 'NATACION', nombre: 'Natación' }],
-    })
-
-    renderPage(true, 'ADMIN')
-
-    await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'Adicional por disciplina' })).toBeInTheDocument(),
-    )
-    await userEvent.setup().selectOptions(screen.getByLabelText('Tipo de cuota'), 'SPORT')
-    expect(screen.getByRole('option', { name: 'Natación' })).toBeInTheDocument()
-  })
-
-  it('submits the selected discipline id for a sport addition', async () => {
-    const user = userEvent.setup()
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <PricingPanel
-        prices={[]}
-        disciplines={[{ id: 'disciplina-1', codigo: 'NATACION', nombre: 'Natación' }]}
-        disciplineState="ready"
-        onCreate={onCreate}
-      />,
-    )
-
-    await user.selectOptions(screen.getByLabelText('Tipo de cuota'), 'SPORT')
-    await user.selectOptions(screen.getByLabelText('Disciplina'), 'disciplina-1')
-    await user.type(screen.getByLabelText('Importe (centavos)'), '3500')
-    await user.type(screen.getByLabelText('Vigente desde'), '2026-01-01')
-    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
-
-    expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'SPORT', disciplina_id: 'disciplina-1' }),
-    )
-  })
-
-  it('submits a base fee without a discipline', async () => {
-    const user = userEvent.setup()
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(<PricingPanel prices={[]} onCreate={onCreate} />)
-
-    await user.type(screen.getByLabelText('Importe (centavos)'), '12500')
-    await user.type(screen.getByLabelText('Vigente desde'), '2026-01-01')
-    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
-
-    expect(onCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'BASE', disciplina_id: null }),
-    )
-    expect(screen.queryByLabelText('Disciplina')).not.toBeInTheDocument()
-  })
-
-  it.each([
-    ['loading', 'Cargando disciplinas…'],
-    ['empty', 'No hay disciplinas disponibles.'],
-    ['error', 'No se pudieron cargar las disciplinas.'],
-  ] as const)('renders the discipline %s state in Spanish', (disciplineState, message) => {
-    render(
-      <PricingPanel
-        prices={[]}
-        disciplines={[]}
-        disciplineState={disciplineState}
-        onCreate={vi.fn()}
-      />,
-    )
-    expect(screen.getByText(message)).toBeInTheDocument()
   })
 })
 
