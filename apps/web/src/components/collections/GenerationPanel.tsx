@@ -35,9 +35,9 @@ export function GenerationPanel({
   const [period, setPeriod] = useState(initial)
   const evidence =
     result && status === 'created'
-      ? `Se generaron ${result.obligation_ids.length} obligaciones para ${result.period}.`
+      ? `Se generaron ${result.generated_obligation_count} obligaciones para ${result.period}.`
       : result && status === 'replayed'
-        ? `El período ya estaba generado; se conservaron ${result.obligation_ids.length} obligaciones.`
+        ? `El período ya estaba generado; se conservaron ${result.retained_existing_count} obligaciones.`
         : null
   const message =
     error ||

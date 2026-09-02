@@ -21,6 +21,7 @@ const {
   createNegotiatedAgreement,
   generateDuesAssessments,
   getDuesPrices,
+  planDuesGeneration,
   getDebt,
   getObligationAgreements,
   previewDuesAssessments,
@@ -68,13 +69,130 @@ describe('typed native dues client', () => {
       query: { period: '2026-01' },
     })
   })
-  it('sends the stable generation key', async () => {
-    await generateDuesAssessments('2026-01', 'retry-key-1')
-    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/assessments/generate', {
+  it('plans without an idempotency key and generates with the reviewed fingerprint', async () => {
+    const fingerprint = 'a'.repeat(64)
+    const plan = {
+      period: '2026-01',
+      currency: 'ARS',
+      plan_fingerprint: fingerprint,
+      can_generate: true,
+      configurations: [
+        {
+          label: 'Cuota social',
+          amount_cents: 12_500,
+          rule: 'Mes completo',
+          validity: 'Desde el 1 de enero de 2026',
+        },
+      ],
+      summary: {
+        eligible_count: 2,
+        ready_count: 1,
+        new_count: 1,
+        existing_count: 0,
+        review_count: 1,
+        conflict_count: 0,
+        estimated_new_total_cents: 12_500,
+      },
+      members: [
+        {
+          member_number: '0001',
+          name: 'Ada Lovelace',
+          status: 'READY',
+          gross_cents: 12_500,
+          net_cents: 12_500,
+          configuration_labels: ['Cuota social'],
+          summary: 'Cuota social mensual',
+          details: ['Cuota social: $125,00'],
+        },
+      ],
+    }
+    apiFetchMock.mockResolvedValueOnce(plan).mockResolvedValueOnce({
+      period: '2026-01',
+      generated_obligation_count: 1,
+      retained_existing_count: 0,
+      review_count: 1,
+      generated_total_cents: 12_500,
+      obligation_ids: ['must-not-expose'],
+    })
+
+    await expect(planDuesGeneration('2026-01')).resolves.toEqual(plan)
+    await expect(generateDuesAssessments('2026-01', fingerprint, 'retry-key-1')).resolves.toEqual({
+      period: '2026-01',
+      generated_obligation_count: 1,
+      retained_existing_count: 0,
+      review_count: 1,
+      generated_total_cents: 12_500,
+    })
+    expect(apiFetchMock).toHaveBeenNthCalledWith(1, '/api/v1/dues/assessments/generation-plan', {
       method: 'POST',
-      headers: { 'idempotency-key': 'retry-key-1' },
       body: { period: '2026-01' },
     })
+    expect(apiFetchMock).toHaveBeenNthCalledWith(2, '/api/v1/dues/assessments/generate', {
+      method: 'POST',
+      headers: { 'idempotency-key': 'retry-key-1' },
+      body: { period: '2026-01', plan_fingerprint: fingerprint },
+    })
+  })
+
+  it('rejects malformed successful generation DTOs and does not expose obligation ids', async () => {
+    const malformedPlan = {
+      period: '2026-01',
+      currency: 'ARS',
+      plan_fingerprint: 'a'.repeat(64),
+      can_generate: true,
+      configurations: [
+        {
+          label: 'Cuota social',
+          amount_cents: 12_500,
+          rule: 'Mes completo',
+          validity: 'Desde el 1 de enero de 2026',
+        },
+      ],
+      summary: {
+        eligible_count: 1,
+        ready_count: 1,
+        new_count: 1,
+        existing_count: 0,
+        review_count: 0,
+        conflict_count: 0,
+        estimated_new_total_cents: 12_500,
+      },
+      members: [
+        {
+          member_number: '0001',
+          name: 'Ada Lovelace',
+          status: 'UNKNOWN',
+          gross_cents: 12_500,
+          net_cents: 12_500,
+          configuration_labels: ['Cuota social'],
+          summary: 'Cuota social mensual',
+          details: [],
+        },
+      ],
+    }
+    apiFetchMock.mockResolvedValueOnce(malformedPlan)
+    await expect(planDuesGeneration('2026-01')).rejects.toMatchObject({ kind: 'partial_data' })
+
+    for (const plan of [
+      { ...malformedPlan, currency: 'ars' },
+      { ...malformedPlan, plan_fingerprint: 'invalid' },
+      { ...malformedPlan, summary: { ...malformedPlan.summary, ready_count: -1 } },
+    ]) {
+      apiFetchMock.mockResolvedValueOnce(plan)
+      await expect(planDuesGeneration('2026-01')).rejects.toMatchObject({ kind: 'partial_data' })
+    }
+
+    apiFetchMock.mockResolvedValueOnce({
+      period: '2026-01',
+      generated_obligation_count: 1,
+      retained_existing_count: 0,
+      review_count: 0,
+      generated_total_cents: '12500',
+      obligation_ids: ['must-not-exist'],
+    })
+    await expect(
+      generateDuesAssessments('2026-01', 'a'.repeat(64), 'retry-key-1'),
+    ).rejects.toMatchObject({ kind: 'partial_data' })
   })
 
   it('sends ADMIN pricing creation and revocation through the native routes', async () => {
