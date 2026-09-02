@@ -31,10 +31,12 @@ type Props = {
   agreementsEnabled?: boolean
   agreementStates: Record<string, AgreementViewState>
   shifts?: CashShift[]
+  shiftAvailability?: 'loading' | 'ready' | 'unavailable'
   lifecycle?: CondonationLifecycle[]
   onPayment?: (
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<FullSelectionPaymentResult & { replayed?: boolean }>
+  onRefreshDebt?: () => Promise<unknown>
   onReverse?: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
   onCreateAgreement?: (
     obligationId: string,
@@ -75,8 +77,10 @@ export function TreatmentWorkspace({
   agreementsEnabled = false,
   agreementStates,
   shifts = [],
+  shiftAvailability = 'ready',
   lifecycle = [],
   onPayment,
+  onRefreshDebt = () => Promise.resolve(),
   onReverse,
   onCreateAgreement,
   onReviseAgreement,
@@ -143,7 +147,9 @@ export function TreatmentWorkspace({
             <SettlementActions
               debt={debt}
               shifts={shifts}
+              shiftAvailability={shiftAvailability}
               onPayment={onPayment}
+              onRefreshDebt={onRefreshDebt as () => Promise<void>}
               onReverse={onReverse}
               headingLevel={4}
             />
