@@ -24,6 +24,23 @@ const lifecycle = (state: Lifecycle['state'] = 'pending'): Lifecycle => ({
   },
 })
 
+const rawLifecycleValues = [
+  '00000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000002',
+  '00000000-0000-4000-8000-000000000003',
+  '00000000-0000-4000-8000-000000000004',
+  '2026-02-01T00:00:00.000Z',
+  '2026-01-31T00:00:00.000Z',
+  'pending',
+  'rejected',
+  'expired',
+  'approved_awaiting_execution',
+  'executed',
+  'recoverable',
+  'unavailable',
+  'replayed',
+]
+
 describe('CondonationLifecycle', () => {
   it.each([
     ['pending', /pendiente.*deuda no cambia/i],
@@ -37,10 +54,23 @@ describe('CondonationLifecycle', () => {
       copy,
     )
     expect(screen.getByRole('list', { name: /obligaciones seleccionadas/i })).toHaveTextContent(
-      '12.50 ARS',
+      '$ 12,50',
     )
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
+
+  it.each(['pending', 'approved_awaiting_execution', 'rejected', 'expired', 'executed'] as const)(
+    'presents %s with Spanish dates and money without raw lifecycle values',
+    (state) => {
+      render(<CondonationLifecycle lifecycle={lifecycle(state)} role="OPERADOR" />)
+
+      const content = screen.getByRole('region', { name: /estado de la condonación/i }).textContent
+      expect(content).toContain('1 de febrero de 2026 a las 00:00')
+      expect(content).toContain('31 de enero de 2026 a las 00:00')
+      expect(content).toContain('$ 12,50')
+      rawLifecycleValues.forEach((value) => expect(content).not.toContain(value))
+    },
+  )
 
   it('shows obligation ordinals without exposing raw identifiers', () => {
     render(<CondonationLifecycle lifecycle={lifecycle()} role="OPERADOR" />)
@@ -48,6 +78,22 @@ describe('CondonationLifecycle', () => {
       'Obligación 1',
     )
     expect(screen.queryByText('00000000-0000-4000-8000-000000000004')).not.toBeInTheDocument()
+  })
+
+  it('keeps lifecycle IDs internal while executing the exact callback once', async () => {
+    const execute = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(
+      <CondonationLifecycle
+        lifecycle={lifecycle('approved_awaiting_execution')}
+        role="TESORERO"
+        onExecute={execute}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /recuperar y ejecutar condonación/i }))
+    expect(execute).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenCalledWith()
   })
 
   it('offers recovery only to treasury roles for an authoritative recoverable lifecycle', async () => {
@@ -182,8 +228,8 @@ describe('CondonationLifecycle', () => {
     )
     expect(screen.getByText('Aprobada: pendiente de ejecución')).toBeInTheDocument()
     expect(screen.getByText('Recuperación requerida')).toBeInTheDocument()
-    expect(screen.getByText('12.50 ARS')).toHaveClass('font-mono', 'tabular-nums')
-    expect(screen.getByText('12.50 ARS').closest('li')).toHaveClass('bg-surface-sunken')
+    expect(screen.getByText('$ 12,50')).toHaveClass('font-mono', 'tabular-nums')
+    expect(screen.getByText('$ 12,50').closest('li')).toHaveClass('bg-surface-sunken')
     expect(screen.queryByText('00000000-0000-4000-8000-000000000004')).not.toBeInTheDocument()
   })
 })
