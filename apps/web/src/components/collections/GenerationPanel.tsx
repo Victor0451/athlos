@@ -1,82 +1,128 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
-import type { DuesGenerationResult } from '@/lib/api/dues'
+import { useEffect, useState, type FormEvent } from 'react'
+import {
+  collectionButtonClass,
+  collectionInlineStatusClass,
+  collectionSectionClass,
+} from '@/components/collections/CollectionPrimitives'
+import type { DuesGenerationPlan, DuesGenerationResult } from '@/lib/api/dues'
+import { GenerationPeriodField } from './GenerationPeriodField'
+import { GenerationPlanReview } from './GenerationPlanReview'
 
 export type GenerationPanelStatus =
   | 'idle'
+  | 'planning'
   | 'loading'
-  | 'created'
-  | 'replayed'
-  | 'zero'
-  | 'conflict'
+  | 'ready'
+  | 'stale'
+  | 'generating'
+  | 'generated'
   | 'error'
+
+export type GenerationRequest = { period: string; plan_fingerprint: string }
 type Props = {
   period?: string
-  status?: GenerationPanelStatus
+  plan?: DuesGenerationPlan | null
   result?: DuesGenerationResult | null
+  status?: GenerationPanelStatus
   error?: string
-  onGenerate: (period: string) => Promise<unknown> | unknown
+  onPlan: (period: string) => Promise<unknown> | unknown
+  onGenerate: (request: GenerationRequest) => Promise<unknown> | unknown
+  onGoToCollections: () => void
 }
-const outcome: Record<string, string> = {
-  created: 'Se generaron las deudas del período.',
-  replayed: 'El período ya estaba generado.',
-  zero: 'No se generaron deudas.',
-  conflict: 'La generación requiere revisión.',
-}
+
+const money = (cents: number, currency: string) =>
+  `${currency} ${new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2 }).format(cents / 100)}`
 
 export function GenerationPanel({
   period: initial = '',
-  status = 'idle',
+  plan,
   result,
+  status = 'idle',
   error,
+  onPlan,
   onGenerate,
+  onGoToCollections,
 }: Props) {
   const [period, setPeriod] = useState(initial)
-  const evidence =
-    result && status === 'created'
-      ? `Se generaron ${result.generated_obligation_count} obligaciones para ${result.period}.`
-      : result && status === 'replayed'
-        ? `El período ya estaba generado; se conservaron ${result.retained_existing_count} obligaciones.`
-        : null
+  const [periodValid, setPeriodValid] = useState(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(initial))
+  const reviewing = status === 'planning' || status === 'loading'
+
+  useEffect(() => {
+    setPeriod(initial)
+  }, [initial])
   const message =
     error ||
-    evidence ||
-    (status === 'loading'
-      ? 'Generando deudas del período…'
-      : status === 'error'
-        ? 'No se pudieron generar las deudas del período.'
-        : (outcome[status] ?? ''))
-  const alert = Boolean(error || status === 'error' || status === 'conflict')
+    (status === 'planning' || status === 'loading'
+      ? 'Revisando la generación del período…'
+      : status === 'generating'
+        ? 'Generando deudas del período…'
+        : status === 'stale'
+          ? 'Los datos cambiaron. Revisá el plan actualizado antes de confirmar.'
+          : status === 'error'
+            ? 'No se pudo revisar la generación del período.'
+            : null)
+  const alert = Boolean(error || status === 'error' || status === 'stale')
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    void Promise.resolve(onGenerate(period)).catch(() => undefined)
+    void onPlan(period)
   }
+
   return (
-    <section aria-labelledby="generation-title" className="space-y-4 rounded-lg border p-4">
-      <h2 id="generation-title" className="text-lg font-semibold">
-        Generación mensual
-      </h2>
+    <section aria-labelledby="generation-title" className={collectionSectionClass}>
+      <div className="space-y-1">
+        <h2 id="generation-title" className="font-display text-xl font-semibold text-ink-900">
+          Generación mensual
+        </h2>
+        <p className="font-body text-sm text-ink-500">Revisá las cuotas antes de generar deudas.</p>
+      </div>
       {message && (
-        <p role={alert ? 'alert' : 'status'} aria-live={alert ? 'assertive' : 'polite'}>
+        <p
+          role={alert ? 'alert' : 'status'}
+          aria-live={alert ? 'assertive' : 'polite'}
+          className={collectionInlineStatusClass(alert ? 'error' : 'neutral')}
+        >
           {message}
         </p>
       )}
       <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-        <label>
-          Período
-          <input
-            type="month"
-            required
-            value={period}
-            onChange={(event) => setPeriod(event.target.value)}
-          />
-        </label>
-        <button type="submit" disabled={status === 'loading'}>
-          Generar deudas del período
+        <GenerationPeriodField
+          value={period}
+          onChange={setPeriod}
+          onValidityChange={setPeriodValid}
+        />
+        <button
+          type="submit"
+          disabled={!periodValid || reviewing || status === 'generating'}
+          className={collectionButtonClass.primary}
+        >
+          Revisar generación
         </button>
       </form>
-      <a href="#debt-title">Ver detalle de deudas</a>
+      {plan && (
+        <GenerationPlanReview
+          plan={plan}
+          isGenerating={status === 'generating'}
+          onConfirm={() =>
+            void onGenerate({ period: plan.period, plan_fingerprint: plan.plan_fingerprint })
+          }
+        />
+      )}
+      {status === 'generated' && result && (
+        <div role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>
+          Se generaron {result.generated_obligation_count} deudas; {result.retained_existing_count}{' '}
+          existentes y {result.review_count} para revisar. Total:{' '}
+          {money(result.generated_total_cents, 'ARS')}
+          <button
+            type="button"
+            onClick={onGoToCollections}
+            className={`ml-3 ${collectionButtonClass.secondary}`}
+          >
+            Ir a cobranza
+          </button>
+        </div>
+      )}
     </section>
   )
 }

@@ -12,6 +12,7 @@ import {
   collectionInlineStatusClass,
   collectionSectionClass,
 } from './CollectionPrimitives'
+import { formatObligationPeriod } from './payment-presentation'
 
 type Obligation = { id: string; period_start: string; outstanding_cents: number; currency: string }
 type Props = {
@@ -134,7 +135,7 @@ export function CondonationActions({
       >
         {eligible.map(({ id, period_start }) => (
           <li key={id} className="bg-surface-sunken px-3 py-2">
-            Período {period_start}
+            Período {formatObligationPeriod(period_start)}
           </li>
         ))}
       </ul>
