@@ -82,7 +82,7 @@ describe('dues services', () => {
     }
     const service = new AssessmentService(db(), { repository, audit: audit.emit })
 
-    await expect(service.generate({ ...context, period: result.period })).resolves.toEqual(result)
+    await expect(service.generate({ ...context, period: result.period, planFingerprint: 'f'.repeat(64) })).resolves.toEqual(result)
     expect(repository.claimReceipt).toHaveBeenCalledOnce()
     expect(audit.records).toEqual([])
   })
@@ -189,52 +189,145 @@ expect(result.periods).toHaveLength(2)
   })
 
   it('returns an authorized generation presentation without transactions, receipts, locks, or audit', async () => {
-    const audit = auditLog()
-    const database = db()
-    const repository = generationRepository()
-    const loadPlan = vi.fn().mockResolvedValue(generationPlan())
-    const service = new AssessmentService(database, { repository, audit: audit.emit, loadPlan } as never)
-    const command: PlanGenerationCommand = { role: 'TESORERO', period }
+const loadPlan = vi.fn().mockResolvedValue(generationPlan())
+const database = db(), repository = generationRepository()
+const service = new AssessmentService(database, { repository, loadPlan } as never)
+const command: PlanGenerationCommand = { role: 'TESORERO', period }
+await expect(service.planGeneration(command)).resolves.toEqual({ ...generationPlan().presentation, fingerprint: 'f'.repeat(64), canGenerate: true })
+await expect(service.planGeneration({ ...command, role: 'ADMIN' })).resolves.toEqual({ ...generationPlan().presentation, fingerprint: 'f'.repeat(64), canGenerate: true })
+await expect(service.planGeneration({ role: 'OPERADOR', period })).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled()
+expect(repository.claimReceipt).not.toHaveBeenCalled()
+expect(repository.lockPeriod).not.toHaveBeenCalled()
+  })
 
-    await expect(service.planGeneration(command)).resolves.toEqual({
-      ...generationPlan().presentation,
-      fingerprint: 'f'.repeat(64),
-      canGenerate: true,
+  it('executes READY payloads verbatim in a repeatable-read transaction and audits benefits', async () => {
+const audit = auditLog(), repository = generationRepository(), payload = readyPayload()
+const database = db(), loadPlan = vi.fn().mockResolvedValue(generationPlan([readyEntry(payload)]))
+const service = new AssessmentService(database, { repository, audit: audit.emit, loadPlan, now: () => new Date('2026-02-10T00:00:00Z') } as never)
+    await expect(service.generate({ ...context, period, planFingerprint: 'f'.repeat(64) })).resolves.toEqual({ period, generatedObligationCount: 1, retainedExistingCount: 0, reviewCount: 0, generatedTotalCents: 3100 })
+    expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'repeatable read' })
+    const calls = [
+      repository.claimReceipt.mock.invocationCallOrder[0],
+      repository.lockPeriod.mock.invocationCallOrder[0],
+      loadPlan.mock.invocationCallOrder[0],
+      repository.insertObligationInTransaction.mock.invocationCallOrder[0],
+    ].map((order) => {
+      expect(order).toBeDefined()
+      return order!
     })
-    await expect(service.planGeneration({ ...command, role: 'ADMIN' })).resolves.toEqual({
-      ...generationPlan().presentation,
-      fingerprint: 'f'.repeat(64),
-      canGenerate: true,
+    expect(calls).toEqual([...calls].sort((left, right) => left - right))
+    const insertion = repository.insertObligationInTransaction.mock.calls[0]?.[1] as { components: unknown; snapshot: { payload: unknown } }
+    expect(insertion.components).toEqual(payload.components)
+    expect(insertion.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'BASE', disciplinaId: null }),
+        expect.objectContaining({ kind: 'SPORT', disciplinaId: 'discipline-1' }),
+      ]),
+    )
+    expect(insertion.snapshot.payload).toEqual(payload.snapshot)
+    expect(audit.records.find((record) => record.action === AuditAction.DUES_BENEFIT_APPLIED)).toMatchObject({
+      entityId: payload.benefitAudits[0]?.id,
+      newValue: { obligationId: 'created-1', benefit: payload.benefitAudits[0] },
+      payload: { obligationId: 'created-1', benefit: payload.benefitAudits[0] },
     })
-    await expect(service.planGeneration({ role: 'OPERADOR', period })).rejects.toMatchObject({
-      code: ErrorCode.INSUFFICIENT_PERMISSIONS,
-    })
+  })
 
-    expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled()
-    expect(repository.claimReceipt).not.toHaveBeenCalled()
-    expect(repository.lockPeriod).not.toHaveBeenCalled()
-    expect(audit.records).toEqual([])
+  it('replays a finalized generation before loading its plan', async () => {
+const result = { period, generatedObligationCount: 1, retainedExistingCount: 0, reviewCount: 0, generatedTotalCents: 3100 }
+const repository = generationRepository({ status: 'replayed', receipt: {}, result }), loadPlan = vi.fn()
+const service = new AssessmentService(db(), { repository, loadPlan } as never)
+await expect(service.generate({ ...context, period, planFingerprint: 'f'.repeat(64) })).resolves.toEqual(result)
+expect(repository.lockPeriod).not.toHaveBeenCalled()
+expect(loadPlan).not.toHaveBeenCalled()
+expect(repository.insertObligationInTransaction).not.toHaveBeenCalled()
+expect(repository.finalizeReceipt).not.toHaveBeenCalled()
+  })
+
+  it.each([['stale', generationPlan(), '0'.repeat(64)], ['conflict', generationPlan([{ ...readyEntry(readyPayload()), status: 'CONFLICT' }]), 'f'.repeat(64)]])('rejects %s plans before inserts', async (_case, plan, planFingerprint) => {
+const audit = auditLog(), repository = generationRepository()
+const service = new AssessmentService(db(), { repository, audit: audit.emit, loadPlan: vi.fn().mockResolvedValue(plan) } as never)
+await expect(service.generate({ ...context, period, planFingerprint })).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+expect(repository.insertObligationInTransaction).not.toHaveBeenCalled()
+expect(audit.records).toEqual([])
+expect(repository.finalizeReceipt).not.toHaveBeenCalled()
+  })
+
+  it('skips REVIEW entries, retaining existing obligations without inserting them', async () => {
+const repository = generationRepository(), audit = auditLog()
+const review = { ...readyEntry(readyPayload()), status: 'REVIEW', existingObligationId: 'existing', insertion: { disposition: 'SKIP' } }
+const service = new AssessmentService(db(), { repository, audit: audit.emit, loadPlan: vi.fn().mockResolvedValue(generationPlan([review])) } as never)
+await expect(service.generate({ ...context, period, planFingerprint: 'f'.repeat(64) })).resolves.toMatchObject({ retainedExistingCount: 1, reviewCount: 1, generatedObligationCount: 0, generatedTotalCents: 0 })
+expect(repository.insertObligationInTransaction).not.toHaveBeenCalled()
   })
 })
 
 const period = { start: '2026-02-01', end: '2026-03-01' }
-const generationPlan = () => ({
-  internal: { fingerprint: 'f'.repeat(64), entries: [] },
+const readyPayload = () => ({
+  amountCents: 3100,
+  components: [
+    {
+      kind: 'BASE',
+      componentKey: 'base',
+      amountCents: 3100,
+      disciplinaId: null,
+      calculationInputs: { source: 'payload' },
+      eligibilitySnapshot: { eligible: true },
+      priceSnapshot: { price: 'p' },
+    },
+    {
+      kind: 'SPORT',
+      componentKey: 'sport:enrollment-1',
+      amountCents: 1200,
+      disciplinaId: 'discipline-1',
+      enrollmentId: 'enrollment-1',
+      calculationInputs: { source: 'payload' },
+      eligibilitySnapshot: { enrollment: { disciplineId: 'discipline-1' } },
+      priceSnapshot: { price: 'sport-p' },
+    },
+  ],
+  benefitAudits: [
+    {
+      id: 'benefit-1',
+      requestedAmountCents: 500,
+      appliedAmountCents: 500,
+      truncatedAmountCents: 0,
+      remainingBeforeCents: 3100,
+      remainingAfterCents: 2600,
+      ruleSnapshot: { kind: 'FIXED_DISCOUNT' },
+      sourceSnapshot: { benefitId: 'benefit-1' },
+    },
+  ],
+  snapshot: { immutable: 'payload' },
+})
+const readyEntry = (payload: ReturnType<typeof readyPayload>) => ({
+  memberId: 'member-1',
+  existingObligationId: null,
+  status: 'READY' as const,
+  insertion: { disposition: 'INSERT' as const, payload },
+})
+const generationPlan = (entries: Array<{ status: string }> = [readyEntry(readyPayload())]) => ({
+  internal: { fingerprint: 'f'.repeat(64), entries },
   presentation: {
     period: '2026-02',
     currency: 'ARS',
     summary: {
-      memberCount: 0,
-      readyCount: 0,
-      reviewCount: 0,
-      conflictCount: 0,
-      estimatedNewTotalCents: 0,
+      memberCount: entries.length,
+      readyCount: entries.filter((entry) => entry.status === 'READY').length,
+      reviewCount: entries.filter((entry) => entry.status === 'REVIEW').length,
+      conflictCount: entries.filter((entry) => entry.status === 'CONFLICT').length,
+      estimatedNewTotalCents: 3100,
     },
     members: [],
   },
 })
-const generationRepository = () => ({
-  claimReceipt: vi.fn(),
+const generationRepository = (
+  claim: unknown = {
+    status: 'claimed',
+    receipt: { id: 'receipt-1', requestFingerprint: context.requestFingerprint },
+  },
+) => ({
+  claimReceipt: vi.fn().mockResolvedValue(claim),
   finalizeReceipt: vi.fn(),
   lockPeriod: vi.fn(),
   lockRange: vi.fn(),
@@ -242,5 +335,5 @@ const generationRepository = () => ({
   listEffectivePrices: vi.fn(),
   findObligation: vi.fn(),
   insertObligation: vi.fn(),
-  insertObligationInTransaction: vi.fn(),
+  insertObligationInTransaction: vi.fn().mockResolvedValue({ obligation: { id: 'created-1' } }),
 })

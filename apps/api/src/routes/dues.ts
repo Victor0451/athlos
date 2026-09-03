@@ -25,7 +25,10 @@ const dateSchema = z
 const periodSchema = z.string().regex(periodPattern, 'period must be YYYY-MM')
 const idParamSchema = z.object({ id: z.string().uuid() })
 const periodQuerySchema = z.object({ period: periodSchema })
-const generationBodySchema = z.object({ period: periodSchema }).strict()
+const generationPlanBodySchema = z.object({ period: periodSchema }).strict()
+const generationBodySchema = generationPlanBodySchema
+  .extend({ plan_fingerprint: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict()
 const previewBodySchema = z
   .object({ socio_id: z.string().uuid(), from_period: periodSchema, through_period: periodSchema })
   .strict()
@@ -187,7 +190,7 @@ const settlementReversalBodySchema = z
 export interface DuesRouteOptions {
   pricingService?: Pick<PricingService, 'create' | 'revoke'>
   assessmentService?: Pick<AssessmentService, 'generate'> &
-    Partial<Pick<AssessmentService, 'preview' | 'executeRange'>>
+    Partial<Pick<AssessmentService, 'preview' | 'executeRange' | 'planGeneration'>>
   listEffectivePrices?: typeof repository.listEffectivePrices
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
@@ -269,6 +272,40 @@ function toFamilyMembershipDTO(row: {
     reason: row.reason,
     revoked_at:
       row.revokedAt instanceof Date ? row.revokedAt.toISOString() : (row.revokedAt ?? null),
+  }
+}
+
+function toGenerationPlanDTO(result: Awaited<ReturnType<AssessmentService['planGeneration']>>) {
+  return {
+    period: result.period,
+    currency: result.currency,
+    plan_fingerprint: result.fingerprint,
+    can_generate: result.canGenerate,
+    configurations: result.configurations.map((configuration) => ({
+      label: configuration.label,
+      amount_cents: configuration.amountCents,
+      rule: configuration.rule,
+      validity: configuration.validity,
+    })),
+    summary: {
+      eligible_count: result.summary.eligibleCount,
+      ready_count: result.summary.readyCount,
+      new_count: result.summary.newCount,
+      existing_count: result.summary.existingCount,
+      review_count: result.summary.reviewCount,
+      conflict_count: result.summary.conflictCount,
+      estimated_new_total_cents: result.summary.estimatedNewTotalCents,
+    },
+    members: result.members.map((member) => ({
+      member_number: member.memberNumber,
+      name: member.name,
+      status: member.status,
+      gross_cents: member.grossCents,
+      net_cents: member.netCents,
+      configuration_labels: member.configurationLabels,
+      summary: member.summary,
+      details: member.details,
+    })),
   }
 }
 
@@ -471,6 +508,16 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
       .send({ created_obligation_ids: result.createdObligationIds, periods: result.periods })
   })
 
+  fastify.post('/api/v1/dues/assessments/generation-plan', FINANCE_GATE, async (request, reply) => {
+    enabled(container)
+    const body = throwIfInvalid(generationPlanBodySchema, request.body ?? {}, 'body')
+    const result = await assessmentService.planGeneration!({
+      role: request.operator!.role,
+      period: periodBounds(body.period),
+    })
+    return reply.code(200).send(toGenerationPlanDTO(result))
+  })
+
   fastify.post('/api/v1/dues/assessments/generate', FINANCE_GATE, async (request, reply) => {
     enabled(container)
     const body = throwIfInvalid(generationBodySchema, request.body ?? {}, 'body')
@@ -478,8 +525,15 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     const result = await assessmentService.generate({
       ...context(request, key, body),
       period: periodBounds(body.period),
+      planFingerprint: body.plan_fingerprint,
     })
-    return reply.code(200).send({ period: body.period, obligation_ids: result.obligationIds })
+    return reply.code(200).send({
+      period: body.period,
+      generated_obligation_count: result.generatedObligationCount,
+      retained_existing_count: result.retainedExistingCount,
+      review_count: result.reviewCount,
+      generated_total_cents: result.generatedTotalCents,
+    })
   })
 
   if (container.env.DUES_ASSESSMENT_ENABLED) {
