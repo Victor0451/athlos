@@ -29,7 +29,7 @@ export const navigation: NavigationItem[] = [
   { href: '/padrones', label: 'Padrones', icon: ClipboardList },
   {
     href: '/collections',
-    label: 'Collections',
+    label: 'Cobranza',
     icon: Wallet,
     section: 'Operations',
     roles: ['ADMIN', 'TESORERO', 'OPERADOR'],
