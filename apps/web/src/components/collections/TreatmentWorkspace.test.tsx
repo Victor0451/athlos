@@ -1,7 +1,21 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { DuesOperationError } from '@/lib/api/dues'
 import { TreatmentWorkspace } from './TreatmentWorkspace'
 import type { DebtDetail } from './DebtPanel'
+
+const shifts = [
+  {
+    id: 'shift-1',
+    desk_id: 'desk-1',
+    status: 'OPEN' as const,
+    business_date: '2026-01-01',
+    assigned_operator_id: 'operator-1',
+    opened_at: '2026-01-01T08:00:00.000Z',
+    closed_at: null,
+  },
+]
 
 const debt = {
   status: 'ready',
@@ -35,6 +49,7 @@ describe('TreatmentWorkspace', () => {
         agreementStates={{}}
         onCreateAgreement={vi.fn()}
         onRefreshAgreement={vi.fn()}
+        onRefreshDebt={vi.fn()}
         onRequestCondonation={vi.fn()}
       />,
     )
@@ -64,5 +79,58 @@ describe('TreatmentWorkspace', () => {
     expect(
       screen.queryByRole('button', { name: 'Enviar solicitud de condonación' }),
     ).not.toBeInTheDocument()
+  })
+
+  it('forwards unavailable open-shift state to payment actions', () => {
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="ADMIN"
+        canSettle
+        agreementStates={{}}
+        shifts={[]}
+        shiftAvailability="unavailable"
+        onPayment={vi.fn()}
+        onReverse={vi.fn()}
+        onRefreshDebt={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'No se pudo cargar los turnos de caja abiertos.',
+    )
+  })
+
+  it('forwards debt refresh to payment conflict recovery without retrying payment', async () => {
+    const user = userEvent.setup()
+    const onPayment = vi.fn().mockRejectedValue(new DuesOperationError('conflict', 'stale'))
+    const onRefreshDebt = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="ADMIN"
+        canSettle
+        agreementStates={{}}
+        shifts={shifts}
+        onPayment={onPayment}
+        onReverse={vi.fn()}
+        onRefreshDebt={onRefreshDebt}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /registrar pago/i }))
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'El saldo cambió. Revisá la deuda actualizada antes de volver a confirmar.',
+    )
+    await user.click(screen.getByRole('button', { name: /actualizar deuda/i }))
+    await waitFor(() => expect(onRefreshDebt).toHaveBeenCalledTimes(1))
+    expect(onRefreshDebt).toHaveBeenCalledWith()
+    expect(onPayment).toHaveBeenCalledTimes(1)
   })
 })
