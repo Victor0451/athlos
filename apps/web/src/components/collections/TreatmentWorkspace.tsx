@@ -36,7 +36,7 @@ type Props = {
   onPayment?: (
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<FullSelectionPaymentResult & { replayed?: boolean }>
-  onRefreshDebt?: () => Promise<unknown>
+  onRefreshDebt: () => Promise<unknown>
   onReverse?: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
   onCreateAgreement?: (
     obligationId: string,
@@ -80,7 +80,7 @@ export function TreatmentWorkspace({
   shiftAvailability = 'ready',
   lifecycle = [],
   onPayment,
-  onRefreshDebt = () => Promise.resolve(),
+  onRefreshDebt,
   onReverse,
   onCreateAgreement,
   onReviseAgreement,
