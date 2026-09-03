@@ -21,11 +21,11 @@ export type ReversalRequest = { settlement_id: string; reason: string }
 type Props = {
   debt: DebtDetail
   shifts: CashShift[]
-  shiftAvailability?: 'loading' | 'ready' | 'unavailable'
+  shiftAvailability: 'loading' | 'ready' | 'unavailable'
   onPayment: (
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<{ replayed?: boolean } | void>
-  onRefreshDebt?: () => Promise<void>
+  onRefreshDebt: () => Promise<void>
   onReverse: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
   headingLevel?: 3 | 4
 }
@@ -40,9 +40,9 @@ const money = (cents: number, currency: string) =>
 export function SettlementActions({
   debt,
   shifts,
-  shiftAvailability = 'ready',
+  shiftAvailability,
   onPayment,
-  onRefreshDebt = () => Promise.resolve(),
+  onRefreshDebt,
   onReverse,
   headingLevel = 3,
 }: Props) {
