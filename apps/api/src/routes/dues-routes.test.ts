@@ -5,9 +5,49 @@ import { BusinessError, ErrorCode } from '@athlos/errors'
 import { mockEnv } from '../test-helpers/mock-env.ts'
 import type { AppContainer } from '../container.ts'
 import { errorHandler } from '../plugins/error-handler.ts'
+import { createIdempotencyFingerprint } from '../lib/idempotency.ts'
 import { duesRoutes, type DuesRouteOptions } from './dues.ts'
 
 const actorId = '00000000-0000-4000-8000-000000000001'
+const planFingerprint = 'a'.repeat(64)
+const generationPlan = {
+  period: 'enero de 2026',
+  currency: 'ARS',
+  fingerprint: planFingerprint,
+  canGenerate: true,
+  configurations: [
+    {
+      label: 'Cuota social',
+      amountCents: 12500,
+      rule: 'Mes completo',
+      validity: 'Desde el 1 de enero de 2026',
+    },
+  ],
+  summary: {
+    eligibleCount: 1,
+    readyCount: 1,
+    newCount: 1,
+    existingCount: 0,
+    reviewCount: 0,
+    conflictCount: 0,
+    estimatedNewTotalCents: 12500,
+  },
+  members: [
+    {
+      memberNumber: '001',
+      name: 'Ada Lovelace',
+      status: 'Listo para generar',
+      grossCents: 12500,
+      netCents: 12500,
+      configurationLabels: ['Cuota social'],
+      summary: 'Se generará una nueva obligación.',
+      details: [],
+      memberId: 'internal-member-id',
+      componentKey: 'base',
+    },
+  ],
+  internalCode: 'not-for-wire',
+}
 // prettier-ignore
 const price = {
   id: '00000000-0000-4000-8000-000000000010', kind: 'BASE' as const, disciplinaId: null, amountCents: 12500, currency: 'ARS',
@@ -26,8 +66,12 @@ function services(): DuesRouteOptions {
     assessmentService: {
       generate: vi.fn().mockResolvedValue({
         period: { start: '2026-01-01', end: '2026-02-01' },
-        obligationIds: ['ob-1'],
+        generatedObligationCount: 1,
+        retainedExistingCount: 0,
+        reviewCount: 0,
+        generatedTotalCents: 12500,
       }),
+      planGeneration: vi.fn().mockResolvedValue(generationPlan),
     },
     settlementService: {
       create: vi.fn(),
@@ -96,7 +140,7 @@ describe('dues assessment routes', () => {
       method: 'POST',
       url: '/api/v1/dues/assessments/generate',
       headers: auth('ADMIN', 'off-1'),
-      payload: { period: '2026-01' },
+      payload: { period: '2026-01', plan_fingerprint: planFingerprint },
     })
     expect(list.statusCode).toBe(404)
     expect(generate.statusCode).toBe(404)
@@ -117,7 +161,7 @@ describe('dues assessment routes', () => {
       method: 'POST',
       url: '/api/v1/dues/assessments/generate',
       headers: auth('TESORERO', key),
-      payload: { period },
+      payload: { period, plan_fingerprint: planFingerprint },
     })
     expect(response.statusCode).toBe(400)
     expect(options.assessmentService?.generate).not.toHaveBeenCalled()
@@ -166,7 +210,7 @@ describe('dues assessment routes', () => {
       method: 'POST',
       url: '/api/v1/dues/assessments/generate',
       headers: auth('TESORERO', 'assessment-1'),
-      payload: { period: '2026-01' },
+      payload: { period: '2026-01', plan_fingerprint: planFingerprint },
     })
     expect(create.json()).toMatchObject({
       id: price.id,
@@ -176,7 +220,13 @@ describe('dues assessment routes', () => {
     })
     expect(create.body).not.toContain('authorizationEvidence')
     expect(list.json().items[0]).toMatchObject({ amount_cents: 12500 })
-    expect(generate.json()).toEqual({ period: '2026-01', obligation_ids: ['ob-1'] })
+    expect(generate.json()).toEqual({
+      period: '2026-01',
+      generated_obligation_count: 1,
+      retained_existing_count: 0,
+      review_count: 0,
+      generated_total_cents: 12500,
+    })
     expect(options.pricingService?.create).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId,
@@ -199,8 +249,107 @@ describe('dues assessment routes', () => {
         role: 'TESORERO',
         callerKey: 'assessment-1',
         period: { start: '2026-01-01', end: '2026-02-01' },
+        planFingerprint,
+        requestFingerprint: createIdempotencyFingerprint(
+          'dues-assessment',
+          '/api/v1/dues/assessments/generate',
+          { period: '2026-01', plan_fingerprint: planFingerprint },
+        ),
       }),
     )
+  })
+
+  it.each(['ADMIN', 'TESORERO'] as const)(
+    'returns a safe generation plan to %s without an idempotency key',
+    async (role) => {
+      const options = services(),
+        app = await buildApp(true, options)
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/dues/assessments/generation-plan',
+        headers: auth(role),
+        payload: { period: '2026-01' },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        period: 'enero de 2026',
+        currency: 'ARS',
+        plan_fingerprint: planFingerprint,
+        can_generate: true,
+        configurations: [
+          {
+            label: 'Cuota social',
+            amount_cents: 12500,
+            rule: 'Mes completo',
+            validity: 'Desde el 1 de enero de 2026',
+          },
+        ],
+        summary: {
+          eligible_count: 1,
+          ready_count: 1,
+          new_count: 1,
+          existing_count: 0,
+          review_count: 0,
+          conflict_count: 0,
+          estimated_new_total_cents: 12500,
+        },
+        members: [
+          {
+            member_number: '001',
+            name: 'Ada Lovelace',
+            status: 'Listo para generar',
+            gross_cents: 12500,
+            net_cents: 12500,
+            configuration_labels: ['Cuota social'],
+            summary: 'Se generará una nueva obligación.',
+            details: [],
+          },
+        ],
+      })
+      expect(response.body).not.toMatch(/internal-member-id|internalCode|componentKey|memberId/)
+      expect(options.assessmentService?.planGeneration).toHaveBeenCalledWith({
+        role,
+        period: { start: '2026-01-01', end: '2026-02-01' },
+      })
+    },
+  )
+
+  it.each([
+    ['OPERADOR', true, { period: '2026-01' }, 403],
+    ['ADMIN', false, { period: '2026-01' }, 404],
+    ['ADMIN', true, { period: '2026-01', extra: true }, 400],
+    ['ADMIN', true, { period: '2026-13' }, 400],
+  ] as const)(
+    'rejects invalid generation-plan access or body',
+    async (role, isEnabled, payload, status) => {
+      const options = services(),
+        app = await buildApp(isEnabled, options)
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/dues/assessments/generation-plan',
+        headers: auth(role),
+        payload,
+      })
+      expect(response.statusCode).toBe(status)
+      expect(options.assessmentService?.planGeneration).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([
+    [{ period: '2026-01' }, 'missing fingerprint'],
+    [{ period: '2026-01', plan_fingerprint: 'A'.repeat(64) }, 'uppercase fingerprint'],
+    [{ period: '2026-01', plan_fingerprint: planFingerprint, extra: true }, 'extra field'],
+  ])('rejects generate %s', async (payload, _name) => {
+    const options = services(),
+      app = await buildApp(true, options)
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dues/assessments/generate',
+      headers: auth('ADMIN', 'generation-1'),
+      payload,
+    })
+    expect(response.statusCode).toBe(400)
+    expect(options.assessmentService?.generate).not.toHaveBeenCalled()
   })
 
   it('keeps pricing creation ADMIN-only', async () => {
@@ -251,7 +400,7 @@ describe('dues assessment routes', () => {
       payload:
         route === 'price'
           ? { kind: 'BASE', amount_cents: 1, effective_from: '2026-01-01', rule: 'FULL_MONTH' }
-          : { period: '2026-01' },
+          : { period: '2026-01', plan_fingerprint: planFingerprint },
     })
     expect(response.statusCode).toBe(status)
     expect(response.json()).toMatchObject({ error: code })
