@@ -23,9 +23,46 @@ export interface DuesPriceInput {
   effective_to: string | null
   rule: DuesPrice['rule']
 }
+export interface DuesGenerationConfiguration {
+  label: string
+  amount_cents: number
+  rule: string
+  validity: string
+}
+export interface DuesGenerationSummary {
+  eligible_count: number
+  ready_count: number
+  new_count: number
+  existing_count: number
+  review_count: number
+  conflict_count: number
+  estimated_new_total_cents: number
+}
+export interface DuesGenerationMember {
+  member_number: string
+  name: string
+  status: 'READY' | 'REVIEW' | 'CONFLICT'
+  gross_cents: number
+  net_cents: number
+  configuration_labels: string[]
+  summary: string
+  details: string[]
+}
+export interface DuesGenerationPlan {
+  period: string
+  currency: string
+  plan_fingerprint: string
+  can_generate: boolean
+  configurations: DuesGenerationConfiguration[]
+  summary: DuesGenerationSummary
+  members: DuesGenerationMember[]
+}
 export interface DuesGenerationResult {
   period: string
-  obligation_ids: string[]
+  generated_obligation_count: number
+  retained_existing_count: number
+  review_count: number
+  generated_total_cents: number
 }
 // prettier-ignore
 export interface AssessmentPreviewInput { socio_id:string; from_period:string; through_period:string }
@@ -115,6 +152,15 @@ function isString(value: unknown): value is string {
 }
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
+}
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+function isCurrency(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Z]{3}$/.test(value)
+}
+function isFingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 // prettier-ignore
 function isNullableString(value: unknown): value is string | null { return value === null || isString(value) }
@@ -287,6 +333,97 @@ function decodeFullSelectionPayment(value: unknown): FullSelectionPaymentResult 
       }
     : null
 }
+function decodeGenerationPlan(value: unknown): DuesGenerationPlan | null {
+  if (!isRecord(value) || !Array.isArray(value.configurations) || !Array.isArray(value.members))
+    return null
+  const configurations = value.configurations.map((configuration) =>
+    isRecord(configuration) &&
+    isString(configuration.label) &&
+    isNonNegativeInteger(configuration.amount_cents) &&
+    isString(configuration.rule) &&
+    isString(configuration.validity)
+      ? {
+          label: configuration.label,
+          amount_cents: configuration.amount_cents,
+          rule: configuration.rule,
+          validity: configuration.validity,
+        }
+      : null,
+  )
+  const summary = value.summary
+  const members = value.members.map((member) =>
+    isRecord(member) &&
+    isString(member.member_number) &&
+    isString(member.name) &&
+    isOneOf(member.status, ['READY', 'REVIEW', 'CONFLICT']) &&
+    isNonNegativeInteger(member.gross_cents) &&
+    isNonNegativeInteger(member.net_cents) &&
+    Array.isArray(member.configuration_labels) &&
+    member.configuration_labels.every(isString) &&
+    isString(member.summary) &&
+    Array.isArray(member.details) &&
+    member.details.every(isString)
+      ? {
+          member_number: member.member_number,
+          name: member.name,
+          status: member.status,
+          gross_cents: member.gross_cents,
+          net_cents: member.net_cents,
+          configuration_labels: member.configuration_labels,
+          summary: member.summary,
+          details: member.details,
+        }
+      : null,
+  )
+  return isString(value.period) &&
+    isCurrency(value.currency) &&
+    isFingerprint(value.plan_fingerprint) &&
+    typeof value.can_generate === 'boolean' &&
+    isRecord(summary) &&
+    isNonNegativeInteger(summary.eligible_count) &&
+    isNonNegativeInteger(summary.ready_count) &&
+    isNonNegativeInteger(summary.new_count) &&
+    isNonNegativeInteger(summary.existing_count) &&
+    isNonNegativeInteger(summary.review_count) &&
+    isNonNegativeInteger(summary.conflict_count) &&
+    isNonNegativeInteger(summary.estimated_new_total_cents) &&
+    configurations.every(Boolean) &&
+    members.every(Boolean)
+    ? {
+        period: value.period,
+        currency: value.currency,
+        plan_fingerprint: value.plan_fingerprint,
+        can_generate: value.can_generate,
+        configurations: configurations as DuesGenerationConfiguration[],
+        summary: {
+          eligible_count: summary.eligible_count,
+          ready_count: summary.ready_count,
+          new_count: summary.new_count,
+          existing_count: summary.existing_count,
+          review_count: summary.review_count,
+          conflict_count: summary.conflict_count,
+          estimated_new_total_cents: summary.estimated_new_total_cents,
+        },
+        members: members as DuesGenerationMember[],
+      }
+    : null
+}
+function decodeGenerationResult(value: unknown): DuesGenerationResult | null {
+  return isRecord(value) &&
+    isString(value.period) &&
+    isNonNegativeInteger(value.generated_obligation_count) &&
+    isNonNegativeInteger(value.retained_existing_count) &&
+    isNonNegativeInteger(value.review_count) &&
+    isNonNegativeInteger(value.generated_total_cents)
+    ? {
+        period: value.period,
+        generated_obligation_count: value.generated_obligation_count,
+        retained_existing_count: value.retained_existing_count,
+        review_count: value.review_count,
+        generated_total_cents: value.generated_total_cents,
+      }
+    : null
+}
 function mapError(error: unknown): DuesOperationError {
   if (error instanceof DuesOperationError) return error
   if (error instanceof ApiError || (isRecord(error) && typeof error.status === 'number')) {
@@ -336,12 +473,24 @@ export function revokeDuesPrice(id: string, reason: string) {
   })
 }
 
-export function generateDuesAssessments(period: string, key: string) {
-  return apiFetch<DuesGenerationResult>('/api/v1/dues/assessments/generate', {
-    method: 'POST',
-    headers: { 'idempotency-key': key },
-    body: { period },
-  })
+export function planDuesGeneration(period: string) {
+  return duesOperation(
+    () =>
+      apiFetch('/api/v1/dues/assessments/generation-plan', { method: 'POST', body: { period } }),
+    decodeGenerationPlan,
+  )
+}
+
+export function generateDuesAssessments(period: string, planFingerprint: string, key: string) {
+  return duesOperation(
+    () =>
+      apiFetch('/api/v1/dues/assessments/generate', {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: { period, plan_fingerprint: planFingerprint },
+      }),
+    decodeGenerationResult,
+  )
 }
 
 export function previewDuesAssessments(input: AssessmentPreviewInput) {
