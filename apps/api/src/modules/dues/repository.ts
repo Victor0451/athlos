@@ -369,6 +369,136 @@ export async function listEffectivePrices(db: DuesDb, period: Period) {
   }
 }
 
+export type GenerationMemberFact = {
+  id: string
+  memberNumber: string
+  label: string
+  memberSince: string
+  baseEligible: true
+  familyGroupId: string | null
+  sports: Array<{
+    id: string
+    disciplineId: string
+    label: string
+    estado: string
+    fechaAlta: string
+    fechaBaja: string | null
+    eligibleFrom: string
+    eligibleTo: string
+    start: string
+    end: string | null
+  }>
+  existingObligationId?: string
+}
+export type GenerationPriceFact = {
+  id: string
+  kind: PriceKind
+  disciplineId: string | null
+  label: string
+  amountCents: number
+  currency: string
+  rule: PriceRule
+  from: string
+  to: string | null
+}
+type GenerationMemberRow = {
+  socioId: string
+  memberNumber: string
+  memberLabel: string
+  memberSince: string
+  familyGroupId: string | null
+  existingObligationId: string | null
+  enrollmentId: string | null
+  disciplinaId: string | null
+  disciplineLabel: string | null
+  enrollmentStart: string | null
+  enrollmentEnd: string | null
+  enrollmentEstado: string | null
+}
+export async function listGenerationMembers(
+  db: DuesDb,
+  period: Period,
+): Promise<GenerationMemberFact[]> {
+  const result = await db.execute(
+    sql`SELECT s.id AS "socioId", s.numero_socio AS "memberNumber", concat_ws(', ', btrim(s.apellido), btrim(s.nombre)) AS "memberLabel", s.fecha_alta AS "memberSince", family.family_group_id AS "familyGroupId", obligation.id AS "existingObligationId", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", d.nombre AS "disciplineLabel", i.fecha_alta AS "enrollmentStart", i.fecha_baja AS "enrollmentEnd", i.estado AS "enrollmentEstado" FROM socios.socios s LEFT JOIN LATERAL (SELECT m.family_group_id FROM tesoreria.dues_family_memberships m WHERE m.socio_id = s.id AND m.revoked_at IS NULL AND m.effective_from < ${period.end} AND (m.effective_to IS NULL OR m.effective_to > ${period.start}) ORDER BY m.effective_from, m.id LIMIT 1) family ON true LEFT JOIN LATERAL (SELECT o.id FROM tesoreria.dues_obligations o WHERE o.socio_id = s.id AND o.kind = 'MONTHLY_DUES' AND o.period_start = ${period.start} AND o.period_end = ${period.end} ORDER BY o.id LIMIT 1) obligation ON true LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${period.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${period.start}) LEFT JOIN deportes.disciplinas d ON d.id = i.disciplina_id WHERE s.estado = 'activo' AND s.fecha_alta < ${period.end} ORDER BY s.id, i.id`,
+  )
+  const members = new Map<string, GenerationMemberFact>()
+  for (const row of rows<GenerationMemberRow>(result)) {
+    const member = members.get(row.socioId) ?? {
+      id: row.socioId,
+      memberNumber: row.memberNumber,
+      label: row.memberLabel,
+      memberSince: row.memberSince,
+      baseEligible: true,
+      familyGroupId: row.familyGroupId,
+      ...(row.existingObligationId ? { existingObligationId: row.existingObligationId } : {}),
+      sports: [],
+    }
+    if (
+      row.enrollmentId &&
+      row.disciplinaId &&
+      row.disciplineLabel &&
+      row.enrollmentStart &&
+      row.enrollmentEstado
+    ) {
+      const eligibleFrom = row.enrollmentStart > period.start ? row.enrollmentStart : period.start
+      const eligibleTo =
+        row.enrollmentEnd && row.enrollmentEnd < period.end ? row.enrollmentEnd : period.end
+      if (eligibleFrom < eligibleTo)
+        member.sports.push({
+          id: row.enrollmentId,
+          disciplineId: row.disciplinaId,
+          label: row.disciplineLabel,
+          estado: row.enrollmentEstado,
+          fechaAlta: row.enrollmentStart,
+          fechaBaja: row.enrollmentEnd,
+          eligibleFrom,
+          eligibleTo,
+          start: row.enrollmentStart,
+          end: row.enrollmentEnd,
+        })
+    }
+    members.set(row.socioId, member)
+  }
+  return [...members.values()]
+}
+type GenerationPriceRow = {
+  versionId: string
+  kind: PriceKind
+  disciplinaId: string | null
+  label: string
+  amount: string
+  currency: string
+  rule: PriceRule
+  effectiveFrom: string
+  effectiveTo: string | null
+}
+export async function listGenerationPrices(
+  db: DuesDb,
+  period: Period,
+): Promise<GenerationPriceFact[]> {
+  const result = await db.execute(
+    sql`SELECT p.id AS "versionId", p.kind, p.disciplina_id AS "disciplinaId", CASE WHEN p.kind = 'BASE' THEN 'Cuota social' ELSE d.nombre END AS label, p.amount::text, btrim(p.currency) AS currency, p.rule, p.effective_from AS "effectiveFrom", p.effective_to AS "effectiveTo" FROM tesoreria.dues_price_versions p LEFT JOIN deportes.disciplinas d ON d.id = p.disciplina_id WHERE p.revoked_at IS NULL AND p.effective_from < ${period.end} AND (p.effective_to IS NULL OR p.effective_to > ${period.start}) ORDER BY p.kind, p.disciplina_id NULLS FIRST, p.effective_from, p.id`,
+  )
+  return rows<GenerationPriceRow>(result)
+    .map((row) => ({
+      id: row.versionId,
+      kind: row.kind,
+      disciplineId: row.disciplinaId,
+      label: row.label,
+      amountCents: cents(row.amount),
+      currency: row.currency,
+      rule: row.rule,
+      from: row.effectiveFrom,
+      to: row.effectiveTo,
+    }))
+    .sort((a, b) =>
+      `${a.kind}|${a.disciplineId ?? ''}|${a.from}|${a.to ?? ''}|${a.id}`.localeCompare(
+        `${b.kind}|${b.disciplineId ?? ''}|${b.from}|${b.to ?? ''}|${b.id}`,
+      ),
+    )
+}
+
 export type AssessmentFacts = {
   member: { socioId: string; fechaAlta: string; enrollments: EligibleEnrollment[] } | null
   prices: Array<{
