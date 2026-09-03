@@ -46,7 +46,21 @@ const actionCopy: Partial<Record<ActionStatus, string>> = {
   denied: 'El servidor no te permite ejecutar esta condonación. La deuda no cambió.',
   transactional_error: 'No se pudo ejecutar la condonación. La deuda no cambió.',
 }
-const amount = (cents: number, currency: string) => `${(cents / 100).toFixed(2)} ${currency}`
+const utcDateTime = new Intl.DateTimeFormat('es-AR', {
+  dateStyle: 'long',
+  timeStyle: 'short',
+  hourCycle: 'h23',
+  timeZone: 'UTC',
+})
+const dateTime = (value: string) => utcDateTime.format(new Date(value))
+const amount = (cents: number, currency: string) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'narrowSymbol',
+  })
+    .format(cents / 100)
+    .replace(/\u00a0/g, ' ')
 
 export function CondonationLifecycle({
   lifecycle,
@@ -122,12 +136,14 @@ export function CondonationLifecycle({
       <dl className="grid gap-px border border-ink-200 bg-ink-200 sm:grid-cols-2">
         <div className="bg-surface px-3 py-2">
           <dt>Vence</dt>
-          <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.expires_at}</dd>
+          <dd className="mt-1 font-mono text-xs text-ink-700">{dateTime(lifecycle.expires_at)}</dd>
         </div>
         {lifecycle.decided_at && (
           <div className="bg-surface px-3 py-2">
             <dt>Decidida el</dt>
-            <dd className="mt-1 font-mono text-xs text-ink-700">{lifecycle.decided_at}</dd>
+            <dd className="mt-1 font-mono text-xs text-ink-700">
+              {dateTime(lifecycle.decided_at)}
+            </dd>
           </div>
         )}
       </dl>

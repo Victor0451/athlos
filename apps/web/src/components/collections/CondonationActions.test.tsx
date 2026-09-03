@@ -33,6 +33,55 @@ describe('CondonationActions', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo registrar la decisión/i)
   })
 
+  it('uses localized periods without exposing obligation identifiers while retaining callback IDs', async () => {
+    const request = vi.fn().mockResolvedValue({
+      id: 'request-1',
+      status: 'pending',
+      expires_at: '2026-09-01',
+      decided_at: null,
+    })
+    const user = userEvent.setup()
+    const obligationIds = [
+      'f62b8a95-2ef4-4e43-95fe-76e791bf7f8f',
+      'c9a4e0a8-26d7-4180-879e-6067483c93d7',
+    ]
+    render(
+      <CondonationActions
+        memberId="member-1"
+        obligations={[
+          {
+            id: obligationIds[0]!,
+            period_start: '2026-07-01',
+            outstanding_cents: 2000,
+            currency: 'ARS',
+          },
+          {
+            id: obligationIds[1]!,
+            period_start: '2026-06-01',
+            outstanding_cents: 1000,
+            currency: 'ARS',
+          },
+        ]}
+        canDecide={false}
+        onRequest={request}
+      />,
+    )
+
+    expect(screen.getByText('Período julio de 2026')).toBeInTheDocument()
+    expect(screen.getByText('Período junio de 2026')).toBeInTheDocument()
+    for (const sentinel of [...obligationIds, '2026-07-01', '2026-06-01'])
+      expect(screen.queryByText(sentinel, { exact: false })).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Contexto de la solicitud'), 'Debt review')
+    await user.type(screen.getByLabelText('Motivo de la solicitud'), 'Hardship')
+    await user.type(screen.getByLabelText('Evidencia de la solicitud'), 'Minutes 12')
+    await user.click(screen.getByRole('button', { name: 'Enviar solicitud de condonación' }))
+
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ obligation_ids: obligationIds.sort() }),
+    )
+  })
+
   it('does not duplicate lifecycle execution controls', () => {
     render(
       <CondonationActions
