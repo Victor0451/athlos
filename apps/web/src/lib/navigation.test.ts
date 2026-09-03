@@ -18,4 +18,14 @@ describe('Collections navigation feature gate', () => {
   it('hides Collections by default', () => {
     expect(visibleNavigation(user).some((item) => item.href === '/collections')).toBe(false)
   })
+
+  it('uses the existing operations section with a Spanish label when enabled', () => {
+    expect(visibleNavigation(user, { collectionsEnabled: true })).toContainEqual(
+      expect.objectContaining({
+        href: '/collections',
+        label: 'Cobranza',
+        section: 'Operations',
+      }),
+    )
+  })
 })
