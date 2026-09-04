@@ -65,6 +65,7 @@ export function PricingPanel({
   onRevoke,
 }: Props) {
   const [reason, setReason] = useState('')
+  const [formError, setFormError] = useState('')
   const pricingMessage =
     error ||
     ({
@@ -87,10 +88,16 @@ export function PricingPanel({
     }[disciplineState] ??
       '')
   const alert = Boolean(
-    error || state === 'error' || state === 'conflict' || state === 'unavailable',
+    formError || error || state === 'error' || state === 'conflict' || state === 'unavailable',
   )
+  const message = formError || pricingMessage
   const revoke = (id: string) => {
-    if (!onRevoke || !reason.trim()) return
+    setFormError('')
+    if (!reason.trim()) {
+      setFormError('El motivo de baja es obligatorio para dar de baja una cuota.')
+      return
+    }
+    if (!onRevoke) return
     void Promise.resolve(onRevoke(id, reason.trim()))
       .then(() => setReason(''))
       .catch(() => undefined)
@@ -101,13 +108,13 @@ export function PricingPanel({
       <h2 id="pricing-title" className="font-display text-lg font-semibold text-ink-900">
         Cuota base y adicionales
       </h2>
-      {pricingMessage && (
+      {message && (
         <p
           role={alert ? 'alert' : 'status'}
           aria-live={alert ? 'assertive' : 'polite'}
           className={collectionInlineStatusClass(alert ? 'error' : 'neutral')}
         >
-          {pricingMessage}
+          {message}
         </p>
       )}
       {disciplineMessage && (
@@ -161,7 +168,10 @@ export function PricingPanel({
           <input
             className={collectionFieldClass}
             value={reason}
-            onChange={(event) => setReason(event.target.value)}
+            onChange={(event) => {
+              setFormError('')
+              setReason(event.target.value)
+            }}
           />
         </label>
       )}

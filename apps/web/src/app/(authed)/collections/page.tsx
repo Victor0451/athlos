@@ -61,12 +61,27 @@ export function canAccessCollections(
 }
 
 const errorText = (_reason: unknown, fallback: string) => fallback
+const pricingErrorText = (reason: unknown) => {
+  if (reason instanceof DuesOperationError)
+    return reason.kind === 'validation'
+      ? 'Revisá los datos y completá todos los campos obligatorios.'
+      : reason.message
+  if (reason instanceof ApiError) {
+    if (reason.status === 409) return 'El intervalo de vigencia se superpone.'
+    if (reason.status === 400) return 'Los datos enviados no son válidos.'
+  }
+  return null
+}
 const pricingErrorState = (reason: unknown): PricingPanelState =>
-  reason instanceof ApiError && reason.status === 409
-    ? 'conflict'
-    : reason instanceof ApiError && (reason.status === 404 || reason.status >= 500)
-      ? 'unavailable'
-      : 'error'
+  reason instanceof DuesOperationError && reason.kind === 'validation'
+    ? 'error'
+    : reason instanceof ApiError && reason.status === 409
+      ? 'conflict'
+      : reason instanceof ApiError && (reason.status === 404 || reason.status >= 500)
+        ? 'unavailable'
+        : reason instanceof DuesOperationError && reason.kind === 'not_found'
+          ? 'unavailable'
+          : 'error'
 
 export default function CollectionsPage() {
   const { user } = useAuth()
@@ -236,7 +251,7 @@ export default function CollectionsPage() {
       setPricingError('')
       setPricingState('success')
     } catch (reason) {
-      setPricingError(errorText(reason, fallback))
+      setPricingError(pricingErrorText(reason) ?? errorText(reason, fallback))
       setPricingState(pricingErrorState(reason))
       throw reason
     }
