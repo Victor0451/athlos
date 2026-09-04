@@ -115,6 +115,7 @@ member: { socioId: 'member-1', fechaAlta: '2026-01-10', enrollments: [] },
 prices: [{ versionId: 'base-1', kind: 'BASE', disciplinaId: null, amountCents: 3100, currency: 'ARS', rule: 'FULL_MONTH', effectiveFrom: '2026-01-01', effectiveTo: null }],
 obligations: [{ id: 'ob-1', periodStart: '2026-01-01', amountCents: 3100 }],
 }),
+resolveBenefitRuleCandidates: vi.fn().mockResolvedValue([]),
 }
 const database = db()
 const service = new AssessmentService(database, { repository: repository as never, now: () => new Date('2026-02-15T12:00:00Z') })
@@ -150,6 +151,7 @@ expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.
           ],
           obligations: [{ id: 'ob-1', periodStart: '2026-01-01', amountCents: 100 }],
         }),
+        resolveBenefitRuleCandidates: vi.fn().mockResolvedValue([]),
       } as never,
       now: () => new Date('2026-02-15T12:00:00Z'),
     })
@@ -182,7 +184,7 @@ expect((database as { transaction: ReturnType<typeof vi.fn> }).transaction).not.
 const prices = expected === 'PRICE_GAP'
     ? [{ versionId: 'late', kind: 'BASE' as const, disciplinaId: null, amountCents: 100, currency: 'ARS', rule: 'FULL_MONTH' as const, effectiveFrom: '2026-02-01', effectiveTo: null }]
     : ['a', 'b'].map((versionId) => ({ versionId, kind: 'BASE' as const, disciplinaId: null, amountCents: 100, currency: 'ARS', rule: 'FULL_MONTH' as const, effectiveFrom: '2026-01-01', effectiveTo: null }))
-const service = new AssessmentService(db(), { repository: { listAssessmentFacts: vi.fn().mockResolvedValue({ member: { socioId: 'member-1', fechaAlta: '2026-01-01', enrollments: [] }, prices, obligations: [] }) } as never, now: () => new Date('2026-02-15T12:00:00Z') })
+const service = new AssessmentService(db(), { repository: { listAssessmentFacts: vi.fn().mockResolvedValue({ member: { socioId: 'member-1', fechaAlta: '2026-01-01', enrollments: [] }, prices, obligations: [] }), resolveBenefitRuleCandidates: vi.fn().mockResolvedValue([]) } as never, now: () => new Date('2026-02-15T12:00:00Z') })
 const result = await service.preview({ ...context, role: 'TESORERO', socioId: 'member-1', fromPeriod: '2026-01', throughPeriod: '2026-02' })
 expect(result).toMatchObject({ executable: false, issues: expect.arrayContaining([expect.objectContaining({ code: expected })]) })
 expect(result.periods).toHaveLength(2)

@@ -14,7 +14,7 @@ const context: AuditContext = {
 const facts = (
   obligations: Array<{ id: string; periodStart: string; amountCents: number }> = [],
 ) => ({
-  member: { socioId: 'member-1', fechaAlta: '2026-01-01', enrollments: [] },
+  member: { socioId: 'member-1', fechaAlta: '2026-01-01', familyGroupId: null, enrollments: [] },
   prices: [
     {
       versionId: 'base-1',
@@ -35,6 +35,7 @@ function repository(overrides: Record<string, unknown> = {}) {
     finalizeReceipt: vi.fn(),
     lockRange: vi.fn(),
     listAssessmentFacts: vi.fn().mockResolvedValue(facts()),
+    resolveBenefitRuleCandidates: vi.fn().mockResolvedValue([]),
     insertObligationInTransaction: vi.fn(async (_tx, input) => ({
       obligation: { id: `ob-${input.periodStart}` },
     })),
