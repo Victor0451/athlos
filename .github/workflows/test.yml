@@ -48,7 +48,7 @@ jobs:
       - name: Collections bootstrap gate
         run: pnpm --filter @athlos/db exec vitest run src/scripts/collections-baseline.test.ts src/scripts/status.test.ts
       - name: Collections compatibility PostgreSQL integration
-        run: pnpm --filter @athlos/db exec vitest run src/scripts/collections-compatibility.postgres.integration.test.ts
+        run: pnpm --filter @athlos/db exec vitest run --config vitest.collections-compatibility.config.ts
       - run: pnpm typecheck
       - run: pnpm --filter @athlos/api build
 
