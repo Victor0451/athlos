@@ -12,6 +12,7 @@ const duesMocks = vi.hoisted(() => ({
   createDuesPrice: vi.fn(),
   revokeDuesPrice: vi.fn(),
   previewDuesAssessments: vi.fn(),
+  executeDuesAssessmentRange: vi.fn(),
   planDuesGeneration: vi.fn(),
   generateDuesAssessments: vi.fn(),
   getDebt: vi.fn(),
@@ -93,9 +94,7 @@ describe('Collections navigation and direct access', () => {
 
     expect(screen.getByRole('tab', { name: 'Cobranza' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('heading', { name: 'Detalle de deuda' })).toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Vista previa de evaluación' }),
-    ).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Vista previa de evaluación' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'Generación de deudas' }))
     expect(screen.getByRole('heading', { name: 'Generación mensual' })).toBeInTheDocument()
@@ -103,9 +102,7 @@ describe('Collections navigation and direct access', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Cobranza' }))
     expect(screen.getByRole('heading', { name: 'Detalle de deuda' })).toBeInTheDocument()
-    expect(
-      screen.queryByRole('heading', { name: 'Vista previa de evaluación' }),
-    ).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Vista previa de evaluación' })).toBeInTheDocument()
 
     const pricingTrigger = screen.getByRole('button', { name: 'Configurar cuotas' })
     await user.click(pricingTrigger)

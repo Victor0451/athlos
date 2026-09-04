@@ -69,13 +69,17 @@ export interface AssessmentPreviewInput { socio_id:string; from_period:string; t
 // prettier-ignore
 export interface AssessmentPreviewSegment { priceVersionId:string; amountCents:number; currency:string; from:string; to:string; rule:'FULL_MONTH'|'DAILY_PRORATED'|'NEXT_PERIOD'; eligibleDays:number; numerator:number }
 // prettier-ignore
-export interface AssessmentPreviewComponent { componentKey:string; kind:'BASE'|'SPORT'; eligibleFrom:string; eligibleTo:string; eligibleDays:number; calendarDays:number; segments:AssessmentPreviewSegment[]; numerator:number; remainder:number; amountCents:number; status:'PENDING'|'ZERO'|'CONFLICT'|'ALREADY_GENERATED' }
+export interface AssessmentPreviewComponent { componentKey:string; kind:'BASE'|'SPORT'|'BENEFIT'; eligibleFrom:string; eligibleTo:string; eligibleDays:number; calendarDays:number; segments:AssessmentPreviewSegment[]; numerator:number; remainder:number; amountCents:number; status:'PENDING'|'ZERO'|'CONFLICT'|'ALREADY_GENERATED' }
 // prettier-ignore
 export interface AssessmentPreviewPeriod { period:string; start:string; end:string; calendarDays:number; components:AssessmentPreviewComponent[]; existingObligationId:string|null; pendingAmountCents:number|null }
 // prettier-ignore
 export interface AssessmentPreviewIssue { code:'NEXT_PERIOD_CONFLICT'|'OVERFLOW'|'PRICE_GAP'|'PRICE_OVERLAP'; componentKey:string; from:string; to:string; period:string }
 // prettier-ignore
 export interface AssessmentPreview { socio_id:string; from_period:string; through_period:string; executable:boolean; currency:string|null; periods:AssessmentPreviewPeriod[]; issues:AssessmentPreviewIssue[]; fingerprint:string }
+export interface AssessmentRangeExecution {
+  created_obligation_ids: string[]
+  periods: string[]
+}
 // prettier-ignore
 export interface DebtComponent { id:string; kind:'BASE'|'SPORT'|'BENEFIT'|'ADJUSTMENT'; component_key:string; amount_cents:number }
 // prettier-ignore
@@ -176,7 +180,7 @@ function decodePreviewSegment(value: unknown): AssessmentPreviewSegment | null {
 function decodePreviewComponent(value: unknown): AssessmentPreviewComponent | null {
   if (!isRecord(value) || !Array.isArray(value.segments)) return null
   const { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, numerator, remainder, amountCents, status } = value, segments = value.segments.map(decodePreviewSegment)
-  return isString(componentKey) && isOneOf(kind, ['BASE', 'SPORT']) && isString(eligibleFrom) && isString(eligibleTo) && isNumber(eligibleDays) && isNumber(calendarDays) && isNumber(numerator) && isNumber(remainder) && isNumber(amountCents) && isOneOf(status, ['PENDING', 'ZERO', 'CONFLICT', 'ALREADY_GENERATED']) && segments.every(Boolean) ? { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, segments: segments as AssessmentPreviewSegment[], numerator, remainder, amountCents, status } : null
+  return isString(componentKey) && isOneOf(kind, ['BASE', 'SPORT', 'BENEFIT']) && isString(eligibleFrom) && isString(eligibleTo) && isNumber(eligibleDays) && isNumber(calendarDays) && isNumber(numerator) && isNumber(remainder) && isNumber(amountCents) && isOneOf(status, ['PENDING', 'ZERO', 'CONFLICT', 'ALREADY_GENERATED']) && segments.every(Boolean) ? { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, segments: segments as AssessmentPreviewSegment[], numerator, remainder, amountCents, status } : null
 }
 // prettier-ignore
 function decodePreview(value: unknown): AssessmentPreview | null {
@@ -185,6 +189,15 @@ function decodePreview(value: unknown): AssessmentPreview | null {
   const periods = value.periods.map((period) => { if (!isRecord(period) || !Array.isArray(period.components)) return null; const { period: key, start, end, calendarDays, existingObligationId, pendingAmountCents } = period, components = period.components.map(decodePreviewComponent); return isString(key) && isString(start) && isString(end) && isNumber(calendarDays) && isNullableString(existingObligationId) && (isNumber(pendingAmountCents) || pendingAmountCents === null) && components.every(Boolean) ? { period: key, start, end, calendarDays, components: components as AssessmentPreviewComponent[], existingObligationId, pendingAmountCents } : null })
   const issues = value.issues.map((issue) => { if (!isRecord(issue)) return null; const { code, componentKey, from, to, period } = issue; return isOneOf(code, ['NEXT_PERIOD_CONFLICT', 'OVERFLOW', 'PRICE_GAP', 'PRICE_OVERLAP']) && isString(componentKey) && isString(from) && isString(to) && isString(period) ? { code, componentKey, from, to, period } : null })
   return isString(socio_id) && isString(from_period) && isString(through_period) && typeof executable === 'boolean' && isNullableString(currency) && isString(fingerprint) && periods.every(Boolean) && issues.every(Boolean) ? { socio_id, from_period, through_period, executable, currency, periods: periods as AssessmentPreviewPeriod[], issues: issues as AssessmentPreviewIssue[], fingerprint } : null
+}
+function decodeRangeExecution(value: unknown): AssessmentRangeExecution | null {
+  return isRecord(value) &&
+    Array.isArray(value.created_obligation_ids) &&
+    Array.isArray(value.periods) &&
+    value.created_obligation_ids.every(isString) &&
+    value.periods.every(isString)
+    ? { created_obligation_ids: value.created_obligation_ids, periods: value.periods }
+    : null
 }
 // prettier-ignore
 function decodeDebt(value: unknown): DebtDetail | null {
@@ -497,6 +510,20 @@ export function previewDuesAssessments(input: AssessmentPreviewInput) {
   return duesOperation(
     () => apiFetch('/api/v1/dues/assessments/preview', { method: 'POST', body: input }),
     decodePreview,
+  )
+}
+export function executeDuesAssessmentRange(
+  input: AssessmentPreviewInput & { preview_fingerprint: string },
+  key: string,
+) {
+  return duesOperation(
+    () =>
+      apiFetch('/api/v1/dues/assessments/execute', {
+        method: 'POST',
+        headers: { 'idempotency-key': key },
+        body: input,
+      }),
+    decodeRangeExecution,
   )
 }
 
