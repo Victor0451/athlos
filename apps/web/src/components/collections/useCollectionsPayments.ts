@@ -19,7 +19,9 @@ import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
 import type { Socio } from '@/lib/api/socios'
 import type { ReversalRequest } from './SettlementActions'
 
-export type DebtSocio = Pick<Socio, 'id' | 'nombre' | 'apellido' | 'numero_socio'>
+export type DebtSocio = Pick<Socio, 'id' | 'nombre' | 'apellido' | 'numero_socio'> & {
+  fecha_alta?: string
+}
 type DebtPanelStatus =
   | 'idle'
   | 'loading'

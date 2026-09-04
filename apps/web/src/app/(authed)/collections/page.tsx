@@ -11,6 +11,7 @@ import type { AgreementViewState } from '@/components/collections/AgreementActio
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
 import type { AgreementDraft } from '@/components/collections/AgreementForm'
 import { CollectionsGenerationWorkspace } from '@/components/collections/CollectionsGenerationWorkspace'
+import { AssessmentPreviewPanel } from '@/components/collections/AssessmentPreviewPanel'
 import {
   PricingPanel,
   type DisciplinePanelState,
@@ -24,7 +25,10 @@ import {
   getObligationAgreements,
   reviseNegotiatedAgreement,
   revokeDuesPrice,
+  executeDuesAssessmentRange,
+  previewDuesAssessments,
   DuesOperationError,
+  type AssessmentPreview,
   type DebtDetail,
   type DuesPrice,
   type DuesPriceInput,
@@ -96,6 +100,11 @@ export default function CollectionsPage() {
   const [disciplineState, setDisciplineState] = useState<DisciplinePanelState>('loading')
   const [disciplineError, setDisciplineError] = useState('')
   const [socios, setSocios] = useState<Socio[]>([])
+  const [assessmentPreview, setAssessmentPreview] = useState<AssessmentPreview | null>(null)
+  const [assessmentStatus, setAssessmentStatus] = useState<
+    'idle' | 'loading' | 'ready' | 'empty' | 'blocked' | 'error'
+  >('idle')
+  const [assessmentError, setAssessmentError] = useState('')
 
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
@@ -271,8 +280,66 @@ export default function CollectionsPage() {
     const result = await getSocios({ search: term, page: 1, limit: 20 })
     setSocios(result.items)
   }
+  const previewAssessment = async (input: {
+    socio_id: string
+    from_period: string
+    through_period: string
+  }) => {
+    setAssessmentStatus('loading')
+    setAssessmentError('')
+    setAssessmentPreview(null)
+    try {
+      const result = await previewDuesAssessments(input)
+      setAssessmentPreview(result)
+      setAssessmentStatus(
+        result.executable ? (result.periods.length ? 'ready' : 'empty') : 'blocked',
+      )
+    } catch {
+      setAssessmentStatus('error')
+      setAssessmentError('No se pudo consultar la evaluación.')
+    }
+  }
+  const executeAssessment = async (input: {
+    socio_id: string
+    from_period: string
+    through_period: string
+    preview_fingerprint: string
+  }) => {
+    if (!user || !selectedSocio) return
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
+    const request = {
+      operatorId: user.operator_id,
+      action: 'execute-dues-range',
+      draftFingerprint: JSON.stringify(input),
+    }
+    const key = idempotency.current.getOrCreate(request)
+    setAssessmentStatus('loading')
+    setAssessmentError('')
+    try {
+      await executeDuesAssessmentRange(input, key)
+      if (!(await refreshDebt()))
+        throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
+      idempotency.current.complete(request)
+      await previewAssessment({
+        socio_id: input.socio_id,
+        from_period: input.from_period,
+        through_period: input.through_period,
+      })
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
+        idempotency.current.abandon(request)
+        setAssessmentError(
+          'Los datos cambiaron. Volvé a consultar la vista previa antes de confirmar.',
+        )
+      } else setAssessmentError('No se pudieron generar las obligaciones. Intentá nuevamente.')
+      setAssessmentStatus('error')
+    }
+  }
   const selectSocio = async (socio: DebtSocio) => {
     selectedMember.current = socio.id
+    setAssessmentPreview(null)
+    setAssessmentStatus('idle')
+    setAssessmentError('')
     setLifecycle([])
     setLifecycleStatus('loading')
     setExecutionFeedback(null)
@@ -617,6 +684,15 @@ export default function CollectionsPage() {
             error={debtError}
             onSearch={searchSocios}
             onSelectSocio={selectSocio}
+          />
+          <AssessmentPreviewPanel
+            socio={selectedSocio}
+            preview={assessmentPreview}
+            status={assessmentStatus}
+            error={assessmentError}
+            onPreview={previewAssessment}
+            onExecute={executeAssessment}
+            onConfigurePrices={() => setPricingOpen(true)}
           />
           {selectedSocio && debt?.status === 'ready' && (
             <>
