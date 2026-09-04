@@ -103,4 +103,31 @@ describe('PricingPanel', () => {
       'Actualización de cuota',
     )
   })
+
+  it('shows an inline validation message when revocation has no reason', async () => {
+    const user = userEvent.setup(),
+      onRevoke = vi.fn()
+    render(
+      <PricingPanel
+        prices={[
+          {
+            id: 'price-1',
+            kind: 'BASE',
+            disciplina_id: null,
+            amount_cents: 12500,
+            currency: 'ARS',
+            effective_from: '2026-01-01',
+            effective_to: null,
+            rule: 'FULL_MONTH',
+            revoked_at: null,
+          },
+        ]}
+        onCreate={vi.fn()}
+        onRevoke={onRevoke}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Dar de baja cuota' }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/motivo de baja es obligatorio/i)
+    expect(onRevoke).not.toHaveBeenCalled()
+  })
 })
