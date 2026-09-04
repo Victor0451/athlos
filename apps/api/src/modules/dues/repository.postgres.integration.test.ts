@@ -27,8 +27,11 @@ const period = (year: number, month: number) => ({
   start: `${year}-${String(month).padStart(2, '0')}-01`,
   end: month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`,
 })
-const randomPeriod = () =>
-  period(2400 + Math.floor(Math.random() * 500), 1 + Math.floor(Math.random() * 12))
+let nextUniquePeriod = 0
+const uniquePeriod = () => {
+  const offset = nextUniquePeriod++
+  return period(2800 + Math.floor(offset / 12), (offset % 12) + 1)
+}
 const waitFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 function gate() {
   let enter!: () => void
@@ -88,7 +91,7 @@ afterAll(async () => Promise.all([winner?.pool.end(), follower?.pool.end()]))
 
 describe('dues repository', () => {
   it('replays a finalized fingerprint and conflicts on a changed fingerprint', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const input = {
       operatorId,
       callerKey: `replay-${randomUUID()}`,
@@ -109,7 +112,7 @@ describe('dues repository', () => {
   })
 
   it('lists active and dated-baja evidence, excluding pending rows, with effective prices', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const socioId = await member(winner)
     const active = await discipline(winner)
     const baja = await discipline(winner)
@@ -136,7 +139,7 @@ describe('dues repository', () => {
   })
 
   it('resolves the effective family group in eligibility and preserves dated memberships', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const socioId = await member(winner)
     const familyGroupId = randomUUID()
     await createFamilyGroup(winner.db, {
@@ -175,7 +178,7 @@ describe('dues repository', () => {
   })
 
   it('uses the period lock so different keys create one monthly obligation', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const socioId = await member(winner)
     const run = (db: ReturnType<typeof createDb>['db'], key: string, hold = false) =>
       db.transaction(async (tx) => {
@@ -212,7 +215,7 @@ describe('dues repository', () => {
   })
 
   it('rolls back the receipt, obligation, and components atomically', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const socioId = await member(winner)
     const key = `rollback-${randomUUID()}`
     await expect(
@@ -250,7 +253,7 @@ describe('dues repository', () => {
   })
 
   it('replays structured snapshots without ctacte projection and preserves immutable history', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const socioId = await member(winner)
     const key = `immutable-${randomUUID()}`
     const before = await winner.pool.query(`SELECT count(*)::int AS count FROM tesoreria.ctacte`)
@@ -283,7 +286,7 @@ describe('dues repository', () => {
   })
 
   it('creates authorized BASE and SPORT price versions with evidence', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const disciplinaId = await discipline(winner)
     await expect(createPrice(winner.db, priceInput(p, 'BASE'))).resolves.toMatchObject({
       kind: 'BASE',
@@ -305,7 +308,7 @@ describe('dues repository', () => {
   })
 
   it('rejects overlapping active ranges globally for BASE and per discipline for SPORT', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const first = await discipline(winner)
     const second = await discipline(winner)
     await createPrice(winner.db, priceInput(p, 'BASE'))
@@ -322,7 +325,7 @@ describe('dues repository', () => {
   })
 
   it('revokes atomically, is idempotent, and frees the interval for replacement', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const created = await createPrice(winner.db, priceInput(p, 'BASE'))
     const revocation = {
       priceVersionId: created.id,
@@ -349,7 +352,7 @@ describe('dues repository', () => {
   })
 
   it('reports an explicit not-found error when revoking an unknown price', async () => {
-    const p = randomPeriod()
+    const p = uniquePeriod()
     const created = await createPrice(winner.db, priceInput(p, 'BASE'))
     await expect(
       revokePrice(winner.db, {
@@ -368,5 +371,5 @@ describe('dues repository', () => {
   })
 
   // prettier-ignore
-  it('persists configurable rules, resolves member/family candidates by priority, and replaces after revoke', async () => { const p = randomPeriod(); const socioId = await member(winner); const familyGroupId = randomUUID(); await createFamilyGroup(winner.db, { id: familyGroupId, reason: 'Approved eligibility group', createdBy: operatorId, authorizationEvidence: { ticket: 'FAM-1' } }); const family = await createBenefitRule(winner.db, benefitInput(p, { familyGroupId, socioId: null, priority: 10 })); const memberRule = await createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' })); expect(memberRule).toMatchObject({ socioId, amountCents: 1000, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues', authorizationEvidence: { ticket: 'BEN-1' } }); await expect(listEffectiveBenefitRules(winner.db, p)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: family.id }), expect.objectContaining({ id: memberRule.id })])); await expect(resolveBenefitRuleCandidates(winner.db, { socioId, familyGroupId, period: p })).resolves.toMatchObject([{ id: family.id }, { id: memberRule.id }]); const revoked = await revokeBenefitRule(winner.db, { benefitRuleId: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); expect(revoked).toMatchObject({ id: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); await expect(createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 5, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' }))).resolves.toMatchObject({ socioId, priority: 5 }) })
+  it('persists configurable rules, resolves member/family candidates by priority, and replaces after revoke', async () => { const p = uniquePeriod(); const socioId = await member(winner); const familyGroupId = randomUUID(); await createFamilyGroup(winner.db, { id: familyGroupId, reason: 'Approved eligibility group', createdBy: operatorId, authorizationEvidence: { ticket: 'FAM-1' } }); const family = await createBenefitRule(winner.db, benefitInput(p, { familyGroupId, socioId: null, priority: 10 })); const memberRule = await createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' })); expect(memberRule).toMatchObject({ socioId, amountCents: 1000, priority: 30, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues', authorizationEvidence: { ticket: 'BEN-1' } }); await expect(listEffectiveBenefitRules(winner.db, p)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: family.id }), expect.objectContaining({ id: memberRule.id })])); await expect(resolveBenefitRuleCandidates(winner.db, { socioId, familyGroupId, period: p })).resolves.toMatchObject([{ id: family.id }, { id: memberRule.id }]); const revoked = await revokeBenefitRule(winner.db, { benefitRuleId: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); expect(revoked).toMatchObject({ id: memberRule.id, revokedBy: operatorId, revokeReason: 'Replaced by approved rule' }); await expect(createBenefitRule(winner.db, benefitInput(p, { socioId, priority: 5, combinability: 'EXCLUSIVE', exclusiveGroup: 'dues' }))).resolves.toMatchObject({ socioId, priority: 5 }) })
 })
