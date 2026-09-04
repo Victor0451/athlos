@@ -70,10 +70,10 @@ export function classifyCollectionsBaseline(input: BaselineInput): BaselineResul
       entries.map((entry) => ({ hash: entry.tag, createdAt: entry.when })),
     )
   const supportedPredecessor = [predecessor, sparsePredecessor].some(matches)
-  const supportedHead = [predecessor, sparsePredecessor].some((entries) =>
-    matches([...entries, ...suffix]),
+  const supportedPostMigration = [predecessor, sparsePredecessor].some((entries) =>
+    suffix.some((_, index) => matches([...entries, ...suffix.slice(0, index + 1)])),
   )
-  if (!supportedPredecessor && !supportedHead)
+  if (!supportedPredecessor && !supportedPostMigration)
     return { kind: 'unsupported', reason: 'ledger no coincide con una línea soportada' }
   const expectedColumns = new Set(['fecha_baja', 'baja_motivo', 'updated_at'])
   if (input.columns.some((column) => !expectedColumns.has(column.name)))
@@ -104,7 +104,7 @@ export function classifyCollectionsBaseline(input: BaselineInput): BaselineResul
           : constraint.definition === definition)
       )
     })
-  if (compatible && (supportedPredecessor || supportedHead))
+  if (compatible && (supportedPredecessor || supportedPostMigration))
     return { kind: 'compatible', reason: 'esquema compatible' }
   return { kind: 'unsupported', reason: 'esquema de inscripciones incompleto o incompatible' }
 }
