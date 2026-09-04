@@ -74,7 +74,7 @@ beforeAll(async () => {
   operatorId = randomUUID()
   await db.pool.query(`CREATE SCHEMA IF NOT EXISTS socios; CREATE SCHEMA IF NOT EXISTS deportes; CREATE TABLE IF NOT EXISTS public.operators (id uuid PRIMARY KEY, username text UNIQUE NOT NULL, password_hash text NOT NULL, role char(1) NOT NULL); CREATE TABLE IF NOT EXISTS socios.socios (id uuid PRIMARY KEY, numero_socio text NOT NULL, nombre text NOT NULL, apellido text NOT NULL, dni text NOT NULL, fecha_alta date NOT NULL, estado text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.disciplinas (id uuid PRIMARY KEY, codigo text UNIQUE NOT NULL, nombre text NOT NULL); CREATE TABLE IF NOT EXISTS deportes.ejercicios (id uuid PRIMARY KEY, anio integer NOT NULL, descripcion text NOT NULL, fecha_inicio date NOT NULL, fecha_fin date NOT NULL); CREATE TABLE IF NOT EXISTS deportes.inscripciones (id uuid PRIMARY KEY, socio_id uuid NOT NULL REFERENCES socios.socios, disciplina_id uuid NOT NULL REFERENCES deportes.disciplinas, ejercicio_id uuid NOT NULL REFERENCES deportes.ejercicios, estado text NOT NULL, fecha_alta date NOT NULL, fecha_baja date)`)
   // prettier-ignore
-  const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql', '0051_dues_family_groups.sql'].map((file) => readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8')))
+   const migrations = await Promise.all(['0049_dues_pricing_obligations.sql', '0050_dues_benefit_rules.sql', '0051_dues_family_groups.sql', '0065_dues_range_receipts.sql'].map((file) => readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', file), 'utf8')))
   await db.pool.query(migrations.join('\n'))
   // prettier-ignore
   await db.pool.query('ALTER TABLE tesoreria.dues_obligation_components DROP CONSTRAINT IF EXISTS dues_obligation_components_benefit_check')
@@ -306,6 +306,56 @@ describe('dues services', () => {
       db.pool.query(`SELECT count(*)::int AS count FROM public.audit_events WHERE metadata ->> 'callerKey' = $1`, [failed.callerKey]),
     ])
     expect(rollback.map((row) => row.rows[0]?.count)).toEqual([0, 0, 0])
+  })
+
+  it('persists one, two, and multiple UTC months with range receipts and blocks missing or conflicting historical prices', async () => {
+    const service = new AssessmentService(db.db, { now: () => new Date('2600-01-01T00:00:00Z') })
+    for (const months of [1, 2, 3]) {
+      const start = period(2460 + months, 1)
+      const last = period(2460 + months, months), end = last.end
+      const socioId = await member()
+      await price({ start: start.start, end }, 'BASE', null, 10_000)
+      const input = { ...context(), socioId, fromPeriod: start.start.slice(0, 7), throughPeriod: last.start.slice(0, 7) }
+      const preview = await service.preview(input)
+      const result = await service.executeRange({ ...input, previewFingerprint: preview.fingerprint })
+      expect(result.createdObligationIds).toHaveLength(months)
+      const receipt = await db.pool.query(`SELECT period_start, period_end FROM tesoreria.dues_generation_receipts WHERE caller_key = $1`, [input.callerKey])
+      expect(receipt.rows.map((row) => ({ period_start: row.period_start.toISOString().slice(0, 10), period_end: row.period_end.toISOString().slice(0, 10) }))).toEqual([{ period_start: start.start, period_end: end }])
+    }
+    const missingSocio = await member(), missingInput = { ...context(), socioId: missingSocio, fromPeriod: '2470-01', throughPeriod: '2470-01' }
+    const missingPreview = await service.preview(missingInput)
+    expect(missingPreview).toMatchObject({ executable: false, issues: [expect.objectContaining({ code: 'PRICE_GAP' })] })
+    await expect(service.executeRange({ ...missingInput, previewFingerprint: missingPreview.fingerprint })).rejects.toMatchObject({ code: 'CONFLICT' })
+    await db.pool.query(`ALTER TABLE tesoreria.dues_price_versions DROP CONSTRAINT dues_price_versions_base_overlap`)
+    const conflict = period(2471, 1), conflictSocio = await member()
+    for (const amount of [10_000, 11_000]) await db.pool.query(`INSERT INTO tesoreria.dues_price_versions (kind, amount, currency, effective_from, effective_to, rule, created_by, authorization_evidence) VALUES ('BASE', $1, 'ARS', $2, $3, 'FULL_MONTH', $4, '{}')`, [amount / 100, conflict.start, conflict.end, operatorId])
+    const conflictPreview = await service.preview({ ...context(), socioId: conflictSocio, fromPeriod: '2471-01', throughPeriod: '2471-01' })
+    expect(conflictPreview).toMatchObject({ executable: false, issues: [expect.objectContaining({ code: 'PRICE_OVERLAP' })] })
+  })
+
+  it('includes benefit facts in a reviewed range and rejects benefit drift before persistence', async () => {
+    const p = period(2480, 1), socioId = await member()
+    await price(p, 'BASE', null, 10_000)
+    const benefit = await repository.createBenefitRule(db.db, { kind: 'FIXED_DISCOUNT', socioId, amountCents: 2_500, currency: 'ARS', effectiveFrom: p.start, effectiveTo: p.end, priority: 1, combinability: 'COMBINABLE', reason: 'Range benefit', createdBy: operatorId, authorizationEvidence: {} })
+    const service = new AssessmentService(db.db, { now: () => new Date('2600-01-01T00:00:00Z') })
+    const input = { ...context(), socioId, fromPeriod: '2480-01', throughPeriod: '2480-01' }
+    const preview = await service.preview(input)
+    expect(preview.periods[0]).toMatchObject({ pendingAmountCents: 7_500, components: expect.arrayContaining([expect.objectContaining({ kind: 'BENEFIT', amountCents: -2_500 })]) })
+    await repository.revokeBenefitRule(db.db, { benefitRuleId: benefit.id, revokedBy: operatorId, revokeReason: 'Changed after preview' })
+    await expect(service.executeRange({ ...input, previewFingerprint: preview.fingerprint })).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1`, [socioId])).rows[0]?.count).toBe(0)
+  })
+
+  it('rejects a price change between range preview and execute before inserting an obligation', async () => {
+    const p = period(2490, 1), socioId = await member()
+    const original = await price(p, 'BASE', null, 10_000)
+    const service = new AssessmentService(db.db, { now: () => new Date('2600-01-01T00:00:00Z') })
+    const input = { ...context(), socioId, fromPeriod: '2490-01', throughPeriod: '2490-01' }
+    const preview = await service.preview(input)
+    await repository.revokePrice(db.db, { priceVersionId: original.id, revokedBy: operatorId, revokeReason: 'Corrected after preview' })
+    await price(p, 'BASE', null, 12_000)
+    await expect(service.executeRange({ ...input, previewFingerprint: preview.fingerprint })).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect((await db.pool.query(`SELECT count(*)::int AS count FROM tesoreria.dues_obligations WHERE socio_id = $1`, [socioId])).rows[0]?.count).toBe(0)
   })
 
       it('applies a family-targeted benefit only through an effective membership', async () => {

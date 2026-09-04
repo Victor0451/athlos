@@ -500,7 +500,12 @@ export async function listGenerationPrices(
 }
 
 export type AssessmentFacts = {
-  member: { socioId: string; fechaAlta: string; enrollments: EligibleEnrollment[] } | null
+  member: {
+    socioId: string
+    fechaAlta: string
+    familyGroupId: string | null
+    enrollments: EligibleEnrollment[]
+  } | null
   prices: Array<{
     versionId: string
     kind: PriceKind
@@ -516,6 +521,7 @@ export type AssessmentFacts = {
 type AssessmentMemberRow = {
   socioId: string
   fechaAlta: string
+  familyGroupId: string | null
   enrollmentId: string | null
   disciplinaId: string | null
   estado: string | null
@@ -529,7 +535,7 @@ export async function listAssessmentFacts(
 ): Promise<AssessmentFacts> {
   const memberRows = rows<AssessmentMemberRow>(
     await db.execute(
-      sql`SELECT s.id AS "socioId", s.fecha_alta AS "fechaAlta", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", i.estado, i.fecha_alta AS "sportAlta", i.fecha_baja AS "sportBaja" FROM socios.socios s LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${range.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${range.start}) WHERE s.id = ${socioId} AND s.estado = 'activo' ORDER BY i.id`,
+      sql`SELECT s.id AS "socioId", s.fecha_alta AS "fechaAlta", family.family_group_id AS "familyGroupId", i.id AS "enrollmentId", i.disciplina_id AS "disciplinaId", i.estado, i.fecha_alta AS "sportAlta", i.fecha_baja AS "sportBaja" FROM socios.socios s LEFT JOIN LATERAL (SELECT m.family_group_id FROM tesoreria.dues_family_memberships m WHERE m.socio_id = s.id AND m.revoked_at IS NULL AND m.effective_from < ${range.end} AND (m.effective_to IS NULL OR m.effective_to > ${range.start}) ORDER BY m.effective_from, m.id LIMIT 1) family ON true LEFT JOIN deportes.inscripciones i ON i.socio_id = s.id AND i.estado IN ('activa', 'baja') AND i.fecha_alta < ${range.end} AND (i.fecha_baja IS NULL OR i.fecha_baja > ${range.start}) WHERE s.id = ${socioId} AND s.estado = 'activo' ORDER BY i.id`,
     ),
   )
   const first = memberRows[0]
@@ -548,6 +554,7 @@ export async function listAssessmentFacts(
       ? {
           socioId: first.socioId,
           fechaAlta: first.fechaAlta,
+          familyGroupId: first.familyGroupId,
           enrollments: memberRows.flatMap((row) =>
             row.enrollmentId && row.sportAlta
               ? [

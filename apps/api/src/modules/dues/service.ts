@@ -4,6 +4,7 @@ import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 // prettier-ignore
 import { loadGenerationPlan } from './generation-plan-loader.ts'
+import { applyBenefits, type ApplicableBenefit } from './benefits.ts'
 import { planAssessmentRange } from './range-planner.ts'
 import * as repository from './repository.ts'
 
@@ -13,6 +14,12 @@ type DuesDb = Db | repository.DuesTransaction
 type Clock = () => Date
 type AuditEmitter = (db: DuesDb, record: AuditRecord) => Promise<EmitAuditResult>
 type Price = Awaited<ReturnType<typeof repository.createPrice>>
+
+const nextMonthStart = (period: string) => {
+  const next = new Date(`${period}-01T00:00:00Z`)
+  next.setUTCMonth(next.getUTCMonth() + 1)
+  return next.toISOString().slice(0, 10)
+}
 
 // prettier-ignore
 export type AuditContext = { actorId: string; role: Role; permissions: string[]; sourceIp: string | null; callerKey: string; requestFingerprint: string; authorizationEvidence: Json }
@@ -120,20 +127,22 @@ export class AssessmentService {
     authorize(input.role, ['ADMIN', 'TESORERO'])
     const current = this.now().toISOString().slice(0, 7)
     if (input.fromPeriod > input.throughPeriod || input.throughPeriod > current) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'El rango de evaluación es inválido o futuro')
-    const throughStart = new Date(`${input.throughPeriod}-01T00:00:00Z`); throughStart.setUTCMonth(throughStart.getUTCMonth() + 1)
-    const range = { start: `${input.fromPeriod}-01`, end: throughStart.toISOString().slice(0, 10) }
+    const range = { start: `${input.fromPeriod}-01`, end: nextMonthStart(input.throughPeriod) }
     const facts = await (this.repository.listAssessmentFacts ?? repository.listAssessmentFacts)(db, input.socioId, range)
     if (!facts.member) throw BusinessError(ErrorCode.NOT_FOUND, 'Socio no encontrado para la evaluación')
-    const periods = [] as Array<Record<string, unknown>>, issues: unknown[] = []
+    const periods = [] as Array<Record<string, unknown>>, issues: unknown[] = [], periodBenefits: Array<{ period: string; benefits: ApplicableBenefit[] }> = []
     for (let period = input.fromPeriod; period <= input.throughPeriod;) {
-      const start = `${period}-01`, next = new Date(`${start}T00:00:00Z`); next.setUTCMonth(next.getUTCMonth() + 1); const end = next.toISOString().slice(0, 10)
+      const start = `${period}-01`, end = nextMonthStart(period)
       const components = [{ key: 'base', kind: 'BASE' as const, alta: facts.member.fechaAlta, baja: null, prices: facts.prices.filter((price) => price.kind === 'BASE').map((price) => ({ priceVersionId: price.versionId, amountCents: price.amountCents, currency: price.currency, from: price.effectiveFrom, to: price.effectiveTo ?? end, rule: price.rule })) }, ...facts.member.enrollments.map((enrollment) => ({ key: `sport:${enrollment.id}`, kind: 'SPORT' as const, alta: enrollment.fechaAlta, baja: enrollment.fechaBaja, prices: facts.prices.filter((price) => price.kind === 'SPORT' && price.disciplinaId === enrollment.disciplinaId).map((price) => ({ priceVersionId: price.versionId, amountCents: price.amountCents, currency: price.currency, from: price.effectiveFrom, to: price.effectiveTo ?? end, rule: price.rule })) }))]
       const plan = planAssessmentRange({ period: { start, end }, components }), existing = facts.obligations.find((obligation) => obligation.periodStart === start)
+      const benefits = await (this.repository.resolveBenefitRuleCandidates ?? repository.resolveBenefitRuleCandidates)(db, { socioId: input.socioId, familyGroupId: facts.member.familyGroupId, period: { start, end } })
+      const benefitResult = plan.executable ? applyBenefits(plan.totalCents!, benefits, facts.prices[0]?.currency ?? 'ARS') : null
+      periodBenefits.push({ period, benefits })
       issues.push(...plan.issues.map((issue) => ({ ...issue, period })))
-      periods.push({ period, start, end, calendarDays: plan.components[0]?.calendarDays ?? 0, components: plan.components.map((component) => ({ ...component, kind: component.componentKey === 'base' ? 'BASE' : 'SPORT', status: existing ? 'ALREADY_GENERATED' : component.status })), existingObligationId: existing?.id ?? null, pendingAmountCents: existing || !plan.executable ? 0 : plan.totalCents })
+      periods.push({ period, start, end, calendarDays: plan.components[0]?.calendarDays ?? 0, components: [...plan.components.map((component) => ({ ...component, kind: component.componentKey === 'base' ? 'BASE' : 'SPORT', status: existing ? 'ALREADY_GENERATED' : component.status })), ...(benefitResult?.components.map((component) => ({ ...component, eligibleFrom: start, eligibleTo: end, eligibleDays: plan.components[0]?.calendarDays ?? 0, calendarDays: plan.components[0]?.calendarDays ?? 0, segments: [], numerator: component.amountCents, remainder: 0, status: existing ? 'ALREADY_GENERATED' : 'PENDING' })) ?? [])], existingObligationId: existing?.id ?? null, pendingAmountCents: existing || !plan.executable ? 0 : benefitResult!.totalCents })
       period = end.slice(0, 7)
     }
-    const sourceSnapshot = { member: facts.member, prices: facts.prices, obligations: facts.obligations, range: input.fromPeriod + ':' + input.throughPeriod }
+    const sourceSnapshot = { member: facts.member, prices: facts.prices, benefits: periodBenefits, obligations: facts.obligations, range: input.fromPeriod + ':' + input.throughPeriod }
     const executable = issues.length === 0 && periods.every((period) => (period.pendingAmountCents !== null)) && !periods.some((period) => (period.components as Array<{ status: string }>).some((component) => component.status === 'CONFLICT'))
     const result = { socioId: input.socioId, fromPeriod: input.fromPeriod, throughPeriod: input.throughPeriod, executable, currency: facts.prices[0]?.currency ?? null, periods, issues, sourceSnapshot }
     return { ...result, fingerprint: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
@@ -141,7 +150,8 @@ export class AssessmentService {
   async executeRange(input: ExecuteRangeCommand): Promise<RangeExecutionResult> {
     authorize(input.role, ['ADMIN', 'TESORERO'])
     return this.db.transaction(async (tx) => {
-      const claim = await this.repository.claimReceipt(tx, { operatorId: input.actorId, callerKey: input.callerKey, requestFingerprint: input.requestFingerprint, periodStart: `${input.fromPeriod}-01`, periodEnd: `${input.throughPeriod}-01`, authorizationEvidence: input.authorizationEvidence })
+      // Range receipt: start is inclusive and end is exclusive, in canonical UTC months.
+      const claim = await this.repository.claimReceipt(tx, { operatorId: input.actorId, callerKey: input.callerKey, requestFingerprint: input.requestFingerprint, periodStart: `${input.fromPeriod}-01`, periodEnd: nextMonthStart(input.throughPeriod), authorizationEvidence: input.authorizationEvidence })
       if (claim.status === 'replayed') return claim.result as RangeExecutionResult
       await this.repository.lockRange(tx, input.socioId)
       const plan = await this.plan(input, tx)
@@ -151,7 +161,7 @@ export class AssessmentService {
       for (const period of plan.periods as Array<{ period: string; start: string; end: string; pendingAmountCents: number; components: Array<Record<string, unknown>> }>) {
         periods.push(period.period)
         if (period.pendingAmountCents <= 0) continue
-        const components = period.components.map((component) => ({ kind: component.kind as 'BASE' | 'SPORT', componentKey: component.componentKey as string, amountCents: component.amountCents as number, priceVersionId: null, calculationInputs: component, eligibilitySnapshot: { eligibleFrom: component.eligibleFrom, eligibleTo: component.eligibleTo }, priceSnapshot: { segments: component.segments } }))
+        const components = period.components.map((component) => ({ kind: component.kind as 'BASE' | 'SPORT' | 'BENEFIT', componentKey: component.componentKey as string, amountCents: component.amountCents as number, priceVersionId: null, calculationInputs: component, eligibilitySnapshot: { eligibleFrom: component.eligibleFrom, eligibleTo: component.eligibleTo }, priceSnapshot: component.kind === 'BENEFIT' ? component.priceSnapshot as Json : { segments: component.segments } }))
         const inserted = await this.repository.insertObligationInTransaction(tx, { periodStart: period.start, periodEnd: period.end, socioId: input.socioId, amountCents: period.pendingAmountCents, generationReceiptId: claim.receipt.id, actorId: input.actorId, snapshot: { planFingerprint: plan.fingerprint, period, sourceSnapshot: plan.sourceSnapshot }, authorizationEvidence: input.authorizationEvidence, components })
         createdObligationIds.push(inserted.obligation.id)
       }
