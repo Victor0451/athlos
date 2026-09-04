@@ -1,4 +1,5 @@
 import { createConfig } from '@athlos/vitest-config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 /**
  * Vitest config for the @athlos/db package.
@@ -9,8 +10,14 @@ import { createConfig } from '@athlos/vitest-config'
  * from the vitest include glob (it uses tsx for ad-hoc DB connection
  * verification, not vitest's test API).
  */
-export default createConfig('node', {
-  include: ['src/**/*.{test,spec}.ts'],
-  // DB test files recreate the shared tesoreria schema.
-  fileParallelism: false,
+export default defineConfig({
+  test: createConfig('node', {
+    include: ['src/**/*.{test,spec}.ts'],
+    exclude: [
+      ...configDefaults.exclude,
+      'src/scripts/collections-compatibility.postgres.integration.test.ts',
+    ],
+    // DB test files recreate the shared tesoreria schema.
+    fileParallelism: false,
+  }),
 })

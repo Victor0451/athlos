@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import pg from 'pg'
 export { statusSchema } from './status.schema.ts'
 import { statusSchema } from './status.schema.ts'
+import { collectionsCompatibilityHashes } from './collections-migration-identities.ts'
 
 const { Pool } = pg
 
@@ -165,10 +166,20 @@ export async function main(argv: string[]): Promise<void> {
   try {
     const appliedWithDates = await getAppliedMigrationsWithDates(connectionString)
     const localMigrations = await getLocalMigrations(getDrizzleDir())
+    const currentCompatibilityHash = localMigrations.find(
+      (migration) => migration.name === '0059_collections_inscription_compatibility',
+    )?.hash
     const namesByHash = new Map(
       localMigrations.map((migration) => [migration.hash, migration.name]),
     )
-    const result = diffMigrations(appliedWithDates, localMigrations)
+    for (const hash of collectionsCompatibilityHashes)
+      namesByHash.set(hash, '0059_collections_inscription_compatibility')
+    const normalizedApplied = appliedWithDates.map((migration) =>
+      currentCompatibilityHash && collectionsCompatibilityHashes.has(migration.hash)
+        ? { ...migration, hash: currentCompatibilityHash }
+        : migration,
+    )
+    const result = diffMigrations(normalizedApplied, localMigrations)
     const output = {
       applied: result.applied.map((hash) => namesByHash.get(hash) ?? hash),
       pending: result.pending.map((hash) => namesByHash.get(hash) ?? hash),

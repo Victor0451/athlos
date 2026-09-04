@@ -3,14 +3,11 @@ DO $$
 DECLARE
   sparse boolean; compatible boolean;
 BEGIN
+  SELECT to_regclass('deportes.inscripciones') IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'deportes' AND table_name = 'inscripciones' AND (column_name IN ('fecha_baja', 'baja_motivo', 'updated_at') OR column_name LIKE 'baja_%'))
+    AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conrelid = 'deportes.inscripciones'::regclass AND con.conname IN ('inscripciones_estado_check', 'inscripciones_baja_metadata_check'))
+  INTO sparse;
   SELECT
-    to_regclass('deportes.inscripciones') IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'deportes' AND table_name = 'inscripciones'
-        AND (column_name IN ('fecha_baja', 'baja_motivo', 'updated_at') OR column_name LIKE 'baja_%'))
-    AND NOT EXISTS (SELECT 1 FROM pg_constraint con
-      WHERE con.conrelid = 'deportes.inscripciones'::regclass
-        AND con.conname IN ('inscripciones_estado_check', 'inscripciones_baja_metadata_check')),
     EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class t ON t.oid = a.attrelid
       JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
       WHERE n.nspname = 'deportes' AND t.relname = 'inscripciones' AND a.attname = 'fecha_baja'
@@ -30,8 +27,11 @@ BEGIN
         AND con.convalidated AND pg_get_constraintdef(con.oid) = $check$CHECK ((estado = ANY (ARRAY['activa'::text, 'pendiente'::text, 'baja'::text])))$check$)
     AND EXISTS (SELECT 1 FROM pg_constraint con
       WHERE con.conrelid = 'deportes.inscripciones'::regclass AND con.conname = 'inscripciones_baja_metadata_check'
-        AND con.convalidated AND pg_get_constraintdef(con.oid) = $check$CHECK (((estado <> 'baja'::text) OR ((fecha_baja IS NOT NULL) AND (baja_motivo IS NOT NULL) AND (btrim(baja_motivo) <> ''::text))))$check$)
-  INTO sparse, compatible;
+        AND con.convalidated AND pg_get_constraintdef(con.oid) IN (
+          $historical$CHECK (((estado <> 'baja'::text) OR ((baja_motivo IS NOT NULL) AND (fecha_baja IS NOT NULL) AND (length(btrim(baja_motivo)) > 0))))$historical$,
+          $canonical$CHECK (((estado <> 'baja'::text) OR ((fecha_baja IS NOT NULL) AND (baja_motivo IS NOT NULL) AND (btrim(baja_motivo) <> ''::text))))$canonical$
+        ))
+   INTO compatible;
 
   IF sparse THEN
     ALTER TABLE deportes.inscripciones ADD COLUMN fecha_baja date, ADD COLUMN baja_motivo text,

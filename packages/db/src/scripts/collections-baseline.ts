@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import pg from 'pg'
+import {
+  canonicalBajaMetadataConstraint,
+  historicalBajaMetadataConstraint,
+  collectionsCompatibilityHashes,
+} from './collections-migration-identities.ts'
 
 const { Pool } = pg
 const sparseTags =
@@ -11,8 +16,7 @@ const sparseTags =
 const expectedConstraints = {
   inscripciones_estado_check:
     "CHECK ((estado = ANY (ARRAY['activa'::text, 'pendiente'::text, 'baja'::text])))",
-  inscripciones_baja_metadata_check:
-    "CHECK (((estado <> 'baja'::text) OR ((fecha_baja IS NOT NULL) AND (baja_motivo IS NOT NULL) AND (btrim(baja_motivo) <> ''::text))))",
+  inscripciones_baja_metadata_check: canonicalBajaMetadataConstraint,
 }
 
 type Journal = { entries: Array<{ tag: string; when: number }> }
@@ -35,11 +39,9 @@ export function parseCollectionsJournal(source: string): Journal {
   }
 }
 
-const canonical = (value: string) =>
-  value
-    .replace(/::[a-z_ ]+/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
+const exactBajaMetadataConstraint = (value: string) =>
+  value === canonicalBajaMetadataConstraint || value === historicalBajaMetadataConstraint
+const canonicalDefault = (value: string) => value.replace(/\s+/g, ' ').trim()
 const equal = (left: Applied[], right: Applied[]) =>
   left.length === right.length &&
   left.every(
@@ -92,10 +94,15 @@ export function classifyCollectionsBaseline(input: BaselineInput): BaselineResul
     !columns.get('baja_motivo')?.default &&
     columns.get('updated_at')?.type === 'timestamp with time zone' &&
     !columns.get('updated_at')?.nullable &&
-    canonical(columns.get('updated_at')?.default ?? '') === 'now()' &&
+    canonicalDefault(columns.get('updated_at')?.default ?? '') === 'now()' &&
     Object.entries(expectedConstraints).every(([name, definition]) => {
       const constraint = constraints.get(name)
-      return constraint?.validated && canonical(constraint.definition) === canonical(definition)
+      return (
+        constraint?.validated &&
+        (name === 'inscripciones_baja_metadata_check'
+          ? exactBajaMetadataConstraint(constraint.definition)
+          : constraint.definition === definition)
+      )
     })
   if (compatible && (supportedPredecessor || supportedHead))
     return { kind: 'compatible', reason: 'esquema compatible' }
@@ -117,8 +124,14 @@ export async function verifyCollectionsBaseline(connectionString: string): Promi
     const ledger = await pool.query<{ ledger: string | null }>(
       "SELECT COALESCE(to_regclass('drizzle.__drizzle_migrations'), to_regclass('public.__drizzle_migrations'))::text AS ledger",
     )
-    if (!ledger.rows[0]?.ledger)
-      return { kind: 'unsupported', reason: 'no existe el libro de migraciones Drizzle' }
+    if (!ledger.rows[0]?.ledger) {
+      const relations = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','p','v','m','S') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'",
+      )
+      return relations.rows[0]?.count === 0
+        ? { kind: 'forward', reason: 'base de datos fresca antes de migrar' }
+        : { kind: 'unsupported', reason: 'faltan ledger y existen objetos de usuario desconocidos' }
+    }
     const appliedRows = await pool.query<{ hash: string; created_at: number }>(
       `SELECT hash, created_at FROM ${ledger.rows[0].ledger} ORDER BY id`,
     )
@@ -134,6 +147,8 @@ export async function verifyCollectionsBaseline(connectionString: string): Promi
       ),
     )
     const byHash = new Map(hashes.map(([tag, hash]) => [hash, tag]))
+    for (const hash of collectionsCompatibilityHashes)
+      byHash.set(hash, '0059_collections_inscription_compatibility')
     const applied = appliedRows.rows.map((row) => ({
       hash: byHash.get(row.hash) ?? row.hash,
       createdAt: Number(row.created_at),
