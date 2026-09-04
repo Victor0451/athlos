@@ -9,6 +9,11 @@ import {
   parseCollectionsJournal,
   type BaselineInput,
 } from './collections-baseline.ts'
+import {
+  canonicalBajaMetadataConstraint,
+  collectionsCompatibilityHashes,
+  historicalBajaMetadataConstraint,
+} from './collections-migration-identities.ts'
 
 const drizzleDir = fileURLToPath(new URL('../../drizzle/', import.meta.url))
 const sparseTags =
@@ -63,8 +68,7 @@ async function fixture(
           },
           {
             name: 'inscripciones_baja_metadata_check',
-            definition:
-              "CHECK (((estado <> 'baja'::text) OR ((fecha_baja IS NOT NULL) AND (baja_motivo IS NOT NULL) AND (btrim(baja_motivo) <> ''::text))))",
+            definition: canonicalBajaMetadataConstraint,
             validated: true,
           },
         ]
@@ -112,9 +116,25 @@ describe('Collections migration baseline', () => {
       "data_type = 'timestamp with time zone' AND is_nullable = 'NO' AND column_default = 'now()'",
     )
     expect(sql).toContain('con.convalidated')
+    expect(sql).toContain(historicalBajaMetadataConstraint)
+    expect(sql).toContain(canonicalBajaMetadataConstraint)
+    expect(collectionsCompatibilityHashes).toEqual(
+      new Set([
+        '86ac3253483a8c5d3f8dd8ce24d63aa104f3ecf56e8692a6a0f81f247503da51',
+        '205b763361c954078ccf99081de1e22d26744c9a9d6370a52861d19df8a1d33a',
+      ]),
+    )
     expect(await readFile(`${drizzleDir}/../../../docker-entrypoint.sh`, 'utf8')).toContain(
       'collections:baseline --post-migration',
     )
+  })
+
+  it('accepts the exact historical metadata constraint but rejects a third form', async () => {
+    const historical = await fixture('compatible')
+    historical.constraints[1]!.definition = historicalBajaMetadataConstraint
+    expect(classifyCollectionsBaseline(historical).kind).toBe('compatible')
+    historical.constraints[1]!.definition = 'CHECK (fecha_baja IS NOT NULL)'
+    expect(classifyCollectionsBaseline(historical).kind).toBe('unsupported')
   })
 
   it('fails closed for hash, timestamp, partial schema, and validation mismatches', async () => {
