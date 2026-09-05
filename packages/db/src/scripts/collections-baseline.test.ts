@@ -9,6 +9,11 @@ import {
   parseCollectionsJournal,
   type BaselineInput,
 } from './collections-baseline.ts'
+import {
+  canonicalBajaMetadataConstraint,
+  collectionsCompatibilityHashes,
+  historicalBajaMetadataConstraint,
+} from './collections-migration-identities.ts'
 
 const drizzleDir = fileURLToPath(new URL('../../drizzle/', import.meta.url))
 const sparseTags =
@@ -18,7 +23,13 @@ const sparseTags =
 
 async function fixture(
   kind: 'sparse' | 'compatible',
-  ledger: 'contiguous' | 'sparse' | 'contiguous-post' | 'sparse-post' = 'contiguous',
+  ledger:
+    | 'contiguous'
+    | 'sparse'
+    | 'contiguous-post'
+    | 'sparse-post'
+    | 'contiguous-through-0064'
+    | 'sparse-through-0064' = 'contiguous',
 ): Promise<BaselineInput> {
   const journal = JSON.parse(await readFile(`${drizzleDir}/meta/_journal.json`, 'utf8')) as {
     entries: Array<{ tag: string; when: number }>
@@ -29,6 +40,9 @@ async function fixture(
   const predecessor = journal.entries.slice(0, compatibilityIndex)
   const sparsePredecessor = predecessor.filter((entry) => sparseTags.includes(entry.tag))
   const suffix = journal.entries.slice(compatibilityIndex)
+  const migration0065Index = suffix.findIndex((entry) => entry.tag === '0065_dues_range_receipts')
+  if (migration0065Index < 0) throw new Error('expected 0065 migration in the local journal')
+  const through0064 = suffix.slice(0, migration0065Index)
   const entries =
     ledger === 'sparse'
       ? sparsePredecessor
@@ -36,7 +50,11 @@ async function fixture(
         ? [...predecessor, ...suffix]
         : ledger === 'sparse-post'
           ? [...sparsePredecessor, ...suffix]
-          : predecessor
+          : ledger === 'contiguous-through-0064'
+            ? [...predecessor, ...through0064]
+            : ledger === 'sparse-through-0064'
+              ? [...sparsePredecessor, ...through0064]
+              : predecessor
   const applied = entries.map(({ tag, when }) => ({ createdAt: when, hash: tag }))
   const columns =
     kind === 'sparse'
@@ -63,8 +81,7 @@ async function fixture(
           },
           {
             name: 'inscripciones_baja_metadata_check',
-            definition:
-              "CHECK (((estado <> 'baja'::text) OR ((fecha_baja IS NOT NULL) AND (baja_motivo IS NOT NULL) AND (btrim(baja_motivo) <> ''::text))))",
+            definition: canonicalBajaMetadataConstraint,
             validated: true,
           },
         ]
@@ -86,7 +103,15 @@ describe('Collections migration baseline', () => {
   )
 
   it.each(['contiguous', 'contiguous-post', 'sparse-post'] as const)(
-    'accepts the exact compatible %s lineage',
+    'accepts the compatible %s predecessor or full-head lineage',
+    async (ledger) =>
+      expect(classifyCollectionsBaseline(await fixture('compatible', ledger)).kind).toBe(
+        'compatible',
+      ),
+  )
+
+  it.each(['contiguous-through-0064', 'sparse-through-0064'] as const)(
+    'accepts the compatible %s contiguous suffix prefix',
     async (ledger) =>
       expect(classifyCollectionsBaseline(await fixture('compatible', ledger)).kind).toBe(
         'compatible',
@@ -112,9 +137,25 @@ describe('Collections migration baseline', () => {
       "data_type = 'timestamp with time zone' AND is_nullable = 'NO' AND column_default = 'now()'",
     )
     expect(sql).toContain('con.convalidated')
+    expect(sql).toContain(historicalBajaMetadataConstraint)
+    expect(sql).toContain(canonicalBajaMetadataConstraint)
+    expect(collectionsCompatibilityHashes).toEqual(
+      new Set([
+        '86ac3253483a8c5d3f8dd8ce24d63aa104f3ecf56e8692a6a0f81f247503da51',
+        '205b763361c954078ccf99081de1e22d26744c9a9d6370a52861d19df8a1d33a',
+      ]),
+    )
     expect(await readFile(`${drizzleDir}/../../../docker-entrypoint.sh`, 'utf8')).toContain(
       'collections:baseline --post-migration',
     )
+  })
+
+  it('accepts the exact historical metadata constraint but rejects a third form', async () => {
+    const historical = await fixture('compatible')
+    historical.constraints[1]!.definition = historicalBajaMetadataConstraint
+    expect(classifyCollectionsBaseline(historical).kind).toBe('compatible')
+    historical.constraints[1]!.definition = 'CHECK (fecha_baja IS NOT NULL)'
+    expect(classifyCollectionsBaseline(historical).kind).toBe('unsupported')
   })
 
   it('fails closed for hash, timestamp, partial schema, and validation mismatches', async () => {

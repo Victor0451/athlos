@@ -17,6 +17,7 @@ const {
   DuesOperationError,
   createCommunityWorkEvidence,
   createDuesPrice,
+  executeDuesAssessmentRange,
   createFullSelectionPayment,
   createNegotiatedAgreement,
   generateDuesAssessments,
@@ -244,6 +245,46 @@ describe('typed native dues client', () => {
     expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/assessments/preview', { method: 'POST', body: { socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' } })
     apiFetchMock.mockResolvedValueOnce({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01', executable: true, currency: 'ARS', fingerprint: 'fingerprint', periods: [{ components: [] }], issues: [] })
     await expect(previewDuesAssessments({ socio_id: 'socio-1', from_period: '2026-01', through_period: '2026-01' })).rejects.toMatchObject({ kind: 'partial_data' })
+  })
+
+  it('executes a reviewed range with its fingerprint and caller idempotency key', async () => {
+    const input = {
+      socio_id: 'socio-1',
+      from_period: '2026-01',
+      through_period: '2026-02',
+      preview_fingerprint: 'a'.repeat(64),
+    }
+    apiFetchMock.mockResolvedValueOnce({
+      created_obligation_ids: ['obligation-1', 'obligation-2'],
+      periods: ['2026-01', '2026-02'],
+    })
+    await expect(executeDuesAssessmentRange(input, 'range-key-1')).resolves.toEqual({
+      created_obligation_ids: ['obligation-1', 'obligation-2'],
+      periods: ['2026-01', '2026-02'],
+    })
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/dues/assessments/execute', {
+      method: 'POST',
+      headers: { 'idempotency-key': 'range-key-1' },
+      body: input,
+    })
+  })
+
+  it.each([
+    { created_obligation_ids: ['obligation-1'] },
+    { created_obligation_ids: ['obligation-1'], periods: [1] },
+  ])('rejects incomplete execute-range responses', async (response) => {
+    apiFetchMock.mockResolvedValueOnce(response)
+    await expect(
+      executeDuesAssessmentRange(
+        {
+          socio_id: 'socio-1',
+          from_period: '2026-01',
+          through_period: '2026-01',
+          preview_fingerprint: 'a'.repeat(64),
+        },
+        'range-key-2',
+      ),
+    ).rejects.toMatchObject({ kind: 'partial_data' })
   })
 
   // prettier-ignore

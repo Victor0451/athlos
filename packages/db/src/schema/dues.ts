@@ -76,8 +76,11 @@ export const duesGenerationReceipts = tesoreriaSchema.table(
       table.operatorId,
       table.callerKey,
     ),
-    // prettier-ignore
-    periodCheck: check('dues_generation_receipts_period_check', sql`${table.periodStart} = date_trunc('month', ${table.periodStart})::date AND ${table.periodEnd} = (${table.periodStart} + INTERVAL '1 month')::date`),
+    // Range receipts use inclusive month-start / exclusive month-end bounds.
+    periodCheck: check(
+      'dues_generation_receipts_period_check',
+      sql`${table.periodStart} = date_trunc('month', ${table.periodStart})::date AND ${table.periodEnd} > ${table.periodStart} AND ${table.periodEnd} = date_trunc('month', ${table.periodEnd})::date`,
+    ),
     // prettier-ignore
     fingerprintCheck: check('dues_generation_receipts_fingerprint_check', sql`length(btrim(${table.requestFingerprint})) = 64`),
   }),
@@ -111,6 +114,9 @@ export const duesObligations = tesoreriaSchema.table(
   },
   (table) => ({
     socioPeriodIdx: index('dues_obligations_socio_period_idx').on(table.socioId, table.periodStart),
+    monthlyNaturalKey: uniqueIndex('dues_obligations_monthly_natural_key')
+      .on(table.socioId, table.periodStart)
+      .where(sql`${table.kind} = 'MONTHLY_DUES'`),
     // prettier-ignore
     periodCheck: check('dues_obligations_period_check', sql`${table.periodEnd} > ${table.periodStart}`),
     // prettier-ignore

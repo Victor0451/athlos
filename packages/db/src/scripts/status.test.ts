@@ -202,6 +202,38 @@ describe('migrate:status', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ pending: [], divergence: [], exitCode: 0 })
   })
 
+  it('accepts only the two published 0059 identities', async () => {
+    const migrations = await localMigrations()
+    const compatibility = migrations.find(
+      (migration) => migration.name === '0059_collections_inscription_compatibility',
+    )!
+    for (const hash of [
+      '86ac3253483a8c5d3f8dd8ce24d63aa104f3ecf56e8692a6a0f81f247503da51',
+      compatibility.hash,
+    ]) {
+      await databaseClient().query(`TRUNCATE ${drizzleLedger}`)
+      for (const migration of migrations)
+        await databaseClient().query(
+          `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
+          [
+            migration.name === compatibility.name ? hash : migration.hash,
+            migration.createdAt.getTime(),
+          ],
+        )
+      expect((await runStatus(['--json'])).exitCode).toBe(0)
+    }
+    await databaseClient().query(`TRUNCATE ${drizzleLedger}`)
+    for (const migration of migrations)
+      await databaseClient().query(
+        `INSERT INTO ${drizzleLedger} (hash, created_at) VALUES ($1, $2)`,
+        [
+          migration.name === compatibility.name ? 'f'.repeat(64) : migration.hash,
+          migration.createdAt.getTime(),
+        ],
+      )
+    expect(JSON.parse((await runStatus(['--json'])).stdout).divergence).toEqual(['f'.repeat(64)])
+  })
+
   it('keeps the forward route-repair migration pending beyond a 0044 frontier', async () => {
     const migrations = await localMigrations()
     const baseline = migrations.find(
@@ -238,6 +270,7 @@ describe('migrate:status', () => {
         '0062_approval_condonation_lifecycle',
         '0063_approval_condonation_request_idempotency',
         '0064_dues_condonation_treatments',
+        '0065_dues_range_receipts',
       ],
       divergence: [],
       exitCode: 1,
