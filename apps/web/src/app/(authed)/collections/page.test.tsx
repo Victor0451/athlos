@@ -821,8 +821,141 @@ describe('community-work evidence settlement', () => {
     expect(screen.getByText('Deuda total pendiente: $ 75,00')).toBeInTheDocument()
   })
 
+  it('keeps a member-scoped community-work confirmation after its full settlement closes the obligation', async () => {
+    prepare()
+    duesMocks.getDebt.mockReset().mockResolvedValueOnce(debt(2_500)).mockResolvedValueOnce(debt(0))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent(
+      'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1.',
+    )
+    expect(
+      screen.queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not show an older member’s confirmed work after switching members during the POST', async () => {
+    const ana = socio
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    let resolvePost!: (result: ReturnType<typeof communityResult>) => void
+    duesMocks.getDebt.mockReset().mockResolvedValue(debt())
+    duesMocks.getObligationAgreements.mockResolvedValue({ active, revisions: [active] })
+    sociosMocks.getSocios.mockResolvedValue({ items: [ana, beto] })
+    duesMocks.createCommunityWorkEvidence.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePost = resolve
+      }),
+    )
+    const user = await openForm()
+    await completeDraft(user)
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    resolvePost(communityResult())
+
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalled())
+    expect(
+      screen.queryByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('records POST success before a failed debt refresh and retries only the refresh', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(debt(7_500))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByText(
+        'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1. No se pudo actualizar el saldo.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('dialog', { name: 'Registrar trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent('Trabajo comunitario registrado')
+  })
+
+  it('keeps a 409 draft in its open dialog while retrying only GET balance recovery', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValue(debt())
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new duesMocks.DuesOperationError('conflict', 'conflict'))
+      .mockResolvedValueOnce(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Registrar trabajo comunitario' })
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(within(dialog).getByLabelText('Valor aprobado (centavos)')).toHaveValue(2500)
+    expect(within(dialog).getByLabelText('Evidencia del trabajo aceptado')).toHaveValue(
+      'Acta 12 aprobada',
+    )
+    expect(within(dialog).getByLabelText('Motivo de la aceptación')).toHaveValue('Trabajo aceptado')
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    const conflictKey = duesMocks.createCommunityWorkEvidence.mock.calls[0]![1]
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(4))
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeEnabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }))
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
+    expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(conflictKey)
+  })
+
+  it('uses the server replay result after an unknown POST failure preserves the key', async () => {
+    prepare()
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(communityResult(false))
+    const user = await openForm()
+    await completeDraft(user)
+
+    await waitFor(() =>
+      expect(screen.getByText(/no se pudo registrar el trabajo/i)).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+
+    expect(
+      await screen.findByText(/trabajo comunitario registrado para la obligación/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/ya había sido registrado/i)).not.toBeInTheDocument()
+  })
+
   it.each([
-    ['conflict', 'El saldo cambió', false],
     ['permission', 'No tenés permiso para registrar trabajo comunitario.', false],
     ['partial_data', 'Los datos del trabajo comunitario están incompletos.', false],
     ['unavailable', 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.', false],
@@ -863,6 +996,6 @@ describe('community-work evidence settlement', () => {
     await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
 
     expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(firstKey)
-    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(3)
   })
 })
