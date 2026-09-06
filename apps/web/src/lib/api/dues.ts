@@ -69,7 +69,7 @@ export interface AssessmentPreviewInput { socio_id:string; from_period:string; t
 // prettier-ignore
 export interface AssessmentPreviewSegment { priceVersionId:string; amountCents:number; currency:string; from:string; to:string; rule:'FULL_MONTH'|'DAILY_PRORATED'|'NEXT_PERIOD'; eligibleDays:number; numerator:number }
 // prettier-ignore
-export interface AssessmentPreviewComponent { componentKey:string; kind:'BASE'|'SPORT'|'BENEFIT'; eligibleFrom:string; eligibleTo:string; eligibleDays:number; calendarDays:number; segments:AssessmentPreviewSegment[]; numerator:number; remainder:number; amountCents:number; status:'PENDING'|'ZERO'|'CONFLICT'|'ALREADY_GENERATED' }
+export interface AssessmentPreviewComponent { componentKey:string; kind:'BASE'|'SPORT'|'BENEFIT'; disciplinaId?:string; eligibleFrom:string; eligibleTo:string; eligibleDays:number; calendarDays:number; segments:AssessmentPreviewSegment[]; numerator:number; remainder:number; amountCents:number; status:'PENDING'|'ZERO'|'CONFLICT'|'ALREADY_GENERATED' }
 // prettier-ignore
 export interface AssessmentPreviewPeriod { period:string; start:string; end:string; calendarDays:number; components:AssessmentPreviewComponent[]; existingObligationId:string|null; pendingAmountCents:number|null }
 // prettier-ignore
@@ -179,8 +179,8 @@ function decodePreviewSegment(value: unknown): AssessmentPreviewSegment | null {
 // prettier-ignore
 function decodePreviewComponent(value: unknown): AssessmentPreviewComponent | null {
   if (!isRecord(value) || !Array.isArray(value.segments)) return null
-  const { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, numerator, remainder, amountCents, status } = value, segments = value.segments.map(decodePreviewSegment)
-  return isString(componentKey) && isOneOf(kind, ['BASE', 'SPORT', 'BENEFIT']) && isString(eligibleFrom) && isString(eligibleTo) && isNumber(eligibleDays) && isNumber(calendarDays) && isNumber(numerator) && isNumber(remainder) && isNumber(amountCents) && isOneOf(status, ['PENDING', 'ZERO', 'CONFLICT', 'ALREADY_GENERATED']) && segments.every(Boolean) ? { componentKey, kind, eligibleFrom, eligibleTo, eligibleDays, calendarDays, segments: segments as AssessmentPreviewSegment[], numerator, remainder, amountCents, status } : null
+  const { componentKey, kind, disciplinaId, eligibleFrom, eligibleTo, eligibleDays, calendarDays, numerator, remainder, amountCents, status } = value, segments = value.segments.map(decodePreviewSegment)
+  return isString(componentKey) && isOneOf(kind, ['BASE', 'SPORT', 'BENEFIT']) && (disciplinaId === undefined || isString(disciplinaId)) && isString(eligibleFrom) && isString(eligibleTo) && isNumber(eligibleDays) && isNumber(calendarDays) && isNumber(numerator) && isNumber(remainder) && isNumber(amountCents) && isOneOf(status, ['PENDING', 'ZERO', 'CONFLICT', 'ALREADY_GENERATED']) && segments.every(Boolean) ? { componentKey, kind, ...(isString(disciplinaId) ? { disciplinaId } : {}), eligibleFrom, eligibleTo, eligibleDays, calendarDays, segments: segments as AssessmentPreviewSegment[], numerator, remainder, amountCents, status } : null
 }
 // prettier-ignore
 function decodePreview(value: unknown): AssessmentPreview | null {

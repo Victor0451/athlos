@@ -17,6 +17,7 @@ import {
   type DisciplinePanelState,
   type PricingPanelState,
 } from '@/components/collections/PricingPanel'
+import type { PricingRepairContext } from '@/components/collections/PricingForm'
 import {
   createCommunityWorkEvidence,
   createDuesPrice,
@@ -93,6 +94,7 @@ export default function CollectionsPage() {
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
   const [activeTab, setActiveTab] = useState<'collections' | 'generation'>('collections')
   const [pricingOpen, setPricingOpen] = useState(false)
+  const [pricingRepairContext, setPricingRepairContext] = useState<PricingRepairContext>()
   const [prices, setPrices] = useState<DuesPrice[]>([])
   const [pricingState, setPricingState] = useState<PricingPanelState>('loading')
   const [pricingError, setPricingError] = useState('')
@@ -265,11 +267,21 @@ export default function CollectionsPage() {
       throw reason
     }
   }
-  const createPrice = (input: DuesPriceInput) =>
-    runPriceAction(
+  const createPrice = async (input: DuesPriceInput) => {
+    await runPriceAction(
       createDuesPrice(input),
       'No se pudo guardar la cuota. Revisá los datos e intentá nuevamente.',
     )
+    const memberId = selectedMember.current
+    const currentPreview = assessmentPreview
+    if (!memberId || currentPreview?.socio_id !== memberId || selectedMember.current !== memberId)
+      return
+    await previewAssessment({
+      socio_id: memberId,
+      from_period: currentPreview.from_period,
+      through_period: currentPreview.through_period,
+    })
+  }
   const revokePrice = (id: string, reason: string) =>
     runPriceAction(
       revokeDuesPrice(id, reason),
@@ -640,7 +652,10 @@ export default function CollectionsPage() {
           <button
             ref={pricingTrigger}
             type="button"
-            onClick={() => setPricingOpen(true)}
+            onClick={() => {
+              setPricingRepairContext(undefined)
+              setPricingOpen(true)
+            }}
             className={collectionButtonClass.secondary}
           >
             Configurar cuotas
@@ -670,6 +685,7 @@ export default function CollectionsPage() {
           disciplines={disciplines}
           disciplineState={disciplineState}
           disciplineError={disciplineError}
+          {...(pricingRepairContext ? { repairContext: pricingRepairContext } : {})}
           onCreate={createPrice}
           onRevoke={revokePrice}
         />
@@ -692,7 +708,10 @@ export default function CollectionsPage() {
             error={assessmentError}
             onPreview={previewAssessment}
             onExecute={executeAssessment}
-            onConfigurePrices={() => setPricingOpen(true)}
+            onConfigurePrices={(context) => {
+              setPricingRepairContext(context)
+              setPricingOpen(true)
+            }}
           />
           {selectedSocio && debt?.status === 'ready' && (
             <>
