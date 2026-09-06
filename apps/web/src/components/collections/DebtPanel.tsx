@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type Ref } from 'react'
 import type { DebtDetail } from '@/lib/api/dues'
 import type { Socio } from '@/lib/api/socios'
 import { collectionInlineStatusClass, collectionSectionClass } from './CollectionPrimitives'
@@ -27,6 +27,7 @@ type Props = {
   error: string
   onSearch: (term: string) => Promise<void> | void
   onSelectSocio: (socio: SocioOption) => Promise<void> | void
+  summaryRef?: Ref<HTMLDivElement>
 }
 
 export function DebtPanel({
@@ -37,6 +38,7 @@ export function DebtPanel({
   error,
   onSearch,
   onSelectSocio,
+  summaryRef,
 }: Props) {
   const statusRef = useRef<HTMLParagraphElement>(null)
   const presentation = debt?.status === 'ready' ? mapDebtPresentation(debt) : null
@@ -71,6 +73,8 @@ export function DebtPanel({
       )}
       {socio && presentation && (
         <div
+          ref={summaryRef}
+          tabIndex={-1}
           aria-label={`Resumen de deuda de ${socio.apellido}, ${socio.nombre}`}
           className="space-y-3"
         >
@@ -90,7 +94,8 @@ export function DebtPanel({
 }
 
 function statusMessage(status: DebtPanelStatus) {
-  if (status === 'empty') return 'No hay deuda registrada todavía para este socio.'
+  if (status === 'empty')
+    return 'Todavía no se generaron obligaciones para este socio. Consultá la vista previa del período para generarlas.'
   if (status === 'not_found') return 'No se encontró el detalle de deuda de este socio.'
   if (status === 'loading') return 'Cargando el detalle de deuda…'
   if (status === 'unavailable' || status === 'error')

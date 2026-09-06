@@ -1,5 +1,5 @@
 import React from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { DebtSearch } from './DebtSearch'
 
@@ -50,6 +50,78 @@ describe('DebtSearch', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/no se pudo buscar socios/i)
     expect(alert).toHaveFocus()
+  })
+
+  it('hides previous results immediately while a new search is pending', async () => {
+    let resolveSearch!: () => void
+    render(
+      search({
+        socios: [result],
+        onSearch: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveSearch = resolve
+            }),
+        ),
+      }),
+    )
+
+    fireEvent.submit(screen.getByRole('search'))
+    expect(screen.queryByRole('button', { name: /pérez, luis/i })).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveSearch()
+    })
+  })
+
+  it('keeps only the latest search feedback when an older request fails after a newer one succeeds', async () => {
+    let rejectOlder!: (reason: Error) => void
+    let resolveNewer!: () => void
+    const onSearch = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectOlder = reject
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveNewer = resolve
+          }),
+      )
+    render(search({ onSearch }))
+
+    fireEvent.submit(screen.getByRole('search'))
+    fireEvent.submit(screen.getByRole('search'))
+    resolveNewer()
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(/no se encontraron socios/i),
+    )
+
+    rejectOlder(new Error('stale offline'))
+    await Promise.resolve()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('moves result focus with native keyboard keys and returns Escape focus to the search field', () => {
+    const second = { ...result, id: 'socio-3', nombre: 'Mara' }
+    render(search({ socios: [result, second] }))
+
+    const first = screen.getByRole('button', { name: /pérez, luis/i })
+    const last = screen.getByRole('button', { name: /pérez, mara/i })
+    first.focus()
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(last).toHaveFocus()
+    fireEvent.keyDown(last, { key: 'Home' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'End' })
+    expect(last).toHaveFocus()
+    fireEvent.keyDown(last, { key: 'ArrowUp' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'Escape' })
+    expect(screen.getByRole('searchbox', { name: /buscar socio/i })).toHaveFocus()
   })
 
   it('renders member results without exposing their opaque identifiers and selects the member', () => {
