@@ -12,7 +12,7 @@ import { AgreementService } from './agreements.ts'
 import { CommunityWorkService } from './community-work.ts'
 import { CtacteProjectionService } from './ctacte-projection.ts'
 import { CashDeskService } from './cash-desk.ts'
-import type { AuditContext } from './service.ts'
+import { AssessmentService, PricingService, type AuditContext } from './service.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 // The generated name must pass this allowlist before it is quoted as a PostgreSQL identifier.
@@ -21,6 +21,7 @@ let db: ReturnType<typeof createDb>
 let admin: ReturnType<typeof createDb> | undefined
 let isolatedDatabaseName: string | undefined
 let operatorId: string
+const exerciseId = randomUUID()
 const period = (year: number, month: number) => ({
   start: `${year}-${String(month).padStart(2, '0')}-01`,
   end: month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, '0')}-01`,
@@ -126,6 +127,10 @@ beforeAll(async () => {
     [operatorId, `settlement-${operatorId}`],
   )
   await db.pool.query(
+    `INSERT INTO deportes.ejercicios (id,anio,descripcion,fecha_inicio,fecha_fin) VALUES ($1,2025,'Settlement fixture',DATE '2024-01-01',DATE '2026-12-31')`,
+    [exerciseId],
+  )
+  await db.pool.query(
     'DROP TABLE IF EXISTS tesoreria.dues_community_work, tesoreria.dues_agreements CASCADE',
   )
   await db.pool.query('CREATE SCHEMA IF NOT EXISTS tesoreria')
@@ -146,6 +151,7 @@ beforeAll(async () => {
     '0060_dues_settlement_reversal_unique.sql',
     '0061_dues_cash_settlement_reversal_expense.sql',
     '0064_dues_condonation_treatments.sql',
+    '0065_dues_range_receipts.sql',
   ]
   await db.pool.query(
     (
@@ -876,4 +882,323 @@ it('commits each tender and rolls settlement allocation and tender rows back aft
     }),
   ).rejects.toThrow('forced audit failure')
   await expect(count()).resolves.toEqual(before)
+})
+
+it('repairs a historical SPORT price gap across three months and replays generation and payment', async () => {
+  const socioId = await member()
+  const disciplinaId = randomUUID()
+  const enrollmentId = randomUUID()
+  const range = { start: '2025-07-01', end: '2025-10-01' }
+  const sportGapStart = '2025-07-25'
+  const augustStart = '2025-08-01'
+  const sportTariffStart = '2025-08-24'
+  const annualBaseAmountCents = 10_000
+  const explicitFixtureSportAmountCents = 2_345
+  // Independent proration oracle: the July SPORT enrollment covers 7 of 31 days.
+  const expectedJulySportAmountCents = Math.round((explicitFixtureSportAmountCents * 7) / 31)
+  const expectedJulyAmountCents = annualBaseAmountCents + expectedJulySportAmountCents
+  const expectedFullMonthAmountCents = annualBaseAmountCents + explicitFixtureSportAmountCents
+  const expectedPeriodAmountsCents = [
+    expectedJulyAmountCents,
+    expectedFullMonthAmountCents,
+    expectedFullMonthAmountCents,
+  ]
+  const expectedTotalCents = expectedPeriodAmountsCents.reduce((total, amount) => total + amount, 0)
+  await db.pool.query(
+    `INSERT INTO deportes.disciplinas (id,codigo,nombre) VALUES ($1,$2,'Historical SPORT fixture')`,
+    [disciplinaId, `historical-${disciplinaId}`],
+  )
+  await db.pool.query(
+    `INSERT INTO deportes.inscripciones (id,socio_id,disciplina_id,ejercicio_id,estado,fecha_alta) VALUES ($1,$2,$3,$4,'activa',$5)`,
+    [enrollmentId, socioId, disciplinaId, exerciseId, sportGapStart],
+  )
+  const pricing = new PricingService(db.db)
+  await pricing.create({
+    ...context(),
+    kind: 'BASE',
+    amountCents: annualBaseAmountCents,
+    currency: 'ARS',
+    effectiveFrom: '2025-01-01',
+    effectiveTo: '2026-01-01',
+    rule: 'FULL_MONTH',
+  })
+  await pricing.create({
+    ...context(),
+    kind: 'SPORT',
+    disciplinaId,
+    amountCents: explicitFixtureSportAmountCents,
+    currency: 'ARS',
+    effectiveFrom: sportTariffStart,
+    effectiveTo: '2026-01-01',
+    rule: 'FULL_MONTH',
+  })
+  const assessment = new AssessmentService(db.db, {
+    now: () => new Date('2026-01-01T00:00:00Z'),
+  })
+  const generation = {
+    ...context('historical-sport-gap-generation'),
+    socioId,
+    fromPeriod: '2025-07',
+    throughPeriod: '2025-09',
+  }
+  const blocked = await assessment.preview(generation)
+  expect(blocked).toMatchObject({
+    executable: false,
+    issues: [
+      {
+        code: 'PRICE_GAP',
+        componentKey: `sport:${enrollmentId}`,
+        from: sportGapStart,
+        to: augustStart,
+        period: '2025-07',
+      },
+      {
+        code: 'PRICE_GAP',
+        componentKey: `sport:${enrollmentId}`,
+        from: augustStart,
+        to: sportTariffStart,
+        period: '2025-08',
+      },
+    ],
+  })
+  expect(blocked.periods).toEqual(
+    ['2025-07', '2025-08', '2025-09'].map((period) =>
+      expect.objectContaining({
+        period,
+        components: expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'SPORT',
+            componentKey: `sport:${enrollmentId}`,
+            disciplinaId,
+          }),
+        ]),
+      }),
+    ),
+  )
+  await pricing.create({
+    ...context(),
+    kind: 'SPORT',
+    disciplinaId,
+    amountCents: explicitFixtureSportAmountCents,
+    currency: 'ARS',
+    effectiveFrom: sportGapStart,
+    effectiveTo: sportTariffStart,
+    rule: 'FULL_MONTH',
+  })
+  const executable = await assessment.preview(generation)
+  expect(executable).toMatchObject({
+    executable: true,
+    periods: [
+      { period: '2025-07', pendingAmountCents: expectedJulyAmountCents },
+      { period: '2025-08', pendingAmountCents: expectedFullMonthAmountCents },
+      { period: '2025-09', pendingAmountCents: expectedFullMonthAmountCents },
+    ],
+  })
+  const executed = await assessment.executeRange({
+    ...generation,
+    previewFingerprint: executable.fingerprint,
+  })
+  expect(executed).toMatchObject({
+    periods: ['2025-07', '2025-08', '2025-09'],
+    createdObligationIds: [expect.any(String), expect.any(String), expect.any(String)],
+  })
+  const obligationRows = await db.pool.query(
+    `SELECT o.amount::text AS obligation_amount,o.period_start::text AS period_start,o.period_end::text AS period_end,c.kind,c.component_key,c.amount::text AS component_amount,c.disciplina_id
+     FROM tesoreria.dues_obligations o
+     JOIN tesoreria.dues_obligation_components c ON c.obligation_id=o.id
+     WHERE o.id=ANY($1::uuid[]) ORDER BY o.period_start,c.kind`,
+    [executed.createdObligationIds],
+  )
+  expect(obligationRows.rows).toEqual([
+    {
+      obligation_amount: '105.30',
+      period_start: '2025-07-01',
+      period_end: '2025-08-01',
+      kind: 'BASE',
+      component_key: 'base',
+      component_amount: '100.00',
+      disciplina_id: null,
+    },
+    {
+      obligation_amount: '105.30',
+      period_start: '2025-07-01',
+      period_end: '2025-08-01',
+      kind: 'SPORT',
+      component_key: `sport:${enrollmentId}`,
+      component_amount: '5.30',
+      disciplina_id: disciplinaId,
+    },
+    {
+      obligation_amount: '123.45',
+      period_start: '2025-08-01',
+      period_end: '2025-09-01',
+      kind: 'BASE',
+      component_key: 'base',
+      component_amount: '100.00',
+      disciplina_id: null,
+    },
+    {
+      obligation_amount: '123.45',
+      period_start: '2025-08-01',
+      period_end: '2025-09-01',
+      kind: 'SPORT',
+      component_key: `sport:${enrollmentId}`,
+      component_amount: '23.45',
+      disciplina_id: disciplinaId,
+    },
+    {
+      obligation_amount: '123.45',
+      period_start: '2025-09-01',
+      period_end: '2025-10-01',
+      kind: 'BASE',
+      component_key: 'base',
+      component_amount: '100.00',
+      disciplina_id: null,
+    },
+    {
+      obligation_amount: '123.45',
+      period_start: '2025-09-01',
+      period_end: '2025-10-01',
+      kind: 'SPORT',
+      component_key: `sport:${enrollmentId}`,
+      component_amount: '23.45',
+      disciplina_id: disciplinaId,
+    },
+  ])
+  await expect(
+    db.pool.query(
+      `SELECT period_start::text AS period_start,period_end::text AS period_end FROM tesoreria.dues_generation_receipts WHERE caller_key=$1`,
+      [generation.callerKey],
+    ),
+  ).resolves.toMatchObject({ rows: [{ period_start: range.start, period_end: range.end }] })
+  const shift = await new CashDeskService(db.db).open({
+    ...context('historical-sport-gap-cash'),
+    deskId: `historical-sport-gap-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const settlements = new SettlementService(db.db)
+  const debtBeforePayment = await settlements.debt({ role: 'ADMIN', socioId })
+  expect(debtBeforePayment).toMatchObject({
+    totalCents: expectedTotalCents,
+    obligations: expectedPeriodAmountsCents.map((outstandingCents, index) =>
+      expect.objectContaining({
+        id: executed.createdObligationIds[index],
+        outstandingCents,
+      }),
+    ),
+  })
+  const selection = await selectFullOutstanding(db.db, {
+    socioId,
+    obligationIds: executed.createdObligationIds,
+  })
+  expect(selection).toMatchObject({
+    totalCents: expectedTotalCents,
+    currency: 'ARS',
+    allocations: expect.arrayContaining(
+      executed.createdObligationIds.map((obligationId, index) => ({
+        obligationId,
+        amountCents: expectedPeriodAmountsCents[index],
+      })),
+    ),
+  })
+  const paymentInput = {
+    ...context('historical-sport-gap-payment'),
+    socioId,
+    obligationIds: executed.createdObligationIds,
+    shiftId: shift.id,
+    tender: 'CASH' as const,
+    selectionFingerprint: selection.fingerprint,
+  }
+  const paid = await settlements.create(paymentInput)
+  expect(paid.allocations).toHaveLength(3)
+  expect(paid).toMatchObject({
+    amountCents: expectedTotalCents,
+    currency: 'ARS',
+    allocations: expect.arrayContaining(
+      executed.createdObligationIds.map((obligationId, index) =>
+        expect.objectContaining({
+          id: expect.any(String),
+          settlementId: paid.settlementId,
+          obligationId,
+          kind: 'ALLOCATION',
+          amountCents: expectedPeriodAmountsCents[index],
+          compensatesAllocationId: null,
+        }),
+      ),
+    ),
+  })
+  const paidAllocationsById = Object.fromEntries(
+    paid.allocations.map((allocation) => [allocation.id, { ...allocation }]),
+  )
+  const paidAllocationIdsByObligationId = Object.fromEntries(
+    paid.allocations.map((allocation) => [allocation.obligationId, allocation.id]),
+  )
+  await expect(
+    db.pool.query(
+      `SELECT s.amount::text AS settlement_amount,btrim(s.currency) AS settlement_currency,a.obligation_id,a.amount::text AS allocation_amount,t.amount::text AS cash_amount,t.direction,t.tender,t.source_type
+       FROM tesoreria.dues_settlements s
+       JOIN tesoreria.dues_allocations a ON a.settlement_id=s.id
+       JOIN tesoreria.dues_cash_tenders t ON t.source_id=s.id
+       WHERE s.id=$1 ORDER BY a.obligation_id`,
+      [paid.settlementId],
+    ),
+  ).resolves.toMatchObject({
+    rows: expect.arrayContaining(
+      executed.createdObligationIds.map((obligationId, index) => ({
+        settlement_amount: '352.20',
+        settlement_currency: 'ARS',
+        obligation_id: obligationId,
+        allocation_amount: index === 0 ? '105.30' : '123.45',
+        cash_amount: '352.20',
+        direction: 'INCOME',
+        tender: 'CASH',
+        source_type: 'SETTLEMENT',
+      })),
+    ),
+  })
+  await expect(settlements.debt({ role: 'ADMIN', socioId })).resolves.toMatchObject({
+    totalCents: 0,
+  })
+  const counts = async () =>
+    (
+      await db.pool.query(
+        `SELECT
+          (SELECT count(*)::int FROM tesoreria.dues_obligations WHERE socio_id=$1) obligations,
+          (SELECT count(*)::int FROM tesoreria.dues_generation_receipts WHERE caller_key=$2) generation_records,
+          (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,
+          (SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,
+          (SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) cash_movements`,
+        [socioId, generation.callerKey],
+      )
+    ).rows[0]
+  const beforeReplay = await counts()
+  expect(beforeReplay).toEqual({
+    obligations: 3,
+    generation_records: 1,
+    settlements: 1,
+    allocations: 3,
+    cash_movements: 1,
+  })
+  await expect(
+    assessment.executeRange({ ...generation, previewFingerprint: executable.fingerprint }),
+  ).resolves.toEqual(executed)
+  const replayedPayment = await settlements.create(paymentInput)
+  expect(replayedPayment).toMatchObject({
+    settlementId: paid.settlementId,
+    kind: 'MONETARY',
+    amountCents: expectedTotalCents,
+    currency: 'ARS',
+  })
+  expect(replayedPayment.allocations).toHaveLength(3)
+  expect(
+    Object.fromEntries(
+      replayedPayment.allocations.map((allocation) => [allocation.id, { ...allocation }]),
+    ),
+  ).toEqual(paidAllocationsById)
+  expect(
+    Object.fromEntries(
+      replayedPayment.allocations.map((allocation) => [allocation.obligationId, allocation.id]),
+    ),
+  ).toEqual(paidAllocationIdsByObligationId)
+  expect(await counts()).toEqual(beforeReplay)
 })
