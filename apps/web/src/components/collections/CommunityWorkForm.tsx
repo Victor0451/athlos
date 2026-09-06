@@ -15,14 +15,17 @@ export interface CommunityWorkDraft {
 }
 
 // prettier-ignore
-type Props = { open: boolean; busy: boolean; error?: string; formId?: string; onCancel: () => void; onSubmit: (draft: CommunityWorkDraft) => Promise<void> | void }
+type Props = { open: boolean; busy: boolean; locked?: boolean; reconciling?: boolean; error?: string; formId?: string; onCancel: () => void; onReconcile?: () => Promise<void> | void; onSubmit: (draft: CommunityWorkDraft) => Promise<void> | void }
 
 export function CommunityWorkForm({
   open,
   busy,
+  locked = false,
+  reconciling = false,
   error = '',
   formId = 'community-work-form',
   onCancel,
+  onReconcile,
   onSubmit,
 }: Props) {
   // prettier-ignore
@@ -37,7 +40,7 @@ export function CommunityWorkForm({
   if (!open) return null
 
   // prettier-ignore
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const amountCents = Number(draft.amountCents); const evidence = draft.evidence.trim(); const reason = draft.reason.trim(); if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !evidence || !reason) { setValidationError('El valor aprobado, la evidencia y el motivo son obligatorios y válidos.'); return } setValidationError(''); await onSubmit({ amountCents, evidence, reason }) }
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (locked) return; const amountCents = Number(draft.amountCents); const evidence = draft.evidence.trim(); const reason = draft.reason.trim(); if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !evidence || !reason) { setValidationError('El valor aprobado, la evidencia y el motivo son obligatorios y válidos.'); return } setValidationError(''); await onSubmit({ amountCents, evidence, reason }) }
 
   return (
     <Modal
@@ -54,11 +57,21 @@ export function CommunityWorkForm({
           >
             Cancelar
           </button>
+          {locked && onReconcile && (
+            <button
+              className={collectionButtonClass.secondary}
+              type="button"
+              onClick={() => void onReconcile()}
+              disabled={busy || reconciling}
+            >
+              {reconciling ? 'Actualizando saldo…' : 'Actualizar saldo'}
+            </button>
+          )}
           <button
             className={collectionButtonClass.primary}
             type="submit"
             form={formId}
-            disabled={busy}
+            disabled={busy || locked}
           >
             {busy ? 'Confirmando trabajo comunitario…' : 'Confirmar trabajo comunitario'}
           </button>
