@@ -38,7 +38,9 @@ export function PaymentDialog({
   onRefreshDebt,
   onClose,
 }: Props) {
-  const eligible = debt.obligations.filter(({ outstanding_cents }) => outstanding_cents > 0)
+  const eligible = debt.obligations.filter(
+    ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
+  )
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [shiftId, setShiftId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH')
@@ -48,6 +50,15 @@ export function PaymentDialog({
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const statusRef = useRef<HTMLParagraphElement>(null)
+  const mountedRef = useRef(true)
+  const openRef = useRef(open)
+  const debtRef = useRef(debt)
+  const submissionInFlight = useRef(false)
+  const lifecycleIdRef = useRef(0)
+  const requestIdRef = useRef(0)
+  const activeRequestIdRef = useRef<number | null>(null)
+  openRef.current = open
+  debtRef.current = debt
   const selected = eligible.filter(({ id }) => selectedIds.includes(id))
   const total = selected.reduce((sum, obligation) => sum + obligation.outstanding_cents, 0)
   const tender = paymentMethod === 'CARD' ? cardSubtype : paymentMethod
@@ -67,7 +78,27 @@ export function PaymentDialog({
                 : ''
 
   useEffect(() => {
-    if (!open) return
+    return () => {
+      mountedRef.current = false
+      lifecycleIdRef.current += 1
+      activeRequestIdRef.current = null
+      submissionInFlight.current = false
+    }
+  }, [])
+  useEffect(() => {
+    lifecycleIdRef.current += 1
+    activeRequestIdRef.current = null
+    submissionInFlight.current = false
+    setBusy(false)
+  }, [debt.socio_id])
+  useEffect(() => {
+    lifecycleIdRef.current += 1
+    activeRequestIdRef.current = null
+    submissionInFlight.current = false
+    if (!open) {
+      setBusy(false)
+      return
+    }
     setSelectedIds(eligible.map(({ id }) => id))
     setShiftId(shifts[0]?.id ?? '')
     setPaymentMethod('CASH')
@@ -93,9 +124,20 @@ export function PaymentDialog({
     }
   }
   const submitPayment = async () => {
-    if (confirmationReason || paymentConflict || !tender) return
+    if (submissionInFlight.current || confirmationReason || paymentConflict || !tender) return
+    submissionInFlight.current = true
+    const lifecycleId = lifecycleIdRef.current
+    const requestId = ++requestIdRef.current
+    activeRequestIdRef.current = requestId
     setBusy(true)
     setError('')
+    const paymentSocioId = debt.socio_id
+    const isActiveRequest = () =>
+      mountedRef.current &&
+      openRef.current &&
+      debtRef.current.socio_id === paymentSocioId &&
+      lifecycleIdRef.current === lifecycleId &&
+      activeRequestIdRef.current === requestId
     try {
       const allocations = [...selected]
         .sort((left, right) => left.id.localeCompare(right.id))
@@ -109,16 +151,19 @@ export function PaymentDialog({
       const selection_fingerprint = [...new Uint8Array(bytes)]
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join('')
+      if (!isActiveRequest()) return
       const result = await onPayment({
         obligation_ids: allocations.map(({ obligationId }) => obligationId),
         shift_id: shiftId,
         tender,
         selection_fingerprint,
       })
+      if (!isActiveRequest()) return
       setSelectedIds([])
       setStatus(result?.replayed ? 'Pago repetido.' : 'Pago registrado.')
       onClose()
     } catch (cause) {
+      if (!isActiveRequest()) return
       if (
         (cause instanceof ApiError && cause.status === 409) ||
         (cause instanceof DuesOperationError && cause.kind === 'conflict')
@@ -127,7 +172,10 @@ export function PaymentDialog({
         setError(staleBalanceMessage)
       } else setError('No se pudo registrar el pago.')
     } finally {
-      setBusy(false)
+      if (activeRequestIdRef.current !== requestId) return
+      activeRequestIdRef.current = null
+      submissionInFlight.current = false
+      if (mountedRef.current) setBusy(false)
     }
   }
   const inlineStatus = (message: string, isError = false) => (

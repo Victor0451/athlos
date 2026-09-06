@@ -33,7 +33,7 @@ describe('PaymentObligationSelector', () => {
       screen.queryByText(/2026-08-01|a26f7d79-69d8-4f3d-a3b5-7e650c7b8119/i),
     ).not.toBeInTheDocument()
     expect(screen.getByText(/60,00/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /quitar selección/i }))
+    await user.click(screen.getByRole('checkbox', { name: /seleccionar todas/i }))
     expect(onSelectedIdsChange).toHaveBeenCalledWith([])
 
     rerender(
@@ -45,5 +45,33 @@ describe('PaymentObligationSelector', () => {
     )
     await user.click(screen.getByLabelText(/período agosto de 2026/i))
     expect(onSelectedIdsChange).toHaveBeenLastCalledWith(['a26f7d79-69d8-4f3d-a3b5-7e650c7b8119'])
+  })
+
+  it('uses only current eligible IDs for a partial master selection', async () => {
+    const user = userEvent.setup()
+    const onSelectedIdsChange = vi.fn()
+    const { rerender } = render(
+      <PaymentObligationSelector
+        obligations={obligations}
+        selectedIds={[obligations[0]!.id, 'stale-obligation']}
+        onSelectedIdsChange={onSelectedIdsChange}
+      />,
+    )
+
+    const master = screen.getByRole('checkbox', { name: /seleccionar todas/i })
+    expect(master).not.toBeChecked()
+    expect(master).toHaveProperty('indeterminate', true)
+    await user.click(master)
+    expect(onSelectedIdsChange).toHaveBeenLastCalledWith(obligations.map(({ id }) => id))
+
+    rerender(
+      <PaymentObligationSelector
+        obligations={obligations}
+        selectedIds={obligations.map(({ id }) => id)}
+        onSelectedIdsChange={onSelectedIdsChange}
+      />,
+    )
+    await user.click(screen.getByLabelText(/período agosto de 2026/i))
+    expect(onSelectedIdsChange).toHaveBeenLastCalledWith([obligations[1]!.id])
   })
 })

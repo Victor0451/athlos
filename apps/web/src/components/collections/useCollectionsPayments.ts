@@ -193,23 +193,29 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
   }
 
   const pay = async (draft: Omit<FullSelectionPaymentInput, 'socio_id'>) => {
+    const memberId = selectedSocio?.id
+    if (!memberId || selectedMember.current !== memberId)
+      throw new DuesOperationError('permission', 'Authentication required')
     if (!openShifts.some(({ id }) => id === draft.shift_id))
       throw new DuesOperationError('conflict', 'Selected cash shift is not open')
     const obligation_ids = [...draft.obligation_ids].sort()
     return runSettlementMutation(
       'full-selection-payment',
       JSON.stringify({
-        socioId: selectedSocio!.id,
+        socioId: memberId,
         obligation_ids,
         shift_id: draft.shift_id,
         tender: draft.tender,
         selection_fingerprint: draft.selection_fingerprint,
       }),
-      (key) =>
-        apiDependencies.createFullSelectionPayment(
-          { ...draft, socio_id: selectedSocio!.id, obligation_ids },
+      (key) => {
+        if (selectedMember.current !== memberId)
+          throw new DuesOperationError('unavailable', 'Payment context unavailable')
+        return apiDependencies.createFullSelectionPayment(
+          { ...draft, socio_id: memberId, obligation_ids },
           key,
-        ),
+        )
+      },
       true,
       refreshPaymentContext,
     )

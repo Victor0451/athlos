@@ -58,6 +58,18 @@ describe('SettlementActions', () => {
     expect(screen.queryByRole('dialog', { name: /revisar pago/i })).not.toBeInTheDocument()
   })
 
+  it('does not open payment for a paid obligation with an inconsistent positive balance', async () => {
+    const user = userEvent.setup()
+    renderActions({
+      ...debt,
+      obligations: [{ ...debt.obligations[0]!, status: 'PAID', outstanding_cents: 10_000 }],
+    })
+
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /registrar pago/i }))
+    expect(screen.queryByRole('dialog', { name: /revisar pago/i })).not.toBeInTheDocument()
+  })
+
   it('uses human reversal labels without exposing settlement identifiers and retains callback IDs', async () => {
     const settlementId = 'a6c9531b-831f-4d11-8c63-67c2f3c3f4cb'
     const onReverse = vi.fn().mockResolvedValue(undefined)
