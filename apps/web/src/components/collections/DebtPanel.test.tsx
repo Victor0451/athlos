@@ -39,7 +39,7 @@ describe('DebtPanel', () => {
   it('reports empty and not-found debt states', () => {
     const { rerender } = render(panel({ status: 'empty', debt: { ...debt, status: 'empty' } }))
     expect(screen.getByRole('status')).toHaveTextContent(
-      /no tiene deuda pendiente.*buscar otro socio/i,
+      'No hay deuda registrada todavía para este socio.',
     )
 
     rerender(panel({ status: 'not_found', debt: null }))
