@@ -146,6 +146,16 @@ export default function CollectionsPage() {
   const pricingTrigger = useRef<HTMLButtonElement>(null)
   const restorePricingTrigger = useRef(false)
   const selectedMember = useRef<string | null>(null)
+  const searchLoad = useRef(0)
+  const assessmentLoad = useRef(0)
+  const assessmentRequest = useRef<{
+    generation: number
+    memberId: string
+    range: string
+  } | null>(null)
+  const selectionVersion = useRef(0)
+  const debtSummaryRef = useRef<HTMLDivElement>(null)
+  const [focusDebtMemberId, setFocusDebtMemberId] = useState<string | null>(null)
   const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
@@ -245,6 +255,14 @@ export default function CollectionsPage() {
   }
 
   useEffect(() => {
+    if (!focusDebtMemberId || selectedSocio?.id !== focusDebtMemberId || debt?.status !== 'ready')
+      return
+    debtSummaryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    debtSummaryRef.current?.focus()
+    setFocusDebtMemberId(null)
+  }, [debt?.status, focusDebtMemberId, selectedSocio?.id])
+
+  useEffect(() => {
     if (!authorized) return
     let active = true
     setPricingState('loading')
@@ -307,25 +325,37 @@ export default function CollectionsPage() {
       'No se pudo dar de baja la cuota. Intentá nuevamente.',
     )
   const searchSocios = async (term: string) => {
-    if (!term) return setSocios([])
+    const request = ++searchLoad.current
+    setSocios([])
+    if (!term) return
     const result = await getSocios({ search: term, page: 1, limit: 20 })
-    setSocios(result.items)
+    if (request === searchLoad.current) setSocios(result.items)
   }
   const previewAssessment = async (input: {
     socio_id: string
     from_period: string
     through_period: string
   }) => {
+    const request = {
+      generation: ++assessmentLoad.current,
+      memberId: input.socio_id,
+      range: `${input.from_period}:${input.through_period}`,
+    }
+    assessmentRequest.current = request
+    const isCurrent = () =>
+      assessmentRequest.current === request && selectedMember.current === request.memberId
     setAssessmentStatus('loading')
     setAssessmentError('')
     setAssessmentPreview(null)
     try {
       const result = await previewDuesAssessments(input)
+      if (!isCurrent()) return
       setAssessmentPreview(result)
       setAssessmentStatus(
         result.executable ? (result.periods.length ? 'ready' : 'empty') : 'blocked',
       )
     } catch {
+      if (!isCurrent()) return
       setAssessmentStatus('error')
       setAssessmentError('No se pudo consultar la evaluación.')
     }
@@ -336,7 +366,19 @@ export default function CollectionsPage() {
     through_period: string
     preview_fingerprint: string
   }) => {
-    if (!user || !selectedSocio) return
+    if (!user || !selectedSocio || selectedMember.current !== input.socio_id) return
+    const selection = selectionVersion.current
+    const previewRequest = assessmentRequest.current
+    if (
+      !previewRequest ||
+      previewRequest.memberId !== input.socio_id ||
+      previewRequest.range !== `${input.from_period}:${input.through_period}`
+    )
+      return
+    const isCurrent = () =>
+      selection === selectionVersion.current &&
+      selectedMember.current === input.socio_id &&
+      assessmentRequest.current === previewRequest
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const request = {
       operatorId: user.operator_id,
@@ -351,12 +393,22 @@ export default function CollectionsPage() {
       if (!(await refreshDebt()))
         throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
       idempotency.current.complete(request)
+      if (!isCurrent()) return
       await previewAssessment({
         socio_id: input.socio_id,
         from_period: input.from_period,
         through_period: input.through_period,
       })
+      const refreshedRequest = assessmentRequest.current
+      if (
+        selection === selectionVersion.current &&
+        selectedMember.current === input.socio_id &&
+        refreshedRequest?.memberId === input.socio_id &&
+        refreshedRequest.range === `${input.from_period}:${input.through_period}`
+      )
+        setFocusDebtMemberId(input.socio_id)
     } catch (reason) {
+      if (!isCurrent()) return
       if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
         idempotency.current.abandon(request)
         setAssessmentError(
@@ -367,7 +419,11 @@ export default function CollectionsPage() {
     }
   }
   const selectSocio = async (socio: DebtSocio) => {
+    selectionVersion.current += 1
+    assessmentLoad.current += 1
+    assessmentRequest.current = null
     selectedMember.current = socio.id
+    setFocusDebtMemberId(null)
     setAssessmentPreview(null)
     setAssessmentStatus('idle')
     setAssessmentError('')
@@ -744,6 +800,7 @@ export default function CollectionsPage() {
       {activeTab === 'collections' && (
         <>
           <DebtPanel
+            summaryRef={debtSummaryRef}
             socio={selectedSocio}
             socios={socios}
             status={debtStatus}
