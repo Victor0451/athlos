@@ -46,7 +46,9 @@ export function SettlementActions({
   onReverse,
   headingLevel = 3,
 }: Props) {
-  const eligible = debt.obligations.filter(({ outstanding_cents }) => outstanding_cents > 0)
+  const eligible = debt.obligations.filter(
+    ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
+  )
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [reversal, setReversal] = useState<ReversalSettlement | null>(null)
   const [reason, setReason] = useState('')
