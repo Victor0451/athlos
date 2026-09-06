@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type {
   CondonationDecisionInput,
   CondonationRequest,
@@ -25,6 +25,15 @@ type Props = {
   headingLevel?: 3 | 4
 }
 type Operation = 'request' | 'decision' | 'execution'
+
+const amount = (cents: number, currency: string) =>
+  new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'narrowSymbol',
+  })
+    .format(cents / 100)
+    .replace(/\u00a0/g, ' ')
 
 const failure = (cause: unknown, operation: Operation) => {
   const kind = (cause as { kind?: unknown })?.kind
@@ -58,6 +67,8 @@ export function CondonationActions({
   const eligible = obligations
     .filter(({ outstanding_cents }) => outstanding_cents > 0)
     .sort((a, b) => a.id.localeCompare(b.id))
+  const eligibleIds = eligible.map(({ id }) => id)
+  const eligibilityKey = eligibleIds.join('\u0000')
   const request = initial
   const [context, setContext] = useState('')
   const [reason, setReason] = useState('')
@@ -68,16 +79,28 @@ export function CondonationActions({
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  useEffect(() => setSelectedIds(new Set()), [memberId])
+  useEffect(() => {
+    const eligibleIdSet = new Set(eligibleIds)
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((id) => eligibleIdSet.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [eligibilityKey])
+  const selectedEligible = eligible.filter(({ id }) => selectedIds.has(id))
+  const selectionLimitReached = selectedEligible.length === 100
   if (!eligible.length) return null
   const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!selectedEligible.length || isSubmitting) return
     setError('')
     setMessage('')
     setIsSubmitting(true)
     try {
       await onRequest({
         member_id: memberId,
-        obligation_ids: eligible.map(({ id }) => id),
+        obligation_ids: selectedEligible.map(({ id }) => id),
         context: context.trim(),
         reason: reason.trim(),
         evidence: evidence.trim(),
@@ -129,16 +152,51 @@ export function CondonationActions({
         Incluye todas las obligaciones pendientes seleccionadas; esta solicitud no perdona ni
         modifica la deuda.
       </p>
-      <ul
-        aria-label="Obligaciones incluidas"
-        className="grid gap-2 border-y border-ink-200 py-3 font-body text-sm text-ink-700 sm:grid-cols-2"
-      >
-        {eligible.map(({ id, period_start }) => (
-          <li key={id} className="bg-surface-sunken px-3 py-2">
-            Período {formatObligationPeriod(period_start)}
-          </li>
-        ))}
-      </ul>
+      {!request && (
+        <>
+          <p className="font-body text-sm text-ink-700">
+            {selectedEligible.length} de {eligible.length} obligaciones seleccionadas
+          </p>
+          <ul
+            aria-label="Obligaciones seleccionables"
+            className="grid gap-2 border-y border-ink-200 py-3 font-body text-sm text-ink-700 sm:grid-cols-2"
+          >
+            {eligible.map(({ id, period_start, outstanding_cents, currency }) => {
+              const selected = selectedIds.has(id)
+              return (
+                <li key={id} className="bg-surface-sunken px-3 py-2">
+                  <label className="flex cursor-pointer items-center justify-between gap-3">
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={isSubmitting || (!selected && selectionLimitReached)}
+                        onChange={() =>
+                          setSelectedIds((current) => {
+                            const next = new Set(current)
+                            if (next.has(id)) next.delete(id)
+                            else next.add(id)
+                            return next
+                          })
+                        }
+                      />
+                      Período {formatObligationPeriod(period_start)}
+                    </span>
+                    <span className="font-mono tabular-nums text-ink-900">
+                      {amount(outstanding_cents, currency)}
+                    </span>
+                  </label>
+                </li>
+              )
+            })}
+          </ul>
+          {selectionLimitReached && (
+            <p className="font-body text-sm text-ink-700">
+              Podés incluir hasta 100 obligaciones por solicitud.
+            </p>
+          )}
+        </>
+      )}
       {message && (
         <p role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>
           {message}
@@ -184,7 +242,7 @@ export function CondonationActions({
           <div className="sm:col-span-2">
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || !selectedEligible.length}
               className={`${collectionButtonClass.primary} disabled:cursor-not-allowed disabled:opacity-60`}
             >
               {isSubmitting ? 'Enviando solicitud…' : 'Enviar solicitud de condonación'}

@@ -59,6 +59,31 @@ describe('AgreementActions', () => {
     expect(screen.queryByRole('button', { name: /registrar acuerdo/i })).not.toBeInTheDocument()
   })
 
+  it('requires an eligible active agreement for community work and shows its current balance', () => {
+    const noAgreement = renderActions({
+      treatment: 'community',
+      onRecordCommunityWork: vi.fn(),
+    })
+    expect(screen.getByRole('status')).toHaveTextContent(/acuerdo activo negociado/i)
+    expect(
+      screen.queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+
+    noAgreement.unmount()
+    renderActions({
+      treatment: 'community',
+      state: state({ active: agreement }),
+      onRecordCommunityWork: vi.fn(),
+      outstandingCents: 10_000,
+      currency: 'ARS',
+    })
+    expect(screen.getByText(/saldo actual de la obligación:.*100,00/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /registrar acuerdo/i })).not.toBeInTheDocument()
+  })
+
   it('renders ascending immutable history and only the active agreement can be revised', () => {
     const previous = { ...agreement, id: 'agreement-previous', status: 'SUPERSEDED' as const }
     const current = { ...agreement, id: 'agreement-current', revision_number: 2 }
