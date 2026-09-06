@@ -489,6 +489,254 @@ describe('Collections navigation and direct access', () => {
   })
 })
 
+describe('assessment price-gap recovery', () => {
+  const socio = {
+    id: 'socio-natacion',
+    nombre: 'Ana',
+    apellido: 'Gorriti',
+    numero_socio: '42',
+    fecha_alta: '2026-01-15',
+  }
+  const blockedPreview = {
+    socio_id: socio.id,
+    from_period: '2026-07',
+    through_period: '2026-09',
+    executable: false,
+    currency: 'ARS',
+    fingerprint: 'blocked-preview',
+    issues: [
+      {
+        code: 'PRICE_GAP' as const,
+        componentKey: 'sport:enrollment-natacion',
+        from: '2026-07-25',
+        to: '2026-08-01',
+        period: '2026-07',
+      },
+      {
+        code: 'PRICE_GAP' as const,
+        componentKey: 'sport:enrollment-natacion',
+        from: '2026-08-01',
+        to: '2026-08-24',
+        period: '2026-08',
+      },
+    ],
+    periods: [
+      {
+        period: '2026-07',
+        start: '2026-07-01',
+        end: '2026-08-01',
+        calendarDays: 31,
+        existingObligationId: null,
+        pendingAmountCents: null,
+        components: [
+          {
+            componentKey: 'sport:enrollment-natacion',
+            kind: 'SPORT' as const,
+            disciplinaId: 'disciplina-natacion',
+            eligibleFrom: '2026-07-25',
+            eligibleTo: '2026-08-01',
+            eligibleDays: 7,
+            calendarDays: 31,
+            segments: [],
+            numerator: 0,
+            remainder: 0,
+            amountCents: 0,
+            status: 'CONFLICT' as const,
+          },
+        ],
+      },
+    ],
+  }
+  const successfulPreview = {
+    ...blockedPreview,
+    executable: true,
+    issues: [],
+    periods: blockedPreview.periods.map((period) => ({
+      ...period,
+      pendingAmountCents: 100,
+      components: period.components.map((component) => ({
+        ...component,
+        status: 'PENDING' as const,
+        amountCents: 100,
+      })),
+    })),
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 0,
+      obligations: [],
+    })
+    duesMocks.getDuesPrices.mockResolvedValue({ items: [] })
+    padronesMocks.getDisciplinas.mockResolvedValue({
+      items: [{ id: 'disciplina-natacion', codigo: 'NATACION', nombre: 'Natación' }],
+    })
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
+  })
+
+  it('repairs a blocked SPORT range, generates it, and records its full payment through mocked boundaries', async () => {
+    const user = userEvent.setup()
+    const generatedDebt = {
+      status: 'ready' as const,
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 100,
+      obligations: [
+        {
+          id: 'gap-obligation-1',
+          period_start: '2026-07-01',
+          period_end: '2026-08-01',
+          original_amount_cents: 100,
+          outstanding_cents: 100,
+          currency: 'ARS',
+          status: 'OPEN' as const,
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    }
+    const paidDebt = {
+      ...generatedDebt,
+      total_debt_cents: 0,
+      obligations: generatedDebt.obligations.map((obligation) => ({
+        ...obligation,
+        outstanding_cents: 0,
+        status: 'PAID' as const,
+      })),
+    }
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce({
+        status: 'ready',
+        socio_id: socio.id,
+        currency: 'ARS',
+        total_debt_cents: 0,
+        obligations: [],
+      })
+      .mockResolvedValueOnce(generatedDebt)
+      .mockResolvedValueOnce(paidDebt)
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([
+      { id: 'shift-gap-1', desk_id: 'desk-1', business_date: '2026-07-25' },
+    ])
+    duesMocks.previewDuesAssessments
+      .mockResolvedValueOnce(blockedPreview)
+      .mockResolvedValueOnce(successfulPreview)
+      .mockResolvedValueOnce(successfulPreview)
+    duesMocks.createDuesPrice.mockResolvedValue({ id: 'sport-price-1' })
+    duesMocks.executeDuesAssessmentRange.mockResolvedValue({
+      created_obligation_ids: ['gap-obligation-1'],
+    })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'gap-settlement-1' })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-07')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-09')
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await screen.findByRole('alert')
+
+    await user.click(
+      within(screen.getByRole('region', { name: 'Vista previa de evaluación' })).getByRole(
+        'button',
+        { name: 'Configurar cuotas' },
+      ),
+    )
+    expect(screen.getByLabelText('Tipo de cuota')).toHaveValue('SPORT')
+    expect(screen.getByLabelText('Disciplina')).toHaveValue('disciplina-natacion')
+    expect(screen.getByLabelText('Vigente desde')).toHaveValue('25/07/2026')
+    expect(screen.getByLabelText('Vigente hasta')).toHaveValue('24/08/2026')
+    expect(screen.getByLabelText('Importe mensual (ARS)')).toHaveValue('')
+
+    await user.type(screen.getByLabelText('Importe mensual (ARS)'), '1')
+    await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
+
+    await waitFor(() =>
+      expect(duesMocks.createDuesPrice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'SPORT',
+          disciplina_id: 'disciplina-natacion',
+          amount_cents: 100,
+          effective_from: '2026-07-25',
+          effective_to: '2026-08-24',
+        }),
+      ),
+    )
+    expect(duesMocks.createDuesPrice).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'BASE' }),
+    )
+    await waitFor(() =>
+      expect(duesMocks.previewDuesAssessments).toHaveBeenLastCalledWith({
+        socio_id: socio.id,
+        from_period: '2026-07',
+        through_period: '2026-09',
+      }),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Generar obligaciones del rango' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))
+    await waitFor(() =>
+      expect(duesMocks.executeDuesAssessmentRange).toHaveBeenCalledWith(
+        {
+          socio_id: socio.id,
+          from_period: '2026-07',
+          through_period: '2026-09',
+          preview_fingerprint: successfulPreview.fingerprint,
+        },
+        expect.any(String),
+      ),
+    )
+    expect(await screen.findByText('Deuda total pendiente: $ 1,00')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Registrar pago' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+    await waitFor(() =>
+      expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          socio_id: socio.id,
+          obligation_ids: ['gap-obligation-1'],
+          shift_id: 'shift-gap-1',
+          tender: 'CASH',
+        }),
+        expect.any(String),
+      ),
+    )
+    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
+    expect(screen.getByText('Deuda total pendiente: $ 0,00')).toBeInTheDocument()
+  })
+
+  it('labels an empty debt response as not yet recorded instead of as zero debt', async () => {
+    const user = userEvent.setup()
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'empty',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 0,
+      obligations: [],
+    })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'No hay deuda registrada todavía para este socio.',
+    )
+    expect(screen.queryByText(/Deuda total pendiente:/)).not.toBeInTheDocument()
+  })
+})
+
 describe('payment orchestration and recovery', () => {
   const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
   const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }

@@ -1,15 +1,25 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type { DisciplinaOption } from '@/lib/api/padrones'
 import type { DuesPrice, DuesPriceInput } from '@/lib/api/dues'
 import { collectionButtonClass, collectionFieldClass } from './CollectionPrimitives'
 import { parseSpanishDate, SpanishDateInput } from './SpanishDateInput'
 
+export type PricingRepairContext =
+  | {
+      kind: 'SPORT'
+      disciplinaId: string
+      effectiveFrom: string
+      effectiveTo: string
+    }
+  | { kind: 'unresolved'; message: string }
+
 type Props = {
   disciplines: DisciplinaOption[]
   disciplineState?: 'loading' | 'ready' | 'empty' | 'error'
   busy?: boolean
+  repairContext?: PricingRepairContext
   onCreate: (input: DuesPriceInput) => Promise<unknown> | unknown
 }
 
@@ -43,7 +53,13 @@ const parseArsToCents = (value: string) => {
   return Number(cents)
 }
 
-export function PricingForm({ disciplines, disciplineState = 'ready', busy, onCreate }: Props) {
+export function PricingForm({
+  disciplines,
+  disciplineState = 'ready',
+  busy,
+  repairContext,
+  onCreate,
+}: Props) {
   const [draft, setDraft] = useState(blank)
   const [dates, setDates] = useState<Record<DateField, string>>({
     effective_from: '',
@@ -52,6 +68,18 @@ export function PricingForm({ disciplines, disciplineState = 'ready', busy, onCr
   const [amount, setAmount] = useState('')
   const [amountError, setAmountError] = useState('')
   const [dateError, setDateError] = useState<Partial<Record<DateField, string>>>({})
+
+  useEffect(() => {
+    if (repairContext?.kind !== 'SPORT') return
+    setDraft({ ...blank, kind: 'SPORT', disciplina_id: repairContext.disciplinaId })
+    setDates({
+      effective_from: repairContext.effectiveFrom.split('-').reverse().join('/'),
+      effective_to: repairContext.effectiveTo.split('-').reverse().join('/'),
+    })
+    setAmount('')
+    setAmountError('')
+    setDateError({})
+  }, [repairContext])
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -94,6 +122,10 @@ export function PricingForm({ disciplines, disciplineState = 'ready', busy, onCr
 
   return (
     <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
+      {repairContext?.kind === 'unresolved' && <p role="alert">{repairContext.message}</p>}
+      {repairContext?.kind === 'SPORT' && (
+        <p className="sm:col-span-2">La vigencia hasta indicada no incluye ese día.</p>
+      )}
       <label className="space-y-1 font-body text-sm font-medium text-ink-700">
         Tipo de cuota
         <select
@@ -183,7 +215,11 @@ export function PricingForm({ disciplines, disciplineState = 'ready', busy, onCr
           <option value="NEXT_PERIOD">Período siguiente</option>
         </select>
       </label>
-      <button type="submit" disabled={busy} className={collectionButtonClass.primary}>
+      <button
+        type="submit"
+        disabled={busy || repairContext?.kind === 'unresolved'}
+        className={collectionButtonClass.primary}
+      >
         Guardar cuota
       </button>
     </form>

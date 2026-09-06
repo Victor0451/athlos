@@ -90,8 +90,7 @@ export function DebtPanel({
 }
 
 function statusMessage(status: DebtPanelStatus) {
-  if (status === 'empty')
-    return 'El socio seleccionado no tiene deuda pendiente. Podés buscar otro socio.'
+  if (status === 'empty') return 'No hay deuda registrada todavía para este socio.'
   if (status === 'not_found') return 'No se encontró el detalle de deuda de este socio.'
   if (status === 'loading') return 'Cargando el detalle de deuda…'
   if (status === 'unavailable' || status === 'error')

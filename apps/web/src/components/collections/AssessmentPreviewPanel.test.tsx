@@ -179,6 +179,50 @@ describe('AssessmentPreviewPanel', () => {
     expect(onConfigurePrices).toHaveBeenCalledOnce()
   })
 
+  it('does not present an unevaluated blocked period as a zero amount', () => {
+    render(
+      <AssessmentPreviewPanel
+        socio={socio}
+        preview={{
+          ...preview,
+          executable: false,
+          issues: [
+            {
+              code: 'PRICE_GAP',
+              componentKey: 'sport:enrollment-natacion',
+              from: '2026-07-25',
+              to: '2026-08-24',
+              period: '2026-07',
+            },
+          ],
+          periods: [
+            {
+              ...preview.periods[0]!,
+              pendingAmountCents: null,
+              components: [
+                {
+                  ...preview.periods[0]!.components[0]!,
+                  kind: 'SPORT',
+                  componentKey: 'sport:enrollment-natacion',
+                  amountCents: 0,
+                  status: 'CONFLICT',
+                },
+              ],
+            },
+          ],
+        }}
+        status="blocked"
+        onPreview={vi.fn()}
+        onExecute={vi.fn()}
+        onConfigurePrices={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Importe pendiente no calculable.')).toBeInTheDocument()
+    expect(screen.queryByText('Total del período: 0.00 ARS')).not.toBeInTheDocument()
+    expect(screen.queryByText('Total del rango: 0.00 ARS')).not.toBeInTheDocument()
+  })
+
   it('renders benefit components instead of the benefit empty state', () => {
     render(
       <AssessmentPreviewPanel

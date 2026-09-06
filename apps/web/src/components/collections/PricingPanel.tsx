@@ -9,7 +9,7 @@ import {
   collectionInlineStatusClass,
   collectionSectionClass,
 } from './CollectionPrimitives'
-import { PricingForm } from './PricingForm'
+import { PricingForm, type PricingRepairContext } from './PricingForm'
 
 export type PricingPanelState =
   | 'loading'
@@ -28,6 +28,7 @@ type Props = {
   disciplines?: DisciplinaOption[]
   disciplineState?: DisciplinePanelState
   disciplineError?: string
+  repairContext?: PricingRepairContext
   onCreate: (input: DuesPriceInput) => Promise<unknown> | unknown
   onRevoke?: (id: string, reason: string) => Promise<unknown> | unknown
 }
@@ -61,6 +62,7 @@ export function PricingPanel({
   disciplines = [],
   disciplineState = 'ready',
   disciplineError,
+  repairContext,
   onCreate,
   onRevoke,
 }: Props) {
@@ -126,6 +128,7 @@ export function PricingPanel({
         disciplines={disciplines}
         disciplineState={disciplineState}
         busy={state === 'loading'}
+        {...(repairContext ? { repairContext } : {})}
         onCreate={onCreate}
       />
       {prices.length > 0 && (
