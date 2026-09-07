@@ -72,7 +72,7 @@ const confirm = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('button', { name: /confirmar pago/i }))
 
 describe('PaymentDialog', () => {
-  it('defaults to all obligations, submits the selection fingerprint, and reports replayed success', async () => {
+  it('defaults to all obligations, submits the selection fingerprint, and reports confirmed success', async () => {
     const user = userEvent.setup()
     const onPayment = vi.fn().mockResolvedValue({ replayed: true })
     const { onClose } = renderDialog(onPayment)
@@ -91,7 +91,7 @@ describe('PaymentDialog', () => {
       }),
     )
     expect(onClose).toHaveBeenCalledOnce()
-    expect(await screen.findByText('Pago repetido.')).toBeInTheDocument()
+    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
   })
 
   it.each([new DuesOperationError('conflict', 'stale'), new ApiError(409, 'CONFLICT', 'stale')])(
