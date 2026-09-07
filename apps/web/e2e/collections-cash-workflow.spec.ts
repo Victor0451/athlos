@@ -226,6 +226,15 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   const dialog = page.getByRole('dialog', { name: 'Revisar pago', exact: true })
   await expect(dialog.getByRole('heading', { name: 'Revisar pago', exact: true })).toBeVisible()
   await expect(dialog.getByRole('checkbox')).toHaveCount(3)
+  const cashNavigation = dialog.getByRole('button', { name: 'Ir a caja', exact: true })
+  await expect(dialog.locator(':focus')).toHaveCount(1)
+  if (mobileKeyboard) {
+    await traverseTo(cashNavigation)
+    await page.keyboard.press('Shift+Tab')
+    await expect(dialog.getByRole('button', { name: 'Cancelar', exact: true })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(cashNavigation).toBeFocused()
+  }
   const february = dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })
   if (mobileKeyboard) {
     await traverseTo(february)
@@ -283,7 +292,16 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   await expect(dialog).not.toBeVisible()
   await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
   await expect(dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })).toBeChecked()
+  await expect(dialog.locator(':focus')).toHaveCount(1)
+  if (mobileKeyboard) {
+    await traverseTo(cashNavigation)
+    await page.keyboard.press('Shift+Tab')
+    await expect(dialog.getByRole('button', { name: 'Confirmar pago', exact: true })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(cashNavigation).toBeFocused()
+  }
   await activate(dialog.getByRole('button', { name: 'Cancelar', exact: true }))
+  await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeFocused()
   if (mobileKeyboard) {
     await activate(page.getByRole('button', { name: 'Abrir navegación' }))
     const drawer = page.getByRole('dialog', { name: 'Navegación principal' })
