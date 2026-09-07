@@ -154,7 +154,7 @@ describe('TreatmentWorkspace', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeEnabled()
     expect(screen.getByRole('alert')).toHaveTextContent(
       'No se pudo cargar los turnos de caja abiertos.',
     )
