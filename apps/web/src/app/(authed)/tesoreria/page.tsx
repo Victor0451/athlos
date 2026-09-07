@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
+import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
+import { CashCloseSummary, closedAtLabel } from '@/components/treasury/CashCloseSummary'
 import {
   closeCashShift,
   forceCloseCashShift,
@@ -28,20 +30,6 @@ const parseCashAmount = (value: string): number | null => {
   if (!match) return null
   const cents = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'))
   return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null
-}
-
-const formatCashTotal = (totals: Record<string, number> | undefined): string => {
-  if (!totals || !Number.isSafeInteger(totals.CASH ?? 0)) return 'No disponible'
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(
-    (totals.CASH ?? 0) / 100,
-  )
-}
-
-const closedAtLabel = (value: string | null): string => {
-  const date = value ? new Date(value) : null
-  return date && Number.isFinite(date.getTime())
-    ? date.toLocaleString('es-AR')
-    : 'Fecha no disponible'
 }
 
 export default function TreasuryPage() {
@@ -286,24 +274,7 @@ export default function TreasuryPage() {
       {closeResult && (
         <section aria-label="Resumen de conciliación" className="space-y-2 rounded border p-4">
           <h2 className="font-display text-lg">Último cierre confirmado</h2>
-          <p>
-            Conciliación de efectivo. Tarjetas y transferencias no se incluyen en el efectivo
-            contado.
-          </p>
-          <dl className="grid gap-2 sm:grid-cols-2">
-            <dt>Efectivo esperado</dt>
-            <dd>{formatCashTotal(closeResult.expected_tenders)}</dd>
-            <dt>Efectivo contado</dt>
-            <dd>{formatCashTotal(closeResult.counted_tenders)}</dd>
-            <dt>Diferencia de efectivo</dt>
-            <dd>{formatCashTotal(closeResult.discrepancy)}</dd>
-          </dl>
-          {closeResult.reason && <p>{closeResult.reason}</p>}
-          {closeResult.id && <p>Referencia de cierre: {closeResult.id}</p>}
-          {closeResult.closed_at && (
-            <p>Cerrado: {closedAtLabel(closeResult.closed_at)} (hora local)</p>
-          )}
-          {closeResult.force_close && <p>Recuperación de turno vencido.</p>}
+          <CashCloseSummary close={closeResult} />
         </section>
       )}
       {refreshWarning && (
@@ -397,10 +368,7 @@ export default function TreasuryPage() {
       </section>
       <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
         <h2 className="font-display text-lg">Turnos cerrados</h2>
-        <p>
-          La lista muestra los turnos cargados; el detalle histórico de conciliación aún no está
-          disponible.
-        </p>
+        <p>Consultá el detalle histórico de conciliación de los turnos cargados.</p>
         <ul className="space-y-2">
           {(query.data?.items ?? [])
             .filter(({ status }) => status === 'CLOSED')
@@ -411,6 +379,12 @@ export default function TreasuryPage() {
                 <p>
                   {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
                 </p>
+                <CashCloseHistoryDetail
+                  key={owner}
+                  shift={shift}
+                  actorId={user?.operator_id}
+                  role={user?.role}
+                />
               </li>
             ))}
         </ul>
