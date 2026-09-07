@@ -6,7 +6,7 @@ import {
   test,
 } from './fixtures/authenticated-dashboard'
 import type { Locator, Page } from '@playwright/test'
-import type { CashShift } from '../src/lib/api/treasury'
+import type { CashClose, CashShift } from '../src/lib/api/treasury'
 
 test('cash round trip preserves selection and reconciles the collected cash', async ({
   authenticatedPage,
@@ -38,6 +38,8 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   let opens = 0
   let payments = 0
   let closes = 0
+  let historicalGets = 0
+  let savedClose: CashClose | null = null
   let debtGets = 0
   let failNextDebtRefresh = false
   const unexpected: string[] = []
@@ -102,6 +104,12 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       })
       return
     }
+    if (method === 'GET' && path === `/api/v1/treasury/shifts/${shiftId}`) {
+      historicalGets += 1
+      expect(savedClose).not.toBeNull()
+      await route.fulfill({ json: { shift, close: savedClose } })
+      return
+    }
     if (path === '/api/v1/treasury/shifts') {
       if (method === 'GET') {
         await route.fulfill({ json: { items: shift ? [shift] : [] } })
@@ -156,17 +164,16 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       expect(request.postDataJSON()).toEqual({ counted_tenders: { CASH: 11000 } })
       expect(request.headers()['idempotency-key']).toBeTruthy()
       shift = { ...shift!, status: 'CLOSED', closed_at: new Date().toISOString() }
-      await route.fulfill({
-        json: {
-          id: '00000000-0000-4000-8000-000000000015',
-          shift_id: shiftId,
-          expected_tenders: { CASH: 11000 },
-          counted_tenders: { CASH: 11000 },
-          discrepancy: {},
-          reason: null,
-          closed_at: shift.closed_at,
-        },
-      })
+      savedClose = {
+        id: '00000000-0000-4000-8000-000000000015',
+        shift_id: shiftId,
+        expected_tenders: { CASH: 11000 },
+        counted_tenders: { CASH: 11000 },
+        discrepancy: {},
+        reason: null,
+        closed_at: shift.closed_at!,
+      }
+      await route.fulfill({ json: savedClose })
       return
     }
     if (
@@ -316,6 +323,26 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   await expect(summary).toContainText(/\$\s*0,00/)
   await expect(page.getByRole('region', { name: 'Turnos cerrados' })).toContainText('front-desk')
   await checkViewport()
+  await page.reload()
+  await expect(summary).not.toBeVisible()
+  const historyOpener = page.getByRole('button', {
+    name: 'Ver conciliación de front-desk',
+    exact: true,
+  })
+  await expect(historyOpener).toBeVisible()
+  expect(historicalGets).toBe(0)
+  await activate(historyOpener)
+  const historyDetail = page.getByRole('dialog', {
+    name: 'Conciliación del turno front-desk',
+    exact: true,
+  })
+  await expect(historyDetail).toContainText(/\$\s*110,00/)
+  await expect(historyDetail).toContainText(/\$\s*0,00/)
+  expect(historicalGets).toBe(1)
+  await checkViewport()
+  await activate(historyDetail.getByRole('button', { name: 'Cerrar detalle', exact: true }))
+  await expect(historyDetail).not.toBeVisible()
+  await expect(historyOpener).toBeFocused()
   expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
 }
