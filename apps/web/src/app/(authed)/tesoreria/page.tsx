@@ -11,6 +11,11 @@ import {
 } from '@/lib/api/treasury'
 import { useAuth } from '@/lib/use-auth'
 import { useFeatureConfig } from '@/lib/features'
+import {
+  canOperateCashShift,
+  isCashShiftEligible,
+  isCashShiftExpired,
+} from '@/lib/cash-shift-eligibility'
 
 export default function TreasuryPage() {
   const { user } = useAuth()
@@ -51,6 +56,13 @@ export default function TreasuryPage() {
   }
 
   const close = async (shift: CashShift) => {
+    const currentShift = shifts.find(({ id }) => id === shift.id)
+    if (!currentShift || !isCashShiftEligible(currentShift, user)) {
+      setCommandError(
+        'El turno ya no está disponible para cierre normal. Actualizá los turnos e intentá de nuevo.',
+      )
+      return
+    }
     setCommandError('')
     try {
       const result = await closeCashShift(
@@ -70,19 +82,31 @@ export default function TreasuryPage() {
     }
   }
 
-  const expired = (shift: CashShift) =>
-    shift.status === 'OPEN' &&
-    Boolean(shift.opened_at) &&
-    Date.now() >= new Date(shift.opened_at!).getTime() + 24 * 60 * 60 * 1000
+  const isOwnShift = (shift: CashShift) => shift.assigned_operator_id === user!.operator_id
+  const expired = (shift: CashShift) => isCashShiftExpired(shift)
+  const recoverableShifts = shifts
+    .filter(expired)
+    .filter((shift) => canOperateCashShift(shift, user))
 
   const confirmRecovery = async (event: FormEvent) => {
     event.preventDefault()
     if (!recoveryShift || !recoveryReason.trim()) return
+    const currentRecoveryShift = shifts.find(({ id }) => id === recoveryShift.id)
+    if (
+      !currentRecoveryShift ||
+      !canOperateCashShift(currentRecoveryShift, user) ||
+      !isCashShiftExpired(currentRecoveryShift)
+    ) {
+      setRecoveryError(
+        'El turno ya no está disponible para recuperación. Actualizá los turnos e intentá de nuevo.',
+      )
+      return
+    }
     setRecoveryPending(true)
     setRecoveryError('')
     try {
       await forceCloseCashShift(
-        recoveryShift.id,
+        currentRecoveryShift.id,
         { CASH: Number(counted) },
         recoveryReason.trim(),
         crypto.randomUUID(),
@@ -163,7 +187,7 @@ export default function TreasuryPage() {
         <div className="space-y-2" aria-label="Turnos abiertos">
           {shifts.length === 0 && <p role="status">No hay turnos.</p>}
           {shifts
-            .filter((shift) => shift.status === 'OPEN' && !expired(shift))
+            .filter((shift) => isCashShiftEligible(shift, user))
             .map((shift) => (
               <button
                 key={shift.id}
@@ -171,7 +195,7 @@ export default function TreasuryPage() {
                 className="rounded border px-3 py-2"
                 onClick={() => void close(shift)}
               >
-                Cerrar {shift.desk_id}
+                Cerrar {shift.desk_id} — {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
               </button>
             ))}
         </div>
@@ -185,8 +209,8 @@ export default function TreasuryPage() {
           La recuperación está disponible después de 24 horas y requiere un motivo. El cierre normal
           se mantiene separado arriba.
         </p>
-        {shifts.filter(expired).length === 0 && <p role="status">No hay turnos vencidos.</p>}
-        {shifts.filter(expired).map((shift) => (
+        {recoverableShifts.length === 0 && <p role="status">No hay turnos vencidos.</p>}
+        {recoverableShifts.map((shift) => (
           <button
             key={shift.id}
             type="button"
@@ -196,7 +220,8 @@ export default function TreasuryPage() {
               setRecoveryError('')
             }}
           >
-            Recuperar turno vencido {shift.desk_id}
+            Recuperar turno vencido {shift.desk_id} —{' '}
+            {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
           </button>
         ))}
       </section>

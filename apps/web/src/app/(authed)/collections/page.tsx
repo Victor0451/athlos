@@ -51,6 +51,7 @@ import {
   type CollectionsIdempotencyStore,
 } from '@/lib/collections-idempotency'
 import { useFeatureConfig } from '@/lib/features'
+import { cashShiftAvailabilityMessage } from '@/lib/cash-shift-eligibility'
 import { useAuth } from '@/lib/use-auth'
 import { Modal } from '@/components/ui/Modal'
 import {
@@ -161,6 +162,7 @@ export default function CollectionsPage() {
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const {
+    cashShiftAvailability,
     debt,
     debtError,
     debtStatus,
@@ -878,6 +880,14 @@ export default function CollectionsPage() {
                     </button>
                   )}
                 </section>
+              )}
+              {cashShiftAvailability && cashShiftAvailability !== 'ready' && (
+                <p
+                  role={cashShiftAvailability === 'unavailable' ? 'alert' : 'status'}
+                  aria-label="Disponibilidad de turnos de caja"
+                >
+                  {cashShiftAvailabilityMessage(cashShiftAvailability)}
+                </p>
               )}
               <TreatmentWorkspace
                 memberId={selectedSocio.id}
