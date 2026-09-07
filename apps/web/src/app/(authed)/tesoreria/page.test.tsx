@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TreasuryPage from './page'
 import { FeatureConfigProvider } from '@/lib/features'
@@ -38,7 +38,9 @@ describe('treasury page', () => {
     authState.user = { role: 'TESORERO', operator_id: 'operator-1' }
     mocks.query = { data: { items: [] }, isPending: false, isError: false, refetch: vi.fn() }
     mocks.openCashShift.mockReset()
+    mocks.closeCashShift.mockReset()
     mocks.forceCloseCashShift.mockReset()
+    window.sessionStorage.clear()
     navigationMocks.params = new URLSearchParams()
     navigationMocks.push.mockReset()
   })
@@ -119,7 +121,9 @@ describe('treasury page', () => {
       fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
 
       expect(
-        await screen.findByText('Turno abierto. No se pudieron actualizar los turnos.'),
+        await screen.findByText(
+          'La operación está confirmada, pero no se pudieron actualizar los turnos.',
+        ),
       ).toBeInTheDocument()
       expect(
         screen.queryByText('No se pudo ejecutar la operación de caja.'),
@@ -133,6 +137,149 @@ describe('treasury page', () => {
       expect(mocks.openCashShift).toHaveBeenCalledTimes(1)
     },
   )
+
+  it('blocks concurrent opening and reuses the key after an ambiguous failure', async () => {
+    let reject!: (error: Error) => void
+    mocks.openCashShift.mockReturnValueOnce(
+      new Promise((_resolve, fail) => {
+        reject = fail
+      }),
+    )
+    render(<TreasuryPage />)
+    const form = screen.getByRole('form', { name: 'Abrir turno de caja' })
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+    expect(mocks.openCashShift).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeDisabled()
+    const key = mocks.openCashShift.mock.calls[0]![2]
+    reject(new Error('Connection lost'))
+    await screen.findByText('No se pudo ejecutar la operación de caja.')
+    mocks.openCashShift.mockRejectedValueOnce(new Error('Connection lost again'))
+    fireEvent.submit(form)
+    await waitFor(() => expect(mocks.openCashShift).toHaveBeenCalledTimes(2))
+    expect(mocks.openCashShift.mock.calls[1]![2]).toBe(key)
+  })
+
+  it('does not let an older operator completion unlock a newer opening', async () => {
+    let resolveOld!: (result: object) => void
+    let rejectNew!: (error: Error) => void
+    mocks.openCashShift
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOld = resolve
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectNew = reject
+        }),
+      )
+    const view = render(<TreasuryPage />)
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    authState.user = { role: 'TESORERO', operator_id: 'operator-2' }
+    view.rerender(<TreasuryPage />)
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    const oldKey = mocks.openCashShift.mock.calls[0]![2]
+    expect(mocks.openCashShift.mock.calls[1]![2]).not.toBe(oldKey)
+    await act(async () => {
+      resolveOld({})
+    })
+    expect(screen.queryByText('Turno abierto.')).not.toBeInTheDocument()
+    expect(mocks.query.refetch).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeDisabled()
+    rejectNew(new Error('Unavailable'))
+    await screen.findByText('No se pudo ejecutar la operación de caja.')
+    expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeEnabled()
+  })
+
+  it.each(['open', 'close', 'recovery'] as const)(
+    'reconciles a confirmed %s using GET only and blocks financial resubmission',
+    async (action) => {
+      const shift: CashShift = {
+        id: 'shift-command',
+        desk_id: 'front',
+        status: 'OPEN',
+        assigned_operator_id: 'operator-1',
+        business_date: '2026-01-01',
+        closed_at: null,
+        opened_at: new Date(
+          Date.now() - (action === 'recovery' ? 25 * 60 * 60 * 1000 : 0),
+        ).toISOString(),
+      }
+      mocks.query.data = { items: action === 'open' ? [] : [shift] }
+      const command =
+        action === 'open'
+          ? mocks.openCashShift
+          : action === 'close'
+            ? mocks.closeCashShift
+            : mocks.forceCloseCashShift
+      command.mockResolvedValueOnce(action === 'open' ? shift : { discrepancy: {} })
+      mocks.query.refetch
+        .mockResolvedValueOnce({ isError: true, error: new Error('Offline') })
+        .mockRejectedValueOnce(new Error('Still offline'))
+        .mockResolvedValueOnce({ isError: false })
+      render(<TreasuryPage />)
+      if (action === 'open')
+        fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+      else if (action === 'close')
+        fireEvent.click(screen.getByRole('button', { name: /cerrar front/i }))
+      else {
+        fireEvent.click(screen.getByRole('button', { name: /recuperar turno vencido front/i }))
+        fireEvent.change(screen.getByLabelText('Motivo de recuperación'), {
+          target: { value: 'Fin de turno' },
+        })
+        fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
+      }
+      const warning = 'La operación está confirmada, pero no se pudieron actualizar los turnos.'
+      await screen.findByText(warning)
+      expect(
+        screen.queryByText('No se pudo ejecutar la operación de caja.'),
+      ).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeDisabled()
+      fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+      expect(mocks.openCashShift).toHaveBeenCalledTimes(action === 'open' ? 1 : 0)
+      fireEvent.click(screen.getByRole('button', { name: 'Actualizar turnos' }))
+      await waitFor(() => expect(mocks.query.refetch).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Actualizar turnos' })).toBeEnabled(),
+      )
+      expect(screen.getByText(warning)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Actualizar turnos' }))
+      await waitFor(() => expect(screen.queryByText(warning)).not.toBeInTheDocument())
+      expect(command).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('button', { name: /cerrar front/i })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /recuperar turno vencido front/i }),
+      ).not.toBeInTheDocument()
+    },
+  )
+
+  it('does not use an opening snapshot after a fresh query reports it closed', async () => {
+    navigationMocks.params = new URLSearchParams(
+      'cash_member=00000000-0000-4000-8000-000000000001&cash_obligations=00000000-0000-4000-8000-000000000002',
+    )
+    const opened: CashShift = {
+      id: 'recent',
+      desk_id: 'front',
+      status: 'OPEN',
+      assigned_operator_id: 'operator-1',
+      business_date: '2026-01-01',
+      opened_at: new Date().toISOString(),
+      closed_at: null,
+    }
+    mocks.openCashShift.mockResolvedValueOnce(opened)
+    mocks.query.refetch.mockImplementationOnce(async () => {
+      const data = { items: [{ ...opened, status: 'CLOSED' as const }] }
+      mocks.query.data = data
+      return { isError: false, data }
+    })
+    render(<TreasuryPage />)
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    await screen.findByText('Turno abierto.')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeEnabled())
+    expect(screen.queryByRole('button', { name: 'Volver a cobranza' })).not.toBeInTheDocument()
+    expect(mocks.openCashShift).toHaveBeenCalledTimes(1)
+  })
 
   it('renders an accessible disabled fallback when the server gate is off', () => {
     render(
@@ -284,10 +431,13 @@ describe('treasury page', () => {
       })
       change(recoveryShift)
       view.rerender(<TreasuryPage />)
-      fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
-
+      if (_scenario === 'the current user changes') {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      } else {
+        fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
+        expect(screen.getByRole('alert')).toHaveTextContent(/ya no está disponible/i)
+      }
       await waitFor(() => expect(mocks.forceCloseCashShift).not.toHaveBeenCalled())
-      expect(screen.getByRole('alert')).toHaveTextContent(/ya no está disponible/i)
     },
   )
 
