@@ -28,7 +28,9 @@ const authState = {
 export const test = base.extend<{
   authenticatedPage: Page
   consoleErrorGuard: ConsoleErrorGuard
+  operatorRole: 'ADMIN' | 'TESORERO'
 }>({
+  operatorRole: ['ADMIN', { option: true }],
   consoleErrorGuard: [
     async ({ page }, use) => {
       const errors: string[] = []
@@ -80,19 +82,22 @@ export const test = base.extend<{
     },
     { auto: true },
   ],
-  authenticatedPage: async ({ page }, use) => {
+  authenticatedPage: async ({ page, operatorRole }, use) => {
     // Test-only localStorage state; production authentication is never bypassed.
-    await page.addInitScript((state) => {
-      let serializedState: string
-      try {
-        serializedState = JSON.stringify(state)
-      } catch (error) {
-        throw new Error('Failed to serialize the Playwright authentication fixture', {
-          cause: error,
-        })
-      }
-      window.localStorage.setItem('athlos.auth', serializedState)
-    }, authState)
+    await page.addInitScript(
+      (state) => {
+        let serializedState: string
+        try {
+          serializedState = JSON.stringify(state)
+        } catch (error) {
+          throw new Error('Failed to serialize the Playwright authentication fixture', {
+            cause: error,
+          })
+        }
+        window.localStorage.setItem('athlos.auth', serializedState)
+      },
+      { ...authState, currentUser: { ...authState.currentUser, role: operatorRole } },
+    )
 
     await page.route('**/api/v1/club-status*', async (route) => {
       let period = 'current-month'
