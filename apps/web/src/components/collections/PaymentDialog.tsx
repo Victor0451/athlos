@@ -23,6 +23,8 @@ type Props = {
   ) => Promise<{ replayed?: boolean } | void>
   onRefreshDebt: () => Promise<void>
   onClose: () => void
+  initialSelection?: string[] | undefined
+  onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
 }
 
 const disabledClass = 'disabled:cursor-not-allowed disabled:opacity-60'
@@ -37,6 +39,8 @@ export function PaymentDialog({
   onPayment,
   onRefreshDebt,
   onClose,
+  initialSelection,
+  onGoToCash,
 }: Props) {
   const eligible = debt.obligations.filter(
     ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
@@ -62,6 +66,8 @@ export function PaymentDialog({
   const selected = eligible.filter(({ id }) => selectedIds.includes(id))
   const total = selected.reduce((sum, obligation) => sum + obligation.outstanding_cents, 0)
   const tender = paymentMethod === 'CARD' ? cardSubtype : paymentMethod
+  const selectionUnavailable =
+    initialSelection !== undefined && initialSelection.length > 0 && !selected.length
   const confirmationReason =
     shiftAvailability === 'loading'
       ? 'Esperá a que se carguen los turnos de caja abiertos.'
@@ -70,7 +76,9 @@ export function PaymentDialog({
         : !shifts.length
           ? 'No hay turnos de caja abiertos para registrar el pago.'
           : !selected.length
-            ? 'Seleccioná al menos una obligación completa.'
+            ? selectionUnavailable
+              ? 'Las obligaciones elegidas ya no tienen saldo pendiente.'
+              : 'Seleccioná al menos una obligación completa.'
             : !shiftId
               ? 'Seleccioná un turno de caja abierto.'
               : paymentMethod === 'CARD' && !cardSubtype
@@ -99,7 +107,11 @@ export function PaymentDialog({
       setBusy(false)
       return
     }
-    setSelectedIds(eligible.map(({ id }) => id))
+    setSelectedIds(
+      initialSelection === undefined
+        ? eligible.map(({ id }) => id)
+        : initialSelection.filter((id) => eligible.some((obligation) => obligation.id === id)),
+    )
     setShiftId(shifts[0]?.id ?? '')
     setPaymentMethod('CASH')
     setCardSubtype(null)
@@ -193,6 +205,8 @@ export function PaymentDialog({
   return (
     <>
       {status && inlineStatus(status)}
+      {selectionUnavailable &&
+        inlineStatus('Las obligaciones elegidas ya no tienen saldo pendiente.')}
       {shiftAvailability === 'loading' &&
         eligible.length > 0 &&
         inlineStatus('Cargando turnos de caja abiertos.')}
@@ -212,6 +226,21 @@ export function PaymentDialog({
             Reintentar
           </button>
         </div>
+      )}
+      {open && onGoToCash && (
+        <button
+          type="button"
+          onClick={() =>
+            onGoToCash(
+              debt.socio_id,
+              selected.map(({ id }) => id),
+            )
+          }
+          disabled={!selected.length}
+          className={`${collectionButtonClass.secondary} ${disabledClass}`}
+        >
+          Ir a caja
+        </button>
       )}
       <PaymentConfirmation
         open={open}

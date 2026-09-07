@@ -58,6 +58,9 @@ type Props = {
   onRequestCondonation?: (input: CondonationRequestInput) => Promise<CondonationRequest>
   onDecideCondonation?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
   onExecuteCondonation?: (item: CondonationLifecycle) => Promise<unknown>
+  initialPaymentSelection?: string[] | undefined
+  resumePaymentKey?: string | undefined
+  onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
   executionFeedback?: {
     id: string
     status:
@@ -93,6 +96,9 @@ export function TreatmentWorkspace({
   onRequestCondonation,
   onDecideCondonation,
   onExecuteCondonation,
+  initialPaymentSelection,
+  resumePaymentKey,
+  onGoToCash,
   executionFeedback,
 }: Props) {
   const pending = lifecycle.find((item) => item.state === 'pending')
@@ -164,6 +170,9 @@ export function TreatmentWorkspace({
               onRefreshDebt={onRefreshDebt as () => Promise<void>}
               onReverse={onReverse}
               headingLevel={4}
+              initialPaymentSelection={initialPaymentSelection}
+              resumePaymentKey={resumePaymentKey}
+              onGoToCash={onGoToCash}
             />
           ) : (
             <p role="status">No tenés permiso para registrar pagos ni revertir liquidaciones.</p>

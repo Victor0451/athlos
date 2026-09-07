@@ -7,6 +7,7 @@ import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
 const authState = vi.hoisted(() => ({ user: null as { role: string; operator_id: string } | null }))
+const navigationMocks = vi.hoisted(() => ({ params: new URLSearchParams(), push: vi.fn() }))
 const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
@@ -35,6 +36,7 @@ const padronesMocks = vi.hoisted(() => ({
   getDisciplinas: vi.fn(() => new Promise(() => undefined)),
 }))
 const sociosMocks = vi.hoisted(() => ({
+  getSocio: vi.fn(),
   getSocios: vi.fn(),
 }))
 const treasuryMocks = vi.hoisted(() => ({
@@ -57,6 +59,10 @@ const condonationMocks = vi.hoisted(() => ({
   },
 }))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: navigationMocks.push }),
+  useSearchParams: () => navigationMocks.params,
+}))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
 vi.mock('@/lib/api/socios', () => sociosMocks)
@@ -83,13 +89,24 @@ describe('Collections navigation and direct access', () => {
       value: vi.fn(),
     })
     sessionStorage.clear()
+    navigationMocks.params = new URLSearchParams()
+    navigationMocks.push.mockReset()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
     duesMocks.getDebt.mockReset()
     duesMocks.getObligationAgreements.mockReset()
     sociosMocks.getSocios.mockReset()
+    sociosMocks.getSocio.mockReset()
     treasuryMocks.getOpenCashShifts.mockReset()
     treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+  })
+
+  it('ignores malformed cash context without loading a member or posting', async () => {
+    navigationMocks.params = new URLSearchParams('cash_member=invalid&cash_obligations=invalid')
+    renderPage(true, 'ADMIN')
+
+    await waitFor(() => expect(sociosMocks.getSocio).not.toHaveBeenCalled())
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
   })
 
   it('opens on Cobranza and keeps pricing configuration in a dialog', async () => {

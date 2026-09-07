@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import {
   closeCashShift,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/api/treasury'
 import { useAuth } from '@/lib/use-auth'
 import { useFeatureConfig } from '@/lib/features'
+import { buildCashContextHref, parseCashContext } from '@/lib/collections-cash-context'
 import {
   canOperateCashShift,
   isCashShiftEligible,
@@ -20,6 +22,8 @@ import {
 export default function TreasuryPage() {
   const { user } = useAuth()
   const { cashEnabled } = useFeatureConfig()
+  const router = useRouter()
+  const cashContext = parseCashContext(useSearchParams())
   const allowed = user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const [desk, setDesk] = useState('front-desk')
   const [cash, setCash] = useState('0')
@@ -31,6 +35,7 @@ export default function TreasuryPage() {
   const [recoveryError, setRecoveryError] = useState('')
   const [message, setMessage] = useState('')
   const [commandError, setCommandError] = useState('')
+  const [openedShift, setOpenedShift] = useState<CashShift | null>(null)
   const query = useQuery({
     queryKey: ['cash-shifts'],
     queryFn: getCashShifts,
@@ -47,9 +52,17 @@ export default function TreasuryPage() {
     event.preventDefault()
     setCommandError('')
     try {
-      await openCashShift(desk, { CASH: Number(cash) }, crypto.randomUUID())
+      const result = await openCashShift(desk, { CASH: Number(cash) }, crypto.randomUUID())
+      setOpenedShift(result)
       setMessage('Turno abierto.')
-      await query.refetch?.()
+      try {
+        const refresh = await query.refetch?.()
+        if (refresh?.isError) {
+          setMessage('Turno abierto. No se pudieron actualizar los turnos.')
+        }
+      } catch {
+        setMessage('Turno abierto. No se pudieron actualizar los turnos.')
+      }
     } catch (error) {
       setCommandError(errorMessage(error))
     }
@@ -83,6 +96,15 @@ export default function TreasuryPage() {
   }
 
   const isOwnShift = (shift: CashShift) => shift.assigned_operator_id === user!.operator_id
+  const canReturnToCollections =
+    cashContext &&
+    [...shifts, ...(openedShift ? [openedShift] : [])].some((shift) =>
+      isCashShiftEligible(shift, user),
+    )
+  const collectionsHref =
+    cashContext && canReturnToCollections
+      ? buildCashContextHref('/collections', cashContext.memberId, cashContext.obligationIds)
+      : null
   const expired = (shift: CashShift) => isCashShiftExpired(shift)
   const recoverableShifts = shifts
     .filter(expired)
@@ -137,6 +159,11 @@ export default function TreasuryPage() {
       {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
       {commandError && <p role="alert">{commandError}</p>}
       {message && <p role="status">{message}</p>}
+      {collectionsHref && (
+        <button type="button" onClick={() => router.push(collectionsHref)}>
+          Volver a cobranza
+        </button>
+      )}
       <form
         onSubmit={open}
         aria-label="Abrir turno de caja"
