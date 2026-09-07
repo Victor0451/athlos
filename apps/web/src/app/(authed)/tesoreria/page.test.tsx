@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TreasuryPage from './page'
 import { FeatureConfigProvider } from '@/lib/features'
-import type { CashShift } from '@/lib/api/treasury'
+import type { CashClose, CashShift } from '@/lib/api/treasury'
 
 const authState = vi.hoisted(() => ({ user: { role: 'TESORERO', operator_id: 'operator-1' } }))
 const navigationMocks = vi.hoisted(() => ({ params: new URLSearchParams(), push: vi.fn() }))
@@ -279,6 +279,104 @@ describe('treasury page', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Abrir turno' })).toBeEnabled())
     expect(screen.queryByRole('button', { name: 'Volver a cobranza' })).not.toBeInTheDocument()
     expect(mocks.openCashShift).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['25,50', 2550],
+    ['25.50', 2550],
+    ['0,29', 29],
+    ['0', 0],
+  ])('converts opening pesos %s to %i cents without rounding', async (value, cents) => {
+    mocks.openCashShift.mockRejectedValueOnce(new Error('Request interrupted'))
+    render(<TreasuryPage />)
+    fireEvent.change(screen.getByLabelText('Efectivo inicial (pesos)'), { target: { value } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    await screen.findByText('No se pudo ejecutar la operación de caja.')
+    expect(mocks.openCashShift).toHaveBeenCalledWith(
+      'front-desk',
+      { CASH: cents },
+      expect.any(String),
+    )
+  })
+
+  it.each(['', '-1', '1.001', '1e3', 'NaN', '90071992547409.92'])(
+    'rejects invalid opening pesos %s before POST',
+    (value) => {
+      render(<TreasuryPage />)
+      fireEvent.change(screen.getByLabelText('Efectivo inicial (pesos)'), { target: { value } })
+      fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+      expect(screen.getByRole('alert')).toHaveTextContent(/importe.*pesos/i)
+      expect(mocks.openCashShift).not.toHaveBeenCalled()
+    },
+  )
+
+  it('shows server-confirmed cash reconciliation in pesos with its reason', async () => {
+    mocks.query.data = {
+      items: [
+        {
+          id: 'cash-summary',
+          desk_id: 'front',
+          status: 'OPEN',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: new Date().toISOString(),
+          closed_at: null,
+        },
+      ],
+    }
+    mocks.closeCashShift.mockResolvedValueOnce({
+      id: 'close-summary',
+      shift_id: 'cash-summary',
+      expected_tenders: { CASH: 2600 },
+      counted_tenders: { CASH: 2550 },
+      discrepancy: { CASH: -50 },
+      reason: 'Control manual',
+      closed_at: '2026-01-01T20:00:00Z',
+    } satisfies CashClose)
+    render(<TreasuryPage />)
+    fireEvent.change(screen.getByLabelText('Efectivo contado (pesos)'), {
+      target: { value: '25,50' },
+    })
+    fireEvent.change(screen.getByLabelText('Motivo de diferencia'), {
+      target: { value: 'Control manual' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /cerrar front/i }))
+    const summary = await screen.findByRole('region', { name: 'Resumen de conciliación' })
+    expect(within(summary).getByText(/\$\s*26,00/)).toBeInTheDocument()
+    expect(within(summary).getByText(/\$\s*25,50/)).toBeInTheDocument()
+    expect(within(summary).getByText(/-\$\s*0,50/)).toBeInTheDocument()
+    expect(within(summary).getByText('Control manual')).toBeInTheDocument()
+    expect(summary).toHaveTextContent('close-summary')
+    expect(mocks.closeCashShift).toHaveBeenCalledWith(
+      'cash-summary',
+      { CASH: 2550 },
+      'Control manual',
+      expect.any(String),
+    )
+  })
+
+  it('lists persisted closed shifts without inventing historical reconciliation totals', () => {
+    mocks.query.data = {
+      items: [
+        {
+          id: 'historical',
+          desk_id: 'front-historic',
+          status: 'CLOSED',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: '2026-01-01T09:00:00Z',
+          closed_at: '2026-01-01T20:00:00Z',
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+    const history = screen.getByRole('region', { name: 'Turnos cerrados' })
+    expect(within(history).getByText('front-historic')).toBeInTheDocument()
+    expect(history).toHaveTextContent('historical')
+    expect(history).toHaveTextContent(/detalle histórico de conciliación/i)
+    expect(
+      screen.queryByRole('region', { name: 'Resumen de conciliación' }),
+    ).not.toBeInTheDocument()
   })
 
   it('renders an accessible disabled fallback when the server gate is off', () => {

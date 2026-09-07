@@ -9,6 +9,7 @@ import {
   getCashShifts,
   openCashShift,
   type CashShift,
+  type CashClose,
 } from '@/lib/api/treasury'
 import { useAuth } from '@/lib/use-auth'
 import { useFeatureConfig } from '@/lib/features'
@@ -19,6 +20,29 @@ import {
   isCashShiftEligible,
   isCashShiftExpired,
 } from '@/lib/cash-shift-eligibility'
+
+const parseCashAmount = (value: string): number | null => {
+  const text = value.trim()
+  if (text.length > 32) return null
+  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(text)
+  if (!match) return null
+  const cents = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'))
+  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null
+}
+
+const formatCashTotal = (totals: Record<string, number> | undefined): string => {
+  if (!totals || !Number.isSafeInteger(totals.CASH ?? 0)) return 'No disponible'
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(
+    (totals.CASH ?? 0) / 100,
+  )
+}
+
+const closedAtLabel = (value: string | null): string => {
+  const date = value ? new Date(value) : null
+  return date && Number.isFinite(date.getTime())
+    ? date.toLocaleString('es-AR')
+    : 'Fecha no disponible'
+}
 
 export default function TreasuryPage() {
   const { user } = useAuth()
@@ -45,6 +69,7 @@ export default function TreasuryPage() {
   const [message, setMessage] = useState('')
   const [commandError, setCommandError] = useState('')
   const [openedShift, setOpenedShift] = useState<CashShift | null>(null)
+  const [closeResult, setCloseResult] = useState<CashClose | null>(null)
   const query = useQuery({
     queryKey: ['cash-shifts', user?.operator_id, user?.role],
     queryFn: getCashShifts,
@@ -59,6 +84,7 @@ export default function TreasuryPage() {
     setMessage('')
     setCommandError('')
     setOpenedShift(null)
+    setCloseResult(null)
     setClosedIds([])
     setRecoveryShift(null)
     setRecoveryError('')
@@ -148,15 +174,24 @@ export default function TreasuryPage() {
       finish(token)
     }
   }
+  const cashAmount = (value: string, reportError = setCommandError) => {
+    const amount = parseCashAmount(value)
+    if (amount === null)
+      reportError('Revisá el importe en pesos: debe ser no negativo y tener hasta dos decimales.')
+    return amount
+  }
   const open = async (event: FormEvent) => {
     event.preventDefault()
-    const opening = { CASH: Number(cash) }
+    const amount = cashAmount(cash)
+    if (amount === null) return
+    const opening = { CASH: amount }
     await runCommand(
       'open',
       { desk, opening },
       (key) => openCashShift(desk, opening, key),
       (result) => {
         setOpenedShift(result)
+        setCloseResult(null)
         setMessage('Turno abierto.')
       },
     )
@@ -170,18 +205,17 @@ export default function TreasuryPage() {
       )
       return
     }
-    const closing = { CASH: Number(counted) }
+    const amount = cashAmount(counted)
+    if (amount === null) return
+    const closing = { CASH: amount }
     await runCommand(
       'close',
       { shiftId: shift.id, closing, reason },
       (key) => closeCashShift(shift.id, closing, reason, key),
       (result) => {
         setClosedIds((ids) => [...ids, shift.id])
-        setMessage(
-          Object.keys(result.discrepancy).length
-            ? `Turno cerrado. Diferencia detectada: ${JSON.stringify(result.discrepancy)}`
-            : 'Turno cerrado.',
-        )
+        setCloseResult(result)
+        setMessage('Turno cerrado.')
       },
     )
   }
@@ -215,13 +249,16 @@ export default function TreasuryPage() {
       )
       return
     }
-    const closing = { CASH: Number(counted) }
+    const amount = cashAmount(counted, setRecoveryError)
+    if (amount === null) return
+    const closing = { CASH: amount }
     const explanation = recoveryReason.trim()
     await runCommand(
       'recover',
       { shiftId: currentRecoveryShift.id, closing, explanation },
       (key) => forceCloseCashShift(currentRecoveryShift.id, closing, explanation, key),
-      () => {
+      (result) => {
+        setCloseResult(result)
         setClosedIds((ids) => [...ids, currentRecoveryShift.id])
         setRecoveryShift(null)
         setRecoveryReason('')
@@ -246,6 +283,29 @@ export default function TreasuryPage() {
       {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
       {commandError && <p role="alert">{commandError}</p>}
       {message && <p role="status">{message}</p>}
+      {closeResult && (
+        <section aria-label="Resumen de conciliación" className="space-y-2 rounded border p-4">
+          <h2 className="font-display text-lg">Último cierre confirmado</h2>
+          <p>
+            Conciliación de efectivo. Tarjetas y transferencias no se incluyen en el efectivo
+            contado.
+          </p>
+          <dl className="grid gap-2 sm:grid-cols-2">
+            <dt>Efectivo esperado</dt>
+            <dd>{formatCashTotal(closeResult.expected_tenders)}</dd>
+            <dt>Efectivo contado</dt>
+            <dd>{formatCashTotal(closeResult.counted_tenders)}</dd>
+            <dt>Diferencia de efectivo</dt>
+            <dd>{formatCashTotal(closeResult.discrepancy)}</dd>
+          </dl>
+          {closeResult.reason && <p>{closeResult.reason}</p>}
+          {closeResult.id && <p>Referencia de cierre: {closeResult.id}</p>}
+          {closeResult.closed_at && (
+            <p>Cerrado: {closedAtLabel(closeResult.closed_at)} (hora local)</p>
+          )}
+          {closeResult.force_close && <p>Recuperación de turno vencido.</p>}
+        </section>
+      )}
       {refreshWarning && (
         <div>
           <p role="alert">{refreshWarning}</p>
@@ -274,10 +334,11 @@ export default function TreasuryPage() {
           />
         </label>
         <label>
-          Efectivo inicial (centavos)
+          Efectivo inicial (pesos)
           <input
             className="mt-1 block w-full rounded border p-2"
-            inputMode="numeric"
+            inputMode="decimal"
+            maxLength={32}
             value={cash}
             disabled={locked}
             onChange={(event) => setCash(event.target.value)}
@@ -291,15 +352,18 @@ export default function TreasuryPage() {
           Abrir turno
         </button>
       </form>
+      <p>Importes en pesos, con coma o punto decimal y sin separadores de miles.</p>
+      <p>El motivo es obligatorio si existe diferencia de efectivo.</p>
       <section
         aria-label="Cerrar turno de caja"
         className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
       >
         <label>
-          Efectivo contado (centavos)
+          Efectivo contado (pesos)
           <input
             className="mt-1 block w-full rounded border p-2"
-            inputMode="numeric"
+            inputMode="decimal"
+            maxLength={32}
             value={counted}
             disabled={locked}
             onChange={(event) => setCounted(event.target.value)}
@@ -330,6 +394,26 @@ export default function TreasuryPage() {
               </button>
             ))}
         </div>
+      </section>
+      <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
+        <h2 className="font-display text-lg">Turnos cerrados</h2>
+        <p>
+          La lista muestra los turnos cargados; el detalle histórico de conciliación aún no está
+          disponible.
+        </p>
+        <ul className="space-y-2">
+          {(query.data?.items ?? [])
+            .filter(({ status }) => status === 'CLOSED')
+            .map((shift) => (
+              <li key={shift.id}>
+                <strong>{shift.desk_id}</strong> —{' '}
+                {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
+                <p>
+                  {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
+                </p>
+              </li>
+            ))}
+        </ul>
       </section>
       <section
         aria-label="Recuperación de turnos vencidos"
