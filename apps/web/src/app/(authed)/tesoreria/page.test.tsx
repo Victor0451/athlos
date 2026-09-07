@@ -4,7 +4,8 @@ import TreasuryPage from './page'
 import { FeatureConfigProvider } from '@/lib/features'
 import type { CashShift } from '@/lib/api/treasury'
 
-vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: { role: 'TESORERO' } }) }))
+const authState = vi.hoisted(() => ({ user: { role: 'TESORERO', operator_id: 'operator-1' } }))
+vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
 const mocks = vi.hoisted(() => ({
   getCashShifts: vi.fn(),
   openCashShift: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 describe('treasury page', () => {
   beforeEach(() => {
+    authState.user = { role: 'TESORERO', operator_id: 'operator-1' }
     mocks.query = { data: { items: [] }, isPending: false, isError: false, refetch: vi.fn() }
     mocks.openCashShift.mockReset()
     mocks.forceCloseCashShift.mockReset()
@@ -66,11 +68,68 @@ describe('treasury page', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('deshabilitada')
   })
 
+  it('offers only the treasurer-owned current shift and labels it without naming an operator', () => {
+    const opened_at = new Date().toISOString()
+    mocks.query = {
+      data: {
+        items: [
+          {
+            id: 'own-1',
+            desk_id: 'front',
+            status: 'OPEN',
+            assigned_operator_id: 'operator-1',
+            opened_at,
+          },
+          {
+            id: 'foreign-1',
+            desk_id: 'back',
+            status: 'OPEN',
+            assigned_operator_id: 'operator-2',
+            opened_at,
+          },
+        ] as CashShift[],
+      },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    }
+    render(<TreasuryPage />)
+
+    expect(screen.getByRole('button', { name: /cerrar front.*tu turno/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cerrar back/i })).not.toBeInTheDocument()
+  })
+
+  it('allows an ADMIN to close another responsible operator shift with a neutral label', () => {
+    authState.user = { role: 'ADMIN', operator_id: 'operator-1' }
+    mocks.query = {
+      data: {
+        items: [
+          {
+            id: 'foreign-1',
+            desk_id: 'back',
+            status: 'OPEN',
+            assigned_operator_id: 'operator-2',
+            opened_at: new Date().toISOString(),
+          },
+        ] as CashShift[],
+      },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    }
+    render(<TreasuryPage />)
+
+    expect(
+      screen.getByRole('button', { name: /cerrar back.*otro responsable/i }),
+    ).toBeInTheDocument()
+  })
+
   it('keeps expired recovery separate and requires confirmation plus a reason', async () => {
     const shift = {
       id: 'expired-1',
       desk_id: 'front',
       status: 'OPEN' as const,
+      assigned_operator_id: 'operator-1',
       opened_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
     }
     mocks.query = {
@@ -83,7 +142,7 @@ describe('treasury page', () => {
     render(<TreasuryPage />)
 
     expect(screen.getByRole('button', { name: /recuperar turno vencido/i })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^cerrar front$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cerrar front/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /recuperar turno vencido/i }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     const confirm = screen.getByRole('button', { name: /confirmar recuperación/i })
@@ -103,11 +162,66 @@ describe('treasury page', () => {
     )
   })
 
+  it.each([
+    [
+      'the current user changes',
+      (_shift: CashShift) => {
+        authState.user = { role: 'TESORERO', operator_id: 'operator-2' }
+      },
+    ],
+    [
+      'the shift is no longer open',
+      (shift: CashShift) => {
+        mocks.query.data = {
+          items: [{ ...shift, status: 'CLOSED' }] as CashShift[],
+        }
+      },
+    ],
+    [
+      'the shift is removed from the current list',
+      (_shift: CashShift) => {
+        mocks.query.data = { items: [] }
+      },
+    ],
+  ])(
+    'does not force-close when %s after recovery confirmation opens',
+    async (_scenario, change) => {
+      const recoveryShift = {
+        id: 'expired-current-1',
+        desk_id: 'front',
+        status: 'OPEN' as const,
+        assigned_operator_id: 'operator-1',
+        business_date: '2026-02-01',
+        opened_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+        closed_at: null,
+      }
+      mocks.query = {
+        data: { items: [recoveryShift] as CashShift[] },
+        isPending: false,
+        isError: false,
+        refetch: vi.fn(),
+      }
+      const view = render(<TreasuryPage />)
+
+      fireEvent.click(screen.getByRole('button', { name: /recuperar turno vencido/i }))
+      fireEvent.change(screen.getByLabelText('Motivo de recuperación'), {
+        target: { value: 'Sin atención' },
+      })
+      change(recoveryShift)
+      view.rerender(<TreasuryPage />)
+      fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
+
+      await waitFor(() => expect(mocks.forceCloseCashShift).not.toHaveBeenCalled())
+      expect(screen.getByRole('alert')).toHaveTextContent(/ya no está disponible/i)
+    },
+  )
+
   it('shows recovery loading and error states without closing the confirmation dialog', async () => {
     const shift = {
       id: 'expired-2',
       desk_id: 'back-office',
       status: 'OPEN' as const,
+      assigned_operator_id: 'operator-1',
       opened_at: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
     }
     let rejectRecovery: (error: Error) => void = () => undefined

@@ -669,7 +669,15 @@ describe('assessment price-gap recovery', () => {
       .mockResolvedValueOnce(generatedDebt)
       .mockResolvedValueOnce(paidDebt)
     treasuryMocks.getOpenCashShifts.mockResolvedValue([
-      { id: 'shift-gap-1', desk_id: 'desk-1', business_date: '2026-07-25' },
+      {
+        id: 'shift-gap-1',
+        desk_id: 'desk-1',
+        status: 'OPEN',
+        business_date: '2026-07-25',
+        assigned_operator_id: 'operator-1',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+      },
     ])
     duesMocks.previewDuesAssessments
       .mockResolvedValueOnce(blockedPreview)
@@ -920,7 +928,15 @@ describe('assessment price-gap recovery', () => {
 
 describe('payment orchestration and recovery', () => {
   const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
-  const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }
+  const shift = {
+    id: 'shift-1',
+    desk_id: 'desk-1',
+    status: 'OPEN' as const,
+    business_date: '2026-01-15',
+    assigned_operator_id: 'operator-1',
+    opened_at: new Date().toISOString(),
+    closed_at: null,
+  }
   // prettier-ignore
   const debt = { status: 'ready' as const, socio_id: socio.id, currency: 'ARS', total_debt_cents: 10_000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 10_000, outstanding_cents: 10_000, currency: 'ARS', status: 'OPEN' as const, components: [], benefits: [], allocations: [] }] }
   const prepare = () => {
