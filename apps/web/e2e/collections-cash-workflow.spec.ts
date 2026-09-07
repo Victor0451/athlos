@@ -1,15 +1,26 @@
 import {
+  allowExpectedResponseFailure,
   assertInteractiveNames,
   assertNoPageOverflow,
   expect,
   test,
 } from './fixtures/authenticated-dashboard'
-import type { Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import type { CashShift } from '../src/lib/api/treasury'
 
 test('cash round trip preserves selection and reconciles the collected cash', async ({
-  authenticatedPage: page,
+  authenticatedPage,
 }) => {
+  await cashJourney(authenticatedPage, false)
+})
+
+test('confirmed cash payment survives failed balance refresh without another charge', async ({
+  authenticatedPage,
+}) => {
+  await cashJourney(authenticatedPage, true)
+})
+
+async function cashJourney(page: Page, failRefresh: boolean) {
   test.setTimeout(90_000)
   test.skip(
     process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
@@ -27,6 +38,8 @@ test('cash round trip preserves selection and reconciles the collected cash', as
   let opens = 0
   let payments = 0
   let closes = 0
+  let debtGets = 0
+  let failNextDebtRefresh = false
   const unexpected: string[] = []
 
   // Every application API request is mocked or handled by the existing fixture.
@@ -55,6 +68,18 @@ test('cash round trip preserves selection and reconciles the collected cash', as
       return
     }
     if (method === 'GET' && path === `/api/v1/dues/debt/${memberId}`) {
+      debtGets += 1
+      if (failNextDebtRefresh) {
+        failNextDebtRefresh = false
+        allowExpectedResponseFailure(page, {
+          url: request.url(),
+          status: 409,
+          request: { method, postData: request.postData() },
+          context: 'post-settlement debt refresh',
+        })
+        await route.fulfill({ status: 409, json: { detail: 'Debt refresh conflict' } })
+        return
+      }
       await route.fulfill({
         json: {
           status: 'ready',
@@ -112,6 +137,7 @@ test('cash round trip preserves selection and reconciles the collected cash', as
       expect(JSON.stringify(body)).toContain(shiftId)
       expect(request.headers()['idempotency-key']).toBeTruthy()
       paid = true
+      failNextDebtRefresh = failRefresh
       await route.fulfill({
         status: 201,
         json: {
@@ -236,7 +262,24 @@ test('cash round trip preserves selection and reconciles the collected cash', as
   }
   await expect(shiftSelect).toHaveValue(shiftId)
   await activate(dialog.getByRole('button', { name: 'Confirmar pago', exact: true }))
-  await expect(page.getByRole('region', { name: 'Resultado del pago' })).toContainText(paymentId)
+  const paymentOutcome = page.getByRole('region', { name: 'Resultado del pago' })
+  await expect(paymentOutcome).toContainText(paymentId)
+  await expect(paymentOutcome).toContainText(/Importe confirmado:\s*\$\s*100,00/)
+  if (failRefresh) {
+    await expect(paymentOutcome.getByRole('alert')).toContainText('No se pudo actualizar el saldo.')
+    await expect(dialog).not.toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Registrar pago', exact: true }),
+    ).not.toBeVisible()
+    expect(payments).toBe(1)
+    const debtGetsBeforeRecovery = debtGets
+    await activate(page.getByRole('button', { name: 'Actualizar saldo', exact: true }))
+    await expect(paymentOutcome.getByRole('alert')).not.toBeVisible()
+    await expect(paymentOutcome).toContainText(paymentId)
+    await expect(paymentOutcome).toContainText(/Importe confirmado:\s*\$\s*100,00/)
+    expect(payments).toBe(1)
+    expect(debtGets).toBe(debtGetsBeforeRecovery + 1)
+  }
   await expect(dialog).not.toBeVisible()
   await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
   await expect(dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })).toBeChecked()
@@ -257,4 +300,4 @@ test('cash round trip preserves selection and reconciles the collected cash', as
   await checkViewport()
   expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
-})
+}

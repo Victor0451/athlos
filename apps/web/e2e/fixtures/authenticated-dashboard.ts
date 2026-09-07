@@ -4,7 +4,7 @@ type ConsoleErrorGuard = void
 type ExpectedResponseFailure = {
   url: string
   status: number
-  request: { method: string; postData: string }
+  request: { method: string; postData: string | null }
   context: string
 }
 
