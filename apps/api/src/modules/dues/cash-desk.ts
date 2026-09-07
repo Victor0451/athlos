@@ -38,7 +38,7 @@ type Row = {
   opening_tenders: Totals
 }
 
-const rows = (value: unknown) => (value as { rows?: Row[] }).rows ?? []
+const rows = <T = Row>(value: unknown) => (value as { rows?: T[] }).rows ?? []
 const cents = (value: string) => {
   const [whole, fraction = ''] = value.split('.')
   return Number(whole) * 100 + Number((fraction + '00').slice(0, 2))
@@ -478,6 +478,23 @@ export class CashDeskService {
         sql`SELECT id,desk_id,status,assigned_operator_id,business_date,opened_at,closed_at FROM tesoreria.dues_cash_shifts ORDER BY opened_at DESC LIMIT 50`,
       ),
     ).map(responseShift)
+  }
+
+  async detail(input: CashCommand & { shiftId: string }) {
+    authorize(input.role)
+    const result = rows<{ shift: Row; close: Row | null }>(
+      await this.db.execute(sql`
+        SELECT row_to_json(s) AS shift, row_to_json(c) AS close
+        FROM tesoreria.dues_cash_shifts s
+        LEFT JOIN tesoreria.dues_cash_closes c ON c.shift_id = s.id
+        WHERE s.id = ${input.shiftId}
+      `),
+    )[0]
+    if (!result) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
+    return {
+      shift: responseShift(result.shift),
+      close: result.close ? responseClose(result.close) : null,
+    }
   }
 
   async recordTender(input: TenderCommand) {
