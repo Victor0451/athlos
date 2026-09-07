@@ -27,6 +27,51 @@ const decodeShift = (value: unknown): CashShift | null => {
     closed_at: value.closed_at,
   }
 }
+export interface CashShiftDetail {
+  shift: CashShift
+  close: CashClose | null
+}
+
+const isTotals = (value: unknown): value is Record<string, number> =>
+  isRecord(value) &&
+  Object.values(value).every((amount) => typeof amount === 'number' && Number.isSafeInteger(amount))
+
+export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDetail> {
+  const value = await apiFetch<unknown>('/api/v1/treasury/shifts/' + encodeURIComponent(shiftId))
+  const invalid = () => new Error('Treasury shift detail response was incomplete')
+  if (!isRecord(value)) throw invalid()
+  const shift = decodeShift(value.shift)
+  if (!shift || shift.id !== shiftId) throw invalid()
+  if (value.close === null) return { shift, close: null }
+  const close = value.close
+  if (
+    !isRecord(close) ||
+    typeof close.id !== 'string' ||
+    close.shift_id !== shiftId ||
+    !isTotals(close.expected_tenders) ||
+    !isTotals(close.counted_tenders) ||
+    !isTotals(close.discrepancy) ||
+    (close.reason !== null && typeof close.reason !== 'string') ||
+    typeof close.closed_at !== 'string' ||
+    !Number.isFinite(new Date(close.closed_at).getTime()) ||
+    (close.force_close !== undefined && typeof close.force_close !== 'boolean')
+  )
+    throw invalid()
+  return {
+    shift,
+    close: {
+      id: close.id,
+      shift_id: shiftId,
+      expected_tenders: close.expected_tenders,
+      counted_tenders: close.counted_tenders,
+      discrepancy: close.discrepancy,
+      reason: close.reason,
+      closed_at: close.closed_at,
+      ...(close.force_close === undefined ? {} : { force_close: close.force_close }),
+    },
+  }
+}
+
 // prettier-ignore
 const headers=(key:string)=>({'idempotency-key':key})
 // prettier-ignore
