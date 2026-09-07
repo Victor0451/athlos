@@ -1,4 +1,10 @@
-import { expect, test } from './fixtures/authenticated-dashboard'
+import {
+  assertInteractiveNames,
+  assertNoPageOverflow,
+  expect,
+  test,
+} from './fixtures/authenticated-dashboard'
+import type { Locator } from '@playwright/test'
 import type { CashShift } from '../src/lib/api/treasury'
 
 test('cash round trip preserves selection and reconciles the collected cash', async ({
@@ -150,46 +156,105 @@ test('cash round trip preserves selection and reconciles the collected cash', as
     await route.fulfill({ json: { items: [] } })
   })
 
+  const mobileKeyboard = process.env.COLLECTIONS_CASH_MOBILE_KEYBOARD_ENABLED === 'true'
+  async function traverseTo(locator: Locator, key = 'Tab') {
+    await expect(locator).toBeVisible()
+    for (let index = 0; index < 60; index += 1) {
+      if (await locator.evaluate((element) => document.activeElement === element)) break
+      await page.keyboard.press(key)
+    }
+    await expect(locator).toBeFocused()
+  }
+  async function activate(locator: Locator) {
+    if (!mobileKeyboard) return locator.click()
+    await traverseTo(locator)
+    await page.keyboard.press('Enter')
+  }
+  async function enterValue(locator: Locator, value: string) {
+    if (!mobileKeyboard) return locator.fill(value)
+    await traverseTo(locator)
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.insertText(value)
+  }
+  async function checkViewport() {
+    if (!mobileKeyboard) return
+    await assertNoPageOverflow(page)
+    await assertInteractiveNames(page)
+  }
+  if (mobileKeyboard) await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/collections')
-  await page.getByRole('searchbox', { name: 'Buscar socio' }).fill('Gorriti')
-  await page.getByRole('button', { name: 'Buscar socio', exact: true }).click()
-  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
-  await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
+  await checkViewport()
+  if (mobileKeyboard) {
+    const trigger = page.getByRole('button', { name: 'Abrir navegación' })
+    await activate(trigger)
+    const drawer = page.getByRole('dialog', { name: 'Navegación principal' })
+    await traverseTo(drawer.getByRole('link', { name: 'Cobranza', exact: true }))
+    await page.keyboard.press('Escape')
+    await expect(drawer).not.toBeVisible()
+    await expect(trigger).toBeFocused()
+  }
+  await enterValue(page.getByRole('searchbox', { name: 'Buscar socio' }), 'Gorriti')
+  await activate(page.getByRole('button', { name: 'Buscar socio', exact: true }))
+  await activate(page.getByRole('button', { name: /Gorriti, Ana/ }))
+  await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
   const dialog = page.getByRole('dialog', { name: 'Revisar pago', exact: true })
   await expect(dialog.getByRole('heading', { name: 'Revisar pago', exact: true })).toBeVisible()
   await expect(dialog.getByRole('checkbox')).toHaveCount(3)
-  await dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ }).uncheck()
+  const february = dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })
+  if (mobileKeyboard) {
+    await traverseTo(february)
+    await page.keyboard.press('Space')
+  } else await february.uncheck()
   await expect(dialog.getByRole('button', { name: 'Confirmar pago', exact: true })).toBeDisabled()
-  await dialog.getByRole('button', { name: 'Ir a caja', exact: true }).click()
+  await activate(dialog.getByRole('button', { name: 'Ir a caja', exact: true }))
   await expect(page).toHaveURL(/\/tesoreria\?/)
   expect(new URL(page.url()).searchParams.get('cash_obligations')).toBe(firstId)
-  await page.getByLabel('Puesto', { exact: true }).fill('front-desk')
-  await page.getByLabel('Efectivo inicial (pesos)').fill('10,00')
-  await page.getByRole('button', { name: 'Abrir turno', exact: true }).click()
+  await checkViewport()
+  await enterValue(page.getByLabel('Puesto', { exact: true }), 'front-desk')
+  await enterValue(page.getByLabel('Efectivo inicial (pesos)'), '10,00')
+  await activate(page.getByRole('button', { name: 'Abrir turno', exact: true }))
   await expect(page.getByText('Turno abierto.', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Volver a cobranza', exact: true }).click()
+  await activate(page.getByRole('button', { name: 'Volver a cobranza', exact: true }))
   await expect(page).toHaveURL(/\/collections\?/)
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('checkbox', { name: /^Período enero de 2026:/ })).toBeChecked()
   await expect(
     dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ }),
   ).not.toBeChecked()
-  await dialog.getByRole('radio', { name: 'Efectivo', exact: true }).check()
-  await dialog.getByRole('combobox', { name: 'Turno de caja' }).selectOption(shiftId)
-  await dialog.getByRole('button', { name: 'Confirmar pago', exact: true }).click()
+  const cash = dialog.getByRole('radio', { name: 'Efectivo', exact: true })
+  const shiftSelect = dialog.getByRole('combobox', { name: 'Turno de caja' })
+  if (mobileKeyboard) {
+    await traverseTo(shiftSelect)
+    await traverseTo(cash, 'Shift+Tab')
+    await page.keyboard.press('Space')
+    await traverseTo(shiftSelect)
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+  } else {
+    await cash.check()
+    await shiftSelect.selectOption(shiftId)
+  }
+  await expect(shiftSelect).toHaveValue(shiftId)
+  await activate(dialog.getByRole('button', { name: 'Confirmar pago', exact: true }))
   await expect(page.getByRole('region', { name: 'Resultado del pago' })).toContainText(paymentId)
   await expect(dialog).not.toBeVisible()
-  await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
+  await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
   await expect(dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })).toBeChecked()
-  await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click()
-  await page.getByRole('link', { name: 'Cash desk', exact: true }).click()
-  await page.getByLabel('Efectivo contado (pesos)').fill('110,00')
-  await page.getByRole('button', { name: /Cerrar front-desk/ }).click()
+  await activate(dialog.getByRole('button', { name: 'Cancelar', exact: true }))
+  if (mobileKeyboard) {
+    await activate(page.getByRole('button', { name: 'Abrir navegación' }))
+    const drawer = page.getByRole('dialog', { name: 'Navegación principal' })
+    await activate(drawer.getByRole('link', { name: 'Cash desk', exact: true }))
+    await expect(drawer).not.toBeVisible()
+  } else await page.getByRole('link', { name: 'Cash desk', exact: true }).click()
+  await enterValue(page.getByLabel('Efectivo contado (pesos)'), '110,00')
+  await activate(page.getByRole('button', { name: /Cerrar front-desk/ }))
   const summary = page.getByRole('region', { name: 'Resumen de conciliación' })
   await expect(summary).toBeVisible()
   await expect(summary).toContainText(/\$\s*110,00/)
   await expect(summary).toContainText(/\$\s*0,00/)
   await expect(page.getByRole('region', { name: 'Turnos cerrados' })).toContainText('front-desk')
+  await checkViewport()
   expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
 })
