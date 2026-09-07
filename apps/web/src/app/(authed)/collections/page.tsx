@@ -966,8 +966,14 @@ export default function CollectionsPage() {
                 onRequestCondonation={requestCondonation}
                 onDecideCondonation={decideCondonation}
                 onExecuteCondonation={presentExecution}
-                initialPaymentSelection={initialPaymentSelection}
-                resumePaymentKey={resumePaymentKey}
+                initialPaymentSelection={
+                  paymentOutcome?.memberId === selectedSocio?.id
+                    ? undefined
+                    : initialPaymentSelection
+                }
+                resumePaymentKey={
+                  paymentOutcome?.memberId === selectedSocio?.id ? undefined : resumePaymentKey
+                }
                 onGoToCash={(memberId, obligationIds) => {
                   const href = buildCashContextHref('/tesoreria', memberId, obligationIds)
                   if (href) router.push(href)
