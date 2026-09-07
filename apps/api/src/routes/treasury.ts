@@ -12,7 +12,7 @@ const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
 // prettier-ignore
 const id=z.object({id:z.string().uuid()}),totals=z.record(z.string().min(1).max(20),z.number().int().nonnegative()),openBody=z.object({desk_id:z.string().trim().min(1).max(80),opening_tenders:totals.default({})}).strict(),tenderBody=z.object({direction:z.enum(['INCOME','EXPENSE']),tender:z.string().trim().min(1).max(20),amount_cents:z.number().int().positive(),source_type:z.enum(['SETTLEMENT','MANUAL']),source_id:z.string().uuid().optional(),reason:z.string().trim().min(1).max(500).optional()}).strict().superRefine((value,ctx)=>{if(value.source_type==='SETTLEMENT'&&!value.source_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_id'],message:'Settlement source is required'});if(value.source_type==='MANUAL'&&value.source_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_id'],message:'Manual tenders cannot have a source'});}),expenseBody=z.object({gasto_id:z.string().uuid(),tender:z.string().trim().min(1).max(20)}).strict(),closeBody=z.object({counted_tenders:totals,reason:z.string().trim().min(1).max(500).optional(),force_close:z.boolean().default(false)}).strict()
 // prettier-ignore
-export interface TreasuryRouteOptions { service?: Partial<Pick<CashDeskService, 'open'|'list'|'recordTender'|'includeExpense'|'close'>> }
+export interface TreasuryRouteOptions { service?: Partial<Pick<CashDeskService, 'open'|'list'|'detail'|'recordTender'|'includeExpense'|'close'>> }
 // prettier-ignore
 const gate=(container:AppContainer)=>{if(!container.env.DUES_CASH_ENABLED)throw BusinessError(ErrorCode.NOT_FOUND,'Resource not found')}
 // prettier-ignore
@@ -23,10 +23,27 @@ function context(request:FastifyRequest,callerKey:string,payload:unknown):AuditC
 // prettier-ignore
 const dto=(row:any)=>({id:row.id,desk_id:row.deskId,status:row.status,...(row.assignedOperatorId?{assigned_operator_id:row.assignedOperatorId}:{}),...(row.businessDate?{business_date:row.businessDate}:{}),...(row.openedAt?{opened_at:row.openedAt}:{}),...(row.closedAt!==undefined?{closed_at:row.closedAt}: {})}) // eslint-disable-line @typescript-eslint/no-explicit-any
 
+const closeDto = (row: Awaited<ReturnType<CashDeskService['close']>>) => ({
+  id: row.id,
+  shift_id: row.shiftId,
+  expected_tenders: row.expectedTenders,
+  counted_tenders: row.countedTenders,
+  discrepancy: row.discrepancy,
+  reason: row.reason,
+  closed_at: row.closedAt,
+  ...(row.forceClose ? { force_close: true } : {}),
+})
+
 // prettier-ignore
 export const treasuryRoutes:FastifyPluginCallback<TreasuryRouteOptions>=(fastify,options,done)=>{const container:AppContainer=fastify.container,service=options.service??new CashDeskService(container.db)
   // prettier-ignore
   fastify.get('/api/v1/treasury/shifts',FINANCE_GATE,async(request,reply)=>{gate(container);return reply.send({items:(await service.list!(context(request,key(request,false),{}))).map(dto)})})
+  fastify.get<{ Params: { id: string } }>('/api/v1/treasury/shifts/:id', FINANCE_GATE, async (request, reply) => {
+    gate(container)
+    const params = throwIfInvalid(id, request.params, 'params')
+    const result = await service.detail!({ ...context(request, key(request, false), {}), shiftId: params.id })
+    return reply.send({ shift: dto(result.shift), close: result.close ? closeDto(result.close) : null })
+  })
   // prettier-ignore
   fastify.post('/api/v1/treasury/shifts',FINANCE_GATE,async(request,reply)=>{gate(container);const body=throwIfInvalid(openBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),deskId:body.desk_id,openingTenders:body.opening_tenders} as OpenCashCommand;return reply.code(201).send(dto(await service.open!(input)))})
   // prettier-ignore
@@ -34,7 +51,7 @@ export const treasuryRoutes:FastifyPluginCallback<TreasuryRouteOptions>=(fastify
   // prettier-ignore
   fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/expenses',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(expenseBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,gastoId:body.gasto_id,tender:body.tender} as ExpenseCommand;return reply.code(201).send(await service.includeExpense!(input))})
   // prettier-ignore
-  fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/close',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(closeBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,countedTenders:body.counted_tenders,forceClose:body.force_close,...(body.reason?{reason:body.reason}:{})} as CloseCashCommand,result=await service.close!(input);return reply.code(200).send({id:result.id,shift_id:result.shiftId,expected_tenders:result.expectedTenders,counted_tenders:result.countedTenders,discrepancy:result.discrepancy,reason:result.reason,closed_at:result.closedAt,...(result.forceClose?{force_close:true}:{})})})
+  fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/close',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(closeBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,countedTenders:body.counted_tenders,forceClose:body.force_close,...(body.reason?{reason:body.reason}:{})} as CloseCashCommand,result=await service.close!(input);return reply.code(200).send(closeDto(result))})
   done()
 }
 // prettier-ignore
