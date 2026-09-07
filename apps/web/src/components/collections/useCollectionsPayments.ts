@@ -30,6 +30,14 @@ type DebtPanelStatus =
   | 'unavailable'
   | 'error'
   | 'empty'
+export type ConfirmedPaymentOutcome = {
+  memberId: string
+  settlementId: string
+  amountCents: number
+  currency: string
+  tender: FullSelectionPaymentInput['tender']
+  reconciliation: 'ready' | 'pending'
+}
 type PaymentsApi = {
   getDebt: typeof getDebt
   getOpenCashShifts: typeof getOpenCashShifts
@@ -56,6 +64,12 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
   const localIdempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const selectedMember = useRef<string | null>(null)
   const debtLoad = useRef(0)
+  const paymentRequest = useRef<{
+    input: { operatorId: string; action: string; draftFingerprint: string }
+    memberId: string
+  } | null>(null)
+  const paymentReconciliationBusy = useRef(false)
+  const [paymentOutcome, setPaymentOutcome] = useState<ConfirmedPaymentOutcome | null>(null)
   const idempotency = sharedIdempotency ?? localIdempotency
   const apiDependencies: PaymentsApi = {
     getDebt,
@@ -72,6 +86,7 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     setOpenShifts([])
     setOpenShiftAvailability('loading')
     setDebtError('')
+    setPaymentOutcome(null)
     setDebtStatus('loading')
     const debtRequest = ++debtLoad.current
     const shiftsRequest = apiDependencies.getOpenCashShifts()
@@ -196,29 +211,75 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     const memberId = selectedSocio?.id
     if (!memberId || selectedMember.current !== memberId)
       throw new DuesOperationError('permission', 'Authentication required')
+    if (paymentOutcome?.memberId === memberId && paymentOutcome.reconciliation === 'pending')
+      throw new DuesOperationError('unavailable', 'Payment reconciliation pending')
     if (!openShifts.some(({ id }) => id === draft.shift_id))
       throw new DuesOperationError('conflict', 'Selected cash shift is not open')
+    if (!user) throw new DuesOperationError('permission', 'Authentication required')
+    if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const obligation_ids = [...draft.obligation_ids].sort()
-    return runSettlementMutation(
-      'full-selection-payment',
-      JSON.stringify({
+    const input = {
+      operatorId: user.operator_id,
+      action: 'full-selection-payment',
+      draftFingerprint: JSON.stringify({
         socioId: memberId,
         obligation_ids,
         shift_id: draft.shift_id,
         tender: draft.tender,
         selection_fingerprint: draft.selection_fingerprint,
       }),
-      (key) => {
-        if (selectedMember.current !== memberId)
-          throw new DuesOperationError('unavailable', 'Payment context unavailable')
-        return apiDependencies.createFullSelectionPayment(
-          { ...draft, socio_id: memberId, obligation_ids },
-          key,
-        )
-      },
-      true,
-      refreshPaymentContext,
+    }
+    const key = idempotency.current.getOrCreate(input)
+    if (selectedMember.current !== memberId)
+      throw new DuesOperationError('unavailable', 'Payment context unavailable')
+    const result = await apiDependencies.createFullSelectionPayment(
+      { ...draft, socio_id: memberId, obligation_ids },
+      key,
     )
+    if (selectedMember.current !== memberId) return result
+    const outcome = {
+      memberId,
+      settlementId: result.settlement_id,
+      amountCents: result.amount_cents,
+      currency: result.currency,
+      tender: draft.tender,
+      reconciliation: 'pending' as const,
+    }
+    paymentRequest.current = { input, memberId }
+    setPaymentOutcome(outcome)
+    try {
+      if (await refreshPaymentContext()) {
+        idempotency.current.complete(input)
+        paymentRequest.current = null
+        setPaymentOutcome({ ...outcome, reconciliation: 'ready' })
+      }
+    } catch {
+      // The POST result remains confirmed while GET reconciliation is retried separately.
+    }
+    return result
+  }
+  const reconcilePayment = async () => {
+    const request = paymentRequest.current
+    if (
+      !request ||
+      selectedMember.current !== request.memberId ||
+      paymentReconciliationBusy.current
+    )
+      return false
+    paymentReconciliationBusy.current = true
+    try {
+      if (!(await refreshPaymentContext())) return false
+      idempotency.current?.complete(request.input)
+      paymentRequest.current = null
+      setPaymentOutcome((current) =>
+        current?.memberId === request.memberId ? { ...current, reconciliation: 'ready' } : current,
+      )
+      return true
+    } catch {
+      return false
+    } finally {
+      paymentReconciliationBusy.current = false
+    }
   }
   const reverse = (input: ReversalRequest) =>
     runSettlementMutation('reverse-settlement', JSON.stringify(input), (key) =>
@@ -232,6 +293,8 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     openShiftAvailability,
     openShifts,
     pay,
+    paymentOutcome,
+    reconcilePayment,
     refreshDebt,
     refreshPaymentContext,
     reverse,

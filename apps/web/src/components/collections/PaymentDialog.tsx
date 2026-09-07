@@ -152,7 +152,7 @@ export function PaymentDialog({
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join('')
       if (!isActiveRequest()) return
-      const result = await onPayment({
+      await onPayment({
         obligation_ids: allocations.map(({ obligationId }) => obligationId),
         shift_id: shiftId,
         tender,
@@ -160,7 +160,7 @@ export function PaymentDialog({
       })
       if (!isActiveRequest()) return
       setSelectedIds([])
-      setStatus(result?.replayed ? 'Pago repetido.' : 'Pago registrado.')
+      setStatus('Pago registrado.')
       onClose()
     } catch (cause) {
       if (!isActiveRequest()) return

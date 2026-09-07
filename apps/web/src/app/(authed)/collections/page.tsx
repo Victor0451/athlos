@@ -167,6 +167,8 @@ export default function CollectionsPage() {
     openShiftAvailability,
     openShifts,
     pay,
+    paymentOutcome,
+    reconcilePayment,
     refreshDebt,
     refreshPaymentContext,
     reverse,
@@ -809,6 +811,21 @@ export default function CollectionsPage() {
             onSearch={searchSocios}
             onSelectSocio={selectSocio}
           />
+          {paymentOutcome && paymentOutcome.memberId === selectedSocio?.id && (
+            <section aria-label="Resultado del pago" className="space-y-2">
+              <p
+                role={paymentOutcome.reconciliation === 'pending' ? 'alert' : 'status'}
+                aria-live={paymentOutcome.reconciliation === 'pending' ? 'assertive' : 'polite'}
+              >
+                {`Pago confirmado. Operación ${paymentOutcome.settlementId}. Importe confirmado: ${(paymentOutcome.amountCents / 100).toLocaleString('es-AR', { style: 'currency', currency: paymentOutcome.currency })}. Medio seleccionado por la persona operadora: ${paymentOutcome.tender}.${paymentOutcome.reconciliation === 'pending' ? ' No se pudo actualizar el saldo.' : ''}`}
+              </p>
+              {paymentOutcome.reconciliation === 'pending' && (
+                <button type="button" onClick={() => void reconcilePayment()}>
+                  Actualizar saldo
+                </button>
+              )}
+            </section>
+          )}
           <AssessmentPreviewPanel
             socio={selectedSocio}
             preview={assessmentPreview}
@@ -873,7 +890,10 @@ export default function CollectionsPage() {
                 shifts={openShifts}
                 shiftAvailability={openShiftAvailability}
                 lifecycle={lifecycle}
-                {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+                {...(canSettle && paymentOutcome?.reconciliation !== 'pending'
+                  ? { onPayment: pay }
+                  : {})}
+                {...(canSettle ? { onReverse: reverse } : {})}
                 onRefreshDebt={refreshPaymentContext}
                 onCreateAgreement={createAgreement}
                 onReviseAgreement={reviseAgreement}

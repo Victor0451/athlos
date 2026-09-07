@@ -82,6 +82,110 @@ describe('useCollectionsPayments', () => {
     expect(JSON.parse(sessionStorage.getItem('athlos:collections:idempotency')!)[0].key).toBe(key)
   })
 
+  it('keeps a confirmed payment outcome when reconciliation fails and retries only GET requests', async () => {
+    const getDebt = vi.fn().mockResolvedValueOnce(debt).mockRejectedValueOnce(new Error('offline'))
+    const getOpenCashShifts = vi
+      .fn()
+      .mockResolvedValueOnce([shift])
+      .mockRejectedValueOnce(new Error('offline'))
+    const createFullSelectionPayment = vi.fn().mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const { result } = renderHook(() =>
+      useCollectionsPayments({
+        user: { operator_id: 'operator-1', role: 'ADMIN' },
+        api: { getDebt, getOpenCashShifts, createFullSelectionPayment },
+      }),
+    )
+
+    await act(() => result.current.selectSocio(socio))
+    await act(() =>
+      result.current.pay({
+        obligation_ids: ['obligation-1'],
+        shift_id: shift.id,
+        tender: 'TRANSFER',
+        selection_fingerprint: 'selection-fingerprint',
+      }),
+    )
+
+    expect(result.current.paymentOutcome).toMatchObject({
+      memberId: socio.id,
+      settlementId: 'settlement-1',
+      amountCents: 10_000,
+      currency: 'ARS',
+      tender: 'TRANSFER',
+      reconciliation: 'pending',
+    })
+    await expect(
+      result.current.pay({
+        obligation_ids: ['obligation-1'],
+        shift_id: shift.id,
+        tender: 'TRANSFER',
+        selection_fingerprint: 'selection-fingerprint',
+      }),
+    ).rejects.toMatchObject({ kind: 'unavailable' })
+    expect(createFullSelectionPayment).toHaveBeenCalledTimes(1)
+    await act(() => result.current.reconcilePayment())
+    expect(createFullSelectionPayment).toHaveBeenCalledTimes(1)
+    expect(getDebt).toHaveBeenCalledTimes(3)
+    expect(getOpenCashShifts).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not show an older member payment outcome when the POST resolves after selection changes', async () => {
+    let resolvePayment!: (value: {
+      settlement_id: string
+      amount_cents: number
+      currency: string
+      allocations: []
+    }) => void
+    const createFullSelectionPayment = vi.fn(
+      () =>
+        new Promise<{
+          settlement_id: string
+          amount_cents: number
+          currency: string
+          allocations: []
+        }>((resolve) => {
+          resolvePayment = resolve
+        }),
+    )
+    const { result } = renderHook(() =>
+      useCollectionsPayments({
+        user: { operator_id: 'operator-1', role: 'ADMIN' },
+        api: {
+          getDebt: vi.fn().mockResolvedValue(debt),
+          getOpenCashShifts: vi.fn().mockResolvedValue([shift]),
+          createFullSelectionPayment,
+        },
+      }),
+    )
+    await act(() => result.current.selectSocio(socio))
+    const payment = result.current.pay({
+      obligation_ids: ['obligation-1'],
+      shift_id: shift.id,
+      tender: 'TRANSFER',
+      selection_fingerprint: 'selection-fingerprint',
+    })
+    await act(() =>
+      result.current.selectSocio({ ...socio, id: 'socio-2', nombre: 'Beto', apellido: 'López' }),
+    )
+    await act(async () => {
+      resolvePayment({
+        settlement_id: 'settlement-1',
+        amount_cents: 10_000,
+        currency: 'ARS',
+        allocations: [],
+      })
+      await payment
+    })
+
+    expect(createFullSelectionPayment).toHaveBeenCalledTimes(1)
+    expect(result.current.paymentOutcome).toBeNull()
+  })
+
   it('marks stale open shifts unavailable and restores them through a complete context retry', async () => {
     const getDebt = vi.fn().mockResolvedValue(debt)
     const getOpenCashShifts = vi

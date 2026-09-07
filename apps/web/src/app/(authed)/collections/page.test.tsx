@@ -679,7 +679,12 @@ describe('assessment price-gap recovery', () => {
     duesMocks.executeDuesAssessmentRange.mockResolvedValue({
       created_obligation_ids: ['gap-obligation-1'],
     })
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'gap-settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'gap-settlement-1',
+      amount_cents: 100,
+      currency: 'ARS',
+      allocations: [],
+    })
 
     renderPage(true, 'ADMIN')
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
@@ -938,7 +943,12 @@ describe('payment orchestration and recovery', () => {
 
   it('submits the default full selection with Transferencia, then refreshes debt and completes its key', async () => {
     prepare()
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
     const user = await openPayment()
     await user.click(screen.getByLabelText('Transferencia'))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
@@ -957,6 +967,33 @@ describe('payment orchestration and recovery', () => {
     await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(2))
     expect(screen.getByText('Pago registrado.')).toBeInTheDocument()
     expect(sessionStorage.getItem('athlos:collections:idempotency')).toBeNull()
+  })
+
+  it('keeps the server-confirmed outcome after the paid debt removes payment actions', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt)
+      .mockResolvedValueOnce({
+        ...debt,
+        status: 'empty',
+        total_debt_cents: 0,
+        obligations: [],
+      })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment()
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    expect(await screen.findByRole('region', { name: 'Resultado del pago' })).toHaveTextContent(
+      'Pago confirmado. Operación settlement-1. Importe confirmado: $ 100,00. Medio seleccionado por la persona operadora: TRANSFER.',
+    )
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
   })
 })
 
