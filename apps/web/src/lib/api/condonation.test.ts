@@ -1,17 +1,137 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiFetchMock = vi.fn()
-vi.mock('@/lib/api', () => ({ apiFetch: apiFetchMock, ApiError: class ApiError extends Error {} }))
+vi.mock('@/lib/api', () => ({
+  apiFetch: apiFetchMock,
+  ApiError: class ApiError extends Error {
+    constructor(readonly status: number) {
+      super('API failure')
+    }
+  },
+}))
 
 const {
+  CondonationOperationError,
   createCondonationRequest,
   decideCondonationRequest,
   executeCondonationRequest,
   listCondonationLifecycle,
+  listCondonationQueue,
 } = await import('./condonation')
 
 describe('condonation client', () => {
   beforeEach(() => apiFetchMock.mockReset())
+
+  const queueItem = () => ({
+    id: '00000000-0000-4000-8000-000000000001',
+    state: 'pending',
+    created_at: '2026-08-27T00:00:00.000Z',
+    expires_at: '2026-09-01T00:00:00.000Z',
+    decided_at: null,
+    execution_id: null,
+    execution_status: 'unavailable',
+    current_member: {
+      id: '00000000-0000-4000-8000-000000000003',
+      numero_socio: '0042',
+      nombre: 'Ana',
+      apellido: 'Gorriti',
+    },
+    requester: { id: '00000000-0000-4000-8000-000000000005', username: 'operator' },
+    context: 'Debt review',
+    reason: 'Hardship',
+    evidence: 'Minutes 12',
+    snapshot: {
+      member_id: '00000000-0000-4000-8000-000000000003',
+      obligations: [
+        {
+          obligation_id: '00000000-0000-4000-8000-000000000004',
+          currency: 'ARS',
+          outstanding_amount_cents: 12500,
+        },
+      ],
+    },
+  })
+  it('reads one queue page without automatically following the opaque cursor', async () => {
+    const item = queueItem()
+    apiFetchMock.mockResolvedValue({ items: [item], next_cursor: 'opaque_cursor' })
+    await expect(listCondonationQueue()).resolves.toEqual({
+      items: [item],
+      next_cursor: 'opaque_cursor',
+    })
+    expect(apiFetchMock).toHaveBeenCalledOnce()
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/condonation-requests?limit=25')
+    apiFetchMock.mockResolvedValue({ items: [], next_cursor: null })
+    await expect(
+      listCondonationQueue({ view: 'all', limit: 1, cursor: 'opaque_cursor' }),
+    ).resolves.toEqual({ items: [], next_cursor: null })
+    expect(apiFetchMock).toHaveBeenLastCalledWith(
+      '/api/v1/condonation-requests?limit=1&view=all&cursor=opaque_cursor',
+    )
+  })
+  it('rejects incomplete or inconsistent decision context rather than showing a partial queue', async () => {
+    const item = queueItem()
+    for (const broken of [
+      { ...item, reason: '' },
+      { ...item, created_at: 'invalid' },
+      { ...item, requester: { id: 'invalid', username: 'operator' } },
+      { ...item, current_member: { ...item.current_member, id: item.id } },
+      { ...item, token_hash: 'must-not-be-displayed' },
+      {
+        ...item,
+        snapshot: {
+          ...item.snapshot,
+          obligations: [...item.snapshot.obligations, ...item.snapshot.obligations],
+        },
+      },
+      {
+        ...item,
+        snapshot: {
+          ...item.snapshot,
+          obligations: [
+            ...item.snapshot.obligations,
+            { ...item.snapshot.obligations[0], obligation_id: item.id, currency: 'USD' },
+          ],
+        },
+      },
+    ]) {
+      apiFetchMock.mockResolvedValue({ items: [item, broken], next_cursor: null })
+      await expect(listCondonationQueue()).rejects.toMatchObject({ kind: 'partial_data' })
+    }
+    for (const page of [
+      { items: [item] },
+      { items: [], next_cursor: '' },
+      { items: [item, item], next_cursor: null },
+    ]) {
+      apiFetchMock.mockResolvedValue(page)
+      await expect(listCondonationQueue()).rejects.toMatchObject({ kind: 'partial_data' })
+    }
+  })
+  it('validates queue options before making a request and reports transport failures', async () => {
+    for (const options of [
+      { limit: 0 },
+      { limit: 101 },
+      { limit: 1.5 },
+      { cursor: '' },
+      { cursor: 'bad=' },
+      { cursor: 'a'.repeat(257) },
+    ])
+      await expect(listCondonationQueue(options)).rejects.toMatchObject({ kind: 'partial_data' })
+    expect(apiFetchMock).not.toHaveBeenCalled()
+    const transportError = new Error('offline')
+    apiFetchMock.mockRejectedValueOnce(transportError)
+    const failure = await listCondonationQueue().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(CondonationOperationError)
+    expect((failure as InstanceType<typeof CondonationOperationError>).kind).toBe('unavailable')
+    expect((failure as Error).cause).toBe(transportError)
+  })
+
+  it('keeps authorization failures distinct from unavailable queue data', async () => {
+    const { ApiError } = await import('@/lib/api')
+    apiFetchMock.mockRejectedValueOnce(new ApiError(403, 'INSUFFICIENT_PERMISSIONS', 'Forbidden'))
+    const failure = await listCondonationQueue().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(CondonationOperationError)
+    expect((failure as InstanceType<typeof CondonationOperationError>).kind).toBe('permission')
+  })
 
   // prettier-ignore
   it('posts authenticated request and decision contracts with caller-owned idempotency keys', async () => {

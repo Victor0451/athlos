@@ -10,6 +10,7 @@ import { BenefitService } from '../modules/dues/dues-benefits.ts'
 import { FamilyGroupService } from '../modules/dues/dues-family-groups.ts'
 import { SettlementService } from '../modules/dues/settlements.ts'
 import { MAX_MONEY_CENTS } from '../modules/dues/allocations.ts'
+import { getSettlementDetail } from '../modules/dues/settlement-detail.ts'
 import { AgreementService, type Agreement } from '../modules/dues/agreements.ts'
 import { CommunityWorkService } from '../modules/dues/community-work.ts'
 import { CtacteProjectionService } from '../modules/dues/ctacte-projection.ts'
@@ -192,6 +193,7 @@ export interface DuesRouteOptions {
   assessmentService?: Pick<AssessmentService, 'generate'> &
     Partial<Pick<AssessmentService, 'preview' | 'executeRange' | 'planGeneration'>>
   listEffectivePrices?: typeof repository.listEffectivePrices
+  getSettlementDetail?: typeof getSettlementDetail
   benefitService?: Pick<BenefitService, 'create' | 'revoke' | 'list'>
   familyGroupService?: Pick<FamilyGroupService, 'create' | 'addMembership' | 'revokeMembership'>
   settlementService?: Pick<SettlementService, 'create'> &
@@ -358,6 +360,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
   const pricingService = options.pricingService ?? new PricingService(container.db)
   const assessmentService = options.assessmentService ?? new AssessmentService(container.db)
   const listEffectivePrices = options.listEffectivePrices ?? repository.listEffectivePrices
+  const settlementDetailReader = options.getSettlementDetail ?? getSettlementDetail
   const benefitService = options.benefitService ?? new BenefitService(container.db)
   const familyGroupService = options.familyGroupService ?? new FamilyGroupService(container.db)
   const settlementService = options.settlementService ?? new SettlementService(container.db)
@@ -541,6 +544,17 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     // prettier-ignore
     // prettier-ignore
     fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id}),body={status:result.status,socio_id:result.socioId,currency:result.currency,total_debt_cents:result.totalCents,obligations:result.obligations.map((obligation)=>({id:obligation.id,period_start:obligation.periodStart,period_end:obligation.periodEnd,original_amount_cents:obligation.originalCents,outstanding_cents:obligation.outstandingCents,currency:obligation.currency,status:obligation.status,components:obligation.components.map(({id,kind,componentKey,amountCents})=>({id,kind,component_key:componentKey,amount_cents:amountCents})),benefits:obligation.benefits.map(({id,componentKey,amountCents})=>({id,component_key:componentKey,amount_cents:amountCents})),allocations:obligation.allocations.map(({id,settlementId,settlementKind,settlementAmountCents,currency,amountCents,kind,compensatesAllocationId,reversalEligible})=>({id,settlement_id:settlementId,settlement_kind:settlementKind,settlement_amount_cents:settlementAmountCents,currency,amount_cents:amountCents,kind,compensates_allocation_id:compensatesAllocationId,reversal_eligible:reversalEligible}))}))};return reply.code(result.status === 'not_found' ? 404 : 200).send(body)})
+    fastify.get<{ Params: { id: string } }>(
+      '/api/v1/dues/settlements/:id',
+      FINANCE_GATE,
+      async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        enabled(container)
+        const params = throwIfInvalid(idParamSchema, request.params, 'params')
+        const result = await settlementDetailReader(container.db, request.operator!.role, params.id)
+        return reply.code(200).send(result)
+      },
+    )
     fastify.post('/api/v1/dues/settlements', FINANCE_GATE, async (request, reply) => {
       enabled(container)
       const body = throwIfInvalid(settlementPaymentBodySchema, request.body ?? {}, 'body'),

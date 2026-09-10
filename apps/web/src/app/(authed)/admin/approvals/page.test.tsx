@@ -1,181 +1,669 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { COLLECTIONS_IDEMPOTENCY_STORAGE_KEY } from '@/lib/collections-idempotency'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-
-/**
- * Approvals list page tests (TASK-035, PR 8c.2).
- *
- * `/admin/approvals` is the ADMIN's queue of pending approval
- * tokens. Per design.md §8 and the spec, the v0.5.x backend has
- * NO list-pending-tokens endpoint — the executor + admin queue
- * land in a Phase 9 backend slice. Until then the page renders
- * the "Próximamente" placeholder (deferred features per the
- * `web-frontend/spec.md` Cross-Slice Disabled Feature Placeholders
- * scenario).
- *
- * Contract:
- *   - ADMIN-only: non-ADMIN operators see "Sin permisos" copy
- *     and do NOT trigger any query
- *   - The page heading renders the queue title
- *   - The body shows "Próximamente — disponible en una próxima
- *     versión" copy with a link to the docs/admin channel
- *   - A "Ver un token específico" deep-link CTA renders so an
- *     ADMIN with a known token URL can still navigate to the
- *     detail page (this is the read-only escape hatch until the
- *     real queue lands)
- *   - Loading state: brief skeleton while the role check resolves
- *   - No fetch is fired (the page is a static placeholder)
- */
+import type * as CondonationApi from '@/lib/api/condonation'
+type CondonationQueueItem = CondonationApi.CondonationQueueItem
+type CondonationQueuePage = CondonationApi.CondonationQueuePage
 
 const pushMock = vi.fn()
-
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushMock, replace: vi.fn(), back: vi.fn() }),
-  usePathname: () => '/admin/approvals',
-  useSearchParams: () => new URLSearchParams(),
-}))
-
 const useAuthMock = vi.fn()
-vi.mock('@/lib/use-auth', () => ({
-  useAuth: () => useAuthMock(),
-}))
-
+const listQueueMock = vi.fn()
+const decideMock = vi.fn()
+const executeMock = vi.fn()
+const listLifecycleMock = vi.fn()
 const getApprovalMock = vi.fn()
-vi.mock('@/lib/api/approvals', () => ({
-  getApproval: (...args: unknown[]) => getApprovalMock(...args),
-  recordApprovalDecision: vi.fn(),
-}))
-
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: pushMock }) }))
+vi.mock('@/lib/use-auth', () => ({ useAuth: () => useAuthMock() }))
+vi.mock('@/lib/api/approvals', () => ({ getApproval: getApprovalMock }))
+vi.mock('@/lib/api/condonation', async (importOriginal) => {
+  const actual = await importOriginal<typeof CondonationApi>()
+  return {
+    ...actual,
+    listCondonationQueue: (...args: unknown[]) => listQueueMock(...args),
+    decideCondonationRequest: (...args: unknown[]) => decideMock(...args),
+    executeCondonationRequest: executeMock,
+    listCondonationLifecycle: (...args: unknown[]) => listLifecycleMock(...args),
+  }
+})
+const { CondonationOperationError } = await import('@/lib/api/condonation')
 const { default: ApprovalsListPage } = await import('./page')
 
-function makeAdminUser() {
-  return {
-    user: {
-      operator_id: 'op-admin',
-      role: 'ADMIN' as const,
-      username: 'admin',
-      permissions: { can_reprint: true, can_anulate: true },
-    },
-    token: 'fake.jwt',
-    isAuthenticated: true,
-    login: vi.fn(),
-    logout: vi.fn(),
-    refresh: vi.fn(),
-  }
+type Role = 'ADMIN' | 'TESORERO' | 'OPERADOR' | 'CONSULTA'
+const auth = (role: Role = 'ADMIN', operatorId = 'operator-1') => ({
+  user: { operator_id: operatorId, role, username: 'usuario' },
+})
+const item = (name = 'Ana', suffix = '1'): CondonationQueueItem => ({
+  id: `00000000-0000-4000-8000-00000000000${suffix}`,
+  state: 'pending',
+  expires_at: '2030-01-01T12:00:00.000Z',
+  decided_at: null,
+  execution_id: null,
+  execution_status: 'unavailable',
+  created_at: '2026-09-01T12:00:00.000Z',
+  snapshot: {
+    member_id: '00000000-0000-4000-8000-000000000042',
+    obligations: [
+      {
+        obligation_id: '00000000-0000-4000-8000-000000000050',
+        currency: 'ARS',
+        outstanding_amount_cents: 12500,
+      },
+    ],
+  },
+  current_member: {
+    id: '00000000-0000-4000-8000-000000000042',
+    numero_socio: '0042',
+    nombre: name,
+    apellido: 'Pérez',
+  },
+  requester: { id: '00000000-0000-4000-8000-000000000060', username: 'solicitante' },
+  context: 'Regularización de cuota social',
+  reason: 'Situación económica comprobada',
+  evidence: 'Informe social adjunto',
+})
+const page = (
+  items: CondonationQueueItem[] = [],
+  next_cursor: string | null = null,
+): CondonationQueuePage => ({ items, next_cursor })
+function deferred() {
+  let resolve!: (value: CondonationQueuePage) => void
+  const promise = new Promise<CondonationQueuePage>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
-
-function makeOperadorUser() {
-  return {
-    user: {
-      operator_id: 'op-1',
-      role: 'OPERADOR' as const,
-      username: 'operador',
-      permissions: { can_reprint: false, can_anulate: false },
-    },
-    token: 'fake.jwt',
-    isAuthenticated: true,
-    login: vi.fn(),
-    logout: vi.fn(),
-    refresh: vi.fn(),
-  }
-}
-
+const clients: QueryClient[] = []
 function renderPage() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  clients.push(client)
+  const view = render(<ApprovalsListPage />, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
   })
-  return render(
-    <QueryClientProvider client={client}>
-      <ApprovalsListPage />
-    </QueryClientProvider>,
-  )
+  return { ...view, client }
 }
+const member = (name: string) => screen.findByRole('heading', { name: new RegExp(`${name} Pérez`) })
+const noMember = (name: string) =>
+  expect(
+    screen.queryByRole('heading', { name: new RegExp(`${name} Pérez`) }),
+  ).not.toBeInTheDocument()
 
-describe('Approvals list page', () => {
+describe('Approvals queue', () => {
   beforeEach(() => {
-    pushMock.mockReset()
-    useAuthMock.mockReset()
-    useAuthMock.mockReturnValue(makeAdminUser())
-    getApprovalMock.mockReset()
-  })
-
-  it('renders the page heading + intro copy for ADMIN', () => {
-    renderPage()
-    expect(screen.getByRole('heading', { name: /aprobaciones/i, level: 1 })).toBeInTheDocument()
-  })
-
-  it('renders the Próximamente placeholder (no list endpoint in v0.5.x)', () => {
-    renderPage()
-    expect(screen.getByText(/próximamente/i)).toBeInTheDocument()
-  })
-
-  it('does NOT fire getApproval on mount (placeholder page — no auto-fetch)', () => {
-    renderPage()
-    // Give any potential queries a tick to fire.
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(getApprovalMock).not.toHaveBeenCalled()
-        resolve()
-      }, 50)
+    vi.clearAllMocks()
+    useAuthMock.mockReturnValue(auth())
+    listQueueMock.mockReset().mockResolvedValue(page())
+    decideMock.mockReset()
+    executeMock.mockReset()
+    listLifecycleMock.mockReset().mockImplementation(() => {
+      const executionId =
+        executeMock.mock.calls.at(-1)?.[1] ?? '00000000-0000-4000-8000-000000000070'
+      return Promise.resolve({
+        items: [
+          {
+            ...item(),
+            state: executeMock.mock.calls.length ? 'executed' : 'approved_awaiting_execution',
+            decided_at: '2026-09-09T12:00:00.000Z',
+            execution_id: executionId,
+            execution_status: executeMock.mock.calls.length ? 'executed' : 'recoverable',
+          },
+        ],
+      })
     })
+    window.sessionStorage.removeItem(COLLECTIONS_IDEMPOTENCY_STORAGE_KEY)
+  })
+  afterEach(() => {
+    clients.splice(0).forEach((client) => client.clear())
   })
 
-  it('does NOT fire getApproval for a non-ADMIN operator either', () => {
-    useAuthMock.mockReturnValue(makeOperadorUser())
+  it.each(['ADMIN', 'TESORERO'] as const)(
+    'shows authoritative context and no financial controls to %s',
+    async (role) => {
+      useAuthMock.mockReturnValue(auth(role))
+      listQueueMock.mockResolvedValue(page([item()]))
+      renderPage()
+      await member('Ana')
+      expect(listQueueMock).toHaveBeenCalledWith({ view: 'all' })
+      expect(screen.getByText(/0042/)).toBeInTheDocument()
+      expect(screen.getByText(/Datos actuales del socio/)).toBeInTheDocument()
+      for (const text of [
+        'solicitante',
+        item().context,
+        item().reason,
+        item().evidence,
+        'Pendiente',
+      ])
+        expect(screen.getByText(text)).toBeInTheDocument()
+      expect(screen.getByText(/125,00/)).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /ejecutar|registrar decisión|enviar solicitud/i }),
+      ).not.toBeInTheDocument()
+      expect(Boolean(screen.queryByTestId('approvals-deeplink'))).toBe(role === 'ADMIN')
+      expect(getApprovalMock).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['OPERADOR', 'CONSULTA'] as const)('denies %s before requesting the queue', (role) => {
+    useAuthMock.mockReturnValue(auth(role))
     renderPage()
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(getApprovalMock).not.toHaveBeenCalled()
-        resolve()
-      }, 50)
-    })
+    expect(screen.getByText('Sin permisos')).toBeInTheDocument()
+    expect(listQueueMock).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('approvals-deeplink')).not.toBeInTheDocument()
   })
 
-  it('renders the "Sin permisos" copy for a non-ADMIN operator', () => {
-    useAuthMock.mockReturnValue(makeOperadorUser())
+  it('does not request data before the authenticated identity is available', () => {
+    useAuthMock.mockReturnValue({ user: null })
     renderPage()
-    expect(screen.getByText(/sin permisos/i)).toBeInTheDocument()
+    expect(listQueueMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Sin permisos')).toBeInTheDocument()
   })
 
-  it('exposes a stable test-id for the placeholder region', () => {
+  it('shows loading followed by an explicit empty result', async () => {
+    const pending = deferred()
+    listQueueMock.mockReturnValueOnce(pending.promise)
     renderPage()
-    expect(screen.getByTestId('approvals-placeholder')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Cargando condonaciones')
+    expect(screen.queryByText(/No hay condonaciones/)).not.toBeInTheDocument()
+    await act(async () => pending.resolve(page()))
+    expect(await screen.findByText(/No hay condonaciones para revisar/)).toBeInTheDocument()
   })
 
-  it('renders the deep-link input so ADMINs with a known token URL can still reach the detail page', () => {
-    renderPage()
-    const input = screen.getByTestId('approvals-token-input')
-    expect(input).toBeInTheDocument()
-    expect(input).toHaveAttribute('type', 'text')
-  })
-
-  it('navigates to /admin/approvals/<token> when the deep-link form is submitted', async () => {
+  it.each([
+    ['permission', /No tenés permisos/],
+    ['partial_data', /datos incompletos/],
+    ['unavailable', /No se pudo cargar/],
+  ] as const)('reports %s and retries the failed first page', async (kind, copy) => {
+    listQueueMock.mockRejectedValueOnce(new CondonationOperationError(kind))
     const user = userEvent.setup()
     renderPage()
-    const input = screen.getByTestId('approvals-token-input')
-    await user.type(input, 'abc123token')
-    await user.click(screen.getByRole('button', { name: /abrir/i }))
-    await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith('/admin/approvals/abc123token')
-    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    await user.click(screen.getByRole('button', { name: 'Reintentar' }))
+    await member('Ana')
+    expect(listQueueMock).toHaveBeenCalledTimes(2)
   })
 
-  it('does NOT navigate when the deep-link input is empty', async () => {
+  it('appends only requested opaque pages, deduplicates identities and stops at the end', async () => {
+    listQueueMock
+      .mockResolvedValueOnce(page([item()], 'opaque_cursor'))
+      .mockResolvedValueOnce(page([item(), item('Beto', '2')]))
     const user = userEvent.setup()
     renderPage()
-    await user.click(screen.getByRole('button', { name: /abrir/i }))
+    await member('Ana')
+    expect(listQueueMock).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Cargar más' }))
+    await member('Beto')
+    expect(screen.getAllByRole('heading', { name: /Ana Pérez/ })).toHaveLength(1)
+    expect(listQueueMock).toHaveBeenLastCalledWith({ view: 'all', cursor: 'opaque_cursor' })
+    expect(screen.queryByRole('button', { name: 'Cargar más' })).not.toBeInTheDocument()
+  })
+
+  it('keeps rows after a next-page failure and retries that same cursor', async () => {
+    listQueueMock
+      .mockResolvedValueOnce(page([item()], 'opaque_cursor'))
+      .mockRejectedValueOnce(new CondonationOperationError('unavailable'))
+      .mockResolvedValueOnce(page([item('Beto', '2')]))
+    const user = userEvent.setup()
+    renderPage()
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Cargar más' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo cargar/)
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Reintentar cargar más' }))
+    await member('Beto')
+    expect(listQueueMock.mock.calls.slice(1)).toEqual([
+      [{ view: 'all', cursor: 'opaque_cursor' }],
+      [{ view: 'all', cursor: 'opaque_cursor' }],
+    ])
+  })
+
+  it.each([
+    ['ADMIN', 'operator-2'],
+    ['TESORERO', 'operator-1'],
+  ] as const)('isolates cached rows when identity changes to %s %s', async (role, operatorId) => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    const view = renderPage()
+    await member('Ana')
+    const pending = deferred()
+    listQueueMock.mockReturnValueOnce(pending.promise)
+    useAuthMock.mockReturnValue(auth(role, operatorId))
+    view.rerender(<ApprovalsListPage />)
+    noMember('Ana')
+    await act(async () => pending.resolve(page([item('Beto', '2')])))
+    await member('Beto')
+    noMember('Ana')
+    expect(listQueueMock).toHaveBeenCalledTimes(2)
+    useAuthMock.mockReturnValue(auth('OPERADOR', operatorId))
+    view.rerender(<ApprovalsListPage />)
+    noMember('Beto')
+    expect(listQueueMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores the previous actor first-page response after switching', async () => {
+    const pending = deferred()
+    listQueueMock
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page([item('Beto', '2')]))
+    const view = renderPage()
+    useAuthMock.mockReturnValue(auth('TESORERO', 'operator-2'))
+    view.rerender(<ApprovalsListPage />)
+    await member('Beto')
+    await act(async () => pending.resolve(page([item()])))
+    noMember('Ana')
+  })
+
+  it('ignores an old actor next-page response and prevents overlapping pagination/refresh', async () => {
+    const pending = deferred()
+    listQueueMock
+      .mockResolvedValueOnce(page([item()], 'opaque_cursor'))
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(page([item('Beto', '2')]))
+    const user = userEvent.setup()
+    const view = renderPage()
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Cargar más' }))
+    expect(screen.getByRole('button', { name: 'Cargando más…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Actualizar' })).toBeDisabled()
+    useAuthMock.mockReturnValue(auth('TESORERO', 'operator-2'))
+    view.rerender(<ApprovalsListPage />)
+    await member('Beto')
+    await act(async () => pending.resolve(page([item('Carlos', '3')])))
+    noMember('Ana')
+    noMember('Carlos')
+  })
+
+  it('hides previously loaded rows when the server denies a subsequent page', async () => {
+    listQueueMock
+      .mockResolvedValueOnce(page([item()], 'opaque_cursor'))
+      .mockRejectedValueOnce(new CondonationOperationError('permission'))
+    const user = userEvent.setup()
+    renderPage()
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Cargar más' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('No tenés permisos')
+    noMember('Ana')
+    expect(screen.queryByRole('button', { name: 'Cargar más' })).not.toBeInTheDocument()
+  })
+
+  it('clears the generic token input when another administrator becomes the current actor', async () => {
+    const user = userEvent.setup()
+    const view = renderPage()
+    await screen.findByText(/No hay condonaciones/)
+    await user.type(screen.getByRole('textbox', { name: 'Token de aprobación' }), 'private-token')
+    useAuthMock.mockReturnValue(auth('ADMIN', 'operator-2'))
+    view.rerender(<ApprovalsListPage />)
+    expect(screen.getByRole('textbox', { name: 'Token de aprobación' })).toHaveValue('')
+    await screen.findByText(/No hay condonaciones/)
+    expect(listQueueMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes authoritative rows and exposes explicit recovery for an approved item', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()])).mockResolvedValueOnce(
+      page([
+        {
+          ...item('Beto', '2'),
+          state: 'approved_awaiting_execution',
+          execution_id: '00000000-0000-4000-8000-000000000070',
+          execution_status: 'recoverable',
+          decided_at: '2026-09-02T12:00:00.000Z',
+        },
+      ]),
+    )
+    const user = userEvent.setup()
+    renderPage()
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Actualizar' }))
+    await member('Beto')
+    noMember('Ana')
+    expect(screen.getByRole('button', { name: 'Aplicar condonación' })).toBeInTheDocument()
+  })
+
+  const recorded = (status: 'approved' | 'rejected' = 'approved') => ({
+    id: item().id,
+    status,
+    expires_at: item().expires_at,
+    decided_at: '2026-09-09T12:00:00.000Z',
+  })
+  async function fillDecision(user: ReturnType<typeof userEvent.setup>, decision = 'approved') {
+    await member('Ana')
+    await user.click(screen.getByRole('button', { name: 'Revisar solicitud' }))
+    const dialog = screen.getByRole('dialog', { name: 'Decidir condonación' })
+    await user.selectOptions(within(dialog).getByLabelText('Decisión'), decision)
+    await user.type(within(dialog).getByLabelText('Motivo de la decisión'), '  Verificado  ')
+    await user.type(within(dialog).getByLabelText('Evidencia de la decisión'), '  Acta 12  ')
+    return dialog
+  }
+
+  it.each([
+    ['ADMIN', 'approved'],
+    ['TESORERO', 'rejected'],
+  ] as const)(
+    'records %s %s and retains confirmation after the row leaves the queue',
+    async (role, decision) => {
+      useAuthMock.mockReturnValue(auth(role))
+      listQueueMock.mockResolvedValueOnce(page([item()]))
+      decideMock.mockResolvedValueOnce(recorded(decision))
+      const user = userEvent.setup()
+      if (decision === 'approved')
+        executeMock.mockImplementation((_requestId, executionId) =>
+          Promise.resolve({
+            execution_id: executionId,
+            approval_id: item().id,
+            member_id: item().snapshot.member_id,
+            currency: 'ARS',
+            approved_amount_cents: 12500,
+            treatment_ids: ['00000000-0000-4000-8000-000000000071'],
+            status: 'executed',
+          }),
+        )
+      renderPage()
+      const dialog = await fillDecision(user, decision)
+      for (const text of [item().context, item().reason, item().evidence])
+        expect(within(dialog).getByText(text)).toBeInTheDocument()
+      await user.click(
+        within(dialog).getByRole('button', {
+          name: decision === 'approved' ? 'Aprobar y aplicar condonación' : 'Registrar decisión',
+        }),
+      )
+      expect(await within(dialog).findByRole('status')).toHaveTextContent(
+        decision === 'approved' ? 'Condonación aplicada' : 'Rechazo registrado',
+      )
+      await screen.findByText(/No hay condonaciones para revisar/)
+      expect(within(dialog).queryByText('Pendiente')).not.toBeInTheDocument()
+      expect(decideMock).toHaveBeenCalledWith(
+        item().id,
+        { decision, reason: 'Verificado', evidence: 'Acta 12' },
+        expect.any(String),
+      )
+      expect(
+        within(dialog).getByText(/Aprobar y aplicar mantiene dos controles del servidor/),
+      ).toBeInTheDocument()
+      expect(
+        within(dialog).queryByRole('link', { name: 'Continuar en Cobranza' }),
+      ).not.toBeInTheDocument()
+      if (decision === 'approved') await waitFor(() => expect(executeMock).toHaveBeenCalledTimes(1))
+      else expect(executeMock).not.toHaveBeenCalled()
+      await user.click(within(dialog).getByRole('button', { name: 'Cerrar' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    },
+  )
+
+  const execution = (executionId: string, overrides = {}) => ({
+    execution_id: executionId,
+    approval_id: item().id,
+    member_id: item().snapshot.member_id,
+    currency: 'ARS',
+    approved_amount_cents: 12500,
+    treatment_ids: ['00000000-0000-4000-8000-000000000071'],
+    status: 'executed' as const,
+    ...overrides,
+  })
+
+  it('posts a valid decision before exactly one matching application and keeps the dialog locked through both phases', async () => {
+    let resolveDecision!: (value: ReturnType<typeof recorded>) => void
+    let resolveExecution!: (value: ReturnType<typeof execution>) => void
+    listQueueMock.mockImplementation(() => {
+      const executionId = executeMock.mock.calls[0]?.[1]
+      return Promise.resolve(
+        page(
+          executionId
+            ? [
+                {
+                  ...item(),
+                  state: 'executed',
+                  decided_at: '2026-09-09T12:00:00.000Z',
+                  execution_id: executionId,
+                  execution_status: 'executed',
+                },
+              ]
+            : [item()],
+        ),
+      )
+    })
+    decideMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDecision = resolve
+      }),
+    )
+    executeMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveExecution = resolve
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage()
+    const dialog = await fillDecision(user)
+    const submit = within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' })
+    await user.click(submit)
+    await user.click(submit)
+    expect(decideMock).toHaveBeenCalledTimes(1)
+    expect(executeMock).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    await act(async () => resolveDecision(recorded()))
+    await waitFor(() => expect(executeMock).toHaveBeenCalledTimes(1))
+    expect(within(dialog).getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    const [requestId, executionId, executionKey] = executeMock.mock.calls[0]!
+    expect(requestId).toBe(item().id)
+    expect(typeof executionId).toBe('string')
+    expect(typeof executionKey).toBe('string')
+    await act(async () => resolveExecution(execution(executionId)))
+    await waitFor(() => expect(listQueueMock).toHaveBeenCalledWith({ view: 'all' }))
+    expect(await within(dialog).findByRole('status')).toHaveTextContent('Condonación aplicada')
+  })
+
+  it('keeps a valid approved request pending after application failure and retries only the application POST', async () => {
+    listQueueMock.mockResolvedValue(page([item()]))
+    decideMock.mockResolvedValueOnce(recorded())
+    executeMock
+      .mockRejectedValueOnce(new CondonationOperationError('unavailable'))
+      .mockImplementationOnce((_requestId, executionId) =>
+        Promise.resolve(execution(executionId, { status: 'replayed' })),
+      )
+    const user = userEvent.setup()
+    renderPage()
+    const dialog = await fillDecision(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    expect(
+      (await within(dialog).findAllByText(/Aprobada pendiente de aplicación/)).length,
+    ).toBeGreaterThan(0)
+    const firstExecution = executeMock.mock.calls[0]
+    await user.click(within(dialog).getByRole('button', { name: 'Reintentar aplicación' }))
+    await within(dialog).findByRole('status')
+    expect(decideMock).toHaveBeenCalledTimes(1)
+    expect(executeMock).toHaveBeenCalledTimes(2)
+    expect(executeMock.mock.calls[1]).toEqual(firstExecution)
+  })
+
+  it('reads approved-pending recovery through view=all without mutating on load or refresh', async () => {
+    const approvedPending = {
+      ...item(),
+      state: 'approved_awaiting_execution' as const,
+      decided_at: '2026-09-09T12:00:00.000Z',
+      execution_id: '00000000-0000-4000-8000-000000000070',
+      execution_status: 'recoverable' as const,
+    }
+    listQueueMock.mockResolvedValue(page([approvedPending]))
+    const user = userEvent.setup()
+    renderPage()
+    await member('Ana')
+    expect(listQueueMock).toHaveBeenCalledWith({ view: 'all' })
+    expect(screen.getByText(/Aprobada: pendiente de ejecución/)).toBeInTheDocument()
+    expect(decideMock).not.toHaveBeenCalled()
+    expect(executeMock).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Actualizar' }))
+    await waitFor(() => expect(listQueueMock).toHaveBeenCalledTimes(2))
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  it('explains why the requester needs a different approver', async () => {
+    useAuthMock.mockReturnValue(auth('TESORERO', item().requester.id))
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    renderPage()
+    await member('Ana')
+    expect(screen.getByText(/Otro ADMIN o TESORERO debe decidir/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revisar solicitud' })).not.toBeInTheDocument()
+    expect(decideMock).not.toHaveBeenCalled()
+  })
+
+  it('locks double submits and closing, then discards late completion after an actor change', async () => {
+    let resolve!: (value: ReturnType<typeof recorded>) => void
+    decideMock.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    const user = userEvent.setup()
+    const view = renderPage()
+    const dialog = await fillDecision(user)
+    const form = within(dialog).getByLabelText('Motivo de la decisión').closest('form')!
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(decideMock).toHaveBeenCalledTimes(1)
+    expect(within(dialog).getByRole('button', { name: 'Cerrar' })).toBeDisabled()
+    expect(within(dialog).getByLabelText('Decisión')).toBeDisabled()
+    useAuthMock.mockReturnValue(auth('TESORERO', 'operator-2'))
+    await act(async () => {
+      view.rerender(<ApprovalsListPage />)
+    })
+    await screen.findByText(/No hay condonaciones/)
+    await act(async () => resolve(recorded()))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Aprobación registrada/)).not.toBeInTheDocument()
+    expect(listQueueMock).toHaveBeenCalledTimes(2)
+    expect(executeMock).not.toHaveBeenCalled()
+  })
+
+  it('preserves an ambiguous attempt across queue refresh and retries the identical payload and key', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    decideMock
+      .mockRejectedValueOnce(new CondonationOperationError('unavailable'))
+      .mockResolvedValueOnce(recorded())
+    const user = userEvent.setup()
+    const view = renderPage()
+    const dialog = await fillDecision(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    await within(dialog).findByRole('alert')
+    const first = decideMock.mock.calls[0]
+    await act(async () => {
+      await view.client.refetchQueries({ queryKey: ['condonation-queue'] })
+    })
+    expect(within(dialog).getByLabelText('Motivo de la decisión')).toHaveValue('  Verificado  ')
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    expect(await within(dialog).findByRole('status')).toHaveTextContent(
+      'Aprobada pendiente de aplicación',
+    )
+    expect(decideMock.mock.calls[1]).toEqual(first)
+  })
+
+  it('uses a new key for an explicitly edited decision draft', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    decideMock.mockRejectedValue(new CondonationOperationError('unavailable'))
+    const user = userEvent.setup()
+    renderPage()
+    const dialog = await fillDecision(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    await within(dialog).findByRole('alert')
+    await user.type(within(dialog).getByLabelText('Motivo de la decisión'), ' con cambio')
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    await within(dialog).findByRole('alert')
+    expect(decideMock.mock.calls).toHaveLength(2)
+    expect(decideMock.mock.calls[1]?.[2]).not.toBe(decideMock.mock.calls[0]?.[2])
+    expect(decideMock.mock.calls[1]?.[1].reason).toBe('Verificado   con cambio')
+  })
+
+  it('removes a selected decision dialog when queue permission is revoked', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    const user = userEvent.setup()
+    const view = renderPage()
+    await fillDecision(user)
+    listQueueMock.mockRejectedValueOnce(new CondonationOperationError('permission'))
+    await act(async () => {
+      await view.client.refetchQueries({ queryKey: ['condonation-queue'] })
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent('No tenés permisos')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(decideMock).not.toHaveBeenCalled()
+  })
+
+  it('does not confirm a mismatched or incomplete decision response', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    decideMock
+      .mockResolvedValueOnce({ ...recorded(), id: item('Beto', '2').id })
+      .mockResolvedValueOnce({ ...recorded(), status: 'pending' })
+      .mockResolvedValueOnce({ ...recorded(), decided_at: 'invalid' })
+    const user = userEvent.setup()
+    renderPage()
+    const dialog = await fillDecision(user)
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await user.click(
+        within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }),
+      )
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent('No se pudo confirmar')
+      expect(decideMock).toHaveBeenCalledTimes(attempt)
+      expect(within(dialog).queryByRole('status')).not.toBeInTheDocument()
+    }
+    expect(listQueueMock).toHaveBeenCalledTimes(1)
+    expect(decideMock.mock.calls.map((call) => call[2])).toEqual(
+      Array(3).fill(decideMock.mock.calls[0]?.[2]),
+    )
+  })
+
+  it('refreshes and locks a conflict without automatically posting again', async () => {
+    listQueueMock.mockResolvedValueOnce(page([item()]))
+    decideMock.mockRejectedValueOnce(new CondonationOperationError('conflict'))
+    const user = userEvent.setup()
+    renderPage()
+    const dialog = await fillDecision(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/La solicitud cambió/)
+    await screen.findByText(/No hay condonaciones/)
+    expect(
+      within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }),
+    ).toBeDisabled()
+    expect(decideMock).toHaveBeenCalledTimes(1)
+    expect(window.sessionStorage.getItem(COLLECTIONS_IDEMPOTENCY_STORAGE_KEY)).toBeNull()
+  })
+
+  it.each(['permission', 'partial_data'] as const)(
+    'retains the draft and key on %s failure',
+    async (kind) => {
+      listQueueMock.mockResolvedValueOnce(page([item()]))
+      decideMock.mockRejectedValue(new CondonationOperationError(kind))
+      const user = userEvent.setup()
+      renderPage()
+      const dialog = await fillDecision(user)
+      await user.click(
+        within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }),
+      )
+      await within(dialog).findByRole('alert')
+      await user.click(
+        within(dialog).getByRole('button', { name: 'Aprobar y aplicar condonación' }),
+      )
+      await within(dialog).findByRole('alert')
+      expect(decideMock.mock.calls[1]).toEqual(decideMock.mock.calls[0])
+      expect(executeMock).not.toHaveBeenCalled()
+    },
+  )
+
+  it('preserves ADMIN token lookup, disabled empty input, trimming and encoding', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByText(/No hay condonaciones/)
+    const input = screen.getByRole('textbox', { name: 'Token de aprobación' })
+    const submit = screen.getByRole('button', { name: 'Abrir' })
+    expect(submit).toBeDisabled()
+    await user.type(input, '   ')
+    expect(submit).toBeDisabled()
     expect(pushMock).not.toHaveBeenCalled()
-  })
-
-  it('trims the token before navigating (whitespace-tolerant)', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    const input = screen.getByTestId('approvals-token-input')
-    await user.type(input, '   abc123token   ')
-    await user.click(screen.getByRole('button', { name: /abrir/i }))
-    await waitFor(() => {
-      expect(pushMock).toHaveBeenCalledWith('/admin/approvals/abc123token')
-    })
+    await user.clear(input)
+    await user.type(input, '  token/a  ')
+    await user.click(submit)
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/admin/approvals/token%2Fa'))
   })
 })

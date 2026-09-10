@@ -5,9 +5,14 @@ import type { FastifyInstance } from 'fastify'
 import type { Env } from '@athlos/config'
 import type { Db } from '@athlos/db'
 import type { ApprovalToken } from '@athlos/db/schema'
-import { generateApprovalToken, listCondonationLifecycle } from '@athlos/approval'
+import {
+  generateApprovalToken,
+  listCondonationLifecycle,
+  listCondonationQueue,
+} from '@athlos/approval'
 import type * as ApprovalModule from '@athlos/approval'
 import { signAccessToken } from '@athlos/auth'
+import { BusinessError, ErrorCode } from '@athlos/errors'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import type * as AllocationsModule from '../modules/dues/allocations.ts'
 
@@ -25,6 +30,7 @@ vi.mock('../modules/dues/condonations.ts', () => ({
 vi.mock('@athlos/approval', async (importOriginal) => ({
   ...(await importOriginal<typeof ApprovalModule>()),
   listCondonationLifecycle: vi.fn(),
+  listCondonationQueue: vi.fn(),
 }))
 
 /**
@@ -126,6 +132,182 @@ const condonationPayload = {
   reason: 'Documented hardship',
   evidence: 'case-123',
 }
+
+describe('GET /api/v1/condonation-requests', () => {
+  const queueRow = () => ({
+    id: '00000000-0000-4000-8000-000000000060',
+    actionId: '00000000-0000-4000-8000-000000000070',
+    status: 'pending' as const,
+    expiresAt: new Date('2099-01-01T00:00:00Z'),
+    decidedAt: null,
+    executionId: null,
+    executionReceiptId: null,
+    createdAt: new Date('2026-01-01T00:00:00.123Z'),
+    createdAtCursor: '2026-01-01T00:00:00.123456Z',
+    condonationSnapshot: {
+      memberId,
+      obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+    },
+    contextSummary: 'Verified hardship case',
+    requestReason: 'Documented hardship',
+    requestEvidence: 'case-123',
+    currentMember: { id: memberId, numeroSocio: '0042', nombre: 'Ana', apellido: 'Gorriti' },
+    requester: { id: requesterId, username: 'operator' },
+  })
+  beforeEach(() => {
+    vi.mocked(listCondonationQueue).mockReset()
+    executeApproved.mockReset()
+  })
+  it('requires authenticated Treasury authority before reading across members', async () => {
+    const { app } = await bootstrap()
+    try {
+      expect(
+        (await app.inject({ method: 'GET', url: '/api/v1/condonation-requests' })).statusCode,
+      ).toBe(401)
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/api/v1/condonation-requests',
+            headers: auth('OPERADOR'),
+          })
+        ).statusCode,
+      ).toBe(403)
+      expect(listCondonationQueue).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+  it.each(['ADMIN', 'TESORERO'] as const)(
+    'returns a safe paginated decision context to %s without executing',
+    async (role) => {
+      const row = queueRow()
+      vi.mocked(listCondonationQueue).mockResolvedValue([row, { ...row, id: approverId }])
+      const { app } = await bootstrap()
+      try {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/api/v1/condonation-requests?limit=1',
+          headers: auth(role),
+        })
+        expect(response.statusCode).toBe(200)
+        const cursor = Buffer.from(JSON.stringify({ t: row.createdAtCursor, id: row.id })).toString(
+          'base64url',
+        )
+        expect(response.json()).toEqual({
+          items: [
+            {
+              id: row.actionId,
+              state: 'pending',
+              created_at: row.createdAt.toISOString(),
+              expires_at: row.expiresAt.toISOString(),
+              decided_at: null,
+              execution_id: null,
+              execution_status: 'unavailable',
+              current_member: {
+                id: memberId,
+                numero_socio: '0042',
+                nombre: 'Ana',
+                apellido: 'Gorriti',
+              },
+              requester: row.requester,
+              context: row.contextSummary,
+              reason: row.requestReason,
+              evidence: row.requestEvidence,
+              snapshot: {
+                member_id: memberId,
+                obligations: [
+                  { obligation_id: obligationId, currency: 'ARS', outstanding_amount_cents: 12500 },
+                ],
+              },
+            },
+          ],
+          next_cursor: cursor,
+        })
+        expect(listCondonationQueue).toHaveBeenCalledWith(expect.anything(), {
+          view: 'actionable',
+          limit: 2,
+        })
+        expect(executeApproved).not.toHaveBeenCalled()
+        vi.mocked(listCondonationQueue).mockResolvedValue([])
+        const next = await app.inject({
+          method: 'GET',
+          url: `/api/v1/condonation-requests?view=all&limit=1&cursor=${cursor}`,
+          headers: auth(role),
+        })
+        expect(next.json()).toEqual({ items: [], next_cursor: null })
+        expect(listCondonationQueue).toHaveBeenLastCalledWith(expect.anything(), {
+          view: 'all',
+          limit: 2,
+          cursor,
+        })
+      } finally {
+        await app.close()
+      }
+    },
+  )
+  it('rejects invalid queue filters before calling the read service', async () => {
+    const { app } = await bootstrap()
+    try {
+      for (const query of [
+        'limit=0',
+        'limit=101',
+        'limit=1.5',
+        'view=pending',
+        'other=1',
+        'cursor=',
+        `cursor=${'a'.repeat(257)}`,
+      ]) {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/v1/condonation-requests?${query}`,
+          headers: auth('ADMIN'),
+        })
+        expect(response.statusCode, query).toBe(400)
+      }
+      expect(listCondonationQueue).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+  it('preserves authoritative lifecycle states and reports unavailable data truthfully', async () => {
+    const { app } = await bootstrap()
+    try {
+      for (const [status, receipt, state] of [
+        ['approved', null, 'approved_awaiting_execution'],
+        ['approved', approverId, 'executed'],
+        ['rejected', null, 'rejected'],
+      ] as const) {
+        vi.mocked(listCondonationQueue).mockResolvedValue([
+          {
+            ...queueRow(),
+            status,
+            executionId: status === 'approved' ? approverId : null,
+            executionReceiptId: receipt,
+          },
+        ])
+        const response = await app.inject({
+          method: 'GET',
+          url: '/api/v1/condonation-requests?view=all',
+          headers: auth('ADMIN'),
+        })
+        expect(response.json().items[0].state).toBe(state)
+      }
+      vi.mocked(listCondonationQueue).mockRejectedValue(
+        BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Condonation queue data is unavailable'),
+      )
+      const unavailable = await app.inject({
+        method: 'GET',
+        url: '/api/v1/condonation-requests',
+        headers: auth('ADMIN'),
+      })
+      expect(unavailable.statusCode).toBe(503)
+      expect(unavailable.json()).toMatchObject({ error: 'SERVICE_UNAVAILABLE' })
+    } finally {
+      await app.close()
+    }
+  })
+})
 
 describe('GET /api/v1/approval/:token', () => {
   it('returns the context for a valid token', async () => {

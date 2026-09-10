@@ -604,6 +604,32 @@ must include the checked-out artifact hash, gate preflight output, the exact
 operation/hash contract, unchanged destination after preflight, and—after a
 failed deploy—a read-only comparison proving restoration.
 
+### Local simulated Community Work acceptance
+
+Use the isolated simulator before any BETA check. It serves the local web UI on
+loopback and intercepts every API request; it never contacts BETA or a database.
+
+```sh
+NATIVE_COLLECTIONS_WEB_ENABLED=true \
+DUES_AGREEMENTS_ENABLED=true \
+ATHLOS_COMMUNITY_WORK_QA_MODE=manual \
+ATHLOS_COMMUNITY_WORK_QA_ROLE=ADMIN \
+pnpm --filter @athlos/web test:e2e -- \
+  e2e/collections-community-work-workflow.spec.ts \
+  --headed --workers=1 --retries=0
+```
+
+**Quick path**
+
+1. Search and select the synthetic Ana Gorriti (N.º 42) record.
+2. In **Acuerdo**, save `Trabajo acordado` / `Acuerdo vigente`; the debt must stay at `$ 100,00`.
+3. In **Trabajo comunitario**, record `$ 25,00`, `Acta 12 aprobada`, and `Trabajo aceptado`.
+4. Confirm the result and refreshed debt of `$ 75,00`. The simulator must report no cash or Treasury mutation.
+
+The manual test pauses before any operation and ends skipped: the human records acceptance separately.
+Use only its synthetic texts. Traces can contain entered evidence. This is local mock evidence, not proof of
+real API, database, BETA, accounting, or deployment behavior.
+
 ### Negotiated dues BETA smoke-check and rollback
 
 After the four BETA flags are enabled together and the dependent slices are deployed,

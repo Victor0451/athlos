@@ -1,7 +1,10 @@
+import type { DebtDetail } from '@/lib/api/dues'
 import type { DebtPresentation } from './debt-presentation'
 
 type Props = {
   obligations: DebtPresentation['obligations']
+  debt?: DebtDetail | null
+  onViewSettlement?: (settlementId: string) => void
 }
 
 type DetailListProps = {
@@ -32,7 +35,25 @@ function DetailList({ title, items, emptyMessage }: DetailListProps) {
   )
 }
 
-export function DebtObligationList({ obligations }: Props) {
+export function DebtObligationList({ obligations, debt, onViewSettlement }: Props) {
+  const receipts = new Map<string, string>()
+  const seen = new Set<string>()
+  const visibleFacts = new Set(
+    obligations.flatMap((item) => item.history.expandedFacts.map((fact) => fact.stableKey)),
+  )
+  for (const item of debt?.obligations ?? []) {
+    for (const allocation of item.allocations) {
+      if (
+        allocation.settlement_kind !== 'MONETARY' ||
+        allocation.kind !== 'ALLOCATION' ||
+        !visibleFacts.has(allocation.id) ||
+        seen.has(allocation.settlement_id)
+      )
+        continue
+      seen.add(allocation.settlement_id)
+      receipts.set(allocation.id, allocation.settlement_id)
+    }
+  }
   if (!obligations.length) return <p role="status">No hay obligaciones para detallar.</p>
 
   return (
@@ -93,6 +114,15 @@ export function DebtObligationList({ obligations }: Props) {
                       <p className="text-ink-700">{fact.compensationLabel}</p>
                     )}
                     <p className="text-ink-700">{fact.reversalLabel}</p>
+                    {onViewSettlement && receipts.has(fact.stableKey) && (
+                      <button
+                        type="button"
+                        className="min-h-11 rounded border px-3 py-2"
+                        onClick={() => onViewSettlement(receipts.get(fact.stableKey)!)}
+                      >
+                        Ver constancia
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

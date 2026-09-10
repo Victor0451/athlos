@@ -42,6 +42,23 @@ export interface CondonationLifecycle {
 export interface CondonationLifecyclePage {
   items: CondonationLifecycle[]
 }
+export interface CondonationQueueItem extends CondonationLifecycle {
+  created_at: string
+  current_member: { id: string; numero_socio: string; nombre: string; apellido: string }
+  requester: { id: string; username: string }
+  context: string
+  reason: string
+  evidence: string
+}
+export interface CondonationQueuePage {
+  items: CondonationQueueItem[]
+  next_cursor: string | null
+}
+export interface CondonationQueueOptions {
+  view?: 'all'
+  limit?: number
+  cursor?: string
+}
 export interface CondonationExecution {
   execution_id: string
   approval_id: string
@@ -157,6 +174,98 @@ const lifecycle = (value: unknown): CondonationLifecycle | null => {
     },
   }
 }
+const queueText = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0
+const queueCursor = (value: unknown): value is string =>
+  typeof value === 'string' && /^[A-Za-z0-9_-]{1,256}$/.test(value)
+
+const queueItem = (value: unknown): CondonationQueueItem | null => {
+  if (!record(value)) return null
+  const { created_at, current_member, requester, context, reason, evidence, ...state } = value
+  const item = lifecycle(state)
+  if (
+    !item ||
+    !time(created_at) ||
+    !exactRecord(current_member, ['id', 'numero_socio', 'nombre', 'apellido']) ||
+    !uuid(current_member.id) ||
+    current_member.id.toLowerCase() !== item.snapshot.member_id.toLowerCase() ||
+    !queueText(current_member.numero_socio) ||
+    !queueText(current_member.nombre) ||
+    !queueText(current_member.apellido) ||
+    !exactRecord(requester, ['id', 'username']) ||
+    !uuid(requester.id) ||
+    !queueText(requester.username) ||
+    !queueText(context) ||
+    !queueText(reason) ||
+    !queueText(evidence)
+  )
+    return null
+  const obligations = item.snapshot.obligations
+  if (
+    new Set(obligations.map((entry) => entry.obligation_id.toLowerCase())).size !==
+      obligations.length ||
+    new Set(obligations.map((entry) => entry.currency)).size !== 1
+  )
+    return null
+  return {
+    ...item,
+    created_at,
+    current_member: {
+      id: current_member.id,
+      numero_socio: current_member.numero_socio,
+      nombre: current_member.nombre,
+      apellido: current_member.apellido,
+    },
+    requester: { id: requester.id, username: requester.username },
+    context,
+    reason,
+    evidence,
+  }
+}
+
+/** Read one authoritative page; callers choose when to request the next opaque cursor. */
+export const listCondonationQueue = async ({
+  view,
+  limit = 25,
+  cursor,
+}: CondonationQueueOptions = {}): Promise<CondonationQueuePage> => {
+  try {
+    if (
+      (view !== undefined && view !== 'all') ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      (cursor !== undefined && !queueCursor(cursor))
+    )
+      throw new CondonationOperationError('partial_data')
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (view) query.set('view', view)
+    if (cursor) query.set('cursor', cursor)
+    const value = await apiFetch<unknown>(`/api/v1/condonation-requests?${query}`)
+    if (
+      !exactRecord(value, ['items', 'next_cursor']) ||
+      !Array.isArray(value.items) ||
+      (value.next_cursor !== null && !queueCursor(value.next_cursor))
+    )
+      throw new CondonationOperationError('partial_data')
+    const items = value.items.map(queueItem)
+    if (
+      items.some((item) => item === null) ||
+      new Set(items.map((item) => item?.id.toLowerCase())).size !== items.length
+    )
+      throw new CondonationOperationError('partial_data')
+    return {
+      items: items.filter((item): item is CondonationQueueItem => item !== null),
+      next_cursor: value.next_cursor,
+    }
+  } catch (cause) {
+    if (cause instanceof CondonationOperationError) throw cause
+    if (cause instanceof ApiError && cause.status === 403)
+      throw new CondonationOperationError('permission', cause)
+    throw new CondonationOperationError('unavailable', cause)
+  }
+}
+
 export const listCondonationLifecycle = async (
   memberId: string,
   limit = 25,
