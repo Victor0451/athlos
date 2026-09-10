@@ -190,7 +190,7 @@ export function AgreementActions({obligation, enabled = true, treatment, currenc
               Revisar acuerdo activo
             </button>
           )}
-          // prettier-ignore
+          {/* prettier-ignore */}
           {treatment === 'community' && communityWorkEligible && onRecordCommunityWork && <button className={collectionButtonClass.primary} type="button" onClick={openCommunityWork} disabled={busy}>Registrar trabajo comunitario</button>}
         </div>
       )}
