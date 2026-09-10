@@ -1,0 +1,43 @@
+project:
+  name: athlos
+  description: 'Athlos — Club Atlético Gorriti operator console (pnpm monorepo)'
+  root: .
+  stack:
+    language: TypeScript 5.7.2
+    runtime: Node.js >=22.0.0
+    package_manager: pnpm 9.15.9
+    applications: [Next.js web app, TypeScript API]
+
+sdd:
+  artifact_store: hybrid
+  strict_tdd: true
+  phase_rules:
+    proposal: clarify scope and product intent
+    spec: define requirements and acceptance scenarios
+    design: document architecture and integration boundaries
+    tasks: derive implementation tasks with tests first
+    apply: implement with strict TDD and preserve traceability
+    verify: validate requirements, scenarios, and test evidence
+    archive: close the change without mutating unrelated artifacts
+
+testing:
+  framework: Vitest 2.1.9
+  runner: vitest
+  commands:
+    default: pnpm test
+    run_all: pnpm test:run
+    workspace: vitest
+    api: pnpm --filter @athlos/api test:run
+    web: pnpm --filter @athlos/web test:run
+    e2e: pnpm --filter @athlos/web test:e2e
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+    format_check: pnpm format:check
+    build: pnpm build
+  strict_tdd_protocol: test-first; run the narrowest applicable test command before implementation, then the required broader checks
+
+conventions:
+  generated_artifacts_language: English
+  preserve_existing_openspec_changes: true
+  preserve_git_state: true
+  application_code_changes_during_init: false
