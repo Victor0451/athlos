@@ -71,7 +71,7 @@ The system SHALL use PostgreSQL with persistent storage, automatic migration exe
 
 ### Requirement: CI/CD Pipeline
 
-The system SHALL build and publish on `main`, but MUST deploy only from a protected job after Environment approval. The deploy job MUST join the Tailnet as ephemeral `tag:ci`, use an ACL limited to that target, and use a restricted SSH credential for `vlongo@100.78.95.34:2244`. It MUST validate approval, Tailnet identity and ACL, host key, credential, port, and administrator prerequisites before mutation; failures MUST be named and fail closed. Logs and artifacts MUST NOT reveal secret values. Repository and administrator prerequisites MUST be documented. Deployment MUST begin with connectivity and read-only preflight using an immutable image input. Compose topology, readiness semantics, and application rollback correctness remain out of scope; stale assumptions MUST NOT be used. Rollback for this change means reverting repository workflow/configuration/documentation only.
+The system SHALL build and publish on `main`, but MUST deploy only from a protected job after Environment approval. The deploy job MUST join the Tailnet as ephemeral `tag:ci`, use an ACL limited to that target, and use a restricted SSH credential for `vlongo@<server-host>:2244`. It MUST validate approval, Tailnet identity and ACL, host key, credential, port, and administrator prerequisites before mutation; failures MUST be named and fail closed. Logs and artifacts MUST NOT reveal secret values. Repository and administrator prerequisites MUST be documented. Deployment MUST begin with connectivity and read-only preflight using an immutable image input. Compose topology, readiness semantics, and application rollback correctness remain out of scope; stale assumptions MUST NOT be used. Rollback for this change means reverting repository workflow/configuration/documentation only.
 
 (Previously: every `main` push deployed through secret-host SSH and claimed readiness-based automatic image rollback.)
 
@@ -113,7 +113,7 @@ The system SHALL build and publish on `main`, but MUST deploy only from a protec
 #### Scenario: Pinned restricted SSH
 - GIVEN Tailnet preflight passed
 - WHEN SSH is invoked with immutable image input
-- THEN it MUST verify the pinned host key and use a dedicated restricted key only for `vlongo@100.78.95.34:2244`
+- THEN it MUST verify the pinned host key and use a dedicated restricted key only for `vlongo@<server-host>:2244`
 
 #### Scenario: Failed connectivity prerequisite
 - GIVEN any identity, ACL, host key, key, port, or administrator prerequisite is missing or invalid
@@ -165,7 +165,7 @@ The system SHALL provide a manual promotion pipeline that moves validated data f
 
 - GIVEN the pnpm workspace is installed
 - WHEN the operator executes `pnpm db:promote`
-- THEN the CLI SHALL run `packages/promotion/src/promote-cli.ts` against the database specified by `DATABASE_URL` (default: `postgresql://athlos:athlos@100.78.95.34:5432/athlos`)
+- THEN the CLI SHALL run `packages/promotion/src/promote-cli.ts` against the database specified by `DATABASE_URL` (default: `postgresql://athlos:athlos@localhost:5432/athlos`)
 - AND the CLI SHALL NOT require any additional arguments or flags for a full promotion run
 - AND the CLI SHALL print per-domain summary lines showing `attempted`, `inserted`, `skipped`, `failed`, and `durationMs`
 - AND the CLI SHALL exit with code 0 on success, or non-zero if any domain had `failed > 0`
@@ -279,7 +279,7 @@ The migration creating this table (`packages/db/drizzle/0015_gastos.sql`) SHALL 
 #### Scenario: gastos master table created via migration 0015
 
 - GIVEN migration `0015_gastos.sql` has NOT been applied yet
-- WHEN `PGPASSWORD=athlos psql -h 100.78.95.34 -U athlos -d athlos -f packages/db/drizzle/0015_gastos.sql` is executed
+- WHEN `PGPASSWORD=athlos psql -h <server-host> -U athlos -d athlos -f packages/db/drizzle/0015_gastos.sql` is executed
 - THEN the `tesoreria.gastos` table SHALL be created with 15 columns: `id` (uuid PK), `tipo` (int NOT NULL), `tipo_cuenta` (int NOT NULL), `cuenta_principal` (text NOT NULL), `cuenta_auxiliar` (int nullable), `secuencia` (int NOT NULL DEFAULT 0), `fecha` (date NOT NULL), `comprobante` (text NOT NULL DEFAULT ''), `concepto` (text nullable), `importe` (text NOT NULL DEFAULT '0.00'), `iva` (text DEFAULT '0.00' NOT NULL), `ingreso_bruto` (text nullable), `socio_id` (uuid nullable, NO FK constraint), `legacy_id` (text nullable), `created_at` (timestamptz NOT NULL DEFAULT now())
 - AND 3 UNIQUE INDEXes SHALL be created: `gastos_legacy_id_unique` (on `legacy_id`), `gastos_5tuple_unique` (on `(tipo, cuenta_principal, secuencia, fecha, comprobante)`), `gastos_cuenta_fecha_idx` (on `(cuenta_principal, fecha)`)
 - AND 1 partial INDEX SHALL be created: `gastos_socio_id_idx` on `socio_id` WHERE `socio_id IS NOT NULL`
@@ -601,7 +601,7 @@ The system SHALL mount the legacy data directory as a read-only volume for impor
 28. **Slice D NEW**: After a successful deploy, `docker images ghcr.io/victor0451/athlos-api` on the server shows all 3 tags (`:latest`, `:vX.Y.Z` when applicable, `:main-<sha>`)
 29. **PR2 RECOVERY**: Deployment MUST NOT claim application rollback correctness; rollback for this change reverts repository workflow, configuration, and documentation only.
 30. **Slice D NEW**: Destructive gate fails the PR check when the `db-destructive` label is present AND migration files changed AND no `*.sql.gz` backup artifact URL is in PR comments AND no `/backup-skipped` directive is in the PR body; the `/backup-skipped` override is logged in workflow output for post-mortem audit
-47. **E1b2b NEW**: `pnpm db:promote` against the test DB (`100.78.95.34:5432/athlos`) populates `tesoreria.gastos` with exactly **2,114 rows**; the CLI stdout shows `{domain: 'gastos', inserted: 2114, skipped: 0, failed: 0, errors: []}` in the per-domain JSON output. The row count of 2,114 (NOT 346) verifies the 5-tuple NK is correctly applied (per scope correction #C2; 3-tuple would yield 346 distinct via `legacy_id` UNIQUE collision).
+47. **E1b2b NEW**: `pnpm db:promote` against the test DB (`<server-host>:5432/athlos`) populates `tesoreria.gastos` with exactly **2,114 rows**; the CLI stdout shows `{domain: 'gastos', inserted: 2114, skipped: 0, failed: 0, errors: []}` in the per-domain JSON output. The row count of 2,114 (NOT 346) verifies the 5-tuple NK is correctly applied (per scope correction #C2; 3-tuple would yield 346 distinct via `legacy_id` UNIQUE collision).
 48. **E1b2b NEW**: `bash scripts/verify-slice.sh` exits 0 (PASS) after E1b2b lands — promotion works for all **8 domains** + TRUE idempotency verified on 2nd run (0 new inserts across all 8 master tables). `scripts/verify-slice.sh` already includes `tesoreria.gastos` in `MASTER_TABLES` (updated in commit `061be50`).
 
 ---
@@ -620,7 +620,7 @@ The endpoint SHALL be implemented in a new file `apps/api/src/routes/promote.ts`
 
 #### Scenario: Admin trigger succeeds (sync HTTP, returns 200)
 
-- GIVEN the API server is running and connected to `100.78.95.34:5432/athlos`
+- GIVEN the API server is running and connected to `<server-host>:5432/athlos`
 - AND an operator with `role: 'ADMIN'` is authenticated via JWT
 - WHEN the operator POSTs `/api/v1/promote/trigger` with body `{}` (defaults to `domain: 'all'`)
 - THEN the API SHALL call `promoteAll(container.db)` synchronously
@@ -673,8 +673,8 @@ The promotion algorithm (`packages/promotion/src/promote.ts`) SHALL filter the p
 
 #### Scenario: Migration 0016 adds `promoted_at` column + INDEX (idempotent)
 
-- GIVEN the test DB `100.78.95.34:5432/athlos` is running and `raw_events` has 652,661 rows
-- WHEN `PGPASSWORD=athlos psql -h 100.78.95.34 -U athlos -d athlos -f packages/db/drizzle/0016_promoted_at.sql` is executed
+- GIVEN the test DB `<server-host>:5432/athlos` is running and `raw_events` has 652,661 rows
+- WHEN `PGPASSWORD=athlos psql -h <server-host> -U athlos -d athlos -f packages/db/drizzle/0016_promoted_at.sql` is executed
 - THEN the migration SHALL add column `promoted_at timestamptz` to `public.raw_events` (nullable, no default)
 - AND the migration SHALL create index `idx_raw_events_promoted_at` on `public.raw_events(promoted_at)`
 - AND running the same SQL twice SHALL be a no-op (`ADD COLUMN IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` guards)
@@ -755,8 +755,8 @@ The column SHALL be added via a new hand-written migration `packages/db/drizzle/
 
 #### Scenario: Migration 0017 adds `legacy_id` column + SQL function (idempotent)
 
-- GIVEN the test DB `100.78.95.34:5432/athlos` is running with pgcrypto AVAILABLE
-- WHEN `PGPASSWORD=athlos psql -h 100.78.95.34 -U athlos -d athlos -f packages/db/drizzle/0017_raw_events_legacy_id.sql` is executed
+- GIVEN the test DB `<server-host>:5432/athlos` is running with pgcrypto AVAILABLE
+- WHEN `PGPASSWORD=athlos psql -h <server-host> -U athlos -d athlos -f packages/db/drizzle/0017_raw_events_legacy_id.sql` is executed
 - THEN `pgcrypto` extension SHALL be created (`CREATE EXTENSION IF NOT EXISTS`)
 - AND `promotion_deterministic_uuid(text)` SQL function SHALL be created (SHA-256 + UUIDv5-like formatting)
 - AND column `legacy_id text` SHALL be added to `public.raw_events` (nullable, no default)
@@ -774,7 +774,7 @@ The column SHALL be added via a new hand-written migration `packages/db/drizzle/
 #### Scenario: Migration 0018 backfills ~426k rows (deduplicated 5-tuple)
 
 - GIVEN migration 0017 has been applied and hash parity has been verified
-- WHEN `PGPASSWORD=athlos psql -h 100.78.95.34 -U athlos -d athlos -f packages/db/drizzle/0018_raw_events_legacy_id_backfill.sql` is executed
+- WHEN `PGPASSWORD=athlos psql -h <server-host> -U athlos -d athlos -f packages/db/drizzle/0018_raw_events_legacy_id_backfill.sql` is executed
 - THEN ~256,088 ctacte raw_events rows SHALL get a non-NULL `legacy_id` (the count of unique 5-tuples; ~70,187 duplicates get NULL due to UNIQUE INDEX — one legacy_id per unique natural key)
 - AND ~170,281 ctacte1 raw_events rows SHALL get a non-NULL `legacy_id` (~75,089 duplicates get NULL)
 - AND total non-NULL `legacy_id` rows across ctacte+ctacte1 SHALL be **≥ 426,000** (the verifiable backfill floor)
