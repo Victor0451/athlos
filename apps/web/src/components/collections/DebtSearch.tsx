@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { Socio } from '@/lib/api/socios'
 import {
   collectionButtonClass,
@@ -23,6 +23,9 @@ export function DebtSearch({ socios, selectedSocio, onSearch, onSelectSocio }: P
   const [hasSearched, setHasSearched] = useState(false)
   const [searchError, setSearchError] = useState('')
   const alertRef = useRef<HTMLParagraphElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const resultRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const searchRequest = useRef(0)
   const message = searchError || (isSearching ? 'Buscando socios…' : '')
 
   useEffect(() => {
@@ -31,16 +34,39 @@ export function DebtSearch({ socios, selectedSocio, onSearch, onSelectSocio }: P
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const request = ++searchRequest.current
     setIsSearching(true)
     setHasSearched(false)
     setSearchError('')
     try {
       await onSearch(term.trim())
-      setHasSearched(true)
+      if (request === searchRequest.current) setHasSearched(true)
     } catch {
-      setSearchError('No se pudo buscar socios. Intentá nuevamente.')
+      if (request === searchRequest.current)
+        setSearchError('No se pudo buscar socios. Intentá nuevamente.')
     } finally {
-      setIsSearching(false)
+      if (request === searchRequest.current) setIsSearching(false)
+    }
+  }
+
+  function moveResultFocus(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!socios.length) return
+    const target =
+      event.key === 'ArrowDown'
+        ? socios[Math.min(index + 1, socios.length - 1)]
+        : event.key === 'ArrowUp'
+          ? socios[Math.max(index - 1, 0)]
+          : event.key === 'Home'
+            ? socios[0]
+            : event.key === 'End'
+              ? socios.at(-1)
+              : null
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      inputRef.current?.focus()
+    } else if (target) {
+      event.preventDefault()
+      resultRefs.current[target.id]?.focus()
     }
   }
 
@@ -55,6 +81,7 @@ export function DebtSearch({ socios, selectedSocio, onSearch, onSelectSocio }: P
         <label className="min-w-0 flex-1 space-y-1 font-body text-sm font-medium text-ink-700">
           Buscar socio
           <input
+            ref={inputRef}
             aria-label="Buscar socio"
             type="search"
             value={term}
@@ -66,16 +93,20 @@ export function DebtSearch({ socios, selectedSocio, onSearch, onSelectSocio }: P
           {isSearching ? 'Buscando…' : 'Buscar socio'}
         </button>
       </form>
-      {socios.length > 0 && (
+      {!isSearching && socios.length > 0 && (
         <ul
           aria-label="Resultados de búsqueda de socios"
           className="divide-y divide-ink-200 border border-ink-200"
         >
-          {socios.map((option) => (
+          {socios.map((option, index) => (
             <li key={option.id}>
               <button
+                ref={(node) => {
+                  resultRefs.current[option.id] = node
+                }}
                 type="button"
                 onClick={() => void onSelectSocio(option)}
+                onKeyDown={(event) => moveResultFocus(event, index)}
                 className={`min-h-11 w-full px-3 py-2 text-left font-body text-sm text-ink-900 hover:bg-surface-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent ${selectedSocio?.id === option.id ? 'bg-info-soft font-semibold' : ''}`}
               >
                 <span className="block">

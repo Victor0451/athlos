@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CurrentUser } from '@/lib/auth'
@@ -78,6 +78,10 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 
 describe('Collections navigation and direct access', () => {
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
     sessionStorage.clear()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
@@ -120,6 +124,48 @@ describe('Collections navigation and direct access', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(pricingTrigger).toHaveFocus()
     expect(screen.getByRole('tab', { name: 'Cobranza' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps only the latest member search response when requests finish out of order', async () => {
+    let resolveOlder!: (value: {
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }) => void
+    let resolveNewer!: (value: {
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }) => void
+    const older = new Promise<{
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = new Promise<{
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }>((resolve) => {
+      resolveNewer = resolve
+    })
+    sociosMocks.getSocios.mockReturnValueOnce(older).mockReturnValueOnce(newer)
+    renderPage(true, 'ADMIN')
+
+    const search = screen.getByRole('search')
+    const input = screen.getByLabelText('Buscar socio')
+    await userEvent.setup().type(input, 'Ana')
+    fireEvent.submit(search)
+    await userEvent.setup().clear(input)
+    await userEvent.setup().type(input, 'Beto')
+    fireEvent.submit(search)
+
+    resolveNewer({
+      items: [{ id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }],
+    })
+    expect(await screen.findByRole('button', { name: /lópez, beto/i })).toBeInTheDocument()
+    await act(async () => {
+      resolveOlder({
+        items: [{ id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }],
+      })
+    })
+
+    expect(screen.queryByRole('button', { name: /gorriti, ana/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /lópez, beto/i })).toBeInTheDocument()
   })
 
   it('shows lifecycle loading for the selected member', async () => {
@@ -696,7 +742,15 @@ describe('assessment price-gap recovery', () => {
         expect.any(String),
       ),
     )
-    expect(await screen.findByText('Deuda total pendiente: $ 1,00')).toBeInTheDocument()
+    const summary = await screen.findByLabelText(/resumen de deuda de gorriti, ana/i)
+    expect(summary).toHaveFocus()
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled()
+    expect(duesMocks.previewDuesAssessments).toHaveBeenLastCalledWith({
+      socio_id: socio.id,
+      from_period: '2026-07',
+      through_period: '2026-09',
+    })
+    expect(screen.getByText('Deuda total pendiente: $ 1,00')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Registrar pago' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
@@ -715,6 +769,128 @@ describe('assessment price-gap recovery', () => {
     expect(screen.getByText('Deuda total pendiente: $ 0,00')).toBeInTheDocument()
   })
 
+  it('keeps the newest range preview and does not focus debt after an older generation refresh completes', async () => {
+    const user = userEvent.setup()
+    let resolveGenerated!: (value: typeof blockedPreview | typeof successfulPreview) => void
+    let resolveNewest!: (value: typeof successfulPreview) => void
+    const generated = new Promise<typeof blockedPreview | typeof successfulPreview>((resolve) => {
+      resolveGenerated = resolve
+    })
+    const newest = new Promise<typeof successfulPreview>((resolve) => {
+      resolveNewest = resolve
+    })
+    duesMocks.previewDuesAssessments
+      .mockResolvedValueOnce(successfulPreview)
+      .mockReturnValueOnce(generated)
+      .mockReturnValueOnce(newest)
+    duesMocks.executeDuesAssessmentRange.mockResolvedValue({ created_obligation_ids: [] })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-07')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-09')
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.click(await screen.findByRole('button', { name: 'Generar obligaciones del rango' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(2))
+
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-08')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-09')
+    fireEvent.submit(screen.getByLabelText('Desde').closest('form')!)
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      resolveNewest({
+        ...successfulPreview,
+        from_period: '2026-08',
+        through_period: '2026-09',
+        fingerprint: 'newest-preview',
+      })
+    })
+    await screen.findByText('newest-preview')
+
+    await act(async () => {
+      resolveGenerated(blockedPreview)
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('newest-preview')).toBeInTheDocument()
+    expect(screen.getByLabelText(/resumen de deuda de gorriti, ana/i)).not.toHaveFocus()
+  })
+
+  it('ignores an older preview rejection after a newer range succeeds', async () => {
+    const user = userEvent.setup()
+    let rejectOlder!: (reason?: unknown) => void
+    let resolveNewer!: (value: typeof successfulPreview) => void
+    const older = new Promise<typeof successfulPreview>((_resolve, reject) => {
+      rejectOlder = reject
+    })
+    const newer = new Promise<typeof successfulPreview>((resolve) => {
+      resolveNewer = resolve
+    })
+    duesMocks.previewDuesAssessments.mockReturnValueOnce(older).mockReturnValueOnce(newer)
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-08')
+    fireEvent.submit(screen.getByLabelText('Desde').closest('form')!)
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      resolveNewer({ ...successfulPreview, from_period: '2026-08', fingerprint: 'newest-preview' })
+    })
+    await screen.findByRole('button', { name: 'Generar obligaciones del rango' })
+
+    await act(async () => {
+      rejectOlder(new Error('stale offline'))
+    })
+
+    expect(screen.queryByText('No se pudo consultar la evaluación.')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Generar obligaciones del rango' }),
+    ).toBeInTheDocument()
+  })
+
+  it('ignores a stale preview completion after switching members', async () => {
+    const user = userEvent.setup()
+    const beto = {
+      ...socio,
+      id: 'socio-beto',
+      nombre: 'Beto',
+      apellido: 'López',
+      numero_socio: '43',
+    }
+    let resolveOlder!: (value: typeof blockedPreview) => void
+    const older = new Promise<typeof blockedPreview>((resolve) => {
+      resolveOlder = resolve
+    })
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio, beto] })
+    duesMocks.previewDuesAssessments.mockReturnValueOnce(older)
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    await act(async () => {
+      resolveOlder(blockedPreview)
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Generar obligaciones del rango' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('labels an empty debt response as not yet recorded instead of as zero debt', async () => {
     const user = userEvent.setup()
     duesMocks.getDebt.mockResolvedValue({
@@ -731,7 +907,7 @@ describe('assessment price-gap recovery', () => {
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
 
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'No hay deuda registrada todavía para este socio.',
+      'Todavía no se generaron obligaciones para este socio. Consultá la vista previa del período para generarlas.',
     )
     expect(screen.queryByText(/Deuda total pendiente:/)).not.toBeInTheDocument()
   })
@@ -821,8 +997,141 @@ describe('community-work evidence settlement', () => {
     expect(screen.getByText('Deuda total pendiente: $ 75,00')).toBeInTheDocument()
   })
 
+  it('keeps a member-scoped community-work confirmation after its full settlement closes the obligation', async () => {
+    prepare()
+    duesMocks.getDebt.mockReset().mockResolvedValueOnce(debt(2_500)).mockResolvedValueOnce(debt(0))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent(
+      'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1.',
+    )
+    expect(
+      screen.queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not show an older member’s confirmed work after switching members during the POST', async () => {
+    const ana = socio
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    let resolvePost!: (result: ReturnType<typeof communityResult>) => void
+    duesMocks.getDebt.mockReset().mockResolvedValue(debt())
+    duesMocks.getObligationAgreements.mockResolvedValue({ active, revisions: [active] })
+    sociosMocks.getSocios.mockResolvedValue({ items: [ana, beto] })
+    duesMocks.createCommunityWorkEvidence.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePost = resolve
+      }),
+    )
+    const user = await openForm()
+    await completeDraft(user)
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    resolvePost(communityResult())
+
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalled())
+    expect(
+      screen.queryByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('records POST success before a failed debt refresh and retries only the refresh', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(debt(7_500))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByText(
+        'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1. No se pudo actualizar el saldo.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('dialog', { name: 'Registrar trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent('Trabajo comunitario registrado')
+  })
+
+  it('keeps a 409 draft in its open dialog while retrying only GET balance recovery', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValue(debt())
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new duesMocks.DuesOperationError('conflict', 'conflict'))
+      .mockResolvedValueOnce(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Registrar trabajo comunitario' })
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(within(dialog).getByLabelText('Valor aprobado (centavos)')).toHaveValue(2500)
+    expect(within(dialog).getByLabelText('Evidencia del trabajo aceptado')).toHaveValue(
+      'Acta 12 aprobada',
+    )
+    expect(within(dialog).getByLabelText('Motivo de la aceptación')).toHaveValue('Trabajo aceptado')
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    const conflictKey = duesMocks.createCommunityWorkEvidence.mock.calls[0]![1]
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(4))
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeEnabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }))
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
+    expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(conflictKey)
+  })
+
+  it('uses the server replay result after an unknown POST failure preserves the key', async () => {
+    prepare()
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(communityResult(false))
+    const user = await openForm()
+    await completeDraft(user)
+
+    await waitFor(() =>
+      expect(screen.getByText(/no se pudo registrar el trabajo/i)).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+
+    expect(
+      await screen.findByText(/trabajo comunitario registrado para la obligación/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/ya había sido registrado/i)).not.toBeInTheDocument()
+  })
+
   it.each([
-    ['conflict', 'El saldo cambió', false],
     ['permission', 'No tenés permiso para registrar trabajo comunitario.', false],
     ['partial_data', 'Los datos del trabajo comunitario están incompletos.', false],
     ['unavailable', 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.', false],
@@ -863,6 +1172,6 @@ describe('community-work evidence settlement', () => {
     await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
 
     expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(firstKey)
-    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(3)
   })
 })

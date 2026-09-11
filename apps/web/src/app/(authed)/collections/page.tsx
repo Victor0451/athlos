@@ -107,6 +107,25 @@ export default function CollectionsPage() {
     'idle' | 'loading' | 'ready' | 'empty' | 'blocked' | 'error'
   >('idle')
   const [assessmentError, setAssessmentError] = useState('')
+  const [communityWorkFeedback, setCommunityWorkFeedback] = useState<
+    | {
+        memberId: string
+        obligationId: string
+        amountCents: number
+        operationId: string
+        replayed: boolean
+        reconciliation: 'ready' | 'pending'
+      }
+    | { memberId: string; reconciliation: 'conflict' | 'pending' }
+    | null
+  >(null)
+  const communityWorkRequest = useRef<{
+    input: { operatorId: string; action: string; draftFingerprint: string }
+    memberId: string
+    obligationId: string
+    postConfirmed: boolean
+  } | null>(null)
+  const communityWorkReconciliationBusy = useRef(false)
 
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
@@ -127,6 +146,16 @@ export default function CollectionsPage() {
   const pricingTrigger = useRef<HTMLButtonElement>(null)
   const restorePricingTrigger = useRef(false)
   const selectedMember = useRef<string | null>(null)
+  const searchLoad = useRef(0)
+  const assessmentLoad = useRef(0)
+  const assessmentRequest = useRef<{
+    generation: number
+    memberId: string
+    range: string
+  } | null>(null)
+  const selectionVersion = useRef(0)
+  const debtSummaryRef = useRef<HTMLDivElement>(null)
+  const [focusDebtMemberId, setFocusDebtMemberId] = useState<string | null>(null)
   const lifecycleLoad = useRef(0)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
@@ -226,6 +255,14 @@ export default function CollectionsPage() {
   }
 
   useEffect(() => {
+    if (!focusDebtMemberId || selectedSocio?.id !== focusDebtMemberId || debt?.status !== 'ready')
+      return
+    debtSummaryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    debtSummaryRef.current?.focus()
+    setFocusDebtMemberId(null)
+  }, [debt?.status, focusDebtMemberId, selectedSocio?.id])
+
+  useEffect(() => {
     if (!authorized) return
     let active = true
     setPricingState('loading')
@@ -288,25 +325,37 @@ export default function CollectionsPage() {
       'No se pudo dar de baja la cuota. Intentá nuevamente.',
     )
   const searchSocios = async (term: string) => {
-    if (!term) return setSocios([])
+    const request = ++searchLoad.current
+    setSocios([])
+    if (!term) return
     const result = await getSocios({ search: term, page: 1, limit: 20 })
-    setSocios(result.items)
+    if (request === searchLoad.current) setSocios(result.items)
   }
   const previewAssessment = async (input: {
     socio_id: string
     from_period: string
     through_period: string
   }) => {
+    const request = {
+      generation: ++assessmentLoad.current,
+      memberId: input.socio_id,
+      range: `${input.from_period}:${input.through_period}`,
+    }
+    assessmentRequest.current = request
+    const isCurrent = () =>
+      assessmentRequest.current === request && selectedMember.current === request.memberId
     setAssessmentStatus('loading')
     setAssessmentError('')
     setAssessmentPreview(null)
     try {
       const result = await previewDuesAssessments(input)
+      if (!isCurrent()) return
       setAssessmentPreview(result)
       setAssessmentStatus(
         result.executable ? (result.periods.length ? 'ready' : 'empty') : 'blocked',
       )
     } catch {
+      if (!isCurrent()) return
       setAssessmentStatus('error')
       setAssessmentError('No se pudo consultar la evaluación.')
     }
@@ -317,7 +366,19 @@ export default function CollectionsPage() {
     through_period: string
     preview_fingerprint: string
   }) => {
-    if (!user || !selectedSocio) return
+    if (!user || !selectedSocio || selectedMember.current !== input.socio_id) return
+    const selection = selectionVersion.current
+    const previewRequest = assessmentRequest.current
+    if (
+      !previewRequest ||
+      previewRequest.memberId !== input.socio_id ||
+      previewRequest.range !== `${input.from_period}:${input.through_period}`
+    )
+      return
+    const isCurrent = () =>
+      selection === selectionVersion.current &&
+      selectedMember.current === input.socio_id &&
+      assessmentRequest.current === previewRequest
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const request = {
       operatorId: user.operator_id,
@@ -332,12 +393,22 @@ export default function CollectionsPage() {
       if (!(await refreshDebt()))
         throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
       idempotency.current.complete(request)
+      if (!isCurrent()) return
       await previewAssessment({
         socio_id: input.socio_id,
         from_period: input.from_period,
         through_period: input.through_period,
       })
+      const refreshedRequest = assessmentRequest.current
+      if (
+        selection === selectionVersion.current &&
+        selectedMember.current === input.socio_id &&
+        refreshedRequest?.memberId === input.socio_id &&
+        refreshedRequest.range === `${input.from_period}:${input.through_period}`
+      )
+        setFocusDebtMemberId(input.socio_id)
     } catch (reason) {
+      if (!isCurrent()) return
       if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
         idempotency.current.abandon(request)
         setAssessmentError(
@@ -348,13 +419,19 @@ export default function CollectionsPage() {
     }
   }
   const selectSocio = async (socio: DebtSocio) => {
+    selectionVersion.current += 1
+    assessmentLoad.current += 1
+    assessmentRequest.current = null
     selectedMember.current = socio.id
+    setFocusDebtMemberId(null)
     setAssessmentPreview(null)
     setAssessmentStatus('idle')
     setAssessmentError('')
     setLifecycle([])
     setLifecycleStatus('loading')
     setExecutionFeedback(null)
+    setCommunityWorkFeedback(null)
+    communityWorkRequest.current = null
     void refreshLifecycle(socio.id)
     const result = await selectPaymentSocio(socio)
     if (!result) return
@@ -455,70 +532,100 @@ export default function CollectionsPage() {
       throw reason
     }
   }
-  const runSettlementMutation = async <T extends object>(
-    action: string,
-    draftFingerprint: string,
-    request: (key: string) => Promise<T>,
-    retainOnConflict = false,
-    refresh = refreshDebt,
+  const createCommunityWork = async (
+    obligationId: string,
+    agreementId: string,
+    draft: CommunityWorkDraft,
   ) => {
     if (!user || !selectedSocio)
       throw new DuesOperationError('permission', 'Authentication required')
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
-    const input = { operatorId: user.operator_id, action, draftFingerprint }
-    const replayed = Boolean(idempotency.current.peek(input))
-    const key = idempotency.current.getOrCreate(input)
-    try {
-      const result = await request(key)
-      if (!(await refresh()))
-        throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
-      idempotency.current.complete(input)
-      return {
-        ...result,
-        replayed: Boolean((result as { replayed?: boolean }).replayed) || replayed,
-      }
-    } catch (reason) {
-      if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
-        idempotency.current.abandon(input)
-      if (
-        action === 'reverse-settlement' &&
-        !retainOnConflict &&
-        ((reason instanceof ApiError && reason.status === 409) ||
-          (reason instanceof DuesOperationError && reason.kind === 'conflict'))
-      ) {
-        idempotency.current.abandon(input)
-        await refreshDebt()
-      }
-      throw reason
-    }
-  }
-  const createCommunityWork = (
-    obligationId: string,
-    agreementId: string,
-    draft: CommunityWorkDraft,
-  ) =>
-    runSettlementMutation(
-      `community-work:${agreementId}`,
-      JSON.stringify({
+    const memberId = selectedSocio.id
+    const input = {
+      operatorId: user.operator_id,
+      action: `community-work:${agreementId}`,
+      draftFingerprint: JSON.stringify({
         obligationId,
         agreementId,
         ...draft,
         evidence: draft.evidence.trim(),
         reason: draft.reason.trim(),
       }),
-      (key) =>
-        createCommunityWorkEvidence(
-          {
-            socio_id: selectedSocio!.id,
-            obligation_id: obligationId,
-            agreement_id: agreementId,
-            amount_cents: draft.amountCents,
-            evidence: { description: draft.evidence.trim() },
-            reason: draft.reason.trim(),
-          },
-          key,
-        ),
+    }
+    const key = idempotency.current.getOrCreate(input)
+    try {
+      const result = await createCommunityWorkEvidence(
+        {
+          socio_id: memberId,
+          obligation_id: obligationId,
+          agreement_id: agreementId,
+          amount_cents: draft.amountCents,
+          evidence: { description: draft.evidence.trim() },
+          reason: draft.reason.trim(),
+        },
+        key,
+      )
+      const feedback = {
+        memberId,
+        obligationId,
+        amountCents: draft.amountCents,
+        operationId: result.community_work_id,
+        replayed: Boolean(result.replayed),
+      }
+      if (selectedMember.current !== memberId)
+        return { ...result, replayed: feedback.replayed, reconciliationPending: true }
+      setCommunityWorkFeedback({ ...feedback, reconciliation: 'pending' })
+      communityWorkRequest.current = { input, memberId, obligationId, postConfirmed: true }
+      if (!(await refreshDebt()))
+        return { ...result, replayed: feedback.replayed, reconciliationPending: true }
+      idempotency.current.complete(input)
+      communityWorkRequest.current = null
+      if (selectedMember.current === memberId)
+        setCommunityWorkFeedback({ ...feedback, reconciliation: 'ready' })
+      return { ...result, replayed: feedback.replayed }
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
+        communityWorkRequest.current = { input, memberId, obligationId, postConfirmed: false }
+        const reconciled = await refreshDebt()
+        if (reconciled) {
+          idempotency.current.abandon(input)
+          communityWorkRequest.current = null
+        }
+        if (selectedMember.current === memberId)
+          setCommunityWorkFeedback({
+            memberId,
+            reconciliation: reconciled ? 'conflict' : 'pending',
+          })
+      }
+      throw reason
+    }
+  }
+  const reconcileCommunityWork = async () => {
+    const request = communityWorkRequest.current
+    if (
+      !request ||
+      selectedMember.current !== request.memberId ||
+      communityWorkReconciliationBusy.current
     )
+      return
+    communityWorkReconciliationBusy.current = true
+    try {
+      if (!(await refreshDebt())) return
+      if (request.postConfirmed) idempotency.current?.complete(request.input)
+      else idempotency.current?.abandon(request.input)
+      communityWorkRequest.current = null
+      setCommunityWorkFeedback((current) =>
+        current &&
+        current.memberId === request.memberId &&
+        current.reconciliation === 'pending' &&
+        !('operationId' in current)
+          ? { ...current, reconciliation: 'conflict' }
+          : current,
+      )
+    } finally {
+      communityWorkReconciliationBusy.current = false
+    }
+  }
   // prettier-ignore
   const condonation = <T extends object>(action: string, draft: object, request: (key: string) => Promise<T>) => {
     if (!user) throw new DuesOperationError('permission', 'Authentication required')
@@ -693,6 +800,7 @@ export default function CollectionsPage() {
       {activeTab === 'collections' && (
         <>
           <DebtPanel
+            summaryRef={debtSummaryRef}
             socio={selectedSocio}
             socios={socios}
             status={debtStatus}
@@ -733,6 +841,27 @@ export default function CollectionsPage() {
                   </button>
                 </div>
               )}
+              {communityWorkFeedback?.memberId === selectedSocio.id && (
+                <section aria-label="Resultado del trabajo comunitario" className="space-y-2">
+                  <p
+                    role={communityWorkFeedback.reconciliation === 'pending' ? 'alert' : 'status'}
+                    aria-live={
+                      communityWorkFeedback.reconciliation === 'pending' ? 'assertive' : 'polite'
+                    }
+                  >
+                    {'operationId' in communityWorkFeedback
+                      ? `${communityWorkFeedback.replayed ? 'Trabajo comunitario ya registrado' : 'Trabajo comunitario registrado'} para la obligación ${communityWorkFeedback.obligationId} por $ ${(communityWorkFeedback.amountCents / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Operación ${communityWorkFeedback.operationId}.${communityWorkFeedback.reconciliation === 'pending' ? ' No se pudo actualizar el saldo.' : ''}`
+                      : communityWorkFeedback.reconciliation === 'pending'
+                        ? 'El saldo cambió y no se pudo actualizar la deuda. Actualizá el saldo antes de volver a enviar.'
+                        : 'El saldo cambió. Se actualizó la deuda antes de permitir un nuevo envío.'}
+                  </p>
+                  {communityWorkFeedback.reconciliation === 'pending' && (
+                    <button type="button" onClick={() => void reconcileCommunityWork()}>
+                      Actualizar saldo
+                    </button>
+                  )}
+                </section>
+              )}
               <TreatmentWorkspace
                 memberId={selectedSocio.id}
                 debt={debt}
@@ -749,6 +878,13 @@ export default function CollectionsPage() {
                 onCreateAgreement={createAgreement}
                 onReviseAgreement={reviseAgreement}
                 onRecordCommunityWork={createCommunityWork}
+                communityWorkPendingObligationId={
+                  communityWorkFeedback?.memberId === selectedSocio.id &&
+                  communityWorkFeedback.reconciliation === 'pending'
+                    ? communityWorkRequest.current?.obligationId
+                    : undefined
+                }
+                onReconcileCommunityWork={reconcileCommunityWork}
                 onRefreshAgreement={refreshAgreement}
                 onRequestCondonation={requestCondonation}
                 onDecideCondonation={decideCondonation}

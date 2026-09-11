@@ -53,6 +53,8 @@ type Props = {
     draft: CommunityWorkDraft,
   ) => Promise<{ replayed?: boolean } | void>
   onRefreshAgreement?: (obligationId: string) => Promise<void> | void
+  communityWorkPendingObligationId?: string | undefined
+  onReconcileCommunityWork?: () => Promise<void> | void
   onRequestCondonation?: (input: CondonationRequestInput) => Promise<CondonationRequest>
   onDecideCondonation?: (id: string, input: CondonationDecisionInput) => Promise<CondonationRequest>
   onExecuteCondonation?: (item: CondonationLifecycle) => Promise<unknown>
@@ -85,6 +87,8 @@ export function TreatmentWorkspace({
   onCreateAgreement,
   onReviseAgreement,
   onRecordCommunityWork,
+  communityWorkPendingObligationId,
+  onReconcileCommunityWork,
   onRefreshAgreement,
   onRequestCondonation,
   onDecideCondonation,
@@ -109,6 +113,8 @@ export function TreatmentWorkspace({
         }
       : {}),
     onRefresh: () => onRefreshAgreement!(obligation.id),
+    communityWorkPending: communityWorkPendingObligationId === obligation.id,
+    ...(onReconcileCommunityWork ? { onReconcileCommunityWork } : {}),
   })
   const agreementsAvailable = agreementsEnabled && onCreateAgreement && onRefreshAgreement
   return (
