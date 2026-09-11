@@ -21,22 +21,43 @@ describe('CommunityWorkForm', () => {
     expect(screen.getByLabelText(/motivo/i)).toHaveAttribute('aria-invalid', 'true')
   })
 
-  it('submits a positive approved value and non-empty evidence and reason', async () => {
+  it.each([
+    ['25,00', 2500],
+    ['25.00', 2500],
+    ['0.29', 29],
+  ])('converts %s pesos to exact cents', async (amount, amountCents) => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     renderForm({ onSubmit })
 
-    await user.type(screen.getByLabelText(/valor aprobado/i), '2500')
+    await user.type(screen.getByLabelText(/valor aprobado/i), amount)
     await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada')
     await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado por el club')
     await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
 
     expect(onSubmit).toHaveBeenCalledWith({
-      amountCents: 2500,
+      amountCents,
       evidence: 'Acta 12 aprobada',
       reason: 'Trabajo aceptado por el club',
     })
   })
+
+  it.each(['0', '-1', '1e2', '1,234.00', '1.234', '90071992547409.92'])(
+    'rejects malformed or unsafe peso input %s',
+    async (amount) => {
+      const user = userEvent.setup()
+      const onSubmit = vi.fn()
+      renderForm({ onSubmit })
+
+      await user.type(screen.getByLabelText(/valor aprobado/i), amount)
+      await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada')
+      await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado por el club')
+      await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/valor aprobado/i)
+      expect(onSubmit).not.toHaveBeenCalled()
+    },
+  )
 
   it('keeps the evidence draft when the container reports a conflict', async () => {
     const user = userEvent.setup()
@@ -64,6 +85,8 @@ describe('CommunityWorkForm', () => {
       'form',
       'accepted-work',
     )
+    expect(screen.getByLabelText(/valor aprobado/i)).toHaveAttribute('inputmode', 'decimal')
+    expect(screen.getByText(/usá coma o punto decimal/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/valor aprobado/i)).toHaveClass(
       'min-h-11',
       'font-mono',

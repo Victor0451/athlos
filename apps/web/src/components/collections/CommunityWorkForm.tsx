@@ -15,7 +15,17 @@ export interface CommunityWorkDraft {
 }
 
 // prettier-ignore
-type Props = { open: boolean; busy: boolean; locked?: boolean; reconciling?: boolean; error?: string; formId?: string; onCancel: () => void; onReconcile?: () => Promise<void> | void; onSubmit: (draft: CommunityWorkDraft) => Promise<void> | void }
+type Props = { open: boolean; busy: boolean; locked?: boolean; reconciling?: boolean; error?: string; formId?: string; currency?: string; outstandingCents?: number | undefined; onCancel: () => void; onReconcile?: () => Promise<void> | void; onSubmit: (draft: CommunityWorkDraft) => Promise<void> | void }
+
+const parsePesoToCents = (value: string): number | null => {
+  const match = /^(0|[1-9]\d*)(?:[,.](\d{1,2}))?$/.exec(value)
+  if (!match) return null
+  const cents = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0') || '0')
+  return cents > 0n && cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null
+}
+
+const formatAmount = (amountCents: number, currency: string) =>
+  new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(amountCents / 100)
 
 export function CommunityWorkForm({
   open,
@@ -24,6 +34,8 @@ export function CommunityWorkForm({
   reconciling = false,
   error = '',
   formId = 'community-work-form',
+  currency = 'ARS',
+  outstandingCents,
   onCancel,
   onReconcile,
   onSubmit,
@@ -40,7 +52,7 @@ export function CommunityWorkForm({
   if (!open) return null
 
   // prettier-ignore
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (locked) return; const amountCents = Number(draft.amountCents); const evidence = draft.evidence.trim(); const reason = draft.reason.trim(); if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !evidence || !reason) { setValidationError('El valor aprobado, la evidencia y el motivo son obligatorios y válidos.'); return } setValidationError(''); await onSubmit({ amountCents, evidence, reason }) }
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (locked) return; const amountCents = parsePesoToCents(draft.amountCents); const evidence = draft.evidence.trim(); const reason = draft.reason.trim(); if (amountCents === null || !evidence || !reason) { setValidationError('El valor aprobado, la evidencia y el motivo son obligatorios y válidos.'); return } setValidationError(''); await onSubmit({ amountCents, evidence, reason }) }
 
   return (
     <Modal
@@ -99,20 +111,27 @@ export function CommunityWorkForm({
         )}
         <div className="grid gap-5 border-t border-ink-100 pt-4 sm:grid-cols-2">
           <label className="grid gap-2 font-body text-sm font-medium text-ink-900">
-            <span>Valor aprobado (centavos)</span>
+            <span>Valor aprobado ({currency})</span>
             <input
               className={`${collectionFieldClass} font-mono tabular-nums`}
               required
-              min={1}
-              step={1}
-              type="number"
+              inputMode="decimal"
+              type="text"
               value={draft.amountCents}
               aria-invalid={Boolean(
-                validationError && (!draft.amountCents || Number(draft.amountCents) <= 0),
+                validationError && parsePesoToCents(draft.amountCents) === null,
               )}
               onChange={(event) => setDraft({ ...draft, amountCents: event.target.value })}
             />
           </label>
+          <p className="font-body text-xs text-ink-700">
+            Usá coma o punto decimal, sin separadores de miles.
+          </p>
+          {outstandingCents !== undefined && (
+            <p className="font-body text-sm text-ink-700">
+              Saldo actual de la obligación: {formatAmount(outstandingCents, currency)}
+            </p>
+          )}
         </div>
         <label className="grid gap-2 border-t border-ink-100 pt-4 font-body text-sm font-medium text-ink-900">
           <span>Evidencia del trabajo aceptado</span>

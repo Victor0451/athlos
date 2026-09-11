@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
@@ -72,7 +72,7 @@ const confirm = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('button', { name: /confirmar pago/i }))
 
 describe('PaymentDialog', () => {
-  it('defaults to all obligations, submits the selection fingerprint, and reports replayed success', async () => {
+  it('defaults to all obligations, submits the selection fingerprint, and reports confirmed success', async () => {
     const user = userEvent.setup()
     const onPayment = vi.fn().mockResolvedValue({ replayed: true })
     const { onClose } = renderDialog(onPayment)
@@ -91,7 +91,7 @@ describe('PaymentDialog', () => {
       }),
     )
     expect(onClose).toHaveBeenCalledOnce()
-    expect(await screen.findByText('Pago repetido.')).toBeInTheDocument()
+    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
   })
 
   it.each([new DuesOperationError('conflict', 'stale'), new ApiError(409, 'CONFLICT', 'stale')])(
@@ -116,6 +116,124 @@ describe('PaymentDialog', () => {
       expect(onPayment).toHaveBeenCalledTimes(1)
     },
   )
+
+  it('excludes paid obligations and prevents stale or duplicate pre-POST submission', async () => {
+    const user = userEvent.setup()
+    const onPayment = vi.fn().mockResolvedValue(undefined)
+    const paidDebt = {
+      ...debt,
+      obligations: [{ ...debt.obligations[0]!, status: 'PAID' as const }],
+    }
+    const { unmount } = render(
+      <PaymentDialog
+        open
+        debt={paidDebt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+    await confirm(user)
+    expect(onPayment).not.toHaveBeenCalled()
+    unmount()
+
+    let resolveDigest!: (bytes: ArrayBuffer) => void
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          resolveDigest = resolve
+        }),
+    )
+    const { rerender: rerenderOpen } = render(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const confirmation = screen.getByRole('button', { name: /confirmar pago/i })
+    fireEvent.click(confirmation)
+    fireEvent.click(confirmation)
+    resolveDigest(new Uint8Array(32).buffer)
+    await waitFor(() => expect(onPayment).toHaveBeenCalledTimes(1))
+
+    rerenderOpen(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    rerenderOpen(
+      <PaymentDialog
+        open={false}
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    resolveDigest(new Uint8Array(32).buffer)
+    await Promise.resolve()
+    expect(onPayment).toHaveBeenCalledTimes(1)
+    digest.mockRestore()
+  })
+
+  it('does not submit a cancelled digest after reopening for the same member', async () => {
+    const digestResolvers: Array<(bytes: ArrayBuffer) => void> = []
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          digestResolvers.push(resolve)
+        }),
+    )
+    const onPayment = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      debt,
+      shifts,
+      shiftAvailability: 'ready' as const,
+      onPayment,
+      onRefreshDebt: vi.fn(),
+      onClose: vi.fn(),
+    }
+    const { rerender } = render(<PaymentDialog open {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    rerender(<PaymentDialog open={false} {...props} />)
+    rerender(<PaymentDialog open {...props} />)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+      expect(digestResolvers).toHaveLength(2)
+      await act(async () => {
+        digestResolvers[0]!(new Uint8Array(32).buffer)
+        await Promise.resolve()
+      })
+      expect(onPayment).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+
+      await act(async () => {
+        digestResolvers[1]!(new Uint8Array(32).buffer)
+        await Promise.resolve()
+      })
+      await waitFor(() => expect(onPayment).toHaveBeenCalledTimes(1))
+    } finally {
+      digest.mockRestore()
+    }
+  })
 
   it('keeps payment unavailable until the open shifts can be refreshed', () => {
     render(

@@ -96,8 +96,14 @@ export function TreatmentWorkspace({
   executionFeedback,
 }: Props) {
   const pending = lifecycle.find((item) => item.state === 'pending')
-  const agreementProps = (obligation: DebtDetail['obligations'][number]) => ({
+  const agreementProps = (
+    obligation: DebtDetail['obligations'][number],
+    treatment: 'agreement' | 'community',
+  ) => ({
     obligation,
+    treatment,
+    currency: obligation.currency,
+    outstandingCents: obligation.outstanding_cents,
     state: agreementStates[obligation.id] ?? { status: 'idle' as const, active: null },
     onCreate: (draft: AgreementDraft) => onCreateAgreement!(obligation.id, draft),
     ...(onReviseAgreement
@@ -181,10 +187,10 @@ export function TreatmentWorkspace({
             </div>
             <Badge>Reducción diferida</Badge>
           </div>
-          {agreementsAvailable ? (
-            <p role="status">
-              El trabajo comunitario se registra desde el acuerdo activo de cada obligación.
-            </p>
+          {agreementsAvailable && onRecordCommunityWork ? (
+            debt.obligations.map((obligation) => (
+              <AgreementActions key={obligation.id} {...agreementProps(obligation, 'community')} />
+            ))
           ) : (
             <p role="status">El flujo de trabajo comunitario no está habilitado.</p>
           )}
@@ -207,7 +213,7 @@ export function TreatmentWorkspace({
           </div>
           {agreementsAvailable ? (
             debt.obligations.map((obligation) => (
-              <AgreementActions key={obligation.id} {...agreementProps(obligation)} />
+              <AgreementActions key={obligation.id} {...agreementProps(obligation, 'agreement')} />
             ))
           ) : (
             <p role="status">El flujo de acuerdos no está habilitado.</p>

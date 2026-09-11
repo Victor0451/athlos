@@ -679,7 +679,12 @@ describe('assessment price-gap recovery', () => {
     duesMocks.executeDuesAssessmentRange.mockResolvedValue({
       created_obligation_ids: ['gap-obligation-1'],
     })
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'gap-settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'gap-settlement-1',
+      amount_cents: 100,
+      currency: 'ARS',
+      allocations: [],
+    })
 
     renderPage(true, 'ADMIN')
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
@@ -938,7 +943,12 @@ describe('payment orchestration and recovery', () => {
 
   it('submits the default full selection with Transferencia, then refreshes debt and completes its key', async () => {
     prepare()
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
     const user = await openPayment()
     await user.click(screen.getByLabelText('Transferencia'))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
@@ -958,6 +968,33 @@ describe('payment orchestration and recovery', () => {
     expect(screen.getByText('Pago registrado.')).toBeInTheDocument()
     expect(sessionStorage.getItem('athlos:collections:idempotency')).toBeNull()
   })
+
+  it('keeps the server-confirmed outcome after the paid debt removes payment actions', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt)
+      .mockResolvedValueOnce({
+        ...debt,
+        status: 'empty',
+        total_debt_cents: 0,
+        obligations: [],
+      })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment()
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    expect(await screen.findByRole('region', { name: 'Resultado del pago' })).toHaveTextContent(
+      'Pago confirmado. Operación settlement-1. Importe confirmado: $ 100,00. Medio seleccionado por la persona operadora: TRANSFER.',
+    )
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+  })
 })
 
 describe('community-work evidence settlement', () => {
@@ -973,7 +1010,7 @@ describe('community-work evidence settlement', () => {
   // prettier-ignore
   const openForm = async () => { const user = userEvent.setup(); renderPage(true, 'ADMIN', true); await user.type(screen.getByLabelText('Buscar socio'), 'Ana'); await user.click(screen.getByRole('button', { name: 'Buscar socio' })); await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ })); await user.click(await screen.findByRole('button', { name: /registrar trabajo comunitario/i })); return user }
   // prettier-ignore
-  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
+  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '25'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
 
   it('links the active agreement, reuses the draft key, and refreshes debt only after confirmation', async () => {
     prepare()
@@ -1081,7 +1118,7 @@ describe('community-work evidence settlement', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Registrar trabajo comunitario' })
     expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
-    expect(within(dialog).getByLabelText('Valor aprobado (centavos)')).toHaveValue(2500)
+    expect(within(dialog).getByLabelText('Valor aprobado (ARS)')).toHaveValue('25')
     expect(within(dialog).getByLabelText('Evidencia del trabajo aceptado')).toHaveValue(
       'Acta 12 aprobada',
     )
