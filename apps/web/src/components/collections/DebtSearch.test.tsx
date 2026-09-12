@@ -49,7 +49,10 @@ describe('DebtSearch', () => {
     fireEvent.submit(screen.getByRole('search'))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/no se pudo buscar socios/i)
-    expect(alert).toHaveFocus()
+    // DebtSearch moves focus in a passive effect, which React schedules asynchronously
+    // after the render commit that findByRole already observed. Assert it through
+    // waitFor so a loaded scheduler cannot turn this into an intermittent failure.
+    await waitFor(() => expect(alert).toHaveFocus())
   })
 
   it('hides previous results immediately while a new search is pending', async () => {
