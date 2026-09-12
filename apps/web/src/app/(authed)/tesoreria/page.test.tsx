@@ -13,6 +13,7 @@ vi.mock('next/navigation', () => ({
 }))
 const mocks = vi.hoisted(() => ({
   getCashShifts: vi.fn(),
+  getCashShiftDetail: vi.fn(),
   openCashShift: vi.fn(),
   closeCashShift: vi.fn(),
   forceCloseCashShift: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/api/treasury', () => ({
   getCashShifts: mocks.getCashShifts,
+  getCashShiftDetail: mocks.getCashShiftDetail,
   openCashShift: mocks.openCashShift,
   closeCashShift: mocks.closeCashShift,
   forceCloseCashShift: mocks.forceCloseCashShift,
@@ -362,7 +364,7 @@ describe('treasury page', () => {
           id: 'historical',
           desk_id: 'front-historic',
           status: 'CLOSED',
-          assigned_operator_id: 'operator-1',
+          assigned_operator_id: 'operator-2',
           business_date: '2026-01-01',
           opened_at: '2026-01-01T09:00:00Z',
           closed_at: '2026-01-01T20:00:00Z',
@@ -373,6 +375,9 @@ describe('treasury page', () => {
     const history = screen.getByRole('region', { name: 'Turnos cerrados' })
     expect(within(history).getByText('front-historic')).toBeInTheDocument()
     expect(history).toHaveTextContent('historical')
+    expect(
+      within(history).getByRole('button', { name: 'Ver conciliación de front-historic' }),
+    ).toBeInTheDocument()
     expect(history).toHaveTextContent(/detalle histórico de conciliación/i)
     expect(
       screen.queryByRole('region', { name: 'Resumen de conciliación' }),

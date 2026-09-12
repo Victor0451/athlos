@@ -129,6 +129,54 @@ async function openSettlement(service: CashDeskService, tender: string, amount =
 }
 
 describe('cash desk PostgreSQL policy', () => {
+  it.each([false, true])(
+    "reads another operator's saved close without recomputing, forced=%s",
+    async (forceClose) => {
+      let now = new Date('2026-08-19T10:00:00.000Z')
+      const service = new CashDeskService(db.db, () => now)
+      const shift = await service.open({
+        ...context(),
+        deskId: randomUUID(),
+        openingTenders: { CASH: 1000 },
+      })
+      const reader = {
+        ...context(),
+        actorId: secondOperatorId,
+        role: 'TESORERO' as const,
+        shiftId: shift.id,
+      }
+      expect(await service.detail(reader)).toEqual({ shift, close: null })
+      now = new Date(forceClose ? '2026-08-20T12:00:00.000Z' : '2026-08-19T12:00:00.000Z')
+      const close = await service.close({
+        ...context(),
+        shiftId: shift.id,
+        countedTenders: { CASH: 990 },
+        reason: 'Counted short',
+        forceClose,
+      })
+      const historical = await service.detail(reader)
+      expect(historical).toEqual({
+        shift: { ...shift, status: 'CLOSED', closedAt: now.toISOString() },
+        close,
+      })
+      expect(historical.close).toMatchObject({
+        expectedTenders: { CASH: 1000 },
+        countedTenders: { CASH: 990 },
+        discrepancy: { CASH: -10 },
+      })
+      expect(historical.close?.forceClose).toBe(forceClose ? true : undefined)
+      expect(JSON.stringify(historical)).not.toMatch(
+        /authorizationEvidence|callerKey|requestFingerprint|operatorId/,
+      )
+      await expect(service.detail({ ...reader, shiftId: randomUUID() })).rejects.toThrow(
+        'Cash shift not found',
+      )
+      await expect(service.detail({ ...reader, role: 'OPERADOR' })).rejects.toThrow(
+        'Cash desk action is not authorized',
+      )
+    },
+  )
+
   it('closes with an inclusive interval, retains businessDate, replays, and excludes NON_CASH', async () => {
     const service = new CashDeskService(db.db)
     const opening = context(`open-${randomUUID()}`)

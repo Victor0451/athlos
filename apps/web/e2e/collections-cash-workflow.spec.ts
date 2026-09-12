@@ -6,11 +6,28 @@ import {
   test,
 } from './fixtures/authenticated-dashboard'
 import type { Locator, Page } from '@playwright/test'
-import type { CashShift } from '../src/lib/api/treasury'
+import type { CashClose, CashShift } from '../src/lib/api/treasury'
 
-test('cash round trip preserves selection and reconciles the collected cash', async ({
-  authenticatedPage,
-}) => {
+const qaMode = process.env.ATHLOS_CASH_QA_MODE
+if (qaMode !== undefined && qaMode !== 'manual' && qaMode !== 'smoke')
+  throw new Error('ATHLOS_CASH_QA_MODE must be unset, manual, or smoke')
+let qaRole: 'ADMIN' | 'TESORERO' = 'ADMIN'
+if (qaMode !== undefined) {
+  const role = process.env.ATHLOS_CASH_QA_ROLE
+  if (role !== 'ADMIN' && role !== 'TESORERO')
+    throw new Error('ATHLOS_CASH_QA_ROLE must be ADMIN or TESORERO')
+  qaRole = role
+}
+if (qaMode === 'manual' && process.env.CI) throw new Error('Manual cash QA cannot run in CI')
+test.use({ operatorRole: qaRole, serviceWorkers: 'block' })
+const scenarioTitle =
+  qaMode === 'manual'
+    ? 'manual session: record human cash acceptance separately'
+    : qaMode === 'smoke'
+      ? 'cash smoke: simulated QA fixture, not human acceptance'
+      : 'cash round trip preserves selection and reconciles the collected cash'
+
+test(scenarioTitle, async ({ authenticatedPage }) => {
   await cashJourney(authenticatedPage, false)
 })
 
@@ -21,7 +38,13 @@ test('confirmed cash payment survives failed balance refresh without another cha
 })
 
 async function cashJourney(page: Page, failRefresh: boolean) {
-  test.setTimeout(90_000)
+  test.setTimeout(qaMode === 'manual' ? 30 * 60_000 : 90_000)
+  test.skip(
+    qaMode === 'manual' && failRefresh,
+    'Recovery automation is separate from human acceptance',
+  )
+  if (qaMode === 'manual' && test.info().project.use.headless !== false)
+    throw new Error('Manual cash QA requires --headed')
   test.skip(
     process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
       process.env.DUES_CASH_ENABLED !== 'true',
@@ -33,14 +56,44 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   const shiftId = '00000000-0000-4000-8000-000000000013'
   const paymentId = '00000000-0000-4000-8000-000000000014'
   const member = { id: memberId, nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+  const foreignShift: CashShift = {
+    id: '00000000-0000-4000-8000-000000000016',
+    desk_id: 'foreign-history-desk',
+    status: 'CLOSED',
+    assigned_operator_id: '00000000-0000-4000-8000-000000000002',
+    business_date: '2026-01-31',
+    opened_at: '2026-01-31T08:00:00Z',
+    closed_at: '2026-01-31T17:00:00Z',
+  }
+  const foreignClose: CashClose = {
+    id: '00000000-0000-4000-8000-000000000017',
+    shift_id: foreignShift.id,
+    expected_tenders: { CASH: 2600 },
+    counted_tenders: { CASH: 2550 },
+    discrepancy: { CASH: -50 },
+    reason: 'Faltante registrado en el turno de prueba.',
+    closed_at: foreignShift.closed_at!,
+  }
   let shift: CashShift | null = null
   let paid = false
   let opens = 0
   let payments = 0
   let closes = 0
+  let historicalGets = 0
+  let savedClose: CashClose | null = null
   let debtGets = 0
   let failNextDebtRefresh = false
   const unexpected: string[] = []
+
+  if (qaMode) {
+    const localOrigin = new URL(test.info().project.use.baseURL!).origin
+    await page.context().route('**/*', (route) => {
+      const url = new URL(route.request().url())
+      return url.origin === localOrigin && !url.pathname.startsWith('/api/')
+        ? route.continue()
+        : route.abort('blockedbyclient')
+    })
+  }
 
   // Every application API request is mocked or handled by the existing fixture.
   // Unknown requests never reach a real backend, even if an API base URL is configured.
@@ -102,9 +155,21 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       })
       return
     }
+    if (method === 'GET' && path === `/api/v1/treasury/shifts/${shiftId}`) {
+      historicalGets += 1
+      expect(savedClose).not.toBeNull()
+      await route.fulfill({ json: { shift, close: savedClose } })
+      return
+    }
+    if (qaMode && method === 'GET' && path === `/api/v1/treasury/shifts/${foreignShift.id}`) {
+      await route.fulfill({ json: { shift: foreignShift, close: foreignClose } })
+      return
+    }
     if (path === '/api/v1/treasury/shifts') {
       if (method === 'GET') {
-        await route.fulfill({ json: { items: shift ? [shift] : [] } })
+        await route.fulfill({
+          json: { items: [...(shift ? [shift] : []), ...(qaMode ? [foreignShift] : [])] },
+        })
         return
       }
       if (method === 'POST') {
@@ -156,17 +221,16 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       expect(request.postDataJSON()).toEqual({ counted_tenders: { CASH: 11000 } })
       expect(request.headers()['idempotency-key']).toBeTruthy()
       shift = { ...shift!, status: 'CLOSED', closed_at: new Date().toISOString() }
-      await route.fulfill({
-        json: {
-          id: '00000000-0000-4000-8000-000000000015',
-          shift_id: shiftId,
-          expected_tenders: { CASH: 11000 },
-          counted_tenders: { CASH: 11000 },
-          discrepancy: {},
-          reason: null,
-          closed_at: shift.closed_at,
-        },
-      })
+      savedClose = {
+        id: '00000000-0000-4000-8000-000000000015',
+        shift_id: shiftId,
+        expected_tenders: { CASH: 11000 },
+        counted_tenders: { CASH: 11000 },
+        discrepancy: {},
+        reason: null,
+        closed_at: shift.closed_at!,
+      }
+      await route.fulfill({ json: savedClose })
       return
     }
     if (
@@ -209,6 +273,16 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   }
   if (mobileKeyboard) await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/collections')
+  if (qaMode === 'manual') {
+    await expect(page.getByLabel('Buscar socio', { exact: true })).toBeVisible()
+    process.stdout.write(
+      `CASH_QA_READY role=${qaRole} api=simulated; human acceptance is not an automated verdict\n`,
+    )
+    await page.pause()
+    expect(unexpected).toEqual([])
+    test.skip(true, 'Session ended; human acceptance must be recorded separately')
+    return
+  }
   await checkViewport()
   if (mobileKeyboard) {
     const trigger = page.getByRole('button', { name: 'Abrir navegación' })
@@ -316,6 +390,45 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   await expect(summary).toContainText(/\$\s*0,00/)
   await expect(page.getByRole('region', { name: 'Turnos cerrados' })).toContainText('front-desk')
   await checkViewport()
+  await page.reload()
+  await expect(summary).not.toBeVisible()
+  const historyOpener = page.getByRole('button', {
+    name: 'Ver conciliación de front-desk',
+    exact: true,
+  })
+  await expect(historyOpener).toBeVisible()
+  expect(historicalGets).toBe(0)
+  await activate(historyOpener)
+  const historyDetail = page.getByRole('dialog', {
+    name: 'Conciliación del turno front-desk',
+    exact: true,
+  })
+  await expect(historyDetail).toContainText(/\$\s*110,00/)
+  await expect(historyDetail).toContainText(/\$\s*0,00/)
+  expect(historicalGets).toBe(1)
+  await checkViewport()
+  await activate(historyDetail.getByRole('button', { name: 'Cerrar detalle', exact: true }))
+  await expect(historyDetail).not.toBeVisible()
+  await expect(historyOpener).toBeFocused()
+  if (qaMode === 'smoke') {
+    expect(
+      await page.evaluate(() => JSON.parse(localStorage.getItem('athlos.auth')!).currentUser.role),
+    ).toBe(qaRole)
+    const foreignOpener = page.getByRole('button', {
+      name: 'Ver conciliación de foreign-history-desk',
+      exact: true,
+    })
+    await activate(foreignOpener)
+    const foreignDetail = page.getByRole('dialog', {
+      name: 'Conciliación del turno foreign-history-desk',
+      exact: true,
+    })
+    await expect(foreignDetail).toContainText(/\$\s*26,00/)
+    await expect(foreignDetail).toContainText(/\$\s*25,50/)
+    await expect(foreignDetail).toContainText(/-\$\s*0,50/)
+    await activate(foreignDetail.getByRole('button', { name: 'Cerrar detalle', exact: true }))
+    await expect(foreignOpener).toBeFocused()
+  }
   expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
 }

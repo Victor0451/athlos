@@ -1,3 +1,4 @@
+import { BusinessError, ErrorCode } from '@athlos/errors'
 // prettier-ignore
 import Fastify,{type FastifyInstance} from 'fastify'
 // prettier-ignore
@@ -20,6 +21,119 @@ const auth=(role:'ADMIN'|'TESORERO'|'OPERADOR',key='cash-1')=>({authorization:`B
 const app=async(service:Record<string,ReturnType<typeof vi.fn>>,enabled=true)=>{const env={...mockEnv(),DUES_CASH_ENABLED:enabled},fastify=Fastify({logger:false});fastify.decorate('container',{db:{},env} as unknown as AppContainer);await fastify.register(errorHandler);await fastify.register(authPlugin(()=>env as never));await fastify.register(treasuryRoutes,{service});apps.push(fastify);return fastify}
 // prettier-ignore
 afterEach(async()=>Promise.all(apps.splice(0).map(fastify=>fastify.close())))
+describe('cash shift detail reads', () => {
+  const shiftId = '00000000-0000-4000-8000-000000000002'
+  const shift = {
+    id: shiftId,
+    deskId: 'front',
+    status: 'CLOSED',
+    assignedOperatorId: 'another-operator',
+    businessDate: '2026-08-19',
+    openedAt: '2026-08-19T10:00:00.000Z',
+    closedAt: '2026-08-20T12:00:00.000Z',
+    operatorId: 'private',
+    authorizationEvidence: { secret: true },
+  }
+
+  it.each([
+    ['TESORERO', false],
+    ['ADMIN', true],
+  ] as const)('returns saved snapshots for %s, forced=%s', async (role, forced) => {
+    const detail = vi.fn().mockResolvedValue({
+      shift,
+      close: {
+        id: 'close-1',
+        shiftId,
+        expectedTenders: { CASH: 1000 },
+        countedTenders: { CASH: 990 },
+        discrepancy: { CASH: -10 },
+        reason: 'Counted short',
+        closedAt: shift.closedAt,
+        forceClose: forced,
+        authorizationEvidence: { secret: true },
+        operatorId: 'private',
+        callerKey: 'private',
+        requestFingerprint: 'private',
+      },
+    })
+    const response = await (
+      await app({ detail })
+    ).inject({
+      method: 'GET',
+      url: `/api/v1/treasury/shifts/${shiftId}`,
+      headers: { authorization: auth(role).authorization },
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({
+      shift: {
+        id: shiftId,
+        desk_id: 'front',
+        status: 'CLOSED',
+        assigned_operator_id: 'another-operator',
+        business_date: shift.businessDate,
+        opened_at: shift.openedAt,
+        closed_at: shift.closedAt,
+      },
+      close: {
+        id: 'close-1',
+        shift_id: shiftId,
+        expected_tenders: { CASH: 1000 },
+        counted_tenders: { CASH: 990 },
+        discrepancy: { CASH: -10 },
+        reason: 'Counted short',
+        closed_at: shift.closedAt,
+        ...(forced ? { force_close: true } : {}),
+      },
+    })
+    expect(detail).toHaveBeenCalledWith(expect.objectContaining({ actorId, role, shiftId }))
+  })
+
+  it.each(['OPEN', 'CLOSED'])(
+    'does not invent reconciliation for a %s shift without a close',
+    async (status) => {
+      const detail = vi.fn().mockResolvedValue({ shift: { ...shift, status }, close: null })
+      const response = await (
+        await app({ detail })
+      ).inject({
+        method: 'GET',
+        url: `/api/v1/treasury/shifts/${shiftId}`,
+        headers: auth('TESORERO'),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ shift: { id: shiftId, status }, close: null })
+    },
+  )
+
+  it.each([
+    ['OPERADOR', true, shiftId, 403, false],
+    ['TESORERO', false, shiftId, 404, false],
+    ['ADMIN', true, 'not-a-uuid', 400, false],
+    ['ADMIN', true, shiftId, 404, true],
+  ] as const)('enforces role=%s enabled=%s id=%s', async (role, enabled, id, status, called) => {
+    const detail = vi
+      .fn()
+      .mockRejectedValue(BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found'))
+    const response = await (
+      await app({ detail }, enabled)
+    ).inject({
+      method: 'GET',
+      url: `/api/v1/treasury/shifts/${id}`,
+      headers: auth(role),
+    })
+    expect(response.statusCode).toBe(status)
+    expect(detail).toHaveBeenCalledTimes(called ? 1 : 0)
+  })
+
+  it('requires authentication before reading a snapshot', async () => {
+    const detail = vi.fn()
+    const response = await (
+      await app({ detail })
+    ).inject({ method: 'GET', url: `/api/v1/treasury/shifts/${shiftId}` })
+    expect(response.statusCode).toBe(401)
+    expect(detail).not.toHaveBeenCalled()
+  })
+})
+
 // prettier-ignore
 describe('treasury routes',()=>{
   // prettier-ignore
