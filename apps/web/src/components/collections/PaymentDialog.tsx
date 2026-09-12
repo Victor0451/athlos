@@ -86,6 +86,7 @@ export function PaymentDialog({
                 : ''
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
       lifecycleIdRef.current += 1
@@ -227,21 +228,6 @@ export function PaymentDialog({
           </button>
         </div>
       )}
-      {open && onGoToCash && (
-        <button
-          type="button"
-          onClick={() =>
-            onGoToCash(
-              debt.socio_id,
-              selected.map(({ id }) => id),
-            )
-          }
-          disabled={!selected.length}
-          className={`${collectionButtonClass.secondary} ${disabledClass}`}
-        >
-          Ir a caja
-        </button>
-      )}
       <PaymentConfirmation
         open={open}
         total={total}
@@ -259,6 +245,22 @@ export function PaymentDialog({
         onConfirm={() => void submitPayment()}
         onRefreshDebt={() => void refreshDebt()}
       >
+        {onGoToCash && (
+          <button
+            type="button"
+            onClick={() => {
+              if (submissionInFlight.current || !selected.length) return
+              onGoToCash(
+                debt.socio_id,
+                selected.map(({ id }) => id),
+              )
+            }}
+            disabled={busy || !selected.length}
+            className={`${collectionButtonClass.secondary} ${disabledClass}`}
+          >
+            Ir a caja
+          </button>
+        )}
         <PaymentObligationSelector
           obligations={eligible}
           selectedIds={selectedIds}

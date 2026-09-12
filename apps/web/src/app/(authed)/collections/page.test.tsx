@@ -759,6 +759,10 @@ describe('assessment price-gap recovery', () => {
       }),
     )
 
+    await user.keyboard('{Escape}')
+    expect(
+      screen.queryByRole('dialog', { name: 'Configuración de cuotas' }),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Generar obligaciones del rango' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))
     await waitFor(() =>
