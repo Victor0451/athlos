@@ -7,6 +7,7 @@ import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
 const authState = vi.hoisted(() => ({ user: null as { role: string; operator_id: string } | null }))
+const navigationMocks = vi.hoisted(() => ({ params: new URLSearchParams(), push: vi.fn() }))
 const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
@@ -35,6 +36,7 @@ const padronesMocks = vi.hoisted(() => ({
   getDisciplinas: vi.fn(() => new Promise(() => undefined)),
 }))
 const sociosMocks = vi.hoisted(() => ({
+  getSocio: vi.fn(),
   getSocios: vi.fn(),
 }))
 const treasuryMocks = vi.hoisted(() => ({
@@ -57,6 +59,10 @@ const condonationMocks = vi.hoisted(() => ({
   },
 }))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: navigationMocks.push }),
+  useSearchParams: () => navigationMocks.params,
+}))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
 vi.mock('@/lib/api/socios', () => sociosMocks)
@@ -83,13 +89,24 @@ describe('Collections navigation and direct access', () => {
       value: vi.fn(),
     })
     sessionStorage.clear()
+    navigationMocks.params = new URLSearchParams()
+    navigationMocks.push.mockReset()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
     duesMocks.getDebt.mockReset()
     duesMocks.getObligationAgreements.mockReset()
     sociosMocks.getSocios.mockReset()
+    sociosMocks.getSocio.mockReset()
     treasuryMocks.getOpenCashShifts.mockReset()
     treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+  })
+
+  it('ignores malformed cash context without loading a member or posting', async () => {
+    navigationMocks.params = new URLSearchParams('cash_member=invalid&cash_obligations=invalid')
+    renderPage(true, 'ADMIN')
+
+    await waitFor(() => expect(sociosMocks.getSocio).not.toHaveBeenCalled())
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
   })
 
   it('opens on Cobranza and keeps pricing configuration in a dialog', async () => {
@@ -669,7 +686,15 @@ describe('assessment price-gap recovery', () => {
       .mockResolvedValueOnce(generatedDebt)
       .mockResolvedValueOnce(paidDebt)
     treasuryMocks.getOpenCashShifts.mockResolvedValue([
-      { id: 'shift-gap-1', desk_id: 'desk-1', business_date: '2026-07-25' },
+      {
+        id: 'shift-gap-1',
+        desk_id: 'desk-1',
+        status: 'OPEN',
+        business_date: '2026-07-25',
+        assigned_operator_id: 'operator-1',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+      },
     ])
     duesMocks.previewDuesAssessments
       .mockResolvedValueOnce(blockedPreview)
@@ -920,7 +945,15 @@ describe('assessment price-gap recovery', () => {
 
 describe('payment orchestration and recovery', () => {
   const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
-  const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }
+  const shift = {
+    id: 'shift-1',
+    desk_id: 'desk-1',
+    status: 'OPEN' as const,
+    business_date: '2026-01-15',
+    assigned_operator_id: 'operator-1',
+    opened_at: new Date().toISOString(),
+    closed_at: null,
+  }
   // prettier-ignore
   const debt = { status: 'ready' as const, socio_id: socio.id, currency: 'ARS', total_debt_cents: 10_000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 10_000, outstanding_cents: 10_000, currency: 'ARS', status: 'OPEN' as const, components: [], benefits: [], allocations: [] }] }
   const prepare = () => {

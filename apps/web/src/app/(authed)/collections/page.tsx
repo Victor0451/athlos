@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
@@ -45,12 +46,14 @@ import {
   type CondonationRequestInput,
 } from '@/lib/api/condonation'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
-import { getSocios, type Socio } from '@/lib/api/socios'
+import { getSocio, getSocios, type Socio } from '@/lib/api/socios'
+import { buildCashContextHref, parseCashContext } from '@/lib/collections-cash-context'
 import {
   createCollectionsIdempotencyStore,
   type CollectionsIdempotencyStore,
 } from '@/lib/collections-idempotency'
 import { useFeatureConfig } from '@/lib/features'
+import { cashShiftAvailabilityMessage } from '@/lib/cash-shift-eligibility'
 import { useAuth } from '@/lib/use-auth'
 import { Modal } from '@/components/ui/Modal'
 import {
@@ -91,6 +94,12 @@ const pricingErrorState = (reason: unknown): PricingPanelState =>
 export default function CollectionsPage() {
   const { user } = useAuth()
   const { collectionsEnabled, agreementsEnabled } = useFeatureConfig()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const cashContext = useMemo(() => parseCashContext(searchParams), [searchParams])
+  const cashContextKey = cashContext
+    ? `${cashContext.memberId}:${cashContext.obligationIds.join(',')}`
+    : null
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
   const [activeTab, setActiveTab] = useState<'collections' | 'generation'>('collections')
   const [pricingOpen, setPricingOpen] = useState(false)
@@ -157,10 +166,14 @@ export default function CollectionsPage() {
   const debtSummaryRef = useRef<HTMLDivElement>(null)
   const [focusDebtMemberId, setFocusDebtMemberId] = useState<string | null>(null)
   const lifecycleLoad = useRef(0)
+  const restoredCashContext = useRef<string | null>(null)
+  const [initialPaymentSelection, setInitialPaymentSelection] = useState<string[] | undefined>()
+  const [resumePaymentKey, setResumePaymentKey] = useState<string>()
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const {
+    cashShiftAvailability,
     debt,
     debtError,
     debtStatus,
@@ -263,6 +276,41 @@ export default function CollectionsPage() {
     debtSummaryRef.current?.focus()
     setFocusDebtMemberId(null)
   }, [debt?.status, focusDebtMemberId, selectedSocio?.id])
+
+  useEffect(() => {
+    if (
+      !authorized ||
+      !cashContext ||
+      !cashContextKey ||
+      restoredCashContext.current === cashContextKey
+    )
+      return
+    restoredCashContext.current = cashContextKey
+    const selection = selectionVersion.current
+    void getSocio(cashContext.memberId)
+      .then(async (socio) => {
+        if (selectionVersion.current !== selection) return
+        const detail = await selectSocio(socio, true)
+        if (
+          !detail ||
+          selectedMember.current !== cashContext.memberId ||
+          selectionVersion.current !== selection + 1
+        )
+          return
+        setInitialPaymentSelection(
+          cashContext.obligationIds.filter((id) =>
+            detail.obligations.some(
+              (obligation) =>
+                obligation.id === id &&
+                obligation.status === 'OPEN' &&
+                obligation.outstanding_cents > 0,
+            ),
+          ),
+        )
+        setResumePaymentKey(cashContextKey)
+      })
+      .catch(() => undefined)
+  }, [authorized, cashContext, cashContextKey])
 
   useEffect(() => {
     if (!authorized) return
@@ -420,7 +468,7 @@ export default function CollectionsPage() {
       setAssessmentStatus('error')
     }
   }
-  const selectSocio = async (socio: DebtSocio) => {
+  async function selectSocio(socio: DebtSocio, returnDetail = false) {
     selectionVersion.current += 1
     assessmentLoad.current += 1
     assessmentRequest.current = null
@@ -439,6 +487,7 @@ export default function CollectionsPage() {
     if (!result) return
     if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
     else setAgreementStates({})
+    return returnDetail ? result : undefined
   }
   const refreshLifecycle = async (memberId: string) => {
     if (selectedMember.current !== memberId) return []
@@ -809,7 +858,7 @@ export default function CollectionsPage() {
             debt={debt}
             error={debtError}
             onSearch={searchSocios}
-            onSelectSocio={selectSocio}
+            onSelectSocio={(socio) => void selectSocio(socio)}
           />
           {paymentOutcome && paymentOutcome.memberId === selectedSocio?.id && (
             <section aria-label="Resultado del pago" className="space-y-2">
@@ -879,6 +928,14 @@ export default function CollectionsPage() {
                   )}
                 </section>
               )}
+              {cashShiftAvailability && cashShiftAvailability !== 'ready' && (
+                <p
+                  role={cashShiftAvailability === 'unavailable' ? 'alert' : 'status'}
+                  aria-label="Disponibilidad de turnos de caja"
+                >
+                  {cashShiftAvailabilityMessage(cashShiftAvailability)}
+                </p>
+              )}
               <TreatmentWorkspace
                 memberId={selectedSocio.id}
                 debt={debt}
@@ -909,6 +966,12 @@ export default function CollectionsPage() {
                 onRequestCondonation={requestCondonation}
                 onDecideCondonation={decideCondonation}
                 onExecuteCondonation={presentExecution}
+                initialPaymentSelection={initialPaymentSelection}
+                resumePaymentKey={resumePaymentKey}
+                onGoToCash={(memberId, obligationIds) => {
+                  const href = buildCashContextHref('/tesoreria', memberId, obligationIds)
+                  if (href) router.push(href)
+                }}
                 executionFeedback={executionFeedback}
               />
             </>

@@ -16,6 +16,11 @@ import {
   type CollectionsIdempotencyStore,
 } from '@/lib/collections-idempotency'
 import { getOpenCashShifts, type CashShift } from '@/lib/api/treasury'
+import {
+  eligibleCashShifts,
+  getCashShiftAvailability,
+  isCashShiftEligible,
+} from '@/lib/cash-shift-eligibility'
 import type { Socio } from '@/lib/api/socios'
 import type { ReversalRequest } from './SettlementActions'
 
@@ -207,14 +212,23 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     }
   }
 
+  const cashShiftAvailability =
+    openShiftAvailability === 'unavailable'
+      ? 'unavailable'
+      : openShiftAvailability === 'loading'
+        ? null
+        : getCashShiftAvailability(openShifts, user)
+  const eligibleOpenShifts = eligibleCashShifts(openShifts, user)
+
   const pay = async (draft: Omit<FullSelectionPaymentInput, 'socio_id'>) => {
     const memberId = selectedSocio?.id
     if (!memberId || selectedMember.current !== memberId)
       throw new DuesOperationError('permission', 'Authentication required')
     if (paymentOutcome?.memberId === memberId && paymentOutcome.reconciliation === 'pending')
       throw new DuesOperationError('unavailable', 'Payment reconciliation pending')
-    if (!openShifts.some(({ id }) => id === draft.shift_id))
-      throw new DuesOperationError('conflict', 'Selected cash shift is not open')
+    const selectedShift = openShifts.find(({ id }) => id === draft.shift_id)
+    if (!selectedShift || !isCashShiftEligible(selectedShift, user))
+      throw new DuesOperationError('conflict', 'Selected cash shift is not available')
     if (!user) throw new DuesOperationError('permission', 'Authentication required')
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const obligation_ids = [...draft.obligation_ids].sort()
@@ -287,11 +301,12 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     )
 
   return {
+    cashShiftAvailability,
     debt,
     debtError,
     debtStatus,
     openShiftAvailability,
-    openShifts,
+    openShifts: eligibleOpenShifts,
     pay,
     paymentOutcome,
     reconcilePayment,

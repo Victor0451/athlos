@@ -28,6 +28,9 @@ type Props = {
   onRefreshDebt: () => Promise<void>
   onReverse: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
   headingLevel?: 3 | 4
+  initialPaymentSelection?: string[] | undefined
+  resumePaymentKey?: string | undefined
+  onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
 }
 type ReversalSettlement = ReversalConfirmationSettlement & {
   currency: string
@@ -45,6 +48,9 @@ export function SettlementActions({
   onRefreshDebt,
   onReverse,
   headingLevel = 3,
+  initialPaymentSelection,
+  resumePaymentKey,
+  onGoToCash,
 }: Props) {
   const eligible = debt.obligations.filter(
     ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
@@ -79,9 +85,15 @@ export function SettlementActions({
       .values(),
   ).filter(({ eligible: isEligible }) => isEligible)
 
+  const resumedPayment = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (reversalError || reversalStatus) statusRef.current?.focus()
   }, [reversalError, reversalStatus])
+  useEffect(() => {
+    if (!resumePaymentKey || resumedPayment.current === resumePaymentKey) return
+    resumedPayment.current = resumePaymentKey
+    setPaymentOpen(true)
+  }, [resumePaymentKey])
 
   const openReversal = (settlement: ReversalSettlement, trigger: HTMLButtonElement) => {
     reversalTriggerRef.current = trigger
@@ -146,7 +158,7 @@ export function SettlementActions({
         <button
           type="button"
           onClick={() => setPaymentOpen(true)}
-          disabled={!eligible.length || shiftAvailability !== 'ready' || !shifts.length}
+          disabled={!eligible.length || shiftAvailability === 'loading'}
           className={`${collectionButtonClass.primary} ${disabledClass}`}
         >
           Registrar pago
@@ -172,6 +184,8 @@ export function SettlementActions({
         onPayment={onPayment}
         onRefreshDebt={onRefreshDebt}
         onClose={() => setPaymentOpen(false)}
+        initialSelection={initialPaymentSelection}
+        onGoToCash={onGoToCash}
       />
       <ReversalConfirmation
         settlement={reversal}

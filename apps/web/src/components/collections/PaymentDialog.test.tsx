@@ -235,6 +235,29 @@ describe('PaymentDialog', () => {
     }
   })
 
+  it('preserves an explicit empty cash selection and does not post', async () => {
+    const user = userEvent.setup()
+    const onGoToCash = vi.fn()
+    render(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={[]}
+        shiftAvailability="ready"
+        initialSelection={[]}
+        onGoToCash={onGoToCash}
+        onPayment={vi.fn()}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText(/período enero de 2026/i)).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Ir a caja' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    expect(onGoToCash).not.toHaveBeenCalled()
+  })
+
   it('keeps payment unavailable until the open shifts can be refreshed', () => {
     render(
       <PaymentDialog

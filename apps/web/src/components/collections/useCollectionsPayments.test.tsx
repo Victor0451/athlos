@@ -4,7 +4,15 @@ import { DuesOperationError } from '@/lib/api/dues'
 import { useCollectionsPayments } from './useCollectionsPayments'
 
 const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
-const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }
+const shift = {
+  id: 'shift-1',
+  desk_id: 'desk-1',
+  status: 'OPEN' as const,
+  business_date: '2026-01-15',
+  assigned_operator_id: 'operator-1',
+  opened_at: new Date().toISOString(),
+  closed_at: null,
+}
 const debt = {
   status: 'ready' as const,
   socio_id: socio.id,
@@ -184,6 +192,38 @@ describe('useCollectionsPayments', () => {
 
     expect(createFullSelectionPayment).toHaveBeenCalledTimes(1)
     expect(result.current.paymentOutcome).toBeNull()
+  })
+
+  it('does not offer a foreign shift and blocks a stale ineligible shift before POST', async () => {
+    const getDebt = vi.fn().mockResolvedValue(debt)
+    const createFullSelectionPayment = vi.fn()
+    const { result } = renderHook(() =>
+      useCollectionsPayments({
+        user: { operator_id: 'operator-1', role: 'TESORERO' },
+        api: {
+          getDebt,
+          getOpenCashShifts: vi
+            .fn()
+            .mockResolvedValue([
+              shift,
+              { ...shift, id: 'foreign-shift', assigned_operator_id: 'operator-2' },
+            ]),
+          createFullSelectionPayment,
+        },
+      }),
+    )
+
+    await act(() => result.current.selectSocio(socio))
+    expect(result.current.openShifts).toEqual([shift])
+    await expect(
+      result.current.pay({
+        obligation_ids: ['obligation-1'],
+        shift_id: 'foreign-shift',
+        tender: 'TRANSFER',
+        selection_fingerprint: 'selection-fingerprint',
+      }),
+    ).rejects.toMatchObject({ kind: 'conflict' })
+    expect(createFullSelectionPayment).not.toHaveBeenCalled()
   })
 
   it('marks stale open shifts unavailable and restores them through a complete context retry', async () => {
