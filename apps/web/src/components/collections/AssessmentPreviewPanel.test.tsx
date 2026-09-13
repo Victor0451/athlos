@@ -16,6 +16,95 @@ const preview = {
   currency: 'ARS', fingerprint: 'abc123', issues: [], periods: [{ period: '2026-01', start: '2026-01-01', end: '2026-02-01', calendarDays: 31, existingObligationId: null, pendingAmountCents: 12500, components: [{ componentKey: 'base', kind: 'BASE' as const, eligibleFrom: '2026-01-01', eligibleTo: '2026-02-01', eligibleDays: 31, calendarDays: 31, segments: [], numerator: 12500, remainder: 0, amountCents: 12500, status: 'PENDING' as const }] }],
 }
 describe('AssessmentPreviewPanel', () => {
+  it('keeps results visible while the range is collapsed and supports keyboard disclosure', async () => {
+    const user = userEvent.setup(),
+      onPreview = vi.fn(),
+      onExecute = vi.fn()
+    render(
+      <AssessmentPreviewPanel
+        socio={socio}
+        preview={preview}
+        status="ready"
+        onPreview={onPreview}
+        onExecute={onExecute}
+        onConfigurePrices={vi.fn()}
+      />,
+    )
+    const toggle = screen.getByRole('button', { name: 'Elegir rango para evaluar' })
+    const controls = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(controls).not.toBeNull()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByLabelText('Desde')).not.toBeVisible()
+    expect(screen.getByLabelText('Hasta')).not.toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Período 2026-01' })).toBeVisible()
+    await user.tab()
+    expect(toggle).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(controls).toBeVisible()
+    expect(screen.getByLabelText('Desde')).toBeVisible()
+    await user.keyboard(' ')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(controls).not.toBeVisible()
+    expect(toggle).toHaveFocus()
+    expect(onPreview).not.toHaveBeenCalled()
+    expect(onExecute).not.toHaveBeenCalled()
+  })
+
+  it('uses distinct disclosure targets for independently mounted panels', () => {
+    const props = {
+      socio,
+      preview: null,
+      status: 'idle' as const,
+      onPreview: vi.fn(),
+      onExecute: vi.fn(),
+      onConfigurePrices: vi.fn(),
+    }
+    render(
+      <>
+        <AssessmentPreviewPanel {...props} />
+        <AssessmentPreviewPanel {...props} />
+      </>,
+    )
+    const ids = screen
+      .getAllByRole('button', { name: 'Elegir rango para evaluar' })
+      .map((button) => button.getAttribute('aria-controls'))
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) expect(document.getElementById(id!)).toHaveAttribute('hidden')
+  })
+
+  it('disables disclosure without a member or during loading and resets it for another member', async () => {
+    const user = userEvent.setup()
+    const props = {
+      preview: null,
+      onPreview: vi.fn(),
+      onExecute: vi.fn(),
+      onConfigurePrices: vi.fn(),
+    }
+    const { rerender } = render(<AssessmentPreviewPanel {...props} socio={null} status="idle" />)
+    expect(screen.getByRole('button', { name: 'Elegir rango para evaluar' })).toBeDisabled()
+    rerender(<AssessmentPreviewPanel {...props} socio={socio} status="loading" />)
+    expect(screen.getByRole('button', { name: 'Elegir rango para evaluar' })).toBeDisabled()
+    rerender(<AssessmentPreviewPanel {...props} socio={socio} status="idle" />)
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
+    rerender(<AssessmentPreviewPanel {...props} socio={socio} status="loading" />)
+    expect(screen.getByRole('button', { name: 'Ocultar selección de rango' })).toBeDisabled()
+    expect(screen.getByLabelText('Desde')).toBeVisible()
+    rerender(
+      <AssessmentPreviewPanel
+        {...props}
+        socio={{ ...socio, id: 's-2', fecha_alta: '2026-03-01' }}
+        status="idle"
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Elegir rango para evaluar' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.getByLabelText('Desde')).toHaveValue('2026-03')
+    expect(screen.getByLabelText('Desde')).not.toBeVisible()
+  })
+
   it('renders an accessible itemized preview with the execution entry point', () => {
     render(
       <AssessmentPreviewPanel
@@ -57,6 +146,7 @@ describe('AssessmentPreviewPanel', () => {
         onConfigurePrices={vi.fn()}
       />,
     )
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
     await user.clear(screen.getByLabelText('Desde'))
     await user.clear(screen.getByLabelText('Hasta'))
     await user.type(screen.getByLabelText('Desde'), '2026-01')
@@ -139,6 +229,11 @@ describe('AssessmentPreviewPanel', () => {
         onConfigurePrices={vi.fn()}
       />,
     )
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-03')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-04')
     await user.click(screen.getByRole('button', { name: 'Generar obligaciones del rango' }))
     expect(onExecute).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))

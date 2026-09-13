@@ -5,7 +5,7 @@ import {
   expect,
   test,
 } from './fixtures/authenticated-dashboard'
-import type { Locator, Page } from '@playwright/test'
+import type { Locator, Page, Route } from '@playwright/test'
 import type { CashClose, CashShift } from '../src/lib/api/treasury'
 
 const qaMode = process.env.ATHLOS_CASH_QA_MODE
@@ -84,6 +84,35 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   let debtGets = 0
   let failNextDebtRefresh = false
   const unexpected: string[] = []
+  async function setQaFeedback(message: string) {
+    await page.evaluate((text) => {
+      let feedback = document.querySelector<HTMLElement>('[data-testid="cash-qa-feedback"]')
+      if (!feedback) {
+        feedback = document.createElement('p')
+        feedback.setAttribute('role', 'alert')
+        feedback.setAttribute('data-testid', 'cash-qa-feedback')
+        feedback.style.cssText =
+          'box-sizing:border-box;max-width:100%;margin:0;padding:8px;background:#fff3cd;color:#332701;font:14px/1.4 sans-serif;overflow-wrap:anywhere;'
+        document.body.prepend(feedback)
+      }
+      feedback.textContent = text
+      feedback.hidden = !text
+    }, message)
+  }
+  async function rejectQaScenario(route: Route, message: string) {
+    const request = route.request()
+    allowExpectedResponseFailure(page, {
+      url: request.url(),
+      status: 400,
+      request: { method: request.method(), postData: request.postData() },
+      context: 'cash QA scenario correction',
+    })
+    await setQaFeedback(message)
+    await route.fulfill({
+      status: 400,
+      json: { error: 'VALIDATION_ERROR', message, request_id: 'cash-qa-fixture' },
+    })
+  }
 
   if (qaMode) {
     const localOrigin = new URL(test.info().project.use.baseURL!).origin
@@ -173,8 +202,24 @@ async function cashJourney(page: Page, failRefresh: boolean) {
         return
       }
       if (method === 'POST') {
+        const body = request.postDataJSON()
+        if (
+          qaMode &&
+          (shift !== null ||
+            body.desk_id !== 'front-desk' ||
+            body.opening_tenders?.CASH !== 1000 ||
+            Object.keys(body.opening_tenders ?? {}).length !== 1 ||
+            Object.keys(body).length !== 2)
+        ) {
+          await rejectQaScenario(
+            route,
+            'Simulador de prueba: abrí un único turno front-desk con efectivo inicial $10,00. Los $100,00 corresponden al pago, no a la apertura.',
+          )
+          return
+        }
+        if (qaMode) await setQaFeedback('')
         opens += 1
-        expect(request.postDataJSON()).toEqual({
+        expect(body).toEqual({
           desk_id: 'front-desk',
           opening_tenders: { CASH: 1000 },
         })
@@ -193,8 +238,26 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       }
     }
     if (method === 'POST' && path === '/api/v1/dues/settlements') {
-      payments += 1
       const body = request.postDataJSON()
+      if (
+        qaMode &&
+        (paid ||
+          shift?.status !== 'OPEN' ||
+          body.socio_id !== memberId ||
+          body.tender !== 'CASH' ||
+          body.shift_id !== shiftId ||
+          !Array.isArray(body.obligation_ids) ||
+          body.obligation_ids.length !== 1 ||
+          body.obligation_ids[0] !== firstId)
+      ) {
+        await rejectQaScenario(
+          route,
+          'Simulador de prueba: cobrá solo enero por $100,00 en efectivo con el turno front-desk abierto. Desmarcá febrero; este escenario admite un solo pago.',
+        )
+        return
+      }
+      if (qaMode) await setQaFeedback('')
+      payments += 1
       expect(body.socio_id).toBe(memberId)
       expect(body.tender).toBe('CASH')
       expect(JSON.stringify(body)).toContain(firstId)
@@ -216,9 +279,25 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       return
     }
     if (method === 'POST' && path === `/api/v1/treasury/shifts/${shiftId}/close`) {
+      const body = request.postDataJSON()
+      if (
+        qaMode &&
+        (shift?.status !== 'OPEN' ||
+          !paid ||
+          body.counted_tenders?.CASH !== 11000 ||
+          Object.keys(body.counted_tenders ?? {}).length !== 1 ||
+          Object.keys(body).length !== 1)
+      ) {
+        await rejectQaScenario(
+          route,
+          'Simulador de prueba: después del pago de $100,00, cerrá el turno con efectivo contado $110,00 y sin motivo de diferencia.',
+        )
+        return
+      }
+      if (qaMode) await setQaFeedback('')
       closes += 1
       expect(paid).toBe(true)
-      expect(request.postDataJSON()).toEqual({ counted_tenders: { CASH: 11000 } })
+      expect(body).toEqual({ counted_tenders: { CASH: 11000 } })
       expect(request.headers()['idempotency-key']).toBeTruthy()
       shift = { ...shift!, status: 'CLOSED', closed_at: new Date().toISOString() }
       savedClose = {
@@ -273,6 +352,12 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   }
   if (mobileKeyboard) await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/collections')
+  if (qaMode) {
+    await expect(page.getByLabel('Buscar socio', { exact: true })).toBeVisible()
+    await setQaFeedback(
+      'Simulador de prueba: apertura front-desk $10,00; pago solo enero $100,00; cierre $110,00. Estos importes son del escenario de prueba, no reglas de Caja.',
+    )
+  }
   if (qaMode === 'manual') {
     await expect(page.getByLabel('Buscar socio', { exact: true })).toBeVisible()
     process.stdout.write(
@@ -283,6 +368,7 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     test.skip(true, 'Session ended; human acceptance must be recorded separately')
     return
   }
+  if (qaMode === 'smoke') await page.reload()
   await checkViewport()
   if (mobileKeyboard) {
     const trigger = page.getByRole('button', { name: 'Abrir navegación' })
@@ -319,7 +405,34 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   await expect(page).toHaveURL(/\/tesoreria\?/)
   expect(new URL(page.url()).searchParams.get('cash_obligations')).toBe(firstId)
   await checkViewport()
+  const qaFeedback = page.getByTestId('cash-qa-feedback')
+  async function expectQa400(path: string, command: () => Promise<void>, message: RegExp) {
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === path &&
+          response.request().method() === 'POST' &&
+          response.status() === 400,
+      ),
+      command(),
+    ])
+    await expect(qaFeedback).toContainText(message)
+    expect(page.isClosed()).toBe(false)
+  }
   await enterValue(page.getByLabel('Puesto', { exact: true }), 'front-desk')
+  if (qaMode === 'smoke') {
+    await enterValue(page.getByLabel('Efectivo inicial (pesos)'), '100,00')
+    const open = page.getByRole('button', { name: 'Abrir turno', exact: true })
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(open).toBeEnabled()
+      await expectQa400(
+        '/api/v1/treasury/shifts',
+        () => activate(open),
+        /Simulador de prueba:.*\$10,00/,
+      )
+    }
+    expect(opens).toBe(0)
+  }
   await enterValue(page.getByLabel('Efectivo inicial (pesos)'), '10,00')
   await activate(page.getByRole('button', { name: 'Abrir turno', exact: true }))
   await expect(page.getByText('Turno abierto.', { exact: true })).toBeVisible()
@@ -344,6 +457,17 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     await shiftSelect.selectOption(shiftId)
   }
   await expect(shiftSelect).toHaveValue(shiftId)
+  if (qaMode === 'smoke') {
+    await february.check()
+    await expectQa400(
+      '/api/v1/dues/settlements',
+      () => activate(dialog.getByRole('button', { name: 'Confirmar pago', exact: true })),
+      /Simulador de prueba:.*enero.*\$100,00/,
+    )
+    expect(payments).toBe(0)
+    await expect(dialog).toBeVisible()
+    await february.uncheck()
+  }
   await activate(dialog.getByRole('button', { name: 'Confirmar pago', exact: true }))
   const paymentOutcome = page.getByRole('region', { name: 'Resultado del pago' })
   await expect(paymentOutcome).toContainText(paymentId)
@@ -382,6 +506,17 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     await activate(drawer.getByRole('link', { name: 'Cash desk', exact: true }))
     await expect(drawer).not.toBeVisible()
   } else await page.getByRole('link', { name: 'Cash desk', exact: true }).click()
+  if (qaMode === 'smoke') {
+    await enterValue(page.getByLabel('Efectivo contado (pesos)'), '100,00')
+    const close = page.getByRole('button', { name: /Cerrar front-desk/ })
+    await expect(close).toBeEnabled()
+    await expectQa400(
+      `/api/v1/treasury/shifts/${shiftId}/close`,
+      () => activate(close),
+      /Simulador de prueba:.*\$110,00/,
+    )
+    expect(closes).toBe(0)
+  }
   await enterValue(page.getByLabel('Efectivo contado (pesos)'), '110,00')
   await activate(page.getByRole('button', { name: /Cerrar front-desk/ }))
   const summary = page.getByRole('region', { name: 'Resumen de conciliación' })

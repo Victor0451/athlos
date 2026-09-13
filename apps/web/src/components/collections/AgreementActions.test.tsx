@@ -234,11 +234,26 @@ describe('AgreementActions', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/acuerdo registrado/i)
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     first.unmount()
-    renderActions({ onCreate, state: state({ status: 'ready' }) })
-    await user.click(screen.getByRole('button', { name: /registrar acuerdo/i }))
-    await user.type(screen.getByLabelText(/narrativa del acuerdo/i), 'Acuerdo repetido')
-    await user.type(screen.getByLabelText(/motivo del acuerdo/i), 'Motivo')
-    await user.click(screen.getByRole('button', { name: /guardar acuerdo/i }))
-    expect(screen.getByRole('status')).toHaveTextContent(/ya había sido registrado/i)
-  })
-})
+        renderActions({ onCreate, state: state({ status: 'ready' }) })
+        await user.click(screen.getByRole('button', { name: /registrar acuerdo/i }))
+        await user.type(screen.getByLabelText(/narrativa del acuerdo/i), 'Acuerdo repetido')
+        await user.type(screen.getByLabelText(/motivo del acuerdo/i), 'Motivo')
+        await user.click(screen.getByRole('button', { name: /guardar acuerdo/i }))
+        expect(screen.getByRole('status')).toHaveTextContent(/ya había sido registrado/i)
+      })
+
+      it('never renders source formatting comments as visible summary text', () => {
+        const community = renderActions({
+          treatment: 'community',
+          state: state({ active: agreement }),
+          onRecordCommunityWork: vi.fn(),
+          outstandingCents: 10_000,
+          currency: 'ARS',
+        })
+        expect(community.container.textContent).not.toContain('prettier-ignore')
+
+        community.unmount()
+        const agreementOnly = renderActions({ state: state({ active: agreement }) })
+        expect(agreementOnly.container.textContent).not.toContain('prettier-ignore')
+      })
+    })
