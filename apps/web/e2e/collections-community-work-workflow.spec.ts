@@ -1,13 +1,18 @@
 import { expect, test, type Route } from '@playwright/test'
 
+// Both guards deliberately tolerate an unset variable. Playwright imports every spec under
+// e2e/ when it lists or runs the suite, so a module-scope throw breaks the whole run for
+// anyone who never asked for this QA harness. Unset means "skip this spec"; an explicit
+// wrong value still fails closed. Matches the ATHLOS_CASH_QA_MODE guard in
+// collections-cash-workflow.spec.ts.
 const mode = process.env.ATHLOS_COMMUNITY_WORK_QA_MODE
-if (mode !== 'manual' && mode !== 'smoke')
-  throw new Error('ATHLOS_COMMUNITY_WORK_QA_MODE must be manual or smoke')
+if (mode !== undefined && mode !== 'manual' && mode !== 'smoke')
+  throw new Error('ATHLOS_COMMUNITY_WORK_QA_MODE must be unset, manual, or smoke')
 if (mode === 'manual' && process.env.CI)
   throw new Error('Manual Community Work QA cannot run in CI')
 const role = process.env.ATHLOS_COMMUNITY_WORK_QA_ROLE
-if (role !== 'ADMIN' && role !== 'TESORERO')
-  throw new Error('ATHLOS_COMMUNITY_WORK_QA_ROLE must be ADMIN or TESORERO')
+if (role !== undefined && role !== 'ADMIN' && role !== 'TESORERO')
+  throw new Error('ATHLOS_COMMUNITY_WORK_QA_ROLE must be unset, ADMIN, or TESORERO')
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, '0')}`
 const member = { id: id('10'), nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
@@ -51,15 +56,17 @@ const agreement = {
 }
 
 for (const scenario of scenarios) {
-  test(`Community Work ${mode} ${scenario.amountInput} ARS: local simulated acceptance, not production evidence`, async ({
+  test(`Community Work ${mode ?? 'unset'} ${scenario.amountInput} ARS: local simulated acceptance, not production evidence`, async ({
     browser,
     baseURL,
   }) => {
     test.setTimeout(mode === 'manual' ? 30 * 60_000 : 90_000)
     test.skip(
-      process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
+      mode === undefined ||
+        role === undefined ||
+        process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
         process.env.DUES_AGREEMENTS_ENABLED !== 'true',
-      'Requires the local Collections and agreements feature flags.',
+      'Requires ATHLOS_COMMUNITY_WORK_QA_MODE, ATHLOS_COMMUNITY_WORK_QA_ROLE and the local Collections and agreements feature flags.',
     )
     if (mode === 'manual' && test.info().project.use.headless !== false)
       throw new Error('Manual Community Work QA requires --headed')
