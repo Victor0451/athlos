@@ -78,18 +78,42 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert account-chart repository/route/registration/tests only; Unit 1's seeded catalog remains harmless and unreadable through this endpoint.
 
-## Unit 3 — Personal shift ownership and safe opening API
+## Unit 3a — Personal OPEN-shift owner migration safety
 
-**Estimate:** 360–500 changed lines. **Depends on:** Units 1–2 and migration-base inspection. **Spec:** `specs/accounted-personal-shifts/spec.md` — Personal Shift Ownership and Concurrent Operation; Shift Authorization Boundaries.  
-**Start / finish:** start with existing `dues_cash_*` schema/lifecycle behavior; finish when an OPERADOR can enter/open its own CASH-only shift without an existing active shift, a prior own OPEN shift is found by non-destructive preflight, concurrent operators may open, and database uniqueness arbitrates same-operator races.
-**Files:** `packages/db/src/schema/dues-cash.ts`, `packages/db/src/schema/index.ts`, new `packages/db/drizzle/<next-index>_personal_cash_shift_owner.sql`, `packages/db/drizzle/meta/_journal.json`, `apps/api/src/modules/dues/cash-desk.ts`, its focused unit/integration test targets, `apps/api/src/routes/treasury.ts`, `apps/api/src/routes/treasury-routes.test.ts`; discovery target: existing cash PostgreSQL lifecycle tests under `apps/api/src/modules/dues/`.
+**Estimate:** 240–340 changed lines. **Depends on:** Units 1–2 and migration-base inspection. **Spec:** `specs/accounted-personal-shifts/spec.md` — Personal Shift Ownership and Concurrent Operation.
+**Start / finish:** add only the additive owner-specific OPEN uniqueness guard after a non-destructive duplicate-owner preflight. Retain the existing desk OPEN guard until Unit 3b. No service, route, authorization, opening-payload, same-desk-concurrency, history, expiry-trigger, close, carryover, or recovery behavior changes.
+**Files:** `packages/db/src/schema/dues-cash.ts`, new `packages/db/drizzle/0067_personal_cash_shift_owner.sql`, `packages/db/drizzle/meta/_journal.json`, `packages/db/src/migration-journal.test.ts`, `packages/db/src/schema/dues.test.ts`, `packages/db/src/scripts/status.test.ts`, and `apps/api/src/modules/dues/cash-desk.postgres.integration.test.ts`.
 
-- [ ] 1. **RED:** add failing focused tests for own-open preflight, foreign-shift denial, CASH-only exact-cent opening input, no automatic carryover, same-operator race, and different-operator same-desk success; use disposable PostgreSQL for the constraint/race cases.
-- [ ] 2. **GREEN:** migrate the OPEN uniqueness boundary from desk to operator without altering completed history; implement owner-aware preflight/open/read authorization and preserve ADMIN/TESORERO recovery semantics. Do not yet create manual sources, production capture, or close transfer.
-- [ ] 3. **TRIANGULATE:** exercise malformed/fractional/overflow/non-CASH opening requests and transaction contention; show either one committed shift or a safe existing-shift response, never two.
-- [ ] 4. **REFACTOR:** isolate ownership/validation helpers from legacy tender/close behavior; run planned focused API/disposable-PG selectors and confirmed shared quality commands. UI runtime evidence is **N/A (API-only unit)**.
+- [x] 1. **RED:** add failing Drizzle metadata, migration-frontier, and disposable real-PostgreSQL tests for the missing `0067` migration and owner index; fixture two legacy OPEN shifts for one assigned operator on different desks and require a diagnostic that identifies both shift IDs before DDL.
+- [x] 2. **GREEN:** add `0067_personal_cash_shift_owner.sql` and its journal entry. The migration SHALL preflight duplicate OPEN `assigned_operator_id` rows before DDL, preserve all rows/triggers/history, retain `dues_cash_shift_open_desk_unique`, and add only `dues_cash_shift_open_operator_unique`; declare both partial indexes under the same SQL names in Drizzle.
+- [x] 3. **TRIANGULATE:** prove on disposable PostgreSQL that duplicate legacy owners leave the old desk index intact and no owner index, while a clean migration is repeat-safe and rejects a new same-owner OPEN duplicate across different desks.
+- [x] 4. **REFACTOR:** retain the direct, diagnostic migration and focused real-PostgreSQL fixtures without broadening runtime behavior; run the focused API and migration-frontier disposable lifecycles. UI runtime evidence is **N/A (migration-only)**.
 
-**Rollback boundary:** revert only owner/preflight migration, cash-desk/treasury changes, and tests; preserve pre-existing completed shifts and recovery data.
+**Rollback boundary:** revert only `0067`, its journal entry, the matching Drizzle index declaration, and the focused migration/frontier tests. Do not delete or auto-close historical shifts.
+
+## Unit 3b — Release desk uniqueness and owner-safe lifecycle service
+
+**Estimate:** 260–370 changed lines. **Depends on:** Unit 3a. **Spec:** `specs/accounted-personal-shifts/spec.md` — Personal Shift Ownership and Concurrent Operation.
+**Start / finish:** remove the temporary desk OPEN guard only after owner-safe service behavior and real-PostgreSQL concurrency evidence are ready; different operators may then share a desk label while one owner remains limited to one OPEN shift.
+
+- [ ] 1. **RED:** add focused service and disposable PostgreSQL tests for same-owner conflict, different-owner same-desk success, and the normal opening conflict message after the desk guard is released.
+- [ ] 2. **GREEN:** release only `dues_cash_shift_open_desk_unique`, preserve the owner guard as the race arbiter, and make the normal opening conflict message accurately describe owner and desk uniqueness outcomes.
+- [ ] 3. **TRIANGULATE:** exercise concurrent same-owner opens and concurrent different-owner same-desk opens on real PostgreSQL; retain one committed owner shift and both permitted different-owner shifts.
+- [ ] 4. **REFACTOR:** isolate the migration/service uniqueness seam without changing legacy tender, close, expiry, recovery, or financial history behavior.
+
+**Rollback boundary:** revert only the desk-index-release migration/service/tests as one reviewed unit; retain Unit 3a's safe owner preflight and constraint.
+
+## Unit 3c — OPERADOR personal Caja open/read boundary
+
+**Estimate:** 250–360 changed lines. **Depends on:** Unit 3b. **Spec:** `specs/accounted-personal-shifts/spec.md` — Shift Authorization Boundaries.
+**Start / finish:** permit an OPERADOR to open and read only that operator's personal Caja shift; preserve ADMIN/TESORERO recovery and visibility semantics without introducing a global finance gate or Collections-payment changes.
+
+- [ ] 1. **RED:** add focused route/service failures for foreign-shift read/open denial, own OPEN-shift preflight, and preserved ADMIN/TESORERO recovery/read behavior.
+- [ ] 2. **GREEN:** implement owner-aware preflight/open/read authorization for OPERADOR only; keep routes, Collections actions, payload validation, manual sources, production capture, close transfer, and new reversal behavior out of scope.
+- [ ] 3. **TRIANGULATE:** exercise no-own-shift, existing-own-shift, foreign-shift, and expired-own-shift outcomes without auto-close, delete, or carryover.
+- [ ] 4. **REFACTOR:** extract ownership helpers from legacy tender/close code; run focused API/disposable-PostgreSQL selectors. UI runtime evidence is **N/A (API-only)**.
+
+**Rollback boundary:** revert only Unit 3c authorization/preflight/open/read code and tests; retain the owner uniqueness migration and all prior financial history.
 
 ## Unit 4 — Authorized Treasury/Caja opening and Collections entry UI
 

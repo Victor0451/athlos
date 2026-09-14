@@ -455,7 +455,7 @@ export class CashDeskService {
             }
             return responseShift(replay)
           }
-          throw BusinessError(ErrorCode.CONFLICT, 'Desk already has an open shift')
+          throw BusinessError(ErrorCode.CONFLICT, 'A desk or operator already has an open shift')
         }
         await this.audit(tx, input, AuditAction.DUES_CASH_SHIFT_OPENED, inserted.id, {
           deskId: input.deskId,
@@ -465,7 +465,7 @@ export class CashDeskService {
       })
       .catch((error: unknown) => {
         if ((error as { code?: string }).code === '23505') {
-          throw BusinessError(ErrorCode.CONFLICT, 'Desk already has an open shift')
+          throw BusinessError(ErrorCode.CONFLICT, 'A desk or operator already has an open shift')
         }
         throw error
       })

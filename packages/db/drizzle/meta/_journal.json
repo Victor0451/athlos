@@ -414,6 +414,13 @@
       "when": 1787853605000,
       "tag": "0066_plan_cuentas",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789387438026,
+      "tag": "0067_personal_cash_shift_owner",
+      "breakpoints": true
     }
   ]
 }

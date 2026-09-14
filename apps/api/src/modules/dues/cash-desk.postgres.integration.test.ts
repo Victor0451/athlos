@@ -128,6 +128,9 @@ async function openSettlement(service: CashDeskService, tender: string, amount =
   return { settlement, shift }
 }
 
+const cashMigration = (name: string) =>
+  readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', name), 'utf8')
+
 describe('cash desk PostgreSQL policy', () => {
   it.each([false, true])(
     "reads another operator's saved close without recomputing, forced=%s",
@@ -555,6 +558,91 @@ describe('cash desk PostgreSQL policy', () => {
         [recoveryShift.id, operatorId, randomUUID(), '4'.repeat(64), exactClose],
       ),
     ).rejects.toMatchObject({ code: '55000' })
+  })
+
+  it('preflights duplicate OPEN owners before adding the owner index and retains the desk index', async () => {
+    const migration = await cashMigration('0067_personal_cash_shift_owner.sql')
+    const duplicateIds = [randomUUID(), randomUUID()]
+    for (const [index, id] of duplicateIds.entries()) {
+      await db.pool.query(
+        `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,$3,'{}',$3,'{}',$4,$5)`,
+        [id, `legacy-owner-desk-${index}`, operatorId, randomUUID(), 'd'.repeat(64)],
+      )
+    }
+    const indexNames = async () =>
+      (
+        await db.pool.query(
+          `SELECT indexname FROM pg_indexes WHERE schemaname='tesoreria' AND tablename='dues_cash_shifts' ORDER BY indexname`,
+        )
+      ).rows.map(({ indexname }) => indexname as string)
+
+    expect(await indexNames()).toContain('dues_cash_shift_open_desk_unique')
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_operator_unique')
+    const error = await db.pool.query(migration).then(
+      () => undefined,
+      (reason: unknown) => reason as { message: string },
+    )
+    expect(error?.message).toContain('Cannot add dues_cash_shift_open_operator_unique')
+    expect(error?.message).toContain(duplicateIds[0])
+    expect(error?.message).toContain(duplicateIds[1])
+    expect(await indexNames()).toContain('dues_cash_shift_open_desk_unique')
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_operator_unique')
+    expect(
+      (
+        await db.pool.query(
+          `SELECT id FROM tesoreria.dues_cash_shifts WHERE id = ANY($1::uuid[]) ORDER BY id`,
+          [duplicateIds],
+        )
+      ).rows
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual([...duplicateIds].sort())
+
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
+    await db.pool.query(migration)
+    await db.pool.query(migration)
+    const race = await Promise.allSettled(
+      ['owner-race-a', 'owner-race-b'].map((deskId) =>
+        db.pool.query(
+          `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,$3,'{}',$3,'{}',$4,$5)`,
+          [randomUUID(), deskId, secondOperatorId, randomUUID(), 'e'.repeat(64)],
+        ),
+      ),
+    )
+    expect(race.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(race.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(race.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { code: '23505' },
+    })
+    const firstOpenId = randomUUID()
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,'owner-first',$2,'{}',$2,'{}',$3,$4)`,
+      [firstOpenId, operatorId, randomUUID(), 'f'.repeat(64)],
+    )
+    await expect(
+      db.pool.query(
+        `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,'owner-second',$2,'{}',$2,'{}',$3,$4)`,
+        [randomUUID(), operatorId, randomUUID(), 'f'.repeat(64)],
+      ),
+    ).rejects.toMatchObject({ code: '23505' })
+    await expect(
+      new CashDeskService(db.db).open({
+        ...context(`owner-conflict-${randomUUID()}`),
+        deskId: 'owner-service-conflict',
+        openingTenders: {},
+      }),
+    ).rejects.toThrow('A desk or operator already has an open shift')
+    expect(await indexNames()).toEqual(
+      expect.arrayContaining([
+        'dues_cash_shift_open_desk_unique',
+        'dues_cash_shift_open_operator_unique',
+      ]),
+    )
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
   })
 
   it('requires accounting-date equality and makes compensation replay/conflict atomic', async () => {

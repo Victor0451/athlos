@@ -146,4 +146,40 @@
 - Deviation: none. No commit, migration, UI, chart CRUD, Caja movement, other finance route, feature flag, or external service was added.
 - Workload/PR boundary: Unit 2 only, stacked-to-main above Unit 1 (`63902fe`); current Unit 2 authored source/test/registration plus persisted task-check changes are 325 changed lines before this evidence, within the 400-line budget. Rollback: remove only the five Unit 2 API files/registration; leave Unit 1's catalog intact and unreadable through this endpoint.
 - Structured status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`; `taskProgress=4/39` at intake; `applyState=ready`; `actionContext.mode=repo-local`; workspace and allowed root `/home/vlongo/Athlos-worktrees/caja-diagnosis`. Warning retained: `/` is a future, unauthorized root and was untouched. QA001 remains pending.
-- Remaining: Unit 3–9 and final-acceptance checkboxes remain `[ ]` in `tasks.md`; the 35-item historical ledger above is superseded for Unit 2's four now-complete lines, while its remaining 31 exact unchecked lines remain unchanged. `tasks.md` is authoritative.
+    - Remaining: Unit 3–9 and final-acceptance checkboxes remain `[ ]` in `tasks.md`; the 35-item historical ledger above is superseded for Unit 2's four now-complete lines, while its remaining 31 exact unchecked lines remain unchanged. `tasks.md` is authoritative.
+
+## Unit 3a — Personal OPEN-shift owner migration safety
+
+- Completed persisted tasks: Unit 3a tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`. Unit 3 was split into 3a/3b/3c; only 3a was implemented.
+- Changed: `0067_personal_cash_shift_owner.sql`, its journal entry, Drizzle index metadata, three migration-frontier tests, the cash-desk disposable PostgreSQL integration test, the normal cash-desk conflict copy, task plan, and this cumulative evidence.
+- Behavior: `0067` preflights every duplicate OPEN `assigned_operator_id` before DDL and raises a diagnostic containing the affected shift IDs. It retains `dues_cash_shift_open_desk_unique` temporarily and adds `dues_cash_shift_open_operator_unique` only when the preflight is clean. The normal open conflict now accurately says that either a desk or an operator already has an OPEN shift. It does not delete, close, carry forward, or alter historic shifts, triggers, expiry/recovery, tenders, closes, routes, or authorization.
+
+### TDD Cycle Evidence
+
+| Task | Test file/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3a.1–3 | `cash-desk.postgres.integration.test.ts` / disposable PostgreSQL | API lifecycle: 8/8 passed | Missing `0067` file: 8 passed, 1 failed (`ENOENT`); conflict-copy RED reported the old desk-only message | 9/9 passed after migration and owner-aware conflict copy | Legacy duplicate owner leaves desk index/no owner index; clean/repeat migration and a real concurrent two-client owner race yield exactly one OPEN row | Focused lifecycle remains 9/9 after target-only Prettier |
+| 3a.1–4 | journal, schema metadata, and status frontier tests / disposable PostgreSQL | Existing DB tests covered by the named lifecycle | 151 passed, 4 expected failures for missing migration/index/frontier | 155/155 passed | Both named partial indexes and clean/duplicate migration paths are covered | No behavior refactor required; direct diagnostic SQL retained |
+
+### Verification
+
+- RED API: `scripts/lib/disposable-postgres.sh run --caller personal-shift-owner -- pnpm --filter @athlos/api exec vitest run src/modules/dues/cash-desk.postgres.integration.test.ts` — 8 passed, 1 failed because `0067_personal_cash_shift_owner.sql` was absent; lifecycle `1789387405-2286527-20561124c3930b2e` removed its container/volume and reported final absence.
+- RED migration frontiers: `pnpm test:disposable-postgres:integration -- packages/db/src/migration-journal.test.ts packages/db/src/schema/dues.test.ts packages/db/src/scripts/status.test.ts` — 151 passed, 4 expected failures for the missing migration, owner index, and `0067` frontier; lifecycle `1789387418-2287683-9ef938f556c97839` cleaned container/volume.
+- Final API real-PostgreSQL lifecycle: the same required `personal-shift-owner` command — 1 file, 9 passed, 0 failed; lifecycle `1789387990-2316126-1d3cf127574943a4` removed its container/volume and verified final absence. Its real concurrent two-client insert race committed exactly one OPEN row and rejected the other with `23505`; the service reports the owner-or-desk conflict accurately.
+- Final named root disposable integration: the same migration-frontier command — 27 files, 155 passed, 0 failed; lifecycle `1789387633-2299138-d8e82623ca26a555` removed its container/volume and verified final absence.
+- `pnpm --filter @athlos/api typecheck && pnpm --filter @athlos/api lint`, `pnpm --filter @athlos/db typecheck && pnpm --filter @athlos/db lint`, and `pnpm --filter @athlos/api build` passed. `typescript-language-server` was unavailable, so repository typechecks were used. `pnpm format:check` and `git diff --check` passed after target-only formatting.
+
+### Boundary, status, and remaining work
+
+- Workload/PR boundary: U3a only, stacked-to-main above Unit 2 (`b3dd68c`); before this evidence the formatted source/migration/test/task delta is 177 additions + 14 deletions = 191 changed lines. Including this cumulative evidence, the full U3a diff is 214 additions + 15 deletions = 229 changed lines. This is below the 400-line budget without compression. No commit, base update, push, PR, UI work, secrets, BETA/production access, or QA001 closure occurred.
+- Limitations/deferred: the temporary desk guard remains; different-operator same-desk concurrency, service conflict copy, OPERADOR open/read authorization, routes, payload validation, exact-cents input, Collections actions, manual sources, production capture, close transfer, and all U3b/U3c work remain out of scope.
+- Remaining exact delegated lines:
+  - [ ] 1. **RED:** add focused service and disposable PostgreSQL tests for same-owner conflict, different-owner same-desk success, and the normal opening conflict message after the desk guard is released.
+  - [ ] 2. **GREEN:** release only `dues_cash_shift_open_desk_unique`, preserve the owner guard as the race arbiter, and make the normal opening conflict message accurately describe owner and desk uniqueness outcomes.
+  - [ ] 3. **TRIANGULATE:** exercise concurrent same-owner opens and concurrent different-owner same-desk opens on real PostgreSQL; retain one committed owner shift and both permitted different-owner shifts.
+  - [ ] 4. **REFACTOR:** isolate the migration/service uniqueness seam without changing legacy tender, close, expiry, recovery, or financial history behavior.
+  - [ ] 1. **RED:** add focused route/service failures for foreign-shift read/open denial, own OPEN-shift preflight, and preserved ADMIN/TESORERO recovery/read behavior.
+  - [ ] 2. **GREEN:** implement owner-aware preflight/open/read authorization for OPERADOR only; keep routes, Collections actions, payload validation, manual sources, production capture, close transfer, and new reversal behavior out of scope.
+  - [ ] 3. **TRIANGULATE:** exercise no-own-shift, existing-own-shift, foreign-shift, and expired-own-shift outcomes without auto-close, delete, or carryover.
+  - [ ] 4. **REFACTOR:** extract ownership helpers from legacy tender/close code; run focused API/disposable-PostgreSQL selectors. UI runtime evidence is **N/A (API-only)**.
+- Structured status consumed: `gentle-ai.sdd-status/v2` supplied by the parent; change `caja-accounted-shift-close`, artifact store `openspec`, intake `taskProgress=8/39`, `applyState=ready`, delivery `stacked-to-main`, bounded runtime attempt `proceed`. `actionContext.mode=repo-local` restricts changes to `/home/vlongo/Athlos-worktrees/caja-diagnosis` and the supplied edit surfaces; no outside root was touched. CodeGraph watcher reported modified files but `.codegraph` is outside the allowed edit surfaces, so no manual sync was run. QA001 remains pending.
