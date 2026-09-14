@@ -7,6 +7,7 @@ import {
   recordSettlementTenderInTransaction,
   validateSettlementShiftInTransaction,
 } from './cash-desk.ts'
+import { recordAutomaticDuesProductionSource } from './production-source.ts'
 import type { AuditContext } from './service.ts'
 
 export { MAX_MONEY_CENTS } from './allocations.ts'
@@ -322,6 +323,11 @@ export class SettlementService {
       await recordSettlementTenderInTransaction(tx, {
         ...command,
         settlementId: claim.settlement.id,
+      })
+      await recordAutomaticDuesProductionSource(tx, {
+        shiftId: command.shiftId,
+        settlementId: claim.settlement.id,
+        origin: 'AUTOMATIC_DUES_PRODUCTION',
       })
       const now = this.now().toISOString()
       await record(

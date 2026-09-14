@@ -3,6 +3,7 @@ import { AuditAction, type AuditRecord } from '@athlos/audit'
 import { ErrorCode } from '@athlos/errors'
 import { getDebt } from './allocations.ts'
 import { MAX_MONEY_CENTS, SettlementService } from './settlements.ts'
+import { recordAutomaticDuesProductionSource } from './production-source.ts'
 import type { AuditContext } from './service.ts'
 
 const context: AuditContext = {
@@ -63,6 +64,45 @@ it('rejects allocations that exceed the settlement value before claiming it',asy
 it('rejects duplicate obligation allocations before claiming an explicit settlement',async()=>{const repository={claimSettlement:vi.fn(),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:auditLog().emit});await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-1',amountCents:1_000},{obligationId:'obligation-1',amountCents:1_000}]})).rejects.toMatchObject({code:ErrorCode.VALIDATION_ERROR});expect(repository.claimSettlement).not.toHaveBeenCalled()})
 // prettier-ignore
 it('returns an exact idempotent replay without inserting allocations or audit',async()=>{const audit=auditLog(),repository={claimSettlement:vi.fn().mockResolvedValue({status:'replayed',settlement:{id:'settlement-1',socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS'},allocations:[{id:'allocation-1',obligationId:'obligation-1',amountCents:2_000}]}),insertAllocation:vi.fn()},service=new SettlementService(db(),{repository,audit:audit.emit}); await expect(service.create({...context,socioId:'socio-1',kind:'NON_CASH',amountCents:2_000,currency:'ARS',evidence:{approval:'fixture'},reason:'Approved settlement',allocations:[{obligationId:'obligation-1',amountCents:2_000}]})).resolves.toMatchObject({settlementId:'settlement-1',allocations:[{id:'allocation-1'}]}); expect(repository.insertAllocation).not.toHaveBeenCalled(); expect(audit.records).toEqual([])})
+
+it('fails closed for an unsupported automatic production origin before any persistence query', async () => {
+  const database = { execute: vi.fn() }
+  await expect(
+    recordAutomaticDuesProductionSource(database as never, {
+      shiftId: 'shift-1',
+      settlementId: 'settlement-1',
+      origin: 'UNMAPPED_PRODUCTION',
+    }),
+  ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+  expect(database.execute).not.toHaveBeenCalled()
+})
+
+it('rejects an inconsistent retained automatic production source', async () => {
+  const database = {
+    execute: vi
+      .fn()
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            code: '4.1.01',
+            name: 'Cuotas sociales',
+            eligible: true,
+            path: [{ code: '4.1.01', name: 'Cuotas sociales' }],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }),
+  }
+  await expect(
+    recordAutomaticDuesProductionSource(database as never, {
+      shiftId: 'shift-1',
+      settlementId: 'settlement-1',
+      origin: 'AUTOMATIC_DUES_PRODUCTION',
+    }),
+  ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+  expect(database.execute).toHaveBeenCalledTimes(3)
+})
 
 it('persists privacy-safe snapshots and reversal reason through the emitter fields', async () => {
   const audit = auditLog()

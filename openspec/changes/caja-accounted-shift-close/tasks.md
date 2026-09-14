@@ -191,17 +191,28 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert only 0069/journal, `dues_cash_sources` schema metadata, the frontier expectations, and the focused source persistence test; retain existing settlement/tender behavior.
 
-## Unit 7B — Authoritative settlement production integration
+## Unit 7B1 — Finance-path authoritative production integration
 
-**Estimate:** 300–390 changed lines. **Depends on:** completed U7-A and the S2 settlement owner handoff. **Chain:** U7-A → U7-B → U4b. **Spec:** `specs/debt-allocation-settlement/spec.md` — Operator Full-Payment Collections Boundary; Linked Automatic Dues Production; `specs/accounted-personal-shifts/spec.md` — Single-Production Collections Capture.
-**Start / finish:** extend only the authoritative settlement transaction so the approved full-payment path creates or retains U7-A's source atomically, with no payment recapture or role expansion.
+**Estimate:** 300–370 changed lines. **Depends on:** completed U7-A; the parent resolved the settlement-owner handoff for this B1 slice. **Chain:** U7-A → U7-B1 → U7-B2 → U4b. **Spec:** `specs/debt-allocation-settlement/spec.md` — Linked Automatic Dues Production; `specs/accounted-personal-shifts/spec.md` — Single-Production Collections Capture.
+**Start / finish:** extend only the existing finance-authorized full-selection transaction so it creates or retains the U7-A source atomically. No role, route, cash-desk, or payment-input changes belong here.
 
-- [ ] 1. **RED:** jointly identify the owner and exact S2 files, then add failing full-payment-only, missing-own-shift, partial/overpayment, replay/concurrency, unsupported-origin, and `Cuotas sociales` source-link tests before edits.
-- [ ] 2. **GREEN:** extend the authoritative settlement transaction only; create/retain exactly one U7-A source with CASH/DEBIT/CREDIT/TRANSFER identity. Do not recapture payment input, map other origins silently, alter finance flows, or add operator reversals.
-- [ ] 3. **TRIANGULATE:** prove competing/replayed calls create neither second settlement/allocation/source nor partial audit state, and that an unsupported new origin rolls back atomically on disposable PostgreSQL.
-- [ ] 4. **REFACTOR:** minimize the integration seam after the agreed ownership handoff; run planned focused route/service/disposable-PG selectors and confirmed shared quality commands. UI runtime evidence is **N/A (API-only unit)**.
+- [x] 1. **RED:** add a meaningful failing real-PostgreSQL assertion that the full-selection payment persists its canonical `Cuotas sociales` source; add an unsupported-origin fail-closed unit assertion before writer code.
+- [x] 2. **GREEN:** add the transaction-only automatic-source writer with explicit `AUTOMATIC_DUES_PRODUCTION` mapping to `4.1.01`, dynamically read code/name/recursive path snapshots, and invoke it after tender and before audit.
+- [x] 3. **TRIANGULATE:** prove CASH/DEBIT/CREDIT/TRANSFER source snapshots, replay/concurrency one-source behavior, inactive mapping rollback of settlement/allocation/tender/source/audit, and forced-audit rollback on disposable PostgreSQL.
+- [x] 4. **REFACTOR:** retain the small helper seam and run focused unit/atomic/disposable-PG tests plus API typecheck, lint, format, and build. UI runtime evidence is **N/A (API-only unit)**.
 
-**Rollback boundary:** revert only the agreed U7-B settlement-production seam and its tests; preserve U7-A's latent persistence contract and prior settlement semantics.
+**Rollback boundary:** revert only `production-source.ts`, the U7-B1 settlement call, and the matching settlement tests; preserve U7-A's latent persistence contract and prior settlement semantics.
+
+## Unit 7B2 — Deferred operator full-payment boundary
+
+**Estimate:** 180–250 changed lines. **Depends on:** U7-B1 and a separately authorized operator/Collections delivery handoff. This slice owns no finance-path role changes.
+
+- [ ] 1. **RED:** add operator own-active-shift, partial/overpayment, and no-new-reversal boundary tests after its authorization handoff.
+- [ ] 2. **GREEN:** add only the separately authorized operator full-payment gate without recapturing payment input or widening finance actions.
+- [ ] 3. **TRIANGULATE:** prove operator replay/conflict and foreign/no-shift denial while preserving the finance B1 flow.
+- [ ] 4. **REFACTOR:** isolate the operator boundary and record focused API/UI evidence in its own work unit.
+
+**Rollback boundary:** revert only the later operator authorization/integration seam and its tests; retain U7-B1 finance production behavior.
 
 ## Unit 8 — Server-computed close transfer and immutable history
 

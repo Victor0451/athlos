@@ -14,6 +14,11 @@ import { CtacteProjectionService } from './ctacte-projection.ts'
 import { CashDeskService } from './cash-desk.ts'
 import { AssessmentService, PricingService, type AuditContext } from './service.ts'
 
+const automaticDuesPath = [
+  { code: '4', name: 'Ingresos' },
+  { code: '4.1', name: 'Ingresos Operativos' },
+  { code: '4.1.01', name: 'Cuotas sociales' },
+]
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 // The generated name must pass this allowlist before it is quoted as a PostgreSQL identifier.
 const isolatedDatabaseNamePattern = /^athlos_dues_settlement_[0-9a-f]{32}$/
@@ -79,19 +84,30 @@ const obligation = async (
   }
   return (await insertObligation(db.db, input)).obligation.id
 }
-const payment = async (socioId: string, obligationIds: string[], key = randomUUID()) => {
+const payment = async (
+  socioId: string,
+  obligationIds: string[],
+  key = randomUUID(),
+  tender: 'CASH' | 'DEBIT' | 'CREDIT' | 'TRANSFER' = 'CASH',
+) => {
+  const paymentOperatorId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')`,
+    [paymentOperatorId, `settlement-${paymentOperatorId}`],
+  )
+  const paymentContext = { ...context(key), actorId: paymentOperatorId }
   const shift = await new CashDeskService(db.db).open({
-    ...context(key),
+    ...paymentContext,
     deskId: `payment-${randomUUID()}`,
     openingTenders: {},
   })
   const selected = await selectFullOutstanding(db.db, { socioId, obligationIds })
   return new SettlementService(db.db).create({
-    ...context(key),
+    ...paymentContext,
     socioId,
     obligationIds,
     shiftId: shift.id,
-    tender: 'CASH',
+    tender,
     selectionFingerprint: selected.fingerprint,
   })
 }
@@ -152,6 +168,8 @@ beforeAll(async () => {
     '0061_dues_cash_settlement_reversal_expense.sql',
     '0064_dues_condonation_treatments.sql',
     '0065_dues_range_receipts.sql',
+    '0066_plan_cuentas.sql',
+    '0069_settlement_production_sources.sql',
   ]
   await db.pool.query(
     (
@@ -209,6 +227,13 @@ it('serializes different-key allocations for one obligation', async () => {
   expect(outcomes.filter((outcome) => outcome.status === 'rejected')[0]).toMatchObject({
     reason: { code: 'CONFLICT' },
   })
+  await expect(
+    db.pool.query(
+      `SELECT count(*)::int AS count FROM tesoreria.dues_cash_sources
+         WHERE settlement_id IN (SELECT id FROM tesoreria.dues_settlements WHERE socio_id=$1)`,
+      [socioId],
+    ),
+  ).resolves.toMatchObject({ rows: [{ count: 1 }] })
   await expect(service.debt({ role: 'TESORERO', socioId })).resolves.toMatchObject({
     totalCents: 0,
   })
@@ -823,6 +848,11 @@ it('rejects cross-representation revisions and serializes negotiated revision ra
 it('commits each tender and rolls settlement allocation and tender rows back after audit failure', async () => {
   const service = new SettlementService(db.db)
   for (const tender of ['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'] as const) {
+    operatorId = randomUUID()
+    await db.pool.query(
+      `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')`,
+      [operatorId, `settlement-${operatorId}`],
+    )
     const socioId = await member(),
       target = await obligation(socioId, 1250, period(2511, 1))
     const shift = await new CashDeskService(db.db).open({
@@ -850,9 +880,31 @@ it('commits each tender and rolls settlement allocation and tender rows back aft
     ).toEqual([{ tender, source_type: 'SETTLEMENT' }])
     expect(await service.create(input)).toEqual(created)
     await expect(
+      db.pool.query(
+        `SELECT shift_id,origin,account_code_snapshot,account_name_snapshot,account_path_snapshot
+             FROM tesoreria.dues_cash_sources WHERE settlement_id=$1`,
+        [created.settlementId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          shift_id: shift.id,
+          origin: 'AUTOMATIC_DUES_PRODUCTION',
+          account_code_snapshot: '4.1.01',
+          account_name_snapshot: 'Cuotas sociales',
+          account_path_snapshot: automaticDuesPath,
+        },
+      ],
+    })
+    await expect(
       service.create({ ...input, requestFingerprint: 'f'.repeat(64) }),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
   }
+  operatorId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')`,
+    [operatorId, `settlement-${operatorId}`],
+  )
   const socioId = await member(),
     target = await obligation(socioId, 100, period(2511, 2))
   const shift = await new CashDeskService(db.db).open({
@@ -863,7 +915,7 @@ it('commits each tender and rolls settlement allocation and tender rows back aft
   const selected = await selectFullOutstanding(db.db, { socioId, obligationIds: [target] })
   const count = () =>
     db.pool.query(
-      `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,(SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders`,
+      `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,(SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders,(SELECT count(*)::int FROM tesoreria.dues_cash_sources s JOIN tesoreria.dues_settlements d ON d.id=s.settlement_id WHERE d.socio_id=$1) sources,(SELECT count(*)::int FROM public.audit_events) audits`,
       [socioId],
     )
   const before = await count()
@@ -882,6 +934,43 @@ it('commits each tender and rolls settlement allocation and tender rows back aft
     }),
   ).rejects.toThrow('forced audit failure')
   await expect(count()).resolves.toEqual(before)
+
+  const unavailableTarget = await obligation(socioId, 100, period(2511, 3))
+  operatorId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')`,
+    [operatorId, `settlement-${operatorId}`],
+  )
+  const unavailableShift = await new CashDeskService(db.db).open({
+    ...context(),
+    deskId: `payment-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const unavailableSelection = await selectFullOutstanding(db.db, {
+    socioId,
+    obligationIds: [unavailableTarget],
+  })
+  const unavailableBefore = await count()
+  await db.pool.query(
+    `UPDATE contabilidad.plan_cuentas SET active=false,imputable=false WHERE code='4.1.01'`,
+  )
+  try {
+    await expect(
+      new SettlementService(db.db).create({
+        ...context(),
+        socioId,
+        obligationIds: [unavailableTarget],
+        shiftId: unavailableShift.id,
+        tender: 'CASH',
+        selectionFingerprint: unavailableSelection.fingerprint,
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    await expect(count()).resolves.toEqual(unavailableBefore)
+  } finally {
+    await db.pool.query(
+      `UPDATE contabilidad.plan_cuentas SET active=true,imputable=true WHERE code='4.1.01'`,
+    )
+  }
 })
 
 it('repairs a historical SPORT price gap across three months and replays generation and payment', async () => {
@@ -1071,6 +1160,11 @@ it('repairs a historical SPORT price gap across three months and replays generat
       [generation.callerKey],
     ),
   ).resolves.toMatchObject({ rows: [{ period_start: range.start, period_end: range.end }] })
+  operatorId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')`,
+    [operatorId, `settlement-${operatorId}`],
+  )
   const shift = await new CashDeskService(db.db).open({
     ...context('historical-sport-gap-cash'),
     deskId: `historical-sport-gap-${randomUUID()}`,

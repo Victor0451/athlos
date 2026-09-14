@@ -365,3 +365,30 @@
   - [ ] 4. **REFACTOR:** minimize the integration seam after the agreed ownership handoff; run planned focused route/service/disposable-PG selectors and confirmed shared quality commands. UI runtime evidence is **N/A (API-only unit)**.
 
 - Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `6b78a4b03b0ddf069c395e255c4b99c7668291c642737f4c82f723fa142350b7`.
+
+## Unit 7B1 — Finance-path authoritative production integration
+
+- Completed persisted tasks: U7-B1 RED, GREEN, TRIANGULATE, and REFACTOR are visibly `[x]` in `tasks.md`; U7-B2 is explicitly deferred and remains `[ ]`.
+- Changed: new `production-source.ts`; the existing full-selection settlement transaction; settlement unit, atomic, and disposable-PostgreSQL tests; B1/B2 task split. The fixture migration list now applies `0066` and `0069`.
+- Behavior: after the authoritative tender and before any audit, the same transaction dynamically reads the active/imputable mapped `4.1.01` catalog leaf and recursive parent path, then inserts one `AUTOMATIC_DUES_PRODUCTION` source. It rejects unavailable/unmapped origins; retention verifies shift, origin, and all snapshots rather than silently accepting inconsistency. Replays return before the writer; no route, role, cash-desk, payment-input, legacy backfill, or other finance flow changed.
+
+| TDD Cycle Evidence | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- |
+| U7-B1 source link | focused disposable PG: 1 failed, 23 skipped; expected source row was absent | writer plus transaction call; unit/atomic 39/39 passed | full disposable command: 3 files, 63 passed; four tenders, replay/concurrency, inactive mapping and audit rollback covered | target Prettier; final full disposable command was 64/64 |
+
+### Verification
+
+- RED: `scripts/lib/disposable-postgres.sh run --caller u7b1-settlement-production-red -- pnpm --filter @athlos/api exec vitest run src/modules/dues/settlements.postgres.integration.test.ts -t 'commits each tender'` — 1 failed, 23 skipped (missing source assertion); lifecycle `1789420158-3489674-20f861f0dab0d251` removed container/volume and reported both absent.
+- Final: `scripts/lib/disposable-postgres.sh run --caller u7b1-settlement-production-final-proof -- pnpm --filter @athlos/api exec vitest run src/modules/dues/settlements.test.ts src/modules/dues/settlements-atomic.test.ts src/modules/dues/settlements.postgres.integration.test.ts` — 3 files, 64 passed, 0 failed, 0 skipped; lifecycle `1789420715-3512364-f36d6023d2e7ade8` removed container/volume and reported both absent.
+- `typescript-language-server` was unavailable (`LSP_AVAILABLE=0`), so `pnpm --filter @athlos/api typecheck` was the static-analysis fallback; it, API lint/build, `pnpm format:check`, and `git diff --check` passed. UI runtime evidence is N/A (API-only); no unconfigured aggregate runner, external DB, BETA, production, secret, or QA001 simulation was used.
+
+### Boundary, status, and remaining work
+
+- Deviation: the existing integration `payment` fixture now gives each synthetic payment a distinct fixture operator, preserving the personal-OPEN-shift invariant without changing production authorization. No design deviation.
+- Workload/PR boundary: U7-B1 only, stacked-to-main above U7-A; current code/test/task delta before this evidence is 272 changed lines, below 400. Rollback only the B1 writer, settlement call, tests, and B1 task evidence; no commit, PR, push, base update, or B2 work occurred.
+- Status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`, artifact store `openspec`, intake `taskProgress=32/59`, `applyState=ready`, `nextRecommended=apply`, resolved `stacked-to-main`, `actionContext.mode=repo-local`, workspace/allowed root `/home/vlongo/Athlos-worktrees/caja-diagnosis`. Produced native status: `taskProgress=36/63`, `applyState=ready`, `nextRecommended=apply`; whole-change verification remains blocked on remaining tasks. Parent corrected this routing transcription after native readback (2 correction diff lines). Warning: B2/operator scope, all other worktrees, and QA001 remain outside this B1 authorization. The parent resolved the stale settlement handoff for B1 only. QA001 remains pending.
+- Remaining exact immediate B2 lines:
+  - [ ] 1. **RED:** add operator own-active-shift, partial/overpayment, and no-new-reversal boundary tests after its authorization handoff.
+  - [ ] 2. **GREEN:** add only the separately authorized operator full-payment gate without recapturing payment input or widening finance actions.
+  - [ ] 3. **TRIANGULATE:** prove operator replay/conflict and foreign/no-shift denial while preserving the finance B1 flow.
+  - [ ] 4. **REFACTOR:** isolate the operator boundary and record focused API/UI evidence in its own work unit.
