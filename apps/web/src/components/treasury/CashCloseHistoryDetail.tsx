@@ -16,7 +16,12 @@ export function CashCloseHistoryDetail({
   role?: string
 }) {
   const [open, setOpen] = useState(false)
-  const allowed = Boolean(actorId && (role === 'ADMIN' || role === 'TESORERO'))
+  const allowed = Boolean(
+    actorId &&
+    (role === 'ADMIN' ||
+      role === 'TESORERO' ||
+      (role === 'OPERADOR' && shift.assigned_operator_id === actorId)),
+  )
   const detail = useQuery({
     queryKey: ['cash-shift-detail', actorId, role, shift.id],
     queryFn: () => getCashShiftDetail(shift.id),

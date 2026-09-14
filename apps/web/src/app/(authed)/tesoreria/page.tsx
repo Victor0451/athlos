@@ -233,6 +233,11 @@ export default function TreasuryPage() {
         (shift) => shift.status === 'OPEN' && shift.assigned_operator_id === user?.operator_id,
       )
     : null
+  const ownClosedShifts = isOperator
+    ? shifts.filter(
+        (shift) => shift.status === 'CLOSED' && shift.assigned_operator_id === user?.operator_id,
+      )
+    : []
   const recoverableShifts = shifts
     .filter(expired)
     .filter((shift) => canOperateCashShift(shift, user))
@@ -343,6 +348,27 @@ export default function TreasuryPage() {
             ) : (
               <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
             )}
+          </section>
+        )}
+        {ownClosedShifts.length > 0 && (
+          <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
+            <h2 className="font-display text-lg">Turnos cerrados</h2>
+            <p>Consultá el detalle histórico de conciliación de tus turnos cargados.</p>
+            <ul className="space-y-2">
+              {ownClosedShifts.map((shift) => (
+                <li key={shift.id}>
+                  <strong>{shift.desk_id}</strong>
+                  <p>
+                    {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
+                  </p>
+                  <CashCloseHistoryDetail
+                    shift={shift}
+                    actorId={user?.operator_id}
+                    role={user?.role}
+                  />
+                </li>
+              ))}
+            </ul>
           </section>
         )}
       </main>

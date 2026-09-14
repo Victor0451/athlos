@@ -600,6 +600,41 @@ describe('treasury page', () => {
     expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
   })
 
+  it('shows an OPERADOR only their own closed Caja history without finance controls', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.query.data = {
+      items: [
+        {
+          id: 'own-closed',
+          desk_id: 'front',
+          status: 'CLOSED',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: '2026-01-01T09:00:00Z',
+          closed_at: '2026-01-01T20:00:00Z',
+        },
+        {
+          id: 'foreign-closed',
+          desk_id: 'back',
+          status: 'CLOSED',
+          assigned_operator_id: 'operator-2',
+          business_date: '2026-01-01',
+          opened_at: '2026-01-01T09:00:00Z',
+          closed_at: '2026-01-01T20:00:00Z',
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+
+    const history = screen.getByRole('region', { name: 'Turnos cerrados' })
+    expect(
+      within(history).getByRole('button', { name: 'Ver conciliación de front' }),
+    ).toBeInTheDocument()
+    expect(within(history).queryByText('back')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Recuperación de turnos vencidos')).not.toBeInTheDocument()
+  })
+
   it('directs an OPERADOR with an expired Caja to finance without offering recovery', () => {
     authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
     mocks.query.data = {

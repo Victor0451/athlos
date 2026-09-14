@@ -301,3 +301,34 @@
   - [ ] 1. Reconcile every unit's recorded RED/GREEN/TRIANGULATE/REFACTOR evidence, migration status, changed-line count, and rollback boundary against the human-selected delivery choice and, if split was selected, its chain strategy. Re-run the confirmed aggregate quality commands from the integrated base.
   - [ ] 2. Run the applicable planned Playwright selectors through the confirmed web E2E command and record exact pass/fail/skip counts. Automated evidence proves only the local/disposable contract.
   - [ ] 3. Leave **QA001 pending** until an authorized live operational observation is separately approved and recorded. Do not replace it with simulation, BETA/production access, secrets, or a synthetic receipt.
+
+## Unit 4c — OPERADOR own closed-history presentation
+
+- Completed persisted tasks: U4c tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`. U4b remains blocked on S2/payment ownership and is unchanged.
+- Changed: local history-read authorization in `CashCloseHistoryDetail`, the OPERADOR Treasury branch, focused component/page tests, and the isolated `operator-caja-entry` headless scenario. No API, Collections, navigation/workflow, payment, finance-write, tender, expense, close, or recovery surface changed.
+- Behavior: ADMIN/TESORERO retain existing history. An OPERADOR sees only own CLOSED rows and can request its existing detail only on demand; foreign rows never render a link or detail, including cached actor/shift transitions. Query identity remains `actorId`, `role`, and `shift.id`. The E2E detail request is GET-only; operator close/recovery controls remain absent.
+
+### TDD Cycle Evidence
+
+| Task | Test/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U4c.1–2 | component + page / Vitest | 43 passed | 2 failed, 43 passed: own operator link/history absent | 45 passed | own and foreign rows covered | smallest local predicate retained; 45 passed after Prettier |
+| U4c.3 | component + page / Vitest | 45 passed | added actor/shift cache-transition assertions | 45 passed | foreign actor/shift states show no link and make no detail GET; own state remains readable | no behavior refactor beyond formatting |
+| U4c.4 | isolated browser / Playwright | existing opening scenario passed | 1 passed, 1 failed: own history absent | 2 passed, 0 failed, 0 skipped | mocked own/foreign CLOSED rows plus GET-only detail | port 3101 absent after run |
+
+### Verification
+
+- `pnpm --filter @athlos/web exec vitest run src/components/treasury/CashCloseHistoryDetail.test.tsx 'src/app/(authed)/tesoreria/page.test.tsx'` — final 2 files, 45 passed, 0 failed, 0 skipped.
+- `DUES_CASH_ENABLED=true NATIVE_COLLECTIONS_WEB_ENABLED=true pnpm --filter @athlos/web exec playwright test e2e/operator-caja-entry.spec.ts` — final 2 passed, 0 failed, 0 skipped; mocked first-party responses only, GET detail only, and loopback `127.0.0.1:3101` was absent after cleanup.
+- `typescript-language-server` was unavailable, so `pnpm --filter @athlos/web typecheck` supplied static analysis; it passed. `pnpm --filter @athlos/web lint`, target Prettier check, `git diff --check`, and `pnpm --filter @athlos/web build` also passed.
+- Playwright and build generated `apps/web/next-env.d.ts`; it was restored after each tool run to SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`.
+
+### Boundary, status, and remaining work
+
+- Deviation from design: none. The existing server U3c owner filter is consumed unchanged; client guards defend cached identity/role transitions and do not substitute for the server boundary.
+- Workload/PR boundary: U4c only, stacked-to-main above U4a, no commit/PR/push/base update. Rollback only the five U4c web files and this task/evidence; retain U3c API authorization and U4a opening.
+- Structured status consumed: `gentle-ai.sdd-status/v2`, change `caja-accounted-shift-close`, artifact store `openspec`, `taskProgress=24/51`, `applyState=ready`, `nextRecommended=apply`, and parent-supplied bounded attempt `proceed`. `actionContext.mode=repo-local`; writes stayed in the parent-provided worktree/edit surfaces. QA001 remains pending and was not simulated.
+- Remaining persisted unchecked lines are the unchanged 27 lines recorded immediately above in the cumulative U4a ledger and are authoritative in `tasks.md`; U4b remains blocked and no U4b checkbox was marked.
+- Diff receipt before this line: 216 additions + 3 deletions = 219 changed lines, including tests and OpenSpec evidence; below the 400-line budget with correction headroom.
+
+- Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `d0ab379aba15b60b38129e4b5492980502a213edd666980b7a2e7b01088bbabc`.

@@ -74,6 +74,40 @@ describe('Historical reconciliation', () => {
     },
   )
 
+  it('allows an OPERADOR to read only an assigned closed shift', async () => {
+    const ownShift = { ...shift, assigned_operator_id: 'reader' }
+    getDetail.mockResolvedValue({ shift: ownShift, close })
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+    const { rerender } = render(
+      <CashCloseHistoryDetail shift={ownShift} actorId="reader" role="OPERADOR" />,
+      {
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      },
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Ver conciliación de front' }))
+    expect(await screen.findByText('Counted short')).toBeInTheDocument()
+    expect(getDetail).toHaveBeenCalledWith('historic-1')
+
+    rerender(<CashCloseHistoryDetail {...props} actorId="next-reader" role="OPERADOR" />)
+    expect(
+      screen.queryByRole('button', { name: 'Ver conciliación de front' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(getDetail).toHaveBeenCalledTimes(1)
+    rerender(<CashCloseHistoryDetail shift={ownShift} actorId="next-reader" role="OPERADOR" />)
+    expect(
+      screen.queryByRole('button', { name: 'Ver conciliación de front' }),
+    ).not.toBeInTheDocument()
+    expect(getDetail).toHaveBeenCalledTimes(1)
+    rerender(<CashCloseHistoryDetail shift={ownShift} actorId="reader" role="OPERADOR" />)
+    expect(screen.getByRole('button', { name: 'Ver conciliación de front' })).toBeInTheDocument()
+    expect(getDetail).toHaveBeenLastCalledWith('historic-1')
+  })
+
   it('retries only the failed detail GET on request', async () => {
     getDetail
       .mockRejectedValueOnce(new Error('Unavailable'))

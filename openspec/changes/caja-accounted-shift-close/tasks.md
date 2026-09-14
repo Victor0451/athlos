@@ -139,9 +139,18 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert only the future Collections payment-gate UI/tests; keep U4a Caja access intact.
 
-## Unit 4c — Deferred OPERADOR closed-history presentation
+## Unit 4c — OPERADOR own closed-history presentation
 
-No implementation task is scheduled. Do not expose a closed-history component or link to OPERADOR unless a separate local-component review proves it supports the owner-only API contract without finance-only actions.
+**Estimate:** 180–290 changed lines. **Depends on:** Unit 3c. **Spec:** `specs/accounted-personal-shifts/spec.md` — Shift Authorization Boundaries; `specs/web-frontend/spec.md` — Capability-Aware Collections Navigation and Protected Routing.
+**Start / finish:** expose only an OPERADOR's own CLOSED shift history through the existing GET detail contract. ADMIN/TESORERO retain their current history. Foreign cached rows, role changes, and actor changes MUST neither render a history action nor fetch detail. No Collections, finance writes, payment enablement, or API change is included.
+**Files:** `apps/web/src/components/treasury/CashCloseHistoryDetail.tsx`, `apps/web/src/components/treasury/CashCloseHistoryDetail.test.tsx`, `apps/web/src/app/(authed)/tesoreria/page.tsx`, `apps/web/src/app/(authed)/tesoreria/page.test.tsx`, and `apps/web/e2e/operator-caja-entry.spec.ts`.
+
+- [x] 1. **RED:** add focused component/page and isolated headless UI failures for an OPERADOR's own CLOSED history, foreign-row absence, and the existing no-history state; run the named focused Vitest command.
+- [x] 2. **GREEN:** permit `ADMIN`/`TESORERO` history as before and an `OPERADOR` only when `shift.assigned_operator_id === actorId`; render only own CLOSED history with the existing GET-on-demand detail, without finance controls or payment actions.
+- [x] 3. **TRIANGULATE:** prove foreign cached rows and actor/role transitions neither render nor fetch detail, while own CLOSED history remains readable and cache keys retain actor, role, and shift identity.
+- [x] 4. **REFACTOR:** retain the smallest local read-only authorization seam; run the named focused Vitest and isolated headless Playwright commands with exact counts.
+
+**Rollback boundary:** revert only the Unit 4c Treasury history component/page/tests/E2E changes; retain the U3c server owner filter and all U4a opening behavior.
 
 ## Unit 5 — Account-linked manual Caja sources and method matrix
 
