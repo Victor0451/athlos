@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { CommunityWorkForm } from './CommunityWorkForm'
@@ -22,25 +22,35 @@ describe('CommunityWorkForm', () => {
   })
 
   it.each([
-    ['25,00', 2500],
-    ['25.00', 2500],
-    ['0.29', 29],
-  ])('converts %s pesos to exact cents', async (amount, amountCents) => {
-    const user = userEvent.setup()
-    const onSubmit = vi.fn()
-    renderForm({ onSubmit })
+    ['25,50', '25,50', 2550],
+    ['25.50', '25,50', 2550],
+    ['0.29', '0,29', 29],
+    ['15600', '15.600,00', 1560000],
+  ])(
+    'formats %s pesos on blur without changing exact cents',
+    async (amount, formatted, amountCents) => {
+      const user = userEvent.setup()
+      const onSubmit = vi.fn()
+      renderForm({ onSubmit })
 
-    await user.type(screen.getByLabelText(/valor aprobado/i), amount)
-    await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada')
-    await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado por el club')
-    await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+      const input = screen.getByLabelText(/valor aprobado/i)
+      await user.type(input, amount)
+      await user.tab()
+      expect(input).toHaveValue(formatted)
+      await user.click(input)
+      expect(input).toHaveValue(amount)
+      await user.tab()
+      await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada')
+      await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado por el club')
+      await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
 
-    expect(onSubmit).toHaveBeenCalledWith({
-      amountCents,
-      evidence: 'Acta 12 aprobada',
-      reason: 'Trabajo aceptado por el club',
-    })
-  })
+      expect(onSubmit).toHaveBeenCalledWith({
+        amountCents,
+        evidence: 'Acta 12 aprobada',
+        reason: 'Trabajo aceptado por el club',
+      })
+    },
+  )
 
   it.each(['0', '-1', '1e2', '1,234.00', '1.234', '90071992547409.92'])(
     'rejects malformed or unsafe peso input %s',
@@ -49,7 +59,10 @@ describe('CommunityWorkForm', () => {
       const onSubmit = vi.fn()
       renderForm({ onSubmit })
 
-      await user.type(screen.getByLabelText(/valor aprobado/i), amount)
+      const input = screen.getByLabelText(/valor aprobado/i)
+      await user.type(input, amount)
+      await user.tab()
+      expect(input).toHaveValue(amount)
       await user.type(screen.getByLabelText(/evidencia/i), 'Acta 12 aprobada')
       await user.type(screen.getByLabelText(/motivo/i), 'Trabajo aceptado por el club')
       await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
@@ -70,15 +83,19 @@ describe('CommunityWorkForm', () => {
     expect(evidence).toHaveValue('Borrador de evidencia')
   })
 
-  it('announces form guidance as a polite status and disables confirmation while busy', () => {
-    renderForm({ busy: true })
+  it('announces form guidance as a polite status and disables confirmation while busy', async () => {
+    await act(async () => {
+      renderForm({ busy: true })
+    })
 
     expect(screen.getByRole('status')).toHaveTextContent(/deuda.*solo.*confirm/i)
     expect(screen.getByRole('button', { name: /confirmando trabajo comunitario/i })).toBeDisabled()
   })
 
-  it('keeps acceptance gated and its responsive field contract stable', () => {
-    renderForm({ formId: 'accepted-work' })
+  it('keeps acceptance gated and its responsive field contract stable', async () => {
+    await act(async () => {
+      renderForm({ formId: 'accepted-work' })
+    })
 
     expect(screen.getByRole('status')).toHaveTextContent(/solo después de confirmar/i)
     expect(screen.getByRole('button', { name: 'Confirmar trabajo comunitario' })).toHaveAttribute(

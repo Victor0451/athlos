@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react'
 import type { DisciplinaOption } from '@/lib/api/padrones'
+import { PesoAmountInput } from '@/components/ui/PesoAmountInput'
 import type { DuesPrice, DuesPriceInput } from '@/lib/api/dues'
 import { collectionButtonClass, collectionFieldClass } from './CollectionPrimitives'
 import { parseSpanishDate, SpanishDateInput } from './SpanishDateInput'
@@ -167,10 +168,9 @@ export function PricingForm({
       )}
       <label className="space-y-1 font-body text-sm font-medium text-ink-700">
         Importe mensual (ARS)
-        <input
+        <PesoAmountInput
           className={collectionFieldClass}
-          type="text"
-          inputMode="decimal"
+          parseCents={parseArsToCents}
           required
           aria-describedby={amountError ? 'pricing-amount-error' : undefined}
           value={amount}
