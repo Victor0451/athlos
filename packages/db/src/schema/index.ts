@@ -126,7 +126,8 @@ export type {
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
-export { contabilidadSchema } from './contabilidad'
+export { contabilidadSchema, planCuentas } from './contabilidad'
+export type { NewPlanCuenta, PlanCuenta } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
 export {
