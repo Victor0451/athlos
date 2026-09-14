@@ -127,6 +127,88 @@ async function buildApp(enabled: boolean, options = services()): Promise<Fastify
 }
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())))
 
+describe('dues settlement retrieval route', () => {
+  const settlementId = '00000000-0000-4000-8000-000000000040'
+  const detail = {
+    settlement_id: settlementId,
+    socio_id: actorId,
+    member: { id: actorId, numero_socio: '123', nombre: 'Ada', apellido: 'Lovelace' },
+    confirmed_at: '2026-01-15T12:30:00.000Z',
+    amount_cents: 12500,
+    currency: 'ARS',
+    tender: 'TRANSFER',
+    allocations: [
+      {
+        id: '00000000-0000-4000-8000-000000000050',
+        obligation_id: '00000000-0000-4000-8000-000000000060',
+        period_start: '2026-01-01',
+        period_end: '2026-02-01',
+        amount_cents: 12500,
+      },
+    ],
+    reversal: null,
+  }
+
+  it.each([
+    ['requires authentication', true, undefined, settlementId, 401],
+    ['denies non-finance actors', true, auth('OPERADOR'), settlementId, 403],
+    ['hides the route when disabled', false, auth('ADMIN'), settlementId, 404],
+    ['rejects an invalid settlement id', true, auth('TESORERO'), 'not-a-uuid', 400],
+  ] as const)('%s', async (_name, enabled, headers, id, expectedStatus) => {
+    const options = { ...services(), getSettlementDetail: vi.fn() }
+    const app = await buildApp(enabled, options)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/dues/settlements/${id}`,
+      ...(headers ? { headers } : {}),
+    })
+    expect(response.statusCode).toBe(expectedStatus)
+    expect(options.getSettlementDetail).not.toHaveBeenCalled()
+  })
+
+  it.each(['ADMIN', 'TESORERO'] as const)(
+    'allows %s to read without writing or caching',
+    async (role) => {
+      const options = { ...services(), getSettlementDetail: vi.fn().mockResolvedValue(detail) }
+      const app = await buildApp(true, options)
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/dues/settlements/${settlementId}`,
+        headers: auth(role),
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual(detail)
+      expect(options.getSettlementDetail).toHaveBeenCalledWith(
+        expect.anything(),
+        role,
+        settlementId,
+      )
+      expect(options.settlementService?.create).not.toHaveBeenCalled()
+      expect(options.settlementService?.reverse).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([
+    [ErrorCode.NOT_FOUND, 404],
+    [ErrorCode.SERVICE_UNAVAILABLE, 503],
+  ] as const)('preserves %s from the reader', async (code, status) => {
+    const options = {
+      ...services(),
+      getSettlementDetail: vi.fn().mockRejectedValue(BusinessError(code, 'Unavailable')),
+    }
+    const app = await buildApp(true, options)
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/dues/settlements/${settlementId}`,
+      headers: auth('ADMIN'),
+    })
+    expect(response.statusCode).toBe(status)
+    expect(response.headers['cache-control']).toBe('no-store')
+    expect(response.json()).toMatchObject({ error: code })
+  })
+})
+
 describe('dues assessment routes', () => {
   it('hides dues routes without data or downstream surfaces when disabled', async () => {
     const options = services(),
