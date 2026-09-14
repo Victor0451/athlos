@@ -142,6 +142,12 @@ const authorizeOpenRead = (role: string) => {
   }
 }
 
+const authorizeSettlementTender = (role: string) => {
+  if (!isFinance(role) && role !== 'OPERADOR') {
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Cash desk action is not authorized')
+  }
+}
+
 const authorizeForceClose = (role: string) => {
   if (role !== 'ADMIN' && role !== 'TESORERO') {
     throw BusinessError(
@@ -238,7 +244,7 @@ export async function recordSettlementTenderInTransaction(
   db: CashDb,
   input: SettlementTenderInput,
 ) {
-  authorize(input.role)
+  authorizeSettlementTender(input.role)
   if (!settlementTenders.has(input.tender)) {
     throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A supported settlement tender is required')
   }

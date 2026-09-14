@@ -255,12 +255,13 @@ it('distinguishes an unknown socio and maps read failures to unavailable',async(
 })
 
 // prettier-ignore
-it('denies debt reads outside finance roles before repository access',async()=>{
-  const repository = { getDebt: vi.fn() }
+it('allows operator debt reads but denies roles outside the Collections boundary',async()=>{
+  const repository = { getDebt: vi.fn().mockResolvedValue({ status: 'empty' }) }
   const service = new SettlementService(db(), { repository, audit: auditLog().emit })
 
-  await expect(service.debt({ role: 'OPERADOR', socioId: 'socio-1' })).rejects.toMatchObject({
+  await expect(service.debt({ role: 'OPERADOR', socioId: 'socio-1' })).resolves.toEqual({ status: 'empty' })
+  await expect(service.debt({ role: 'CONSULTA' as never, socioId: 'socio-1' })).rejects.toMatchObject({
     code: ErrorCode.INSUFFICIENT_PERMISSIONS,
   })
-  expect(repository.getDebt).not.toHaveBeenCalled()
+  expect(repository.getDebt).toHaveBeenCalledOnce()
 })

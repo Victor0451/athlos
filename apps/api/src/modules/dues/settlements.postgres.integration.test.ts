@@ -1296,3 +1296,101 @@ it('repairs a historical SPORT price gap across three months and replays generat
   ).toEqual(paidAllocationIdsByObligationId)
   expect(await counts()).toEqual(beforeReplay)
 })
+
+it('limits operator payments to an own current shift while preserving exact replay', async () => {
+  const actorId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','O')`,
+    [actorId, `operator-${actorId}`],
+  )
+  const operatorContext = {
+    ...context(`operator-payment-${randomUUID()}`),
+    actorId,
+    role: 'OPERADOR' as const,
+    authorizationEvidence: { role: 'OPERADOR' },
+  }
+  const socioId = await member()
+  const service = new SettlementService(db.db)
+  const shift = await new CashDeskService(db.db).open({
+    ...operatorContext,
+    deskId: `operator-payment-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const payment = async (target: string, shiftId = shift.id, contextOverride = operatorContext) => {
+    const selection = await selectFullOutstanding(db.db, { socioId, obligationIds: [target] })
+    return service.create({
+      ...contextOverride,
+      callerKey: `operator-boundary-${target}`,
+      requestFingerprint: randomUUID().replaceAll('-', '').padEnd(64, '0').slice(0, 64),
+      socioId,
+      obligationIds: [target],
+      shiftId,
+      tender: 'CASH',
+      selectionFingerprint: selection.fingerprint,
+    })
+  }
+  const first = await obligation(socioId, 1_000, period(2520, 1))
+  const firstSelection = await selectFullOutstanding(db.db, { socioId, obligationIds: [first] })
+  const firstInput = {
+    ...operatorContext,
+    socioId,
+    obligationIds: [first],
+    shiftId: shift.id,
+    tender: 'CASH' as const,
+    selectionFingerprint: firstSelection.fingerprint,
+  }
+  const created = await service.create(firstInput)
+  expect(
+    (
+      await db.pool.query(
+        `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE id=$1) settlements,
+(SELECT count(*)::int FROM tesoreria.dues_cash_tenders WHERE source_id=$1) tenders,
+(SELECT count(*)::int FROM tesoreria.dues_cash_sources WHERE settlement_id=$1) sources`,
+        [created.settlementId],
+      )
+    ).rows,
+  ).toEqual([{ settlements: 1, tenders: 1, sources: 1 }])
+
+  const mutateShift = async (set: string) => {
+    const historical = await db.pool.connect()
+    try {
+      await historical.query(`SET session_replication_role = replica`)
+      await historical.query(`UPDATE tesoreria.dues_cash_shifts SET ${set} WHERE id=$1`, [shift.id])
+    } finally {
+      await historical.query(`SET session_replication_role = origin`)
+      historical.release()
+    }
+  }
+  await mutateShift(`opened_at=NOW()-INTERVAL '25 hours'`)
+  await expect(service.create(firstInput)).resolves.toEqual(created)
+
+  const countFinancialWrites = async () =>
+    db.pool.query(
+      `SELECT (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,
+(SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,
+(SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders,
+(SELECT count(*)::int FROM tesoreria.dues_cash_sources s JOIN tesoreria.dues_settlements d ON d.id=s.settlement_id WHERE d.socio_id=$1) sources`,
+      [socioId],
+    )
+  const beforeDenied = await countFinancialWrites()
+  const expired = await obligation(socioId, 1_000, period(2520, 2))
+  await expect(payment(expired)).rejects.toMatchObject({ code: 'CONFLICT' })
+  const closed = await obligation(socioId, 1_000, period(2520, 3))
+  await mutateShift(`status='CLOSED'`)
+  await expect(payment(closed)).rejects.toMatchObject({ code: 'CONFLICT' })
+  const missing = await obligation(socioId, 1_000, period(2520, 4))
+  await expect(payment(missing, randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  await mutateShift(`status='OPEN'`)
+  const outsider = { ...operatorContext, actorId: randomUUID() }
+  const foreign = await obligation(socioId, 1_000, period(2520, 5))
+  const foreignSelection = await selectFullOutstanding(db.db, { socioId, obligationIds: [foreign] })
+  await expect(
+    service.create({
+      ...firstInput,
+      ...outsider,
+      obligationIds: [foreign],
+      selectionFingerprint: foreignSelection.fingerprint,
+    }),
+  ).rejects.toMatchObject({ code: 'INSUFFICIENT_PERMISSIONS' })
+  await expect(countFinancialWrites()).resolves.toEqual(beforeDenied)
+})

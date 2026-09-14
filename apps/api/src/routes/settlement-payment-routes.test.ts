@@ -73,28 +73,31 @@ it('accepts only the strict authenticated idempotent payment DTO', async () => {
   expect(create).toHaveBeenCalledTimes(4)
 })
 
-it('requires finance authorization and an idempotency key before service invocation', async () => {
-  const create = vi.fn()
+it('accepts an operator full-selection payment with an idempotency key', async () => {
+  const create = vi.fn().mockResolvedValue({
+    settlementId: 'settlement-operator-1',
+    kind: 'MONETARY',
+    amountCents: 1200,
+    currency: 'ARS',
+    allocations: [],
+  })
   const fastify = await app({ create } as never)
-  expect(
-    (
-      await fastify.inject({
-        method: 'POST',
-        url: '/api/v1/dues/settlements',
-        headers: headers('OPERADOR'),
-        payload,
-      })
-    ).statusCode,
-  ).toBe(403)
-  expect(
-    (
-      await fastify.inject({
-        method: 'POST',
-        url: '/api/v1/dues/settlements',
-        headers: headers('ADMIN', ''),
-        payload,
-      })
-    ).statusCode,
-  ).toBe(400)
-  expect(create).not.toHaveBeenCalled()
+  const accepted = await fastify.inject({
+    method: 'POST',
+    url: '/api/v1/dues/settlements',
+    headers: headers('OPERADOR'),
+    payload,
+  })
+  expect(accepted.statusCode).toBe(201)
+  expect(create).toHaveBeenCalledWith(
+    expect.objectContaining({ actorId, role: 'OPERADOR', socioId, shiftId, tender: 'CASH' }),
+  )
+  const missingKey = await fastify.inject({
+    method: 'POST',
+    url: '/api/v1/dues/settlements',
+    headers: headers('ADMIN', ''),
+    payload,
+  })
+  expect(missingKey.statusCode).toBe(400)
+  expect(create).toHaveBeenCalledOnce()
 })

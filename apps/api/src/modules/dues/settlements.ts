@@ -74,6 +74,11 @@ const authorize = (role: AuditContext['role']) => {
     throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Settlement action is not authorized')
 }
 
+const authorizeOperatorPayment = (role: AuditContext['role']) => {
+  if (role !== 'ADMIN' && role !== 'TESORERO' && role !== 'OPERADOR')
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Settlement action is not authorized')
+}
+
 const auditMetadata = (input: AuditContext, now: string, extra: Json = {}) => ({
   actorId: input.actorId,
   role: input.role,
@@ -279,7 +284,7 @@ export class SettlementService {
       new Set(input.obligationIds).size !== input.obligationIds.length
     )
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Full selection payment command is invalid')
-    authorize(input.role)
+    authorizeOperatorPayment(input.role)
     const command = { ...input, obligationIds: [...input.obligationIds].sort() }
     return this.db.transaction(async (tx) => {
       const replay = await (
@@ -516,7 +521,7 @@ export class SettlementService {
   }
 
   async debt(input: DebtCommand) {
-    authorize(input.role)
+    authorizeOperatorPayment(input.role)
     try {
       return await (this.repository.getDebt ?? allocations.getDebt)(this.db, input.socioId)
     } catch (error) {

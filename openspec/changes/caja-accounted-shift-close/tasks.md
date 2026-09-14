@@ -207,10 +207,10 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Estimate:** 180–250 changed lines. **Depends on:** U7-B1 and a separately authorized operator/Collections delivery handoff. This slice owns no finance-path role changes.
 
-- [ ] 1. **RED:** add operator own-active-shift, partial/overpayment, and no-new-reversal boundary tests after its authorization handoff.
-- [ ] 2. **GREEN:** add only the separately authorized operator full-payment gate without recapturing payment input or widening finance actions.
-- [ ] 3. **TRIANGULATE:** prove operator replay/conflict and foreign/no-shift denial while preserving the finance B1 flow.
-- [ ] 4. **REFACTOR:** isolate the operator boundary and record focused API/UI evidence in its own work unit.
+- [x] 1. **RED:** add operator own-active-shift, partial/overpayment, and no-new-reversal boundary tests after its authorization handoff.
+- [x] 2. **GREEN:** add only the separately authorized operator full-payment gate without recapturing payment input or widening finance actions.
+- [x] 3. **TRIANGULATE:** prove operator replay/conflict and foreign/no-shift denial while preserving the finance B1 flow.
+- [x] 4. **REFACTOR:** isolate the operator boundary and record focused API/UI evidence in its own work unit.
 
 **Rollback boundary:** revert only the later operator authorization/integration seam and its tests; retain U7-B1 finance production behavior.
 
