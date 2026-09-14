@@ -115,18 +115,33 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert only Unit 3c authorization/preflight/open/read code and tests; retain the owner uniqueness migration and all prior financial history.
 
-## Unit 4 — Authorized Treasury/Caja opening and Collections entry UI
+## Unit 4a — Caja-first OPERADOR entry, opening, and own-read UI
 
-**Estimate:** 300–440 changed lines. **Depends on:** Unit 3. **Spec:** `specs/native-collections-web/spec.md` — Authorized Personal Caja Collections Journey; `specs/web-frontend/spec.md` — Capability-Aware Collections Navigation and Protected Routing.  
-**Start / finish:** start from Unit 3 API; finish with Spanish no-active-shift, existing-own-shift, foreign-denial, validation, conflict, and success states, allowing OPERADOR Treasury entry/opening but not a full-payment action until the operator owns an active shift.
-**Files:** `apps/web/src/app/(authed)/tesoreria/page.tsx`, `apps/web/src/app/(authed)/tesoreria/page.test.tsx`, `apps/web/src/app/(authed)/collections/page.tsx`, its existing test target, `apps/web/src/lib/navigation.ts`, `apps/web/src/lib/navigation.test.ts`, `apps/web/e2e/collections-cash-workflow.spec.ts`; discovery target: `apps/web/src/lib/features.tsx` and `apps/web/src/app/(authed)/layout.tsx`.
+**Estimate:** 280–390 changed lines. **Depends on:** Unit 3c. **Spec:** `specs/native-collections-web/spec.md` — Authorized Personal Caja Collections Journey; `specs/web-frontend/spec.md` — Capability-Aware Collections Navigation and Protected Routing.
+**User-selected slice:** Caja first. OPERADOR receives feature-gated Treasury navigation, entry, opening, and own OPEN-shift read without an active-shift prerequisite. This slice does not change Collections, payment authorization, tender/expense/close/recovery actions, or closed-history component access.
+**Files:** `apps/web/src/app/(authed)/tesoreria/page.tsx`, `apps/web/src/app/(authed)/tesoreria/page.test.tsx`, `apps/web/src/lib/navigation.ts`, `apps/web/src/lib/navigation.test.ts`, and new `apps/web/e2e/operator-caja-entry.spec.ts`.
 
-- [ ] 1. **RED:** add component/navigation failures for the role/feature/own-shift distinctions and Spanish state copy; add a failing planned Playwright scenario for OPERADOR opening Caja and being denied the payment action until active.
-- [ ] 2. **GREEN:** wire only Treasury/Caja entry and opening to Unit 3; preserve ADMIN/TESORERO behavior and keep negotiation, condonation, agreement-management, and reversal actions absent for OPERADOR.
-- [ ] 3. **TRIANGULATE:** cover direct `/collections` access, stale/duplicate-open response, foreign-shift response, and mobile/keyboard path without inline styles or hard-coded colors.
-- [ ] 4. **REFACTOR:** extract presentational state only where it reduces page complexity. Run planned focused web/Playwright selectors with exact counts, then confirmed shared quality commands.
+- [x] 1. **RED:** add component/navigation failures for the OPERADOR feature/no-shift/own-shift/foreign distinctions and Spanish stale-duplicate/expired-recovery copy; add the isolated Playwright OPERADOR Caja opening scenario.
+- [x] 2. **GREEN:** allow feature-gated Treasury/Caja entry and opening through Unit 3c only. Preserve ADMIN/TESORERO behavior; hide finance-only tender, expense, close, recovery, and closed-history actions from OPERADOR.
+- [x] 3. **TRIANGULATE:** cover own-empty/open, stale duplicate, foreign data, command error, and mobile keyboard opening. Do not claim a payment is available merely because Caja is open.
+- [x] 4. **REFACTOR:** retain the local presentational role boundary and run focused Vitest plus isolated headless Playwright with exact counts.
 
-**Rollback boundary:** revert these UI/navigation/e2e changes only; Unit 3 API remains independently usable by approved callers.
+**Rollback boundary:** revert only these Treasury/navigation/e2e changes; Unit 3c API remains independently usable by approved callers.
+
+## Unit 4b — Deferred Collections full-payment action gate
+
+**Depends on:** a separately authorized payment API/S2 integration point. Collections changes remain out of scope for the Caja-first slice. An active Caja alone SHALL NOT be presented as payment authorization.
+
+- [ ] 1. **RED:** after S2 ownership is resolved, add focused Collections tests for no-own-active-shift denial and a separately authorized full-payment path.
+- [ ] 2. **GREEN:** consume only the completed payment API gate; do not recapture tender, grant finance actions, or claim Caja opening authorizes payment.
+- [ ] 3. **TRIANGULATE:** exercise direct Collections access, stale active-shift state, conflict/replay, and mobile keyboard behavior.
+- [ ] 4. **REFACTOR:** keep the payment gate isolated from Caja entry and record focused web/Playwright evidence.
+
+**Rollback boundary:** revert only the future Collections payment-gate UI/tests; keep U4a Caja access intact.
+
+## Unit 4c — Deferred OPERADOR closed-history presentation
+
+No implementation task is scheduled. Do not expose a closed-history component or link to OPERADOR unless a separate local-component review proves it supports the owner-only API contract without finance-only actions.
 
 ## Unit 5 — Account-linked manual Caja sources and method matrix
 
