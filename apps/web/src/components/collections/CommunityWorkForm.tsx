@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Modal } from '@/components/ui/Modal'
+import { PesoAmountInput } from '@/components/ui/PesoAmountInput'
 import {
   collectionButtonClass,
   collectionFieldClass,
@@ -112,12 +113,11 @@ export function CommunityWorkForm({
         <div className="grid gap-5 border-t border-ink-100 pt-4 sm:grid-cols-2">
           <label className="grid gap-2 font-body text-sm font-medium text-ink-900">
             <span>Valor aprobado ({currency})</span>
-            <input
+            <PesoAmountInput
               className={`${collectionFieldClass} font-mono tabular-nums`}
               required
-              inputMode="decimal"
-              type="text"
               value={draft.amountCents}
+              parseCents={parsePesoToCents}
               aria-invalid={Boolean(
                 validationError && parsePesoToCents(draft.amountCents) === null,
               )}
@@ -125,7 +125,8 @@ export function CommunityWorkForm({
             />
           </label>
           <p className="font-body text-xs text-ink-700">
-            Usá coma o punto decimal, sin separadores de miles.
+            Ingresá pesos sin separadores de miles, por ejemplo 15600. Para centavos opcionales, usá
+            coma o punto decimal. El formato se aplica al salir del campo.
           </p>
           {outstandingCents !== undefined && (
             <p className="font-body text-sm text-ink-700">

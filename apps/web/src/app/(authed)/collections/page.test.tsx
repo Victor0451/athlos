@@ -1159,7 +1159,7 @@ describe('community-work evidence settlement', () => {
 
     const dialog = await screen.findByRole('dialog', { name: 'Registrar trabajo comunitario' })
     expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
-    expect(within(dialog).getByLabelText('Valor aprobado (ARS)')).toHaveValue('25')
+    expect(within(dialog).getByLabelText('Valor aprobado (ARS)')).toHaveValue('25,00')
     expect(within(dialog).getByLabelText('Evidencia del trabajo aceptado')).toHaveValue(
       'Acta 12 aprobada',
     )
