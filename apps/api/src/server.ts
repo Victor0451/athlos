@@ -50,6 +50,7 @@ import { implementationContactRoutes } from './routes/implementation-contact.ts'
 import { clubStatusRoutes } from './routes/club-status.ts'
 import { duesRoutes } from './routes/dues.ts'
 import { treasuryRoutes } from './routes/treasury.ts'
+import { accountChartRoutes } from './routes/account-chart.ts'
 
 /**
  * Read the API package version from `package.json` at boot. Used as
@@ -210,6 +211,7 @@ export async function buildServer(opts: BuildServerOptions = {}): Promise<Fastif
   await app.register(clubStatusRoutes)
   await app.register(duesRoutes)
   await app.register(treasuryRoutes)
+  await app.register(accountChartRoutes)
 
   // 10b. Approval routes (PR 3b): public-by-token + internal create-link.
   await app.register(approvalRoutes)

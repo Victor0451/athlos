@@ -71,10 +71,10 @@ These are candidates for the human split decision, not an automatic chain. Each 
 **Start / finish:** start from the seeded catalog; finish with a GET-only, role/capability-protected catalog endpoint that deterministically filters by code, Spanish name, or root group and returns hierarchy/active/imputable metadata. No selector UI and no chart CRUD.
 **Files:** new `apps/api/src/modules/account-chart/repository.ts`, new `apps/api/src/modules/account-chart/repository.postgres.integration.test.ts`, new `apps/api/src/routes/account-chart.ts`, new `apps/api/src/routes/account-chart.test.ts`, `apps/api/src/server.ts`; discovery target for established auth/capability convention: `apps/api/src/routes/treasury.ts` and `apps/api/src/routes/dues.ts`.
 
-- [ ] 1. **RED:** write route injection failures for unauthenticated/unauthorized access and query validation, plus a disposable-PG repository failure for code/name/group filters, stable ordering, and inclusion of active imputable leaves under Assets and Liabilities.
-- [ ] 2. **GREEN:** implement only parameterized read/search and a GET route registration. Make the exact authorized-role/capability choice match the existing Collections/Caja gate discovered above; return no mutation surface or account-selection writer.
-- [ ] 3. **TRIANGULATE:** add no-match, accent/case normalization (if the approved deterministic contract supports it), group-only, inactive, and non-imputable response cases; prove all queries remain scoped to the seeded hierarchy on disposable PostgreSQL.
-- [ ] 4. **REFACTOR:** share DTO/filter parsing without weakening Zod validation or authorization. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
+- [x] 1. **RED:** write route injection failures for unauthenticated/unauthorized access and query validation, plus a disposable-PG repository failure for code/name/group filters, stable ordering, and inclusion of active imputable leaves under Assets and Liabilities.
+- [x] 2. **GREEN:** implement only parameterized read/search and a GET route registration. Make the exact authorized-role/capability choice match the existing Collections/Caja gate discovered above; return no mutation surface or account-selection writer.
+- [x] 3. **TRIANGULATE:** add no-match, accent/case normalization (if the approved deterministic contract supports it), group-only, inactive, and non-imputable response cases; prove all queries remain scoped to the seeded hierarchy on disposable PostgreSQL.
+- [x] 4. **REFACTOR:** share DTO/filter parsing without weakening Zod validation or authorization. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
 
 **Rollback boundary:** revert account-chart repository/route/registration/tests only; Unit 1's seeded catalog remains harmless and unreadable through this endpoint.
 

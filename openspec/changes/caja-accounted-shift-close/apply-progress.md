@@ -120,3 +120,30 @@
   - [ ] 2. Run the applicable planned Playwright selectors through the confirmed web E2E command and record exact pass/fail/skip counts. Automated evidence proves only the local/disposable contract.
   - [ ] 3. Leave **QA001 pending** until an authorized live operational observation is separately approved and recorded. Do not replace it with simulation, BETA/production access, secrets, or a synthetic receipt.
 - Evidence hash receipt: SHA-256 of `apply-progress.md` immediately after the correction evidence above and before this receipt was appended: `25448f4d371e94fb831986f6ee0b606b0d4dd81e02371ab80978db9f7e0e937d`.
+
+## Unit 2 — Read/search account-chart API
+
+- Completed persisted tasks: Unit 2 tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`.
+- Changed: `apps/api/src/modules/account-chart/repository.ts`, its disposable-PG integration test, `apps/api/src/routes/account-chart.ts`, its injection test, and `apps/api/src/server.ts` registration.
+- GET-only `/api/v1/account-chart` accepts `code`, `name`, `root`, `group`, and explicit `active=true|false`; omitted `active` includes both states. It permits `ADMIN`, `TESORERO`, and `OPERADOR`, rejects unauthenticated/CONSULTA/unknown/oversized/non-boolean queries, and has no writer or feature flag.
+- The repository uses a recursive parent-link hierarchy (never code-prefix ancestry), parameterized SQL, literal wildcard escaping, case/accent-normalized code/name substring matching, explicit ancestor-group filtering, and numeric hierarchy ordering. DTOs expose parent/root/path code/name plus active/imputable/eligible metadata.
+- RED: route test failed to load the absent route (0 tests); the disposable-PG test failed to load the absent repository (0 tests). Lifecycle `1789354495-961223-cb702818e90b3687` cleaned its container and volume with final absence evidence.
+- GREEN: route injection — 2 passed, 0 failed; disposable PostgreSQL repository — 2 passed, 0 failed under lifecycle `1789354593-967542-23af6a0fae895773`.
+- TRIANGULATE: no-match, literal wildcard, active/inactive, ancestor group, active imputable Assets/Liabilities, stable order, and `CREDITOS POR VENTAS` accent/case search passed on real PostgreSQL under lifecycle `1789354650-970984-8b6b31b5ffdbccb9`.
+
+### TDD Cycle Evidence
+
+| Task | Test file/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| Unit 2.1–2 | route injection + disposable PostgreSQL | N/A (new files) | missing route/repository observed | route 2/2; repository 2/2 | catalog filter cases covered | shared parser/DTO helpers retained; 4/4 focused green |
+| Unit 2.3 | repository PostgreSQL | 2/2 GREEN | added accent-normalized name case | 2/2 retained | group, inactive, no-match, wildcard paths exercised | Prettier; 4/4 focused green |
+| Unit 2.4 | API/package quality | focused 4/4 | N/A (refactor only) | 4/4 focused green | N/A (covered above) | API typecheck/lint/build and repository format check passed |
+
+### Verification and boundary
+
+- `scripts/lib/disposable-postgres.sh run --caller account-chart -- pnpm --filter @athlos/api exec vitest run src/routes/account-chart.test.ts src/modules/account-chart/repository.postgres.integration.test.ts` — 2 files, 4 passed, 0 failed; lifecycle `1789354796-979855-21bc49c8d52fdf63` removed container/volume and verified both absent.
+- `pnpm --filter @athlos/api typecheck`, `pnpm --filter @athlos/api lint`, `pnpm --filter @athlos/api build`, and `pnpm format:check` — passed. `typescript-language-server` was unavailable before build, so repository typecheck supplied static analysis. No aggregate runner was repeated: its normal DB lane lacks `ATHLOS_TEST_DATABASE_URL`; the disposable lifecycle above is the candidate database evidence. UI runtime evidence: N/A (API-only).
+- Deviation: none. No commit, migration, UI, chart CRUD, Caja movement, other finance route, feature flag, or external service was added.
+- Workload/PR boundary: Unit 2 only, stacked-to-main above Unit 1 (`63902fe`); current Unit 2 authored source/test/registration plus persisted task-check changes are 325 changed lines before this evidence, within the 400-line budget. Rollback: remove only the five Unit 2 API files/registration; leave Unit 1's catalog intact and unreadable through this endpoint.
+- Structured status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`; `taskProgress=4/39` at intake; `applyState=ready`; `actionContext.mode=repo-local`; workspace and allowed root `/home/vlongo/Athlos-worktrees/caja-diagnosis`. Warning retained: `/` is a future, unauthorized root and was untouched. QA001 remains pending.
+- Remaining: Unit 3–9 and final-acceptance checkboxes remain `[ ]` in `tasks.md`; the 35-item historical ledger above is superseded for Unit 2's four now-complete lines, while its remaining 31 exact unchecked lines remain unchanged. `tasks.md` is authoritative.
