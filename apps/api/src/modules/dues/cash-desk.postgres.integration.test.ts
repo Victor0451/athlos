@@ -187,10 +187,88 @@ describe('cash desk PostgreSQL policy', () => {
         'Cash shift not found',
       )
       await expect(service.detail({ ...reader, role: 'OPERADOR' })).rejects.toThrow(
-        'Cash desk action is not authorized',
+        'Cash shift responsibility does not match the operator',
       )
     },
   )
+
+  it('limits an OPERADOR to own Caja shifts while finance keeps cross-owner reads', async () => {
+    const service = new CashDeskService(db.db)
+    const own = await service.open({
+      ...context(`operator-own-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    const foreign = await service.open({
+      ...context(`operator-foreign-${randomUUID()}`),
+      actorId: secondOperatorId,
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    const operator = { ...context(`operator-read-${randomUUID()}`), role: 'OPERADOR' as const }
+
+    await expect(service.list(operator)).resolves.toEqual([own])
+    await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
+      shift: own,
+      close: null,
+    })
+    await expect(service.detail({ ...operator, shiftId: foreign.id })).rejects.toThrow(
+      'Cash shift responsibility does not match the operator',
+    )
+    await expect(
+      service.detail({ ...operator, role: 'TESORERO', shiftId: foreign.id }),
+    ).resolves.toEqual({ shift: foreign, close: null })
+  })
+
+  it('returns no foreign shifts to an OPERADOR without one and replays that operator’s own opening', async () => {
+    const service = new CashDeskService(db.db)
+    const operator = {
+      ...context(`operator-empty-list-${randomUUID()}`),
+      role: 'OPERADOR' as const,
+    }
+    const opening = {
+      ...operator,
+      callerKey: `operator-own-replay-${randomUUID()}`,
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    }
+
+    await expect(service.list(operator)).resolves.toEqual([])
+    const opened = await service.open(opening)
+    await expect(
+      service.open({ ...opening, deskId: `other-desk-${randomUUID()}` }),
+    ).resolves.toEqual(opened)
+    expect(opened.assignedOperatorId).toBe(operator.actorId)
+  })
+
+  it('lets an OPERADOR read an expired own shift but blocks a new opening without auto-close', async () => {
+    let now = new Date('2026-08-19T10:00:00.000Z')
+    const service = new CashDeskService(db.db, () => now)
+    const own = await service.open({
+      ...context(`operator-expired-own-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    now = new Date('2026-08-20T11:00:00.000Z')
+    const operator = {
+      ...context(`operator-expired-read-${randomUUID()}`),
+      role: 'OPERADOR' as const,
+    }
+
+    await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
+      shift: own,
+      close: null,
+    })
+    await expect(
+      service.open({
+        ...operator,
+        callerKey: `operator-expired-reopen-${randomUUID()}`,
+        deskId: `desk-${randomUUID()}`,
+        openingTenders: {},
+      }),
+    ).rejects.toThrow(own.id)
+    expect((await service.detail({ ...context(), shiftId: own.id })).shift.status).toBe('OPEN')
+  })
 
   it('closes with an inclusive interval, retains businessDate, replays, and excludes NON_CASH', async () => {
     const service = new CashDeskService(db.db)

@@ -39,6 +39,9 @@ type Row = {
   opening_tenders: Totals
 }
 
+const isShiftOwner = (shift: Pick<Row, 'assigned_operator_id'>, actorId: string) =>
+  shift.assigned_operator_id === actorId
+
 const rows = <T = Row>(value: unknown) => (value as { rows?: T[] }).rows ?? []
 const cents = (value: string) => {
   const [whole, fraction = ''] = value.split('.')
@@ -125,8 +128,16 @@ export function reconcileTenders(
   return { expected, counted: normalized, discrepancy }
 }
 
+const isFinance = (role: string) => role === 'ADMIN' || role === 'TESORERO'
+
 const authorize = (role: string) => {
-  if (role !== 'ADMIN' && role !== 'TESORERO') {
+  if (!isFinance(role)) {
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Cash desk action is not authorized')
+  }
+}
+
+const authorizeOpenRead = (role: string) => {
+  if (!isFinance(role) && role !== 'OPERADOR') {
     throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Cash desk action is not authorized')
   }
 }
@@ -438,7 +449,7 @@ export class CashDeskService {
       ),
     )[0]
     if (!row) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
-    if (row.assigned_operator_id !== input.actorId && input.role !== 'ADMIN') {
+    if (!isShiftOwner(row, input.actorId) && input.role !== 'ADMIN') {
       throw BusinessError(
         ErrorCode.INSUFFICIENT_PERMISSIONS,
         'Cash shift responsibility does not match the operator',
@@ -455,7 +466,7 @@ export class CashDeskService {
   }
 
   async open(input: OpenCashCommand) {
-    authorize(input.role)
+    authorizeOpenRead(input.role)
     const opening = validateOpeningTenders(input.openingTenders)
     const openedAt = this.now()
     const businessDate = businessDateForOpening(openedAt)
@@ -528,16 +539,18 @@ export class CashDeskService {
   }
 
   async list(input: CashCommand) {
-    authorize(input.role)
+    authorizeOpenRead(input.role)
+    const ownership =
+      input.role === 'OPERADOR' ? sql`WHERE assigned_operator_id = ${input.actorId}` : sql``
     return rows(
       await this.db.execute(
-        sql`SELECT id,desk_id,status,assigned_operator_id,business_date,opened_at,closed_at FROM tesoreria.dues_cash_shifts ORDER BY opened_at DESC LIMIT 50`,
+        sql`SELECT id,desk_id,status,assigned_operator_id,business_date,opened_at,closed_at FROM tesoreria.dues_cash_shifts ${ownership} ORDER BY opened_at DESC LIMIT 50`,
       ),
     ).map(responseShift)
   }
 
   async detail(input: CashCommand & { shiftId: string }) {
-    authorize(input.role)
+    authorizeOpenRead(input.role)
     const result = rows<{ shift: Row; close: Row | null }>(
       await this.db.execute(sql`
         SELECT row_to_json(s) AS shift, row_to_json(c) AS close
@@ -547,6 +560,12 @@ export class CashDeskService {
       `),
     )[0]
     if (!result) throw BusinessError(ErrorCode.NOT_FOUND, 'Cash shift not found')
+    if (input.role === 'OPERADOR' && !isShiftOwner(result.shift, input.actorId)) {
+      throw BusinessError(
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
+        'Cash shift responsibility does not match the operator',
+      )
+    }
     return {
       shift: responseShift(result.shift),
       close: result.close ? responseClose(result.close) : null,

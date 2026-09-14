@@ -9,6 +9,7 @@ import { CashDeskService, type CloseCashCommand, type ExpenseCommand, type OpenC
 import type { AuditContext } from '../modules/dues/service.ts'
 
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
+const SHIFT_OPEN_READ_GATE = { preHandler: requireRole('ADMIN', 'TESORERO', 'OPERADOR') }
 // prettier-ignore
 const id=z.object({id:z.string().uuid()}),totals=z.record(z.string().min(1).max(20),z.number().int().nonnegative()),openBody=z.object({desk_id:z.string().trim().min(1).max(80),opening_tenders:totals.default({})}).strict(),tenderBody=z.object({direction:z.enum(['INCOME','EXPENSE']),tender:z.string().trim().min(1).max(20),amount_cents:z.number().int().positive(),source_type:z.enum(['SETTLEMENT','MANUAL']),source_id:z.string().uuid().optional(),reason:z.string().trim().min(1).max(500).optional()}).strict().superRefine((value,ctx)=>{if(value.source_type==='SETTLEMENT'&&!value.source_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_id'],message:'Settlement source is required'});if(value.source_type==='MANUAL'&&value.source_id)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_id'],message:'Manual tenders cannot have a source'});}),expenseBody=z.object({gasto_id:z.string().uuid(),tender:z.string().trim().min(1).max(20)}).strict(),closeBody=z.object({counted_tenders:totals,reason:z.string().trim().min(1).max(500).optional(),force_close:z.boolean().default(false)}).strict()
 // prettier-ignore
@@ -37,15 +38,15 @@ const closeDto = (row: Awaited<ReturnType<CashDeskService['close']>>) => ({
 // prettier-ignore
 export const treasuryRoutes:FastifyPluginCallback<TreasuryRouteOptions>=(fastify,options,done)=>{const container:AppContainer=fastify.container,service=options.service??new CashDeskService(container.db)
   // prettier-ignore
-  fastify.get('/api/v1/treasury/shifts',FINANCE_GATE,async(request,reply)=>{gate(container);return reply.send({items:(await service.list!(context(request,key(request,false),{}))).map(dto)})})
-  fastify.get<{ Params: { id: string } }>('/api/v1/treasury/shifts/:id', FINANCE_GATE, async (request, reply) => {
+  fastify.get('/api/v1/treasury/shifts',SHIFT_OPEN_READ_GATE,async(request,reply)=>{gate(container);return reply.send({items:(await service.list!(context(request,key(request,false),{}))).map(dto)})})
+  fastify.get<{ Params: { id: string } }>('/api/v1/treasury/shifts/:id', SHIFT_OPEN_READ_GATE, async (request, reply) => {
     gate(container)
     const params = throwIfInvalid(id, request.params, 'params')
     const result = await service.detail!({ ...context(request, key(request, false), {}), shiftId: params.id })
     return reply.send({ shift: dto(result.shift), close: result.close ? closeDto(result.close) : null })
   })
   // prettier-ignore
-  fastify.post('/api/v1/treasury/shifts',FINANCE_GATE,async(request,reply)=>{gate(container);const body=throwIfInvalid(openBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),deskId:body.desk_id,openingTenders:body.opening_tenders} as OpenCashCommand;return reply.code(201).send(dto(await service.open!(input)))})
+  fastify.post('/api/v1/treasury/shifts',SHIFT_OPEN_READ_GATE,async(request,reply)=>{gate(container);const body=throwIfInvalid(openBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),deskId:body.desk_id,openingTenders:body.opening_tenders} as OpenCashCommand;return reply.code(201).send(dto(await service.open!(input)))})
   // prettier-ignore
   fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/tenders',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(tenderBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,direction:body.direction,tender:body.tender,amountCents:body.amount_cents,sourceType:body.source_type,...(body.source_id?{sourceId:body.source_id}:{}),...(body.reason?{reason:body.reason}:{})} as TenderCommand;return reply.code(201).send(await service.recordTender!(input))})
   // prettier-ignore

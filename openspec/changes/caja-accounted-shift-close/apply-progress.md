@@ -209,3 +209,39 @@
 - Produced status: `gentle-ai.sdd-status/v2`, change `caja-accounted-shift-close`, artifact store `openspec`, `taskProgress=16/47`, `applyState=ready`, `nextRecommended=verify`, `actionContext.mode=repo-local`; allowed edits remained only within the parent-provided worktree surfaces. Parent owns native attempt settlement. QA001 remains pending.
 - Remaining delegated follow-up is U3c only; do not start it in this work unit.
 - Evidence receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `090f49240d4e43a6847179578451204b15ea86980bcb89bb196dd4ec2ef1aa8c`.
+
+## Unit 3c — OPERADOR personal Caja open/read boundary
+
+- Completed persisted tasks: U3c tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`.
+- Changed: `apps/api/src/routes/treasury.ts`, `apps/api/src/modules/dues/cash-desk.ts`, focused route and disposable-PostgreSQL tests, the persisted U3c task checkboxes, and this cumulative evidence.
+- Behavior: only list, detail, and opening use the separate `ADMIN`/`TESORERO`/`OPERADOR` gate. `OPERADOR` opens only with its authenticated actor as owner, lists only `assigned_operator_id = actorId`, and receives no DTO for a foreign detail. Idempotent opening remains actor-scoped; an existing own OPEN shift remains the non-destructive preflight result, including after expiry. ADMIN/TESORERO retain cross-owner list/detail visibility and all existing finance writes (tender, expense, close, and forced close) remain finance-gated; Collections, settlement/reversal/negotiation, manual sources, and UI were not changed.
+- Payload boundary: the existing strict open schema rejects `assigned_operator_id`; the route derives ownership exclusively from the authenticated token.
+
+### TDD Cycle Evidence
+
+| Task | Test file/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U3c.1 | `treasury-routes.test.ts` / Fastify injection | 15/15 route tests passed; direct combined baseline could not supply `ATHLOS_TEST_DATABASE_URL`, then required disposable baseline was 9/9 | 2 failures: OPERADOR open/read returned 403; spoof payload returned 403 before strict validation | 17/17 route tests passed after the bounded gate | token-derived actor, list/detail access, and strict owner-spoof rejection covered | retained focused green |
+| U3c.1–3 | `cash-desk.postgres.integration.test.ts` / disposable real PostgreSQL | 9/9 passed, lifecycle `1789392938-2533935-59d67a8a803c93ea` cleaned container/volume | 2 failures: OPERADOR list/detail rejected by the finance-only service guard, lifecycle `1789393027-2537801-f7d1a18b3a991519` cleaned resources | 11/11 after operator-only list filtering and foreign-detail guard | 12/12: empty own list, actor-scoped open replay, own/foreign/finance reads, and expired-own read/reopen blocking | extracted `isFinance`, `authorizeOpenRead`, and `isShiftOwner`; 17/17 route and 12/12 PostgreSQL tests remained green |
+| U3c.4 | focused API verification | 17/17 route and 12/12 PostgreSQL before refactor | approval coverage above | unchanged behavior green | covered by the distinct ownership paths above | target-only Prettier plus final focused runs green |
+
+### Verification
+
+- `pnpm --filter @athlos/api exec vitest run src/routes/treasury-routes.test.ts` — final 17 passed, 0 failed, 0 skipped.
+- `scripts/lib/disposable-postgres.sh run --caller personal-shift-open-read-format-verify -- pnpm --filter @athlos/api exec vitest run src/modules/dues/cash-desk.postgres.integration.test.ts` — final 1 file, 12 passed, 0 failed, 0 skipped. Lifecycle `1789393253-2550220-073f6dce8da89cfb` removed container and volume and reported both absent. No external DB URL, BETA, production, secrets, or live services were used.
+- `pnpm --filter @athlos/api typecheck`, `pnpm --filter @athlos/api lint`, `pnpm --filter @athlos/api build`, `pnpm format:check`, and `git diff --check` — passed. `typescript-language-server` was unavailable (`LSP_AVAILABLE=0`), so API typecheck was the static-analysis fallback.
+- The direct requested combined Vitest command was not a valid PostgreSQL harness: route tests passed 15/15 while the PostgreSQL file was skipped then failed setup for missing `ATHLOS_TEST_DATABASE_URL`. The repository-owned disposable command above is the required real-PostgreSQL evidence.
+
+### Boundary, status, and remaining work
+
+- Deviation from design: none. UI/Playwright is N/A for this API-only U3c unit. No automatic close, delete, carryover, tender/expense/close authorization widening, finance flow modification, commit, PR, push, base update, external access, or QA001 closure occurred.
+- Workload/PR boundary: U3c only, stacked-to-main above U3b; current formatted work-unit diff is recorded by the final diff receipt below and remains below the 400-line budget. Rollback only the U3c route gate, open/read ownership helpers and filters, tests, and this task evidence; retain U3a/U3b uniqueness migrations and all financial history.
+- Structured status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`; artifact store `openspec`; intake `taskProgress=16/47`; `applyState=ready`; delivery `ask-on-risk` with resolved `stacked-to-main`; `actionContext.mode=repo-local`; authoritative worktree and allowed edit surfaces supplied by parent. Warning retained: do not touch `/`, the principal checkout, other worktrees, or S2-reserved settlement files. QA001 remains pending.
+- Remaining exact next-unit lines:
+  - [ ] 1. **RED:** add component/navigation failures for the role/feature/own-shift distinctions and Spanish state copy; add a failing planned Playwright scenario for OPERADOR opening Caja and being denied the payment action until active.
+  - [ ] 2. **GREEN:** wire only Treasury/Caja entry and opening to Unit 3; preserve ADMIN/TESORERO behavior and keep negotiation, condonation, agreement-management, and reversal actions absent for OPERADOR.
+  - [ ] 3. **TRIANGULATE:** cover direct `/collections` access, stale/duplicate-open response, foreign-shift response, and mobile/keyboard path without inline styles or hard-coded colors.
+  - [ ] 4. **REFACTOR:** extract presentational state only where it reduces page complexity. Run planned focused web/Playwright selectors with exact counts, then confirmed shared quality commands.
+  All later Units 5–9 and final acceptance remain unchecked and out of scope; the persisted `tasks.md` is authoritative.
+- Diff receipt: before this receipt, `git diff --numstat` was 212 additions and 16 deletions; the U3c work unit remains below the 400 changed-line budget.
+- Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before these receipt lines: `97586976d725e86a3d015ffa856371464121e82593a05462a0a76967e4a2e4c6`.

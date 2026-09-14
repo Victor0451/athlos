@@ -105,7 +105,7 @@ describe('cash shift detail reads', () => {
   )
 
   it.each([
-    ['OPERADOR', true, shiftId, 403, false],
+    ['OPERADOR', true, shiftId, 404, true],
     ['TESORERO', false, shiftId, 404, false],
     ['ADMIN', true, 'not-a-uuid', 400, false],
     ['ADMIN', true, shiftId, 404, true],
@@ -139,10 +139,74 @@ describe('treasury routes',()=>{
   // prettier-ignore
   it('opens a shift for finance and returns a privacy-safe close DTO',async()=>{const service={open:vi.fn().mockResolvedValue({id:'shift-1',deskId:'front',status:'OPEN'}),close:vi.fn()},fastify=await app(service),opened=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{desk_id:'front',opening_tenders:{CASH:100}}});expect(opened.statusCode).toBe(201);expect(opened.json()).toEqual({id:'shift-1',desk_id:'front',status:'OPEN'});expect(service.open).toHaveBeenCalledWith(expect.objectContaining({deskId:'front',openingTenders:{CASH:100}}))})
   // prettier-ignore
-   it('rejects operators and remains disabled behind the cash gate',async()=>{const service={open:vi.fn()};expect((await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('OPERADOR'),payload:{}})).statusCode).toBe(403);expect((await(await app(service,false)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{}})).statusCode).toBe(404)})
+   it('remains disabled behind the cash gate',async()=>{const service={open:vi.fn()};expect((await(await app(service,false)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{}})).statusCode).toBe(404);expect(service.open).not.toHaveBeenCalled()})
    it('requires an explicit idempotency key for every financial command',async()=>{const service={open:vi.fn()};const response=await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO',''),payload:{desk_id:'front',opening_tenders:{}}});expect(response.statusCode).toBe(400);expect(service.open).not.toHaveBeenCalled()})
   // prettier-ignore
    it('maps an authorized discrepancy close and never returns authorization evidence',async()=>{const service={close:vi.fn().mockResolvedValue({id:'close-1',shiftId:'shift-1',expectedTenders:{CASH:100},countedTenders:{CASH:90},discrepancy:{CASH:-10},reason:'Counted short',closedAt:'2026-08-19T10:00:00.000Z'})},fastify=await app(service),response=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('TESORERO','close-1'),payload:{counted_tenders:{CASH:90},reason:'Counted short'}});expect(response.statusCode).toBe(200);expect(response.json()).toEqual({id:'close-1',shift_id:'shift-1',expected_tenders:{CASH:100},counted_tenders:{CASH:90},discrepancy:{CASH:-10},reason:'Counted short',closed_at:'2026-08-19T10:00:00.000Z'});expect(response.body).not.toContain('authorizationEvidence')})
    it('passes force-close intent and reason only to an authorized finance operator',async()=>{const service={close:vi.fn().mockResolvedValue({id:'close-force',shiftId:'shift-1',expectedTenders:{},countedTenders:{},discrepancy:{},reason:'Recovery',closedAt:'2026-08-20T10:00:00.000Z',forceClose:true})},fastify=await app(service),response=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('TESORERO','force-close-1'),payload:{counted_tenders:{},force_close:true,reason:'Recovery'}});expect(response.statusCode).toBe(200);expect(service.close).toHaveBeenCalledWith(expect.objectContaining({forceClose:true,reason:'Recovery'}));expect(response.json()).toMatchObject({force_close:true,reason:'Recovery'});expect(response.body).not.toContain('authorizationEvidence')})
    it('rejects force-close for an ordinary operator',async()=>{const service={close:vi.fn()};const response=await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('OPERADOR','force-close-operator'),payload:{counted_tenders:{},force_close:true,reason:'Recovery'}});expect(response.statusCode).toBe(403);expect(service.close).not.toHaveBeenCalled()})
+
+  it('permits an operator through only the Caja open and read routes', async () => {
+    const shiftId = '00000000-0000-4000-8000-000000000002'
+    const ownShift = {
+      id: shiftId,
+      deskId: 'front',
+      status: 'OPEN',
+      assignedOperatorId: actorId,
+      businessDate: '2026-08-19',
+      openedAt: '2026-08-19T10:00:00.000Z',
+      closedAt: null,
+    }
+    const service = {
+      open: vi.fn().mockResolvedValue(ownShift),
+      list: vi.fn().mockResolvedValue([ownShift]),
+      detail: vi.fn().mockResolvedValue({ shift: ownShift, close: null }),
+    }
+    const fastify = await app(service)
+
+    const opened = await fastify.inject({
+      method: 'POST',
+      url: '/api/v1/treasury/shifts',
+      headers: auth('OPERADOR', 'operator-open'),
+      payload: { desk_id: 'front', opening_tenders: {} },
+    })
+    const listed = await fastify.inject({
+      method: 'GET',
+      url: '/api/v1/treasury/shifts',
+      headers: { authorization: auth('OPERADOR').authorization },
+    })
+    const detail = await fastify.inject({
+      method: 'GET',
+      url: `/api/v1/treasury/shifts/${shiftId}`,
+      headers: { authorization: auth('OPERADOR').authorization },
+    })
+
+    expect(opened.statusCode).toBe(201)
+    expect(listed.json()).toEqual({ items: [expect.objectContaining({ id: shiftId })] })
+    expect(detail.json()).toMatchObject({ shift: { id: shiftId, assigned_operator_id: actorId } })
+    expect(service.open).toHaveBeenCalledWith(expect.objectContaining({ actorId }))
+    expect(service.list).toHaveBeenCalledWith(expect.objectContaining({ actorId, role: 'OPERADOR' }))
+    expect(service.detail).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId, role: 'OPERADOR', shiftId }),
+    )
+  })
+
+  it('rejects an owner-spoofing opening payload before calling the service', async () => {
+    const service = { open: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url: '/api/v1/treasury/shifts',
+      headers: auth('OPERADOR', 'operator-spoof'),
+      payload: {
+        desk_id: 'front',
+        opening_tenders: {},
+        assigned_operator_id: '00000000-0000-4000-8000-000000000099',
+      },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(service.open).not.toHaveBeenCalled()
+  })
  })

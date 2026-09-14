@@ -108,10 +108,10 @@ These are candidates for the human split decision, not an automatic chain. Each 
 **Estimate:** 250–360 changed lines. **Depends on:** Unit 3b. **Spec:** `specs/accounted-personal-shifts/spec.md` — Shift Authorization Boundaries.
 **Start / finish:** permit an OPERADOR to open and read only that operator's personal Caja shift; preserve ADMIN/TESORERO recovery and visibility semantics without introducing a global finance gate or Collections-payment changes.
 
-- [ ] 1. **RED:** add focused route/service failures for foreign-shift read/open denial, own OPEN-shift preflight, and preserved ADMIN/TESORERO recovery/read behavior.
-- [ ] 2. **GREEN:** implement owner-aware preflight/open/read authorization for OPERADOR only; keep routes, Collections actions, payload validation, manual sources, production capture, close transfer, and new reversal behavior out of scope.
-- [ ] 3. **TRIANGULATE:** exercise no-own-shift, existing-own-shift, foreign-shift, and expired-own-shift outcomes without auto-close, delete, or carryover.
-- [ ] 4. **REFACTOR:** extract ownership helpers from legacy tender/close code; run focused API/disposable-PostgreSQL selectors. UI runtime evidence is **N/A (API-only)**.
+- [x] 1. **RED:** add focused route/service failures for foreign-shift read/open denial, own OPEN-shift preflight, and preserved ADMIN/TESORERO recovery/read behavior.
+- [x] 2. **GREEN:** implement owner-aware preflight/open/read authorization for OPERADOR only; keep routes, Collections actions, payload validation, manual sources, production capture, close transfer, and new reversal behavior out of scope.
+- [x] 3. **TRIANGULATE:** exercise no-own-shift, existing-own-shift, foreign-shift, and expired-own-shift outcomes without auto-close, delete, or carryover.
+- [x] 4. **REFACTOR:** extract ownership helpers from legacy tender/close code; run focused API/disposable-PostgreSQL selectors. UI runtime evidence is **N/A (API-only)**.
 
 **Rollback boundary:** revert only Unit 3c authorization/preflight/open/read code and tests; retain the owner uniqueness migration and all prior financial history.
 
