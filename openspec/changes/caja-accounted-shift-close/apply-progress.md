@@ -445,3 +445,45 @@
   - [ ] 1. Reconcile every unit's recorded RED/GREEN/TRIANGULATE/REFACTOR evidence, migration status, changed-line count, and rollback boundary against the human-selected delivery choice and, if split was selected, its chain strategy. Re-run the confirmed aggregate quality commands from the integrated base.
   - [ ] 2. Run the applicable planned Playwright selectors through the confirmed web E2E command and record exact pass/fail/skip counts. Automated evidence proves only the local/disposable contract.
   - [ ] 3. Leave **QA001 pending** until an authorized live operational observation is separately approved and recorded. Do not replace it with simulation, BETA/production access, secrets, or a synthetic receipt.
+
+## Unit 4bA — OPERADOR Collections full-payment presentation gate
+
+- Completed persisted tasks: U4bA RED, GREEN, TRIANGULATE, and REFACTOR are `[x]`; U4bB remains pending.
+- Changed: Collections page capability split, TreatmentWorkspace payment-only presentation, optional reversal controls, focused component/page tests, and the isolated operator Caja E2E.
+- Behavior: `financeCapability` remains ADMIN/TESORERO-only; `canPayFullSelection` additionally permits OPERADOR only with the existing eligible own OPEN ≤24h shift. No-shift OPERADORs see Spanish Caja/Tesorería guidance and no submit action; own-shift payment reuses the existing full-selection dialog/hook. Reversal, approval, negotiation management, and condonation execution remain unavailable.
+
+### TDD Cycle Evidence
+
+| Task | Safety net / RED | GREEN | TRIANGULATE / REFACTOR |
+| --- | --- | --- | --- |
+| U4bA 1–4 | baseline 42/42; test-first RED 42 passed, 3 failed (no-shift state, operator payment, reversal visibility) | focused 45/45 | own-shift full selection adds 46/46; target Prettier then 46/46 |
+| U4bA E2E | mocked direct Collections journey authored before final E2E validation | 3/3 Playwright | no-shift link/no POST and own-shift one full payment POST; no reversal; formatting rerun 3/3 |
+
+### Verification, boundary, and status
+
+- `pnpm --filter @athlos/web exec vitest run 'src/app/(authed)/collections/page.test.tsx' src/components/collections/TreatmentWorkspace.test.tsx src/components/collections/SettlementActions.test.tsx` — final 3 files, 46 passed, 0 failed, 0 skipped.
+- `PLAYWRIGHT_PORT=3101 NATIVE_COLLECTIONS_WEB_ENABLED=true DUES_CASH_ENABLED=true COLLECTIONS_CASH_MOBILE_KEYBOARD_ENABLED=true pnpm --filter @athlos/web exec playwright test e2e/operator-caja-entry.spec.ts` — 3 passed, 0 failed, 0 skipped; strict mocked DTO/UI evidence only, not PostgreSQL or QA001 evidence. Port 3101 was absent before and after; no process was killed.
+- `typescript-language-server` was unavailable, so `pnpm --filter @athlos/web typecheck` was the static-analysis fallback; it, `pnpm --filter @athlos/web lint`, `pnpm format:check`, `pnpm --filter @athlos/web build`, and `git diff --check` passed. Build-generated `apps/web/next-env.d.ts` was restored to SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`.
+- Deviation: none. Workload/PR boundary: U4bA only, stacked-to-main above U7B2/U4a; no commit, integration, API, DB, simulator, or navigation change. Rollback only the listed U4bA Collections UI/tests; U4bB is pending: `- [ ] 1. **RED:** add focused failures distinguishing operator 403 denial from 409 stale state, refresh, replay failure, and mobile keyboard recovery.` through its remaining three `[ ]` lines in `tasks.md`.
+- Structured status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`, openspec, `taskProgress=40/63`, `applyState=ready`, `nextRecommended=apply`, delivery `stacked-to-main`, parent attempt `proceed U4bA`. `actionContext.mode=repo-local`; writes stayed in the authoritative `/home/vlongo/Athlos-worktrees/caja-diagnosis` allowlist. QA001 remains pending; UI mocks do not close it. Backend prerequisite `41f7238` was present; no external service/secrets/live access occurred.
+
+## U4bA bounded post-implementation correction
+
+- Approval: user explicitly accepted `size:exception` up to 450 cumulative changed lines for A only; the carried candidate is 381 lines (354 additions, 27 deletions) versus `HEAD`.
+- Behavior: a confirmed operator payment with pending reconciliation now suppresses the no-own-shift Caja link and states that balance refresh is pending; genuine ineligible absence says `turno propio abierto y vigente`.
+
+### TDD Cycle Evidence
+
+| Task | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U4bA correction | page integration | 46 focused tests passed | new operator POST-confirmed/context-GET-failed test failed on the false no-shift guidance | target test and no-shift counterpart passed (2/2) | full focused suite 47/47; retry performed only GET context calls and no second POST | target Prettier unchanged; 47/47 green |
+
+### Verification and boundary
+
+- Safety net: `pnpm --filter @athlos/web exec vitest run 'src/app/(authed)/collections/page.test.tsx' src/components/collections/TreatmentWorkspace.test.tsx src/components/collections/SettlementActions.test.tsx` — 46 passed, 0 failed.
+- RED: `pnpm --filter @athlos/web exec vitest run 'src/app/(authed)/collections/page.test.tsx' -t 'keeps an operator payment confirmed'` — 1 failed, 36 skipped; false no-shift guidance was present.
+- GREEN/triangulation: the target selector passed 2/2; the focused three-file command passed 47/47; only the exact no-shift assertion copy changed in the existing E2E.
+- Runtime: `PLAYWRIGHT_PORT=3101 NATIVE_COLLECTIONS_WEB_ENABLED=true DUES_CASH_ENABLED=true COLLECTIONS_CASH_MOBILE_KEYBOARD_ENABLED=true pnpm --filter @athlos/web exec playwright test e2e/operator-caja-entry.spec.ts` — 3 passed, 0 failed, 0 skipped; port 3101 was absent before/after and no process was killed.
+- Quality: web typecheck, lint, `pnpm format:check`, build, and `git diff --check` passed; `next-env.d.ts` retained SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`.
+- Correction stats versus tree `15810a911267f7a3b414fdfbfb5b97aaea416198`: 62 additions, 5 deletions, 67 changed lines (tests, source, exact E2E copy, and this evidence); carried 381 plus correction 67 is 448, within the explicit 450 exception.
+- Workload/PR boundary: A correction only, stacked-to-main; rollback only this pending-reconciliation presentation wiring, regression/exact-copy assertions, and evidence. U4bB remains four unchecked tasks; no checkbox changed and whole-change verify remains blocked. Status: `applyState=ready`, `actionContext.mode=repo-local`, authoritative allowed root observed; QA001 remains pending.

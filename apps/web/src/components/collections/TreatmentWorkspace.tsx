@@ -27,6 +27,7 @@ type Props = {
   debt: DebtDetail
   role: Role
   canSettle?: boolean
+  canPayFullSelection?: boolean
   canRequestCondonation?: boolean
   agreementsEnabled?: boolean
   agreementStates: Record<string, AgreementViewState>
@@ -61,6 +62,8 @@ type Props = {
   initialPaymentSelection?: string[] | undefined
   resumePaymentKey?: string | undefined
   onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
+  paymentUnavailableHref?: string | undefined
+  paymentReconciliationPending?: boolean
   executionFeedback?: {
     id: string
     status:
@@ -78,6 +81,7 @@ export function TreatmentWorkspace({
   debt,
   role,
   canSettle = false,
+  canPayFullSelection = canSettle,
   canRequestCondonation = false,
   agreementsEnabled = false,
   agreementStates,
@@ -99,6 +103,8 @@ export function TreatmentWorkspace({
   initialPaymentSelection,
   resumePaymentKey,
   onGoToCash,
+  paymentUnavailableHref,
+  paymentReconciliationPending = false,
   executionFeedback,
 }: Props) {
   const pending = lifecycle.find((item) => item.state === 'pending')
@@ -161,19 +167,26 @@ export function TreatmentWorkspace({
             </div>
             <Badge variant="info">Efecto: liquidación confirmada</Badge>
           </div>
-          {canSettle && onPayment && onReverse ? (
+          {canPayFullSelection && onPayment ? (
             <SettlementActions
               debt={debt}
               shifts={shifts}
               shiftAvailability={shiftAvailability}
               onPayment={onPayment}
               onRefreshDebt={onRefreshDebt as () => Promise<void>}
-              onReverse={onReverse}
+              {...(onReverse ? { onReverse } : {})}
               headingLevel={4}
               initialPaymentSelection={initialPaymentSelection}
               resumePaymentKey={resumePaymentKey}
               onGoToCash={onGoToCash}
             />
+          ) : paymentReconciliationPending ? (
+            <p role="status">El pago confirmado espera la actualización del saldo.</p>
+          ) : role === 'OPERADOR' && paymentUnavailableHref ? (
+            <p role="status">
+              No podés registrar pagos sin un turno propio abierto y vigente.{' '}
+              <a href={paymentUnavailableHref}>Ir a Caja / Tesorería</a>
+            </p>
           ) : (
             <p role="status">No tenés permiso para registrar pagos ni revertir liquidaciones.</p>
           )}

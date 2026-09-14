@@ -378,6 +378,111 @@ describe('Collections navigation and direct access', () => {
     expect(screen.getByRole('main', { name: /cobranza/i })).toBeInTheDocument()
   })
 
+  it('guides an operator without an own active shift to Caja without exposing payment', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    })
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+
+    renderPage(true, 'OPERADOR')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(
+      await screen.findByText('No podés registrar pagos sin un turno propio abierto y vigente.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ir a Caja / Tesorería' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/tesoreria'),
+    )
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it('lets an operator submit the selected obligations in an own active shift only', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    })
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([
+      {
+        id: 'own-open-shift',
+        desk_id: 'desk-1',
+        status: 'OPEN',
+        business_date: '2026-01-01',
+        assigned_operator_id: 'operator-1',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+      },
+    ])
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+
+    renderPage(true, 'OPERADOR')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(await screen.findByRole('button', { name: 'Registrar pago' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    await waitFor(() =>
+      expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          socio_id: socio.id,
+          obligation_ids: ['obligation-1'],
+          shift_id: 'own-open-shift',
+          tender: 'CASH',
+        }),
+        expect.any(String),
+      ),
+    )
+    expect(screen.queryByRole('button', { name: /revertir pago/i })).not.toBeInTheDocument()
+  })
+
   it('requires both Collections Web and agreements flags for agreement actions', async () => {
     const user = userEvent.setup()
     const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
@@ -970,9 +1075,9 @@ describe('payment orchestration and recovery', () => {
     duesMocks.getDebt.mockResolvedValue(debt)
     treasuryMocks.getOpenCashShifts.mockResolvedValue([shift])
   }
-  const openPayment = async () => {
+  const openPayment = async (role = 'ADMIN') => {
     const user = userEvent.setup()
-    renderPage(true, 'ADMIN')
+    renderPage(true, role)
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
     await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
@@ -1035,6 +1140,37 @@ describe('payment orchestration and recovery', () => {
       'Pago confirmado. Operación settlement-1. Importe confirmado: $ 100,00. Medio seleccionado por la persona operadora: TRANSFER.',
     )
     expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an operator payment confirmed while only its failed context refresh is retried', async () => {
+    prepare()
+    treasuryMocks.getOpenCashShifts
+      .mockResolvedValueOnce([shift])
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([shift])
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment('OPERADOR')
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    expect(await screen.findByRole('region', { name: 'Resultado del pago' })).toHaveTextContent(
+      'Pago confirmado. Operación settlement-1. Importe confirmado: $ 100,00. Medio seleccionado por la persona operadora: TRANSFER. No se pudo actualizar el saldo.',
+    )
+    expect(screen.getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(
+      screen.queryByText('No podés registrar pagos sin un turno propio abierto.'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Ir a Caja / Tesorería' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(treasuryMocks.getOpenCashShifts).toHaveBeenCalledTimes(3))
+    expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -128,16 +128,23 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert only these Treasury/navigation/e2e changes; Unit 3c API remains independently usable by approved callers.
 
-## Unit 4b — Deferred Collections full-payment action gate
+## Unit 4bA — OPERADOR Collections full-payment presentation gate
 
-**Depends on:** a separately authorized payment API/S2 integration point. Collections changes remain out of scope for the Caja-first slice. An active Caja alone SHALL NOT be presented as payment authorization.
+**Depends on:** completed U7-A/B1/B2 payment API gate at `41f7238`; this UI slice consumes it without API changes. An active Caja alone SHALL NOT be presented as payment authorization.
 
-- [ ] 1. **RED:** after S2 ownership is resolved, add focused Collections tests for no-own-active-shift denial and a separately authorized full-payment path.
-- [ ] 2. **GREEN:** consume only the completed payment API gate; do not recapture tender, grant finance actions, or claim Caja opening authorizes payment.
-- [ ] 3. **TRIANGULATE:** exercise direct Collections access, stale active-shift state, conflict/replay, and mobile keyboard behavior.
-- [ ] 4. **REFACTOR:** keep the payment gate isolated from Caja entry and record focused web/Playwright evidence.
+- [x] 1. **RED:** add focused Collections tests for no-own-active-shift denial, own-active-shift full-payment presentation, and absent reversal controls.
+- [x] 2. **GREEN:** expose only the completed full-selection payment path for an OPERADOR with an eligible own OPEN shift; do not recapture tender or grant finance actions.
+- [x] 3. **TRIANGULATE:** exercise direct Collections no-shift Caja/Tesorería guidance and own-shift full selected-obligation submission with one payment POST.
+- [x] 4. **REFACTOR:** isolate payment availability from finance/reversal capability and record focused web/Playwright evidence.
 
-**Rollback boundary:** revert only the future Collections payment-gate UI/tests; keep U4a Caja access intact.
+## Unit 4bB — Deferred payment recovery and mobile hardening
+
+- [ ] 1. **RED:** add focused failures distinguishing operator 403 denial from 409 stale state, refresh, replay failure, and mobile keyboard recovery.
+- [ ] 2. **GREEN:** preserve the existing payment recovery hook while presenting each authorized recovery state.
+- [ ] 3. **TRIANGULATE:** exercise refresh/replay after conflict and mobile keyboard completion without duplicate payment POSTs.
+- [ ] 4. **REFACTOR:** retain the isolated operator payment gate and record focused web/Playwright evidence.
+
+**Rollback boundary:** revert only the U4bA/B Collections payment-gate UI/tests; keep U4a Caja access and U7 payment API intact.
 
 ## Unit 4c — OPERADOR own closed-history presentation
 

@@ -68,6 +68,120 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
   await expect(page.getByLabel('Turnos cerrados')).toHaveCount(0)
 })
 
+test('OPERADOR enters Collections from Caja and records one full selected payment', async ({
+  authenticatedPage: page,
+}) => {
+  let ownShiftOpen = false
+  const settlementRequests: unknown[] = []
+  const member = {
+    id: '00000000-0000-4000-8000-000000000010',
+    nombre: 'Ana',
+    apellido: 'Gorriti',
+    numero_socio: '42',
+  }
+  const debt = {
+    status: 'ready',
+    socio_id: member.id,
+    currency: 'ARS',
+    total_debt_cents: 10_000,
+    obligations: [
+      {
+        id: '00000000-0000-4000-8000-000000000011',
+        period_start: '2026-01-01',
+        period_end: '2026-02-01',
+        original_amount_cents: 10_000,
+        outstanding_cents: 10_000,
+        currency: 'ARS',
+        status: 'OPEN',
+        components: [],
+        benefits: [],
+        allocations: [],
+      },
+    ],
+  }
+
+  await page.addInitScript(() => {
+    const state = JSON.parse(window.localStorage.getItem('athlos.auth')!) as {
+      currentUser: { role: string }
+    }
+    state.currentUser.role = 'OPERADOR'
+    window.localStorage.setItem('athlos.auth', JSON.stringify(state))
+  })
+  await page.route('**/api/v1/socios?*', (route) =>
+    route.fulfill({ json: { items: [member], page: 1, limit: 20, total: 1, has_more: false } }),
+  )
+  await page.route('**/api/v1/dues/debt/*', (route) => route.fulfill({ json: debt }))
+  await page.route('**/api/v1/dues/prices?*', (route) => route.fulfill({ json: { items: [] } }))
+  await page.route('**/api/v1/padrones/disciplinas*', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  )
+  await page.route('**/api/v1/members/*/condonation-requests*', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  )
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
+      json: {
+        items: ownShiftOpen
+          ? [
+              {
+                id: 'own-open',
+                desk_id: 'front-desk',
+                status: 'OPEN',
+                business_date: '2026-01-01',
+                assigned_operator_id: '00000000-0000-4000-8000-000000000001',
+                opened_at: new Date().toISOString(),
+                closed_at: null,
+              },
+            ]
+          : [],
+      },
+    }),
+  )
+  await page.route('**/api/v1/dues/settlements', (route) => {
+    settlementRequests.push(JSON.parse(route.request().postData() ?? '{}'))
+    return route.fulfill({
+      json: {
+        settlement_id: 'settlement-1',
+        amount_cents: 10_000,
+        currency: 'ARS',
+        allocations: [],
+      },
+    })
+  })
+
+  await page.goto('/collections')
+  await page.getByLabel('Buscar socio').fill('Ana')
+  await page.getByRole('button', { name: 'Buscar socio' }).click()
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  await expect(
+    page.getByText('No podés registrar pagos sin un turno propio abierto y vigente.'),
+  ).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Ir a Caja / Tesorería' })).toHaveAttribute(
+    'href',
+    /\/tesoreria/,
+  )
+  await expect(page.getByRole('button', { name: 'Registrar pago' })).toHaveCount(0)
+  expect(settlementRequests).toEqual([])
+
+  ownShiftOpen = true
+  await page.goto('/collections')
+  await page.getByLabel('Buscar socio').fill('Ana')
+  await page.getByRole('button', { name: 'Buscar socio' }).click()
+  await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
+  await page.getByRole('button', { name: 'Registrar pago' }).click()
+  await page.getByRole('button', { name: 'Confirmar pago' }).click()
+
+  await expect(page.getByText(/Pago confirmado\. Operación settlement-1\./)).toBeVisible()
+  expect(settlementRequests).toEqual([
+    expect.objectContaining({
+      obligation_ids: ['00000000-0000-4000-8000-000000000011'],
+      shift_id: 'own-open',
+      tender: 'CASH',
+    }),
+  ])
+  await expect(page.getByRole('button', { name: /revertir pago/i })).toHaveCount(0)
+})
+
 test('OPERADOR reads only own closed Caja history with GET detail', async ({
   authenticatedPage: page,
 }) => {
