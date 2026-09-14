@@ -428,6 +428,13 @@
       "when": 1789391012423,
       "tag": "0068_personal_cash_shift_desk_release",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1789417700000,
+      "tag": "0069_settlement_production_sources",
+      "breakpoints": true
     }
   ]
 }

@@ -332,3 +332,36 @@
 - Diff receipt before this line: 216 additions + 3 deletions = 219 changed lines, including tests and OpenSpec evidence; below the 400-line budget with correction headroom.
 
 - Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `d0ab379aba15b60b38129e4b5492980502a213edd666980b7a2e7b01088bbabc`.
+
+## Unit 7A — Additive automatic-production source persistence
+
+- Completed persisted tasks: U7-A tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`; U7-B and U4b remain unchecked and blocked on the later settlement-owner integration.
+- Changed: `0069_settlement_production_sources.sql`, its journal entry, `duesCashSources` Drizzle metadata, migration-frontier expectations, and a new disposable real-PostgreSQL source-persistence test.
+- Behavior: the latent `tesoreria.dues_cash_sources` record is linked to one shift and uniquely to one settlement. It preserves the exact `4.1.01` `Cuotas sociales` code/name/path snapshot, accepts it only while the mapped chart leaf is active and imputable, and is append-only. It stores no amount or tender: the existing settlement/tender remains the payment authority. No backfill, historical remapping, payment recapture, live settlement transaction change, route, role, or API export was added.
+
+### TDD Cycle Evidence
+
+| Task | Test file/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U7-A.1–3 | `production-source.postgres.integration.test.ts` / disposable real PostgreSQL | `dues.test.ts` — 20 passed | Required `0069` first; focused run failed with `ENOENT` and 3 skipped tests | 3 passed after migration/schema/frontiers | unique source/link/snapshot; inactive/group/unsupported mapping; append-only and transaction rollback | Target Prettier; final focused run remained 3 passed |
+| U7-A.4 | migration journal, schema, and status frontiers / disposable real PostgreSQL | existing suite | observed stale 0068 terminal expectation (1 failed, 39 passed) | 40 passed after 0069 frontier update | journal ordering and status pending list both include 0069 | focused source test and all quality checks remained green |
+
+### Verification
+
+- RED: `scripts/lib/disposable-postgres.sh run --caller settlement-production -- pnpm --filter @athlos/api exec vitest run src/modules/dues/production-source.postgres.integration.test.ts` — failed as expected: absent `0069` produced `ENOENT`, 3 skipped. Lifecycle `1789417681-3403686-3c18dfe0a028b049` removed container/volume and reported both absent.
+- Final focused: `scripts/lib/disposable-postgres.sh run --caller settlement-production-final-focus -- pnpm --filter @athlos/api exec vitest run src/modules/dues/production-source.postgres.integration.test.ts` — 1 file, 3 passed, 0 failed, 0 skipped. Lifecycle `1789417934-3416787-7bbefc02947b945a` cleaned its container/volume and reported final absence.
+- Frontiers: `scripts/lib/disposable-postgres.sh run --caller settlement-production-frontier -- pnpm --filter @athlos/db exec vitest run src/migration-journal.test.ts src/schema/dues.test.ts src/scripts/status.test.ts` — 3 files, 40 passed, 0 failed. Lifecycle `1789417821-3410596-4f9edc033f3f8344` cleaned its container/volume and reported final absence.
+- `typescript-language-server` was unavailable (`LSP_AVAILABLE=0`), so `pnpm --filter @athlos/db typecheck` and `pnpm --filter @athlos/api typecheck` supplied the static-analysis fallback; both passed. DB/API lint, root `pnpm format:check`, `git diff --check`, and `pnpm --filter @athlos/api build` passed.
+
+### Boundary, status, and remaining work
+
+- Deviation from design: none. The intentionally latent record omits a service helper and amount/method fields so U7-B consumes the authoritative settlement/tender input rather than creating a second payment writer; future manual sources can extend this one source boundary without historical fabrication.
+- Workload/PR boundary: U7-A only, stacked-to-main above U4c. Rollback only 0069/journal, source metadata, frontier expectations, and the focused persistence test; it leaves settlement behavior untouched. No commit, integration, push, PR, publication, external service, BETA/production access, role expansion, or QA001 closure occurred.
+- Structured status consumed: `gentle-ai.sdd-status/v2`; change `caja-accounted-shift-close`; artifact store `openspec`; intake `taskProgress=28/55`; `applyState=ready`; resolved delivery `stacked-to-main`; `actionContext.mode=repo-local`; authoritative workspace and parent-provided allowed edit surfaces only. Produced status: `taskProgress=32/59`, `applyState=ready`, `nextRecommended=apply`. Warning retained: U7-B must not write the reserved settlement/route integration surfaces until the parent hands it off; U4b remains blocked.
+- Remaining exact delegated U7-B lines:
+  - [ ] 1. **RED:** jointly identify the owner and exact S2 files, then add failing full-payment-only, missing-own-shift, partial/overpayment, replay/concurrency, unsupported-origin, and `Cuotas sociales` source-link tests before edits.
+  - [ ] 2. **GREEN:** extend the authoritative settlement transaction only; create/retain exactly one U7-A source with CASH/DEBIT/CREDIT/TRANSFER identity. Do not recapture payment input, map other origins silently, alter finance flows, or add operator reversals.
+  - [ ] 3. **TRIANGULATE:** prove competing/replayed calls create neither second settlement/allocation/source nor partial audit state, and that an unsupported new origin rolls back atomically on disposable PostgreSQL.
+  - [ ] 4. **REFACTOR:** minimize the integration seam after the agreed ownership handoff; run planned focused route/service/disposable-PG selectors and confirmed shared quality commands. UI runtime evidence is **N/A (API-only unit)**.
+
+- Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `6b78a4b03b0ddf069c395e255c4b99c7668291c642737f4c82f723fa142350b7`.

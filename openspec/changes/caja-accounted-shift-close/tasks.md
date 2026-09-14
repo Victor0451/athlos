@@ -178,18 +178,30 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert supporting-record tables/routes/tests only; manual source behavior from Unit 5 remains valid without a document.
 
-## Unit 7 — Atomic automatic dues production
+## Unit 7A — Additive automatic-production source persistence
 
-**Estimate:** 380–520 changed lines. **Depends on:** Units 1–3 and **S2 overlap resolution**. **Spec:** `specs/debt-allocation-settlement/spec.md` — Operator Full-Payment Collections Boundary; Linked Automatic Dues Production; `specs/accounted-personal-shifts/spec.md` — Single-Production Collections Capture.  
-**Start / finish:** start only after written coordination for the reserved settlement surfaces; finish when an own-active-shift OPERADOR can complete only the existing authoritative full dues payment and its allocation/production/source link/audit commit once, atomically, to the `Cuotas sociales` snapshot with receipt-method totals.
-**Files:** reserved/discovery targets `apps/api/src/modules/dues/settlement-detail*`, `apps/api/src/routes/dues.ts`, `apps/api/src/routes/dues-routes.test.ts`, and settlement PostgreSQL test target; expected integration files `apps/api/src/modules/dues/settlements.ts`, `packages/db/src/schema/dues-settlements.ts`, `packages/db/src/schema/dues-cash.ts`, and a next migration/journal entry if the approved source link needs storage.
+**Estimate:** 300–390 changed lines. **Depends on:** Units 1–3 and the approved S2 handoff. **Chain:** U7-A → U7-B → U4b. **Spec:** `specs/debt-allocation-settlement/spec.md` — Linked Automatic Dues Production; `specs/accounted-personal-shifts/spec.md` — Single-Production Collections Capture.
+**Start / finish:** add latent source storage only. It stores one append-only, linked-shift source identity per settlement with the immutable active/imputable `4.1.01` `Cuotas sociales` code/name/path snapshot. It does not change settlement, allocation, tender, audit, role, route, or payment behavior, and never backfills or recaptures historical payments.
+**Files:** `packages/db/drizzle/0069_settlement_production_sources.sql`, journal, `packages/db/src/schema/dues-cash.ts`, migration frontier tests, and `apps/api/src/modules/dues/production-source.postgres.integration.test.ts`.
 
-- [ ] 1. **RED:** jointly identify the owner and exact S2 files, then add failing full-payment-only, missing-own-shift, partial/overpayment, replay/concurrency, unsupported-origin, and `Cuotas sociales` snapshot/link tests before edits.
-- [ ] 2. **GREEN:** extend the authoritative settlement transaction only; create/retain exactly one automatic production source with CASH/DEBIT/CREDIT/TRANSFER identity. Do not recapture payment input, map other origins silently, alter finance flows, or add operator reversals.
+- [x] 1. **RED:** add a disposable real-PostgreSQL persistence test for the absent migration that requires a linked shift, one source per settlement, and the immutable `Cuotas sociales` snapshot.
+- [x] 2. **GREEN:** add only normalized source storage with settlement uniqueness, linked-shift foreign key, append-only guard, and active/imputable `4.1.01` mapping guard; add no settlement writer or authorization surface.
+- [x] 3. **TRIANGULATE:** reject inactive, group, and unsupported account mappings; prove update/delete rejection and transaction rollback on disposable PostgreSQL.
+- [x] 4. **REFACTOR:** retain the staged source boundary, update migration frontiers, target-format, and run focused disposable-PG, DB/API typecheck, lint, format, and API build evidence. UI runtime evidence is **N/A (persistence-only)**.
+
+**Rollback boundary:** revert only 0069/journal, `dues_cash_sources` schema metadata, the frontier expectations, and the focused source persistence test; retain existing settlement/tender behavior.
+
+## Unit 7B — Authoritative settlement production integration
+
+**Estimate:** 300–390 changed lines. **Depends on:** completed U7-A and the S2 settlement owner handoff. **Chain:** U7-A → U7-B → U4b. **Spec:** `specs/debt-allocation-settlement/spec.md` — Operator Full-Payment Collections Boundary; Linked Automatic Dues Production; `specs/accounted-personal-shifts/spec.md` — Single-Production Collections Capture.
+**Start / finish:** extend only the authoritative settlement transaction so the approved full-payment path creates or retains U7-A's source atomically, with no payment recapture or role expansion.
+
+- [ ] 1. **RED:** jointly identify the owner and exact S2 files, then add failing full-payment-only, missing-own-shift, partial/overpayment, replay/concurrency, unsupported-origin, and `Cuotas sociales` source-link tests before edits.
+- [ ] 2. **GREEN:** extend the authoritative settlement transaction only; create/retain exactly one U7-A source with CASH/DEBIT/CREDIT/TRANSFER identity. Do not recapture payment input, map other origins silently, alter finance flows, or add operator reversals.
 - [ ] 3. **TRIANGULATE:** prove competing/replayed calls create neither second settlement/allocation/source nor partial audit state, and that an unsupported new origin rolls back atomically on disposable PostgreSQL.
 - [ ] 4. **REFACTOR:** minimize the integration seam after the agreed ownership handoff; run planned focused route/service/disposable-PG selectors and confirmed shared quality commands. UI runtime evidence is **N/A (API-only unit)**.
 
-**Rollback boundary:** revert only the agreed settlement-production seam, related migration, and tests as one transaction; preserve prior settlement semantics and Units 1–6.
+**Rollback boundary:** revert only the agreed U7-B settlement-production seam and its tests; preserve U7-A's latent persistence contract and prior settlement semantics.
 
 ## Unit 8 — Server-computed close transfer and immutable history
 
