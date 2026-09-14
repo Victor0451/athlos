@@ -100,14 +100,13 @@ afterAll(async () => {
 })
 
 describe('dues pricing and obligation schema', () => {
-  it('declares the temporary desk and new personal OPEN-shift indexes', () => {
+  it('declares only the personal OPEN-shift uniqueness guard', () => {
     expect(
       getTableConfig(duesCashShifts)
         .indexes.map((index) => index.config.name)
         .sort(),
     ).toEqual([
       'dues_cash_shift_desk_idx',
-      'dues_cash_shift_open_desk_unique',
       'dues_cash_shift_open_operator_unique',
       'dues_cash_shift_operator_key_unique',
     ])
@@ -145,7 +144,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0067_personal_cash_shift_owner',
+      tag: '0068_personal_cash_shift_desk_release',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),

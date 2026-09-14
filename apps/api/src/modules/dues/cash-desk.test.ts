@@ -4,6 +4,7 @@ import {
   movementInInterval,
   reconcileTenders,
   requestFingerprintConflict,
+  validateOpeningTenders,
 } from './cash-desk.ts'
 
 describe('cash desk reconciliation', () => {
@@ -49,5 +50,21 @@ describe('cash desk reconciliation', () => {
   it('distinguishes same-key replay from a payload conflict', () => {
     expect(requestFingerprintConflict('a'.repeat(64), 'a'.repeat(64))).toBe(false)
     expect(requestFingerprintConflict('a'.repeat(64), 'b'.repeat(64))).toBe(true)
+  })
+
+  it('accepts only bounded CASH opening cents while preserving an empty opening', () => {
+    expect(validateOpeningTenders({})).toEqual({})
+    expect(validateOpeningTenders({ CASH: 0 })).toEqual({ CASH: 0 })
+    expect(validateOpeningTenders({ CASH: 99_999_999_999_999 })).toEqual({
+      CASH: 99_999_999_999_999,
+    })
+    for (const opening of [
+      { CARD: 1 },
+      { CASH: -1 },
+      { CASH: 1.5 },
+      { CASH: Number.MAX_SAFE_INTEGER + 1 },
+      { CASH: 100_000_000_000_000 },
+    ])
+      expect(() => validateOpeningTenders(opening)).toThrow('CASH')
   })
 })

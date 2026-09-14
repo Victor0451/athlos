@@ -96,10 +96,10 @@ These are candidates for the human split decision, not an automatic chain. Each 
 **Estimate:** 260–370 changed lines. **Depends on:** Unit 3a. **Spec:** `specs/accounted-personal-shifts/spec.md` — Personal Shift Ownership and Concurrent Operation.
 **Start / finish:** remove the temporary desk OPEN guard only after owner-safe service behavior and real-PostgreSQL concurrency evidence are ready; different operators may then share a desk label while one owner remains limited to one OPEN shift.
 
-- [ ] 1. **RED:** add focused service and disposable PostgreSQL tests for same-owner conflict, different-owner same-desk success, and the normal opening conflict message after the desk guard is released.
-- [ ] 2. **GREEN:** release only `dues_cash_shift_open_desk_unique`, preserve the owner guard as the race arbiter, and make the normal opening conflict message accurately describe owner and desk uniqueness outcomes.
-- [ ] 3. **TRIANGULATE:** exercise concurrent same-owner opens and concurrent different-owner same-desk opens on real PostgreSQL; retain one committed owner shift and both permitted different-owner shifts.
-- [ ] 4. **REFACTOR:** isolate the migration/service uniqueness seam without changing legacy tender, close, expiry, recovery, or financial history behavior.
+- [x] 1. **RED:** add focused service and disposable PostgreSQL tests for same-owner conflict, different-owner same-desk success, and the normal opening conflict message after the desk guard is released.
+- [x] 2. **GREEN:** release only `dues_cash_shift_open_desk_unique`, preserve the owner guard as the race arbiter, and make the normal opening conflict message accurately describe owner and desk uniqueness outcomes.
+- [x] 3. **TRIANGULATE:** exercise concurrent same-owner opens and concurrent different-owner same-desk opens on real PostgreSQL; retain one committed owner shift and both permitted different-owner shifts.
+- [x] 4. **REFACTOR:** isolate the migration/service uniqueness seam without changing legacy tender, close, expiry, recovery, or financial history behavior.
 
 **Rollback boundary:** revert only the desk-index-release migration/service/tests as one reviewed unit; retain Unit 3a's safe owner preflight and constraint.
 

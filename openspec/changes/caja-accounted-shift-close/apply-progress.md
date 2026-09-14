@@ -183,3 +183,29 @@
   - [ ] 3. **TRIANGULATE:** exercise no-own-shift, existing-own-shift, foreign-shift, and expired-own-shift outcomes without auto-close, delete, or carryover.
   - [ ] 4. **REFACTOR:** extract ownership helpers from legacy tender/close code; run focused API/disposable-PostgreSQL selectors. UI runtime evidence is **N/A (API-only)**.
 - Structured status consumed: `gentle-ai.sdd-status/v2` supplied by the parent; change `caja-accounted-shift-close`, artifact store `openspec`, intake `taskProgress=8/39`, `applyState=ready`, delivery `stacked-to-main`, bounded runtime attempt `proceed`. `actionContext.mode=repo-local` restricts changes to `/home/vlongo/Athlos-worktrees/caja-diagnosis` and the supplied edit surfaces; no outside root was touched. CodeGraph watcher reported modified files but `.codegraph` is outside the allowed edit surfaces, so no manual sync was run. QA001 remains pending.
+
+## Unit 3b — Desk uniqueness release and owner-safe opening lifecycle
+
+- Completed persisted tasks: U3b tasks 1 RED, 2 GREEN, 3 TRIANGULATE, and 4 REFACTOR are visibly `[x]` in `tasks.md`; U3c and every later unit remain unchecked.
+- Changed: `0068_personal_cash_shift_desk_release.sql` drops **only** `tesoreria.dues_cash_shift_open_desk_unique`; journal/index metadata and frontier tests now end at 0068. `CashDeskService.open` retains idempotent same-key replay/conflict behavior, rejects malformed/non-CASH/fractional/unsafe/overflow opening input, preserves `{}` as no carried opening CASH, preflights a different-key prior personal OPEN with its ID and expired-shift recovery direction, and maps the owner uniqueness race to the same recovery message. No role, route, list/detail, tender, close, expiry/recovery, audit, or history policy changed.
+- Real PostgreSQL evidence releases the desk index after the U3a duplicate-owner preflight, retains the owner guard, permits two owners on one desk label, and races same-owner opens to exactly one committed row. Integration fixtures now truncate financial shift rows after each scenario so existing lifecycle coverage obeys the personal-OPEN invariant rather than relying on legacy multi-open test state.
+
+### TDD Cycle Evidence
+
+| Task | Test file/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U3b.1–3 | `cash-desk.test.ts` unit + `cash-desk.postgres.integration.test.ts` disposable real PostgreSQL | API unit 5/5 and PostgreSQL 9/9; DB frontiers 40/40 | API: 13 passed, 2 failed (`validateOpeningTenders` absent; 0068 absent); DB: 36 passed, 4 failed for absent 0068/frontier/index metadata | API unit + PostgreSQL 15/15; DB frontier 40/40 | empty/zero/max CASH plus invalid CASH/non-CASH cases; same-owner concurrent race yields one; two owners share a desk | Prettier plus focused API 15/15 and DB 40/40 remained green |
+| U3b.4 | focused service/migration seam | 15/15 after GREEN | N/A (refactor-only) | 15/15 | covered above | extracted validation/recovery-message seam; no legacy tender/close changes |
+
+### Verification
+
+- `scripts/lib/disposable-postgres.sh run --caller personal-shift-opening-verify -- pnpm --filter @athlos/api exec vitest run src/modules/dues/cash-desk.test.ts src/modules/dues/cash-desk.postgres.integration.test.ts` — 2 files, 15 passed, 0 failed; lifecycle `1789391432-2476788-579bd7f60e5f2c02` removed its disposable container and volume with absence evidence.
+- `scripts/lib/disposable-postgres.sh run --caller personal-shift-opening-frontier-refactor -- pnpm --filter @athlos/db exec vitest run src/migration-journal.test.ts src/schema/dues.test.ts src/scripts/status.test.ts` — 3 files, 40 passed, 0 failed; lifecycle `1789391361-2472720-13751609b53c2d5f` cleaned its disposable resources.
+- API and DB typecheck/lint passed; API build passed. `typescript-language-server` was unavailable (`LSP_AVAILABLE=0`), so typecheck was the LSP fallback. `pnpm format:check` and `git diff --check` passed.
+
+### Boundary, status, and remaining work
+
+- Workload/PR boundary: U3b only, stacked-to-main above U3a; current source/migration/test/task diff is 147 additions + 23 deletions = **170 changed lines** before this evidence, below the 400-line budget. No exception, commit, PR, push, base update, external service, BETA/production access, or QA001 closure occurred. Roll back only 0068/journal/schema metadata, opening validation/preflight, and these focused tests; retain U3a owner safety.
+- Produced status: `gentle-ai.sdd-status/v2`, change `caja-accounted-shift-close`, artifact store `openspec`, `taskProgress=16/47`, `applyState=ready`, `nextRecommended=verify`, `actionContext.mode=repo-local`; allowed edits remained only within the parent-provided worktree surfaces. Parent owns native attempt settlement. QA001 remains pending.
+- Remaining delegated follow-up is U3c only; do not start it in this work unit.
+- Evidence receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `090f49240d4e43a6847179578451204b15ea86980bcb89bb196dd4ec2ef1aa8c`.

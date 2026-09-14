@@ -421,6 +421,13 @@
       "when": 1789387438026,
       "tag": "0067_personal_cash_shift_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789391012423,
+      "tag": "0068_personal_cash_shift_desk_release",
+      "breakpoints": true
     }
   ]
 }

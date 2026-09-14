@@ -3,6 +3,7 @@ import { AuditAction, emitAudit } from '@athlos/audit'
 import type { Db } from '@athlos/db'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import { createSha256Fingerprint } from '../../lib/idempotency.ts'
+import { MAX_MONEY_CENTS } from './allocations.ts'
 import type { AuditContext } from './service.ts'
 
 export const CLUB_TIMEZONE = 'America/Argentina/Jujuy'
@@ -53,6 +54,31 @@ const clean = (value: unknown): Totals =>
       },
     ),
   )
+
+export const validateOpeningTenders = (value: unknown): Totals => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Opening tenders must contain only CASH cents')
+  const opening = value as Record<string, unknown>
+  const entries = Object.entries(opening)
+  if (
+    entries.some(
+      ([tender, amount]) =>
+        tender !== 'CASH' ||
+        typeof amount !== 'number' ||
+        !Number.isSafeInteger(amount) ||
+        amount < 0 ||
+        amount > MAX_MONEY_CENTS,
+    )
+  )
+    throw BusinessError(
+      ErrorCode.VALIDATION_ERROR,
+      'Opening tenders must contain only bounded non-negative CASH cents',
+    )
+  return entries.length ? { CASH: opening.CASH as number } : {}
+}
+
+const existingOpenShiftMessage = (id: string) =>
+  `Cash shift ${id} is already OPEN; close it or use expired-shift recovery`
 
 export function businessDateForOpening(openedAt: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -430,11 +456,31 @@ export class CashDeskService {
 
   async open(input: OpenCashCommand) {
     authorize(input.role)
-    const opening = clean(input.openingTenders)
+    const opening = validateOpeningTenders(input.openingTenders)
     const openedAt = this.now()
     const businessDate = businessDateForOpening(openedAt)
     return this.db
       .transaction(async (tx) => {
+        const keyed = rows(
+          await tx.execute(
+            sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+          ),
+        )[0]
+        if (keyed) {
+          if (requestFingerprintConflict(keyed.request_fingerprint, input.requestFingerprint)) {
+            throw BusinessError(
+              ErrorCode.CONFLICT,
+              'Idempotency key was already used for a different shift',
+            )
+          }
+          return responseShift(keyed)
+        }
+        const prior = rows(
+          await tx.execute(
+            sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE assigned_operator_id = ${input.actorId} AND status = 'OPEN' AND caller_key <> ${input.callerKey} ORDER BY opened_at LIMIT 1`,
+          ),
+        )[0]
+        if (prior) throw BusinessError(ErrorCode.CONFLICT, existingOpenShiftMessage(prior.id))
         const inserted = rows(
           await tx.execute(
             sql`INSERT INTO tesoreria.dues_cash_shifts (desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint,business_date,timezone,opened_at) VALUES (${input.deskId},${input.actorId},${JSON.stringify(opening)}::jsonb,${input.actorId},${JSON.stringify(input.authorizationEvidence)}::jsonb,${input.callerKey},${input.requestFingerprint},${businessDate},${CLUB_TIMEZONE},${openedAt}) ON CONFLICT (operator_id,caller_key) DO NOTHING RETURNING *`,
@@ -463,9 +509,19 @@ export class CashDeskService {
         })
         return responseShift(inserted)
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if ((error as { code?: string }).code === '23505') {
-          throw BusinessError(ErrorCode.CONFLICT, 'A desk or operator already has an open shift')
+          const prior = rows(
+            await this.db.execute(
+              sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE assigned_operator_id = ${input.actorId} AND status = 'OPEN' AND caller_key <> ${input.callerKey} ORDER BY opened_at LIMIT 1`,
+            ),
+          )[0]
+          throw BusinessError(
+            ErrorCode.CONFLICT,
+            prior
+              ? existingOpenShiftMessage(prior.id)
+              : 'Cash shift opening conflicted; retry the request',
+          )
         }
         throw error
       })

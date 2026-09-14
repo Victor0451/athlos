@@ -273,6 +273,7 @@ describe('migrate:status', () => {
         '0065_dues_range_receipts',
         '0066_plan_cuentas',
         '0067_personal_cash_shift_owner',
+        '0068_personal_cash_shift_desk_release',
       ],
       divergence: [],
       exitCode: 1,
