@@ -7,7 +7,11 @@ import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
 const authState = vi.hoisted(() => ({ user: null as { role: string; operator_id: string } | null }))
-const navigationMocks = vi.hoisted(() => ({ params: new URLSearchParams(), push: vi.fn() }))
+const navigationMocks = vi.hoisted(() => ({
+  params: new URLSearchParams(),
+  push: vi.fn(),
+  replace: vi.fn(),
+}))
 const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
@@ -60,7 +64,7 @@ const condonationMocks = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: navigationMocks.push }),
+  useRouter: () => ({ push: navigationMocks.push, replace: navigationMocks.replace }),
   useSearchParams: () => navigationMocks.params,
 }))
 vi.mock('@/lib/api/dues', () => duesMocks)
@@ -91,6 +95,7 @@ describe('Collections navigation and direct access', () => {
     sessionStorage.clear()
     navigationMocks.params = new URLSearchParams()
     navigationMocks.push.mockReset()
+    navigationMocks.replace.mockReset()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
     duesMocks.getDebt.mockReset()
@@ -107,6 +112,213 @@ describe('Collections navigation and direct access', () => {
 
     await waitFor(() => expect(sociosMocks.getSocio).not.toHaveBeenCalled())
     expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  const handoff = {
+    memberId: '00000000-0000-4000-8000-000000000001',
+    requestId: '00000000-0000-4000-8000-000000000002',
+    obligationId: '00000000-0000-4000-8000-000000000004',
+  }
+  const handoffQuery = () =>
+    `condonation_member=${handoff.memberId}&condonation_request=${handoff.requestId}`
+  const handoffSocio = (id = handoff.memberId) => ({
+    id,
+    nombre: 'Ana',
+    apellido: 'Gorriti',
+    numero_socio: '42',
+  })
+  const handoffDebt = (id = handoff.memberId) => ({
+    status: 'ready',
+    socio_id: id,
+    currency: 'ARS',
+    total_debt_cents: 100,
+    obligations: [
+      {
+        id: handoff.obligationId,
+        period_start: '2026-01-01',
+        period_end: '2026-02-01',
+        original_amount_cents: 100,
+        outstanding_cents: 100,
+        currency: 'ARS',
+        status: 'OPEN',
+        components: [],
+        benefits: [],
+        allocations: [],
+      },
+    ],
+  })
+  const handoffLifecycle = (
+    state:
+      | 'pending'
+      | 'rejected'
+      | 'expired'
+      | 'approved_awaiting_execution'
+      | 'executed' = 'approved_awaiting_execution',
+  ) =>
+    ({
+      id: handoff.requestId,
+      state,
+      expires_at: '2030-02-01T00:00:00.000Z',
+      decided_at: state === 'pending' ? null : '2026-01-31T00:00:00.000Z',
+      execution_id:
+        state === 'approved_awaiting_execution' || state === 'executed'
+          ? '00000000-0000-4000-8000-000000000003'
+          : null,
+      execution_status:
+        state === 'executed'
+          ? 'executed'
+          : state === 'approved_awaiting_execution'
+            ? 'recoverable'
+            : 'unavailable',
+      snapshot: {
+        member_id: handoff.memberId,
+        obligations: [
+          {
+            obligation_id: handoff.obligationId,
+            currency: 'ARS',
+            outstanding_amount_cents: 100,
+          },
+        ],
+      },
+    }) as CondonationLifecyclePage['items'][number]
+
+  it('opens the exact approved lifecycle without selecting payment or executing it', async () => {
+    navigationMocks.params = new URLSearchParams(`keep=one&${handoffQuery()}&tag=first&tag=second`)
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [handoffLifecycle()] })
+    renderPage(true, 'ADMIN')
+
+    const lifecycle = await screen.findByRole('region', { name: 'Estado de la condonación' })
+    await waitFor(() => expect(lifecycle).toHaveFocus())
+    expect(navigationMocks.replace).toHaveBeenCalledWith(
+      '/collections?keep=one&tag=first&tag=second',
+      { scroll: false },
+    )
+    expect(
+      screen.getByRole('status', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/aprobada.*ejecución sigue siendo explícita/i)
+    expect(screen.getByRole('button', { name: /Recuperar y ejecutar condonación/ })).toBeEnabled()
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['pending', /todavía está pendiente/],
+    ['rejected', /fue rechazada/],
+    ['expired', /venció/],
+    ['executed', /ya fue ejecutada/],
+  ] as const)('shows the fresh %s state without triggering an action', async (state, copy) => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({
+      items: [handoffLifecycle(state)],
+    })
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('status', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(copy)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['condonation_member=invalid', 'ADMIN', true],
+    [handoffQuery(), 'CONSULTA', true],
+    [handoffQuery(), 'ADMIN', false],
+  ])(
+    'cleans a disallowed or malformed handoff without fetching: %s',
+    async (query, role, enabled) => {
+      navigationMocks.params = new URLSearchParams(`before=one&${query}&after=two`)
+      renderPage(enabled, role)
+      await waitFor(() =>
+        expect(navigationMocks.replace).toHaveBeenCalledWith('/collections?before=one&after=two', {
+          scroll: false,
+        }),
+      )
+      expect(sociosMocks.getSocio).not.toHaveBeenCalled()
+      expect(condonationMocks.listCondonationLifecycle).not.toHaveBeenCalled()
+      expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reports member and lifecycle mismatches without exposing an action', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio('00000000-0000-4000-8000-000000000099'))
+    const view = renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/enlace no corresponde/i)
+    expect(condonationMocks.listCondonationLifecycle).not.toHaveBeenCalled()
+    view.unmount()
+
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({
+      items: [
+        { ...handoffLifecycle(), id: '00000000-0000-4000-8000-000000000099' },
+        {
+          ...handoffLifecycle(),
+          snapshot: {
+            ...handoffLifecycle().snapshot,
+            member_id: '00000000-0000-4000-8000-000000000099',
+          },
+        },
+      ],
+    })
+    renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró la solicitud/i)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+  })
+
+  it('reports lookup and lifecycle failures truthfully', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockRejectedValue(new Error('offline'))
+    const view = renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo cargar el socio/i)
+    view.unmount()
+
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockRejectedValue(new Error('offline'))
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('alert', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/No se pudo cargar.*condonación indicada/i)
+  })
+
+  it('reports when the linked member detail cannot be loaded', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockRejectedValue(new Error('offline'))
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('alert', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/No se pudo cargar el detalle del socio/i)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+  })
+
+  it('lets a newer manual selection win over a late handoff lookup', async () => {
+    let resolve!: (value: ReturnType<typeof handoffSocio>) => void
+    sociosMocks.getSocio.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [beto] })
+    duesMocks.getDebt.mockResolvedValue(handoffDebt(beto.id))
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    const user = userEvent.setup()
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Beto')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /López, Beto/ }))
+    await act(async () => resolve(handoffSocio()))
+    expect(duesMocks.getDebt).toHaveBeenCalledWith(beto.id)
+    expect(duesMocks.getDebt).not.toHaveBeenCalledWith(handoff.memberId)
+    expect(screen.queryByRole('button', { name: /ejecutar condonación/i })).not.toBeInTheDocument()
   })
 
   it('opens on Cobranza and keeps pricing configuration in a dialog', async () => {
@@ -952,6 +1164,12 @@ describe('assessment price-gap recovery', () => {
 })
 
 describe('payment orchestration and recovery', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
+  })
   const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
   const shift = {
     id: 'shift-1',
@@ -1031,10 +1249,82 @@ describe('payment orchestration and recovery', () => {
     await user.click(screen.getByLabelText('Transferencia'))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
 
-    expect(await screen.findByRole('region', { name: 'Resultado del pago' })).toHaveTextContent(
-      'Pago confirmado. Operación settlement-1. Importe confirmado: $ 100,00. Medio seleccionado por la persona operadora: TRANSFER.',
-    )
+    const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+    expect(within(result).getByRole('heading', { name: 'Pago registrado' })).toBeInTheDocument()
+    expect(within(result).getByText(/\$\s*100,00/)).toBeInTheDocument()
+    expect(result).toHaveTextContent('settlement-1')
+    expect(result).toHaveTextContent('TRANSFER')
+    expect(within(result).getByRole('button', { name: 'Ver e imprimir constancia' })).toBeEnabled()
+    expect(
+      screen.queryByRole('dialog', { name: 'Constancia de pago no fiscal' }),
+    ).not.toBeInTheDocument()
+    await waitFor(() => expect(result).toHaveFocus())
     expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+  })
+
+  it('waits for an alertdialog to close before focusing the confirmed result', async () => {
+    prepare()
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment()
+    const frames: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const alert = document.createElement('div')
+    alert.setAttribute('role', 'alertdialog')
+    alert.setAttribute('aria-modal', 'true')
+    document.body.appendChild(alert)
+    try {
+      await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+      const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(0))
+      })
+      expect(result).not.toHaveFocus()
+      await act(async () => {
+        alert.remove()
+      })
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(0))
+      })
+      expect(result).toHaveFocus()
+    } finally {
+      alert.remove()
+      raf.mockRestore()
+    }
+  })
+
+  it('does not refocus the confirmed result or submit again after balance recovery', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ...debt, total_debt_cents: 0, obligations: [] })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    const user = await openPayment()
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+    const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+    await waitFor(() => expect(result).toHaveFocus())
+    const resultFocuses = () => focus.mock.contexts.filter((element) => element === result)
+    expect(resultFocuses()).toHaveLength(1)
+    await user.click(within(result).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(within(result).queryByRole('alert')).not.toBeInTheDocument())
+    expect(resultFocuses()).toHaveLength(1)
+    expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledTimes(1)
+    focus.mockRestore()
   })
 })
 

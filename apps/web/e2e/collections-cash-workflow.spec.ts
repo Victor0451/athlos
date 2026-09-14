@@ -55,6 +55,7 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   const secondId = '00000000-0000-4000-8000-000000000012'
   const shiftId = '00000000-0000-4000-8000-000000000013'
   const paymentId = '00000000-0000-4000-8000-000000000014'
+  const allocationId = '00000000-0000-4000-8000-000000000018'
   const member = { id: memberId, nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
   const foreignShift: CashShift = {
     id: '00000000-0000-4000-8000-000000000016',
@@ -83,6 +84,9 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   let savedClose: CashClose | null = null
   let debtGets = 0
   let failNextDebtRefresh = false
+  let confirmedAt: string | null = null
+  let receiptGets = 0
+  let failNextReceiptGet = false
   const unexpected: string[] = []
   async function setQaFeedback(message: string) {
     await page.evaluate((text) => {
@@ -178,7 +182,22 @@ async function cashJourney(page: Page, failRefresh: boolean) {
             status: !index && paid ? 'PAID' : 'OPEN',
             components: [],
             benefits: [],
-            allocations: [],
+            allocations:
+              !index && paid
+                ? [
+                    {
+                      id: allocationId,
+                      settlement_id: paymentId,
+                      settlement_kind: 'MONETARY',
+                      settlement_amount_cents: 10000,
+                      currency: 'ARS',
+                      amount_cents: 10000,
+                      kind: 'ALLOCATION',
+                      compensates_allocation_id: null,
+                      reversal_eligible: true,
+                    },
+                  ]
+                : [],
           })),
         },
       })
@@ -237,6 +256,47 @@ async function cashJourney(page: Page, failRefresh: boolean) {
         return
       }
     }
+    if (method === 'GET' && path === `/api/v1/dues/settlements/${paymentId}`) {
+      receiptGets += 1
+      if (!paid || !confirmedAt) {
+        unexpected.push(`${method} ${path}`)
+        await route.fulfill({ status: 404, json: { detail: 'Settlement not found' } })
+        return
+      }
+      if (failNextReceiptGet) {
+        failNextReceiptGet = false
+        allowExpectedResponseFailure(page, {
+          url: request.url(),
+          status: 503,
+          request: { method, postData: request.postData() },
+          context: 'persisted settlement receipt refresh',
+        })
+        await route.fulfill({ status: 503, json: { detail: 'Receipt temporarily unavailable' } })
+        return
+      }
+      await route.fulfill({
+        json: {
+          settlement_id: paymentId,
+          socio_id: memberId,
+          member,
+          confirmed_at: confirmedAt,
+          amount_cents: 10000,
+          currency: 'ARS',
+          tender: 'CASH',
+          allocations: [
+            {
+              id: allocationId,
+              obligation_id: firstId,
+              period_start: '2026-01-01',
+              period_end: '2026-02-01',
+              amount_cents: 10000,
+            },
+          ],
+          reversal: null,
+        },
+      })
+      return
+    }
     if (method === 'POST' && path === '/api/v1/dues/settlements') {
       const body = request.postDataJSON()
       if (
@@ -265,6 +325,7 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       expect(JSON.stringify(body)).toContain(shiftId)
       expect(request.headers()['idempotency-key']).toBeTruthy()
       paid = true
+      confirmedAt = new Date().toISOString()
       failNextDebtRefresh = failRefresh
       await route.fulfill({
         status: 201,
@@ -369,6 +430,18 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     return
   }
   if (qaMode === 'smoke') await page.reload()
+  // Only automation replaces OS printing; the manual session returns above.
+  await page.addInitScript(() => {
+    if (window.frameElement?.getAttribute('data-testid') !== 'settlement-receipt-print') return
+    window.print = () => {
+      const logo = document.querySelector<HTMLImageElement>('[data-receipt-logo="official"]')
+      window.parent.document.documentElement.dataset.receiptLogo = String(
+        logo?.getAttribute('src') === '/escudo.jpg' && logo.complete && logo.naturalWidth > 0,
+      )
+      window.parent.document.documentElement.dataset.receiptPrint = document.body.innerText
+      window.dispatchEvent(new Event('afterprint'))
+    }
+  })
   await checkViewport()
   if (mobileKeyboard) {
     const trigger = page.getByRole('button', { name: 'Abrir navegación' })
@@ -433,7 +506,14 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     }
     expect(opens).toBe(0)
   }
-  await enterValue(page.getByLabel('Efectivo inicial (pesos)'), '10,00')
+  const openingAmount = page.getByLabel('Efectivo inicial (pesos)')
+  await enterValue(openingAmount, '15600')
+  await page.keyboard.press('Tab')
+  await expect(openingAmount).toHaveValue('15.600,00')
+  expect(opens).toBe(0)
+  await enterValue(openingAmount, '10')
+  await page.keyboard.press('Tab')
+  await expect(openingAmount).toHaveValue('10,00')
   await activate(page.getByRole('button', { name: 'Abrir turno', exact: true }))
   await expect(page.getByText('Turno abierto.', { exact: true })).toBeVisible()
   await activate(page.getByRole('button', { name: 'Volver a cobranza', exact: true }))
@@ -470,6 +550,8 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   }
   await activate(dialog.getByRole('button', { name: 'Confirmar pago', exact: true }))
   const paymentOutcome = page.getByRole('region', { name: 'Resultado del pago' })
+  await expect(paymentOutcome).toBeFocused()
+  await expect(paymentOutcome.getByRole('heading', { name: 'Pago registrado' })).toBeInViewport()
   await expect(paymentOutcome).toContainText(paymentId)
   await expect(paymentOutcome).toContainText(/Importe confirmado:\s*\$\s*100,00/)
   if (failRefresh) {
@@ -488,6 +570,60 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     expect(debtGets).toBe(debtGetsBeforeRecovery + 1)
   }
   await expect(dialog).not.toBeVisible()
+  const receiptOpener = paymentOutcome.getByRole('button', {
+    name: 'Ver e imprimir constancia',
+    exact: true,
+  })
+  await expect(receiptOpener).toBeInViewport()
+  expect(receiptGets).toBe(0)
+  await expect(
+    page.getByRole('dialog', { name: 'Constancia de pago no fiscal', exact: true }),
+  ).toHaveCount(0)
+  await activate(receiptOpener)
+  const receiptDialog = page.getByRole('dialog', {
+    name: 'Constancia de pago no fiscal',
+    exact: true,
+  })
+  await expect(receiptDialog).toContainText('Datos actuales del socio')
+  await expect(receiptDialog).toContainText('Ana Gorriti')
+  await expect(receiptDialog).toContainText(paymentId)
+  await expect(receiptDialog).toContainText('01/01/2026 al 31/01/2026')
+  expect(receiptGets).toBe(1)
+  await checkViewport()
+  await activate(receiptDialog.getByRole('button', { name: 'Imprimir', exact: true }))
+  await expect
+    .poll(() => page.locator('html').getAttribute('data-receipt-print'))
+    .toContain(paymentId)
+  const printed = await page.locator('html').getAttribute('data-receipt-print')
+  await expect(page.locator('html')).toHaveAttribute('data-receipt-logo', 'true')
+  for (const text of [
+    'Club Atlético Gorriti',
+    'Constancia de pago no fiscal',
+    'No válida como factura',
+    'Datos actuales del socio',
+    'Ana Gorriti',
+    '42',
+    '01/01/2026 al 31/01/2026',
+  ])
+    expect(printed).toContain(text)
+  expect(printed).toMatch(/\$\s*100,00/)
+  for (const text of ['Gestión operativa', 'Registrar pago', 'Imprimir', 'Cerrar'])
+    expect(printed).not.toContain(text)
+  await expect(page.getByTestId('settlement-receipt-print')).toHaveCount(0)
+  await activate(receiptDialog.getByRole('button', { name: 'Cerrar', exact: true }))
+  await expect(receiptOpener).toBeFocused()
+  failNextReceiptGet = true
+  await activate(receiptOpener)
+  await expect(receiptDialog.getByRole('alert')).toContainText(
+    'No se pudo cargar la constancia de pago.',
+  )
+  await expect(receiptDialog.locator('article')).not.toBeVisible()
+  await expect(receiptDialog.getByRole('button', { name: 'Imprimir', exact: true })).toBeDisabled()
+  expect(receiptGets).toBe(2)
+  await activate(receiptDialog.getByRole('button', { name: 'Reintentar', exact: true }))
+  await expect(receiptDialog.locator('article')).toContainText(paymentId)
+  expect(receiptGets).toBe(3)
+  await activate(receiptDialog.getByRole('button', { name: 'Cerrar', exact: true }))
   await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
   await expect(dialog.getByRole('checkbox', { name: /^Período febrero de 2026:/ })).toBeChecked()
   await expect(dialog.locator(':focus')).toHaveCount(1)
@@ -517,7 +653,10 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     )
     expect(closes).toBe(0)
   }
-  await enterValue(page.getByLabel('Efectivo contado (pesos)'), '110,00')
+  const countedAmount = page.getByLabel('Efectivo contado (pesos)')
+  await enterValue(countedAmount, '110')
+  await page.keyboard.press('Tab')
+  await expect(countedAmount).toHaveValue('110,00')
   await activate(page.getByRole('button', { name: /Cerrar front-desk/ }))
   const summary = page.getByRole('region', { name: 'Resumen de conciliación' })
   await expect(summary).toBeVisible()
@@ -564,6 +703,24 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     await activate(foreignDetail.getByRole('button', { name: 'Cerrar detalle', exact: true }))
     await expect(foreignOpener).toBeFocused()
   }
+  // Recovery starts from the normal Collections URL, not the cash-return context.
+  await page.goto('/collections')
+  await page.reload()
+  await expect(paymentOutcome).not.toBeVisible()
+  await enterValue(page.getByRole('searchbox', { name: 'Buscar socio' }), 'Gorriti')
+  await activate(page.getByRole('button', { name: 'Buscar socio', exact: true }))
+  await activate(page.getByRole('button', { name: /Gorriti, Ana/ }))
+  const januaryHistory = page.getByRole('listitem', {
+    name: 'Obligación de enero de 2026',
+    exact: true,
+  })
+  await activate(januaryHistory.locator('summary', { hasText: 'Historial de movimientos' }))
+  await activate(januaryHistory.getByRole('button', { name: 'Ver constancia', exact: true }))
+  await expect(receiptDialog).toContainText(paymentId)
+  await expect(receiptDialog).toContainText('01/01/2026 al 31/01/2026')
+  expect(receiptGets).toBe(4)
+  expect(payments).toBe(1)
+  await activate(receiptDialog.getByRole('button', { name: 'Cerrar', exact: true }))
   expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
 }

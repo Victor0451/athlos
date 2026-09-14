@@ -25,6 +25,7 @@ type Props = {
   status: DebtPanelStatus
   debt: DebtDetail | null
   error: string
+  onViewSettlement?: (settlementId: string) => void
   onSearch: (term: string) => Promise<void> | void
   onSelectSocio: (socio: SocioOption) => Promise<void> | void
   summaryRef?: Ref<HTMLDivElement>
@@ -36,6 +37,7 @@ export function DebtPanel({
   status,
   debt,
   error,
+  onViewSettlement,
   onSearch,
   onSelectSocio,
   summaryRef,
@@ -86,7 +88,11 @@ export function DebtPanel({
               {presentation.total.label}: {presentation.total.value}
             </p>
           </div>
-          <DebtObligationList obligations={presentation.obligations} />
+          <DebtObligationList
+            obligations={presentation.obligations}
+            debt={debt}
+            {...(onViewSettlement ? { onViewSettlement } : {})}
+          />
         </div>
       )}
     </section>
