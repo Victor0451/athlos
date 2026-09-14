@@ -3,6 +3,18 @@ import { visibleNavigation } from './navigation'
 
 const user = { role: 'TESORERO', permissions: { data_steward: false } } as never
 
+describe('approvals navigation', () => {
+  it.each(['ADMIN', 'TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
+    'gates the queue for %s',
+    (role) => {
+      const actor = { role, permissions: { data_steward: false } } as never
+      expect(visibleNavigation(actor).some((item) => item.href === '/admin/approvals')).toBe(
+        role === 'ADMIN' || role === 'TESORERO',
+      )
+    },
+  )
+})
+
 describe('cash navigation feature gate', () => {
   it('hides treasury when the server-provided cash feature is disabled', () => {
     expect(
