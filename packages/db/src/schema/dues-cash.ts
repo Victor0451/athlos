@@ -14,12 +14,38 @@ export const duesCashSources=tesoreriaSchema.table('dues_cash_sources',{id:uuid(
 export const duesCashManualSources=tesoreriaSchema.table('dues_cash_manual_sources',{id:uuid('id').primaryKey().defaultRandom(),tenderId:uuid('tender_id').notNull().references(()=>duesCashTenders.id,{onDelete:'restrict'}),accountCodeSnapshot:text('account_code_snapshot').notNull(),accountNameSnapshot:text('account_name_snapshot').notNull(),accountPathSnapshot:jsonb('account_path_snapshot').notNull(),description:text('description').notNull(),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({tenderUnique:unique('dues_cash_manual_source_tender_unique').on(t.tenderId),descriptionCheck:check('dues_cash_manual_source_description_check',sql`NULLIF(BTRIM(${t.description}), '') IS NOT NULL`)}))
 // prettier-ignore
 export const duesCashSupportingRecords=tesoreriaSchema.table('dues_cash_supporting_records',{id:uuid('id').primaryKey().defaultRandom(),manualSourceId:uuid('manual_source_id').notNull().references(()=>duesCashManualSources.id,{onDelete:'restrict'}),kind:text('kind').notNull(),docType:text('doc_type'),letter:text('letter'),pointOfSale:text('point_of_sale'),docNumber:text('doc_number'),legend:text('legend'),issuer:text('issuer'),recipient:text('recipient'),issueDate:date('issue_date'),currency:text('currency').notNull().default('ARS'),total:numeric('total',{precision:14,scale:2}).notNull(),priorReferences:jsonb('prior_references').notNull().default([]),taxComponents:jsonb('tax_components').notNull().default([]),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({sourceUnique:unique('dues_cash_supporting_record_source_unique').on(t.manualSourceId),kindCheck:check('dues_cash_supporting_record_kind_check',sql`${t.kind} IN ('EXTERNAL','INTERNAL')`),totalCheck:check('dues_cash_supporting_record_total_check',sql`${t.total} > 0`),internalUnnumbered:check('dues_cash_supporting_record_internal_unnumbered',sql`${t.kind} <> 'INTERNAL' OR (${t.docType} IS NULL AND ${t.docNumber} IS NULL AND ${t.pointOfSale} IS NULL)`)}))
-// prettier-ignore
-export const duesCashShiftExpenses=tesoreriaSchema.table('dues_cash_shift_expenses',{id:uuid('id').primaryKey().defaultRandom(),shiftId:uuid('shift_id').notNull().references(()=>duesCashShifts.id),gastoId:uuid('gasto_id').notNull().references(()=>gastos.id),operatorId:uuid('operator_id').notNull().references(()=>operators.id),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({oneShiftExpense:uniqueIndex('dues_cash_shift_expense_unique').on(t.gastoId),shiftIdx:index('dues_cash_shift_expense_shift_idx').on(t.shiftId)}))
+
 // prettier-ignore
 export const duesCashCloses=tesoreriaSchema.table('dues_cash_closes',{id:uuid('id').primaryKey().defaultRandom(),shiftId:uuid('shift_id').notNull().unique().references(()=>duesCashShifts.id),expectedTenders:jsonb('expected_tenders').notNull(),countedTenders:jsonb('counted_tenders').notNull(),discrepancy:jsonb('discrepancy').notNull(),reason:text('reason'),forceClose:boolean('force_close').notNull().default(false),operatorId:uuid('operator_id').notNull().references(()=>operators.id),authorizationEvidence:jsonb('authorization_evidence').notNull().default({}),callerKey:text('caller_key').notNull(),requestFingerprint:text('request_fingerprint').notNull(),closedAt:timestamp('closed_at',{withTimezone:true}).notNull().defaultNow()})
 // prettier-ignore
-export const gastoCompensations=tesoreriaSchema.table('gasto_compensations',{id:uuid('id').primaryKey().defaultRandom(),originalGastoId:uuid('original_gasto_id').notNull().references(()=>gastos.id),compensatingGastoId:uuid('compensating_gasto_id').notNull().references(()=>gastos.id),reason:text('reason').notNull(),operatorId:uuid('operator_id').notNull().references(()=>operators.id),callerKey:text('caller_key').notNull(),requestFingerprint:text('request_fingerprint').notNull(),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({callerUnique:uniqueIndex('gasto_compensation_operator_key_unique').on(t.operatorId,t.callerKey)}))
+export const duesCashCloseTransfers=tesoreriaSchema.table('dues_cash_close_transfers',{id:uuid('id').primaryKey().defaultRandom(),closeId:uuid('close_id').notNull().references(()=>duesCashCloses.id,{onDelete:'restrict'}),shiftId:uuid('shift_id').notNull().references(()=>duesCashShifts.id,{onDelete:'restrict'}),accountCodeSnapshot:text('account_code_snapshot').notNull(),accountNameSnapshot:text('account_name_snapshot').notNull(),accountPathSnapshot:jsonb('account_path_snapshot').notNull(),amount:numeric('amount',{precision:14,scale:2}).notNull(),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({closeUnique:unique('dues_cash_close_transfer_close_unique').on(t.closeId),shiftUnique:unique('dues_cash_close_transfer_shift_unique').on(t.shiftId),amountCheck:check('dues_cash_close_transfer_amount_check',sql`${t.amount} > 0`)}))
+// prettier-ignore
+export const duesCashShiftExpenses=tesoreriaSchema.table('dues_cash_shift_expenses',{id:uuid('id').primaryKey().defaultRandom(),shiftId:uuid('shift_id').notNull().references(()=>duesCashShifts.id),gastoId:uuid('gasto_id').notNull().references(()=>gastos.id),operatorId:uuid('operator_id').notNull().references(()=>operators.id),createdAt:timestamp('created_at',{withTimezone:true}).notNull().defaultNow()},t=>({oneShiftExpense:uniqueIndex('dues_cash_shift_expense_unique').on(t.gastoId),shiftIdx:index('dues_cash_shift_expense_shift_idx').on(t.shiftId)})) // prettier-ignore
+export const gastoCompensations = tesoreriaSchema.table(
+  'gasto_compensations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    originalGastoId: uuid('original_gasto_id')
+      .notNull()
+      .references(() => gastos.id),
+    compensatingGastoId: uuid('compensating_gasto_id')
+      .notNull()
+      .references(() => gastos.id),
+    reason: text('reason').notNull(),
+    operatorId: uuid('operator_id')
+      .notNull()
+      .references(() => operators.id),
+    callerKey: text('caller_key').notNull(),
+    requestFingerprint: text('request_fingerprint').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    callerUnique: uniqueIndex('gasto_compensation_operator_key_unique').on(
+      t.operatorId,
+      t.callerKey,
+    ),
+  }),
+)
 
 export const gastoMutationReceipts = tesoreriaSchema.table(
   'gasto_mutation_receipts',

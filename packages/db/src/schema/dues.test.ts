@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { duesCashManualSources, duesCashShifts, duesCashSupportingRecords } from './dues-cash.ts'
+import {
+  duesCashCloseTransfers,
+  duesCashManualSources,
+  duesCashShifts,
+  duesCashSupportingRecords,
+} from './dues-cash.ts'
 import { duesComponentKind, duesObligationKind, duesPriceKind } from './dues.ts'
 // prettier-ignore
 import { duesBenefitCombinability, duesBenefitKind, duesBenefitPercentageBasis } from './dues-benefits.ts'
@@ -144,7 +149,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0072_cash_supporting_records',
+      tag: '0073_cash_close_transfers',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
@@ -182,6 +187,22 @@ describe('dues pricing and obligation schema', () => {
       ]),
     )
     expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
+  })
+
+  it('declares close transfers as one computed outflow per close without tender duplication', () => {
+    const columns = Object.keys(duesCashCloseTransfers)
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'id',
+        'closeId',
+        'shiftId',
+        'accountCodeSnapshot',
+        'accountNameSnapshot',
+        'accountPathSnapshot',
+        'amount',
+      ]),
+    )
+    expect(columns).not.toEqual(expect.arrayContaining(['tender', 'direction', 'sourceType']))
   })
 
   it('allows dated memberships but rejects overlapping active groups for one socio', async () => {
