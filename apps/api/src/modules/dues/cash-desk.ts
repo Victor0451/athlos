@@ -130,6 +130,35 @@ export function reconcileTenders(
 
 const isFinance = (role: string) => role === 'ADMIN' || role === 'TESORERO'
 
+type AccountSnapshot = { code: string; name: string; eligible: boolean; path: unknown[] }
+const resolveAccountSnapshot = async (
+  db: CashDb,
+  accountCode: string,
+): Promise<AccountSnapshot | undefined> => {
+  const result = await db.execute(sql`
+    WITH RECURSIVE ancestors AS (
+      SELECT code,name,parent_code,root_code,active,imputable,0 AS depth
+      FROM contabilidad.plan_cuentas WHERE code=${accountCode}
+      UNION ALL
+      SELECT p.code,p.name,p.parent_code,p.root_code,p.active,p.imputable,ac.depth+1
+      FROM contabilidad.plan_cuentas p JOIN ancestors ac ON ac.parent_code=p.code AND ac.root_code=p.root_code
+    )
+    SELECT
+      (SELECT code FROM ancestors WHERE depth=0) AS code,
+      (SELECT name FROM ancestors WHERE depth=0) AS name,
+      (SELECT active AND imputable FROM ancestors WHERE depth=0) AS eligible,
+      jsonb_agg(jsonb_build_object('code',code,'name',name) ORDER BY depth DESC) AS path
+    FROM ancestors
+  `)
+  const row = result.rows?.[0] as Record<string, unknown> | undefined
+  if (!row || !(row.eligible === true)) return undefined
+  return {
+    code: String(row.code ?? ''),
+    name: String(row.name ?? ''),
+    eligible: true,
+    path: (Array.isArray(row.path) ? row.path : []) as unknown[],
+  }
+}
 const authorize = (role: string) => {
   if (!isFinance(role)) {
     throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Cash desk action is not authorized')
@@ -192,6 +221,8 @@ export type CashCommand = AuditContext & { role: AuditContext['role'] }
 export type OpenCashCommand = CashCommand & { deskId: string; openingTenders: Totals }
 export type TenderCommand = CashCommand & {
   shiftId: string
+  accountCode?: string
+  description?: string
   direction: Direction
   tender: string
   amountCents: number
@@ -591,6 +622,20 @@ export class CashDeskService {
         'Tender amount, direction, and manual reason are required',
       )
     }
+    if (input.sourceType === 'MANUAL' && (input.accountCode?.trim() || input.description?.trim())) {
+      if (!input.accountCode?.trim()) {
+        throw BusinessError(
+          ErrorCode.VALIDATION_ERROR,
+          'A manual account code and description are required together',
+        )
+      }
+      if (!input.description?.trim()) {
+        throw BusinessError(
+          ErrorCode.VALIDATION_ERROR,
+          'A manual account code and description are required together',
+        )
+      }
+    }
     if (input.sourceType === 'SETTLEMENT') {
       return this.db.transaction((tx) =>
         recordSettlementTenderInTransaction(tx, {
@@ -655,12 +700,40 @@ export class CashDeskService {
           }
           throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Tender replay is unavailable')
         }
+        let manualSourceId: string | undefined
+        if (
+          input.sourceType === 'MANUAL' &&
+          input.accountCode?.trim() &&
+          input.description?.trim()
+        ) {
+          const acct = await resolveAccountSnapshot(tx, input.accountCode.trim())
+          if (!acct?.eligible)
+            throw BusinessError(ErrorCode.CONFLICT, 'Manual movement account is unavailable')
+          const snapPath = JSON.stringify(acct.path)
+          const srcInserted = rows(
+            await tx.execute(
+              sql`INSERT INTO tesoreria.dues_cash_manual_sources (tender_id,account_code_snapshot,account_name_snapshot,account_path_snapshot,description) VALUES (${inserted.id},${input.accountCode.trim()},${acct.name},${snapPath}::jsonb,${input.description.trim()}) RETURNING id`,
+            ),
+          )[0]
+          if (srcInserted) manualSourceId = srcInserted.id
+          else {
+            const retained = rows(
+              await tx.execute(
+                sql`SELECT id FROM tesoreria.dues_cash_manual_sources WHERE tender_id=${inserted.id} AND account_code_snapshot=${input.accountCode.trim()} FOR UPDATE`,
+              ),
+            )[0]
+            if (!retained)
+              throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Manual source is unavailable')
+            manualSourceId = retained.id
+          }
+        }
         await this.audit(tx, input, AuditAction.DUES_CASH_TENDER_RECORDED, inserted.id, {
           shiftId: input.shiftId,
           direction: input.direction,
           tender: input.tender,
           amountCents: amount,
           sourceType: input.sourceType,
+          ...(manualSourceId ? { manualSourceId } : {}),
         })
         return responseTender(inserted)
       })

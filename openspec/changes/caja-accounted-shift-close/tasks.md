@@ -174,6 +174,8 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Scope:** the remaining full manual-income/expense contract. U5B MUST provide the dedicated atomic writer that creates the required tender and source together, validates request exact cents and bounds before numeric persistence, locks the current own OPEN shift, and supplies the authorized route/service surface. U5A alone does not claim orphan prevention, idempotency, or exactly-once source/tender creation.
 
+> **B1/B2 split status:** Practically split into `work/caja-diagnosis` branch work unit **U5-B1** (atomic manual-source writer: `cash-desk.ts` + tests) and residual U5-B2 (route/service orchestration). This plan retains a single combined U5-B checkbox block; checkboxes are left `[ ]` per instructions — the split is documented below in `apply-progress.md`.
+    
 - [ ] 1. **RED:** add source/writer/route failures for description, missing or multiple methods, fractional/unsafe/overflow amounts, inactive/group accounts, closed/foreign shifts, replay conflicts, and BANK_DEBIT income rejection.
 - [ ] 2. **GREEN:** implement only the atomic authorized manual writer and route: income CASH/DEBIT/CREDIT/TRANSFER; expense CASH/DEBIT/CREDIT/TRANSFER/BANK_DEBIT; one tender plus one source with immutable snapshots and no split payment.
 - [ ] 3. **TRIANGULATE:** prove one committed tender/source or no write on rollback, replay/idempotency without duplicate tender/source, CASH-only reconciliation preservation, and historical readers with absent manual-source metadata.

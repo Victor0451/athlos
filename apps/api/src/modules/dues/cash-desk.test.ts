@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Db } from '@athlos/db'
 import {
   businessDateForOpening,
   movementInInterval,
@@ -6,6 +7,7 @@ import {
   requestFingerprintConflict,
   validateOpeningTenders,
 } from './cash-desk.ts'
+import { CashDeskService } from './cash-desk.ts'
 
 describe('cash desk reconciliation', () => {
   it('keeps cash reconciliation separate from non-cash tender reporting', () => {
@@ -66,5 +68,51 @@ describe('cash desk reconciliation', () => {
       { CASH: 100_000_000_000_000 },
     ])
       expect(() => validateOpeningTenders(opening)).toThrow('CASH')
+  })
+})
+
+describe('MANUAL tender attribution validation', () => {
+  // recordTender validates attribution BEFORE any db access; the stub proves rejection paths never touch PG.
+  const unreachable = (): never => {
+    throw new Error('db must not be reached')
+  }
+  const stubDb = { transaction: unreachable, execute: unreachable } as unknown as Db
+  const record = (overrides: Record<string, unknown>) =>
+    new CashDeskService(stubDb).recordTender({
+      actorId: 'a1',
+      role: 'ADMIN' as const,
+      permissions: [] as string[],
+      sourceIp: '127.0.0.1',
+      callerKey: 'key',
+      requestFingerprint: 'f'.repeat(64),
+      authorizationEvidence: {},
+      shiftId: 's1',
+      direction: 'INCOME' as const,
+      tender: 'CASH' as const,
+      amountCents: 500,
+      sourceType: 'MANUAL' as const,
+      reason: 'Receipt',
+      ...overrides,
+    })
+
+  it('rejects accountCode-only as incomplete attribution', async () => {
+    await expect(record({ accountCode: '1.1.1.01' })).rejects.toThrow(
+      'A manual account code and description are required together',
+    )
+  })
+
+  it('rejects description-only as incomplete attribution', async () => {
+    await expect(record({ description: 'Manual income' })).rejects.toThrow(
+      'A manual account code and description are required together',
+    )
+  })
+
+  it('passes full, blank, and omitted attribution through to the db layer', async () => {
+    for (const overrides of [
+      { accountCode: '1.1.1.01', description: 'Cash receipt' },
+      { accountCode: ' ', description: '' },
+      {},
+    ])
+      await expect(record(overrides)).rejects.toThrow('db must not be reached')
   })
 })
