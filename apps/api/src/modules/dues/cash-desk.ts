@@ -37,6 +37,26 @@ type Row = {
   fecha: string
   importe: string
   opening_tenders: Totals
+  // prettier-ignore
+  manual_source_id?: string;
+  tender_id?: string
+  account_code_snapshot?: string
+  account_name_snapshot?: string
+  account_path_snapshot?: unknown
+  description?: string
+  doc_type?: string | null
+  letter?: string | null
+  point_of_sale?: string | null
+  doc_number?: string | null
+  legend?: string | null
+  issuer?: string | null
+  recipient?: string | null
+  issue_date?: string | null
+  currency?: string
+  total?: string | number
+  prior_references?: string[] | null
+  tax_components?: { label: string; amount_cents: number; semantic: string }[] | null
+  created_at?: string | Date
 }
 
 const isShiftOwner = (shift: Pick<Row, 'assigned_operator_id'>, actorId: string) =>
@@ -184,6 +204,41 @@ const authorizeManualTender = (role: string) => {
   }
 }
 
+// prettier-ignore
+const SUPPORTING_DOC_TYPES = ['FACTURA_A','FACTURA_B','FACTURA_C','FACTURA_E','FACTURA_M','FACTURA_T','NOTA_CREDITO','NOTA_DEBITO','RECIBO_A','RECIBO_B','RECIBO_C','RECIBO_X','REMITO_R','REMITO_X','TICKET']
+
+// Transcription guards mirror the 0072 DB policy; the database remains the fail-closed backstop.
+const validateSupportingInput = (input: SupportingRecordCommand) => {
+  // prettier-ignore
+  if (!Number.isSafeInteger(input.totalCents) || input.totalCents <= 0) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Supporting records require a positive exact-cent total')
+  if (input.kind === 'EXTERNAL') {
+    // prettier-ignore
+    if (!input.docType || !SUPPORTING_DOC_TYPES.includes(input.docType)) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'External supporting records require a whitelisted document type')
+    // prettier-ignore
+    if ((input.docType === 'NOTA_CREDITO' || input.docType === 'NOTA_DEBITO') && !input.priorReferences?.some((reference) => reference.trim())) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Credit and debit notes require prior document references')
+  }
+  // prettier-ignore
+  if (input.kind === 'INTERNAL' && (input.docType || input.docNumber || input.pointOfSale)) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Internal supporting evidence is unnumbered')
+  let additiveTotal = 0
+  let hasAdditive = false
+  for (const component of input.taxComponents ?? []) {
+    // prettier-ignore
+    if (!component.label?.trim() || !Number.isSafeInteger(component.amountCents) || component.amountCents <= 0 || (component.semantic !== 'ADDITIVE' && component.semantic !== 'CONTAINED')) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Tax components require a label, positive integer cents, and explicit semantics')
+    if (component.semantic === 'ADDITIVE') {
+      hasAdditive = true
+      additiveTotal += component.amountCents
+    }
+  }
+  // prettier-ignore
+  if (hasAdditive && additiveTotal !== input.totalCents) throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Additive tax components must reconcile exactly to the document total')
+}
+
+// prettier-ignore
+const responseSupporting = (row: Row) => ({ id: row.id, manualSourceId: row.manual_source_id, kind: row.kind, ...(row.doc_type ? { docType: row.doc_type } : {}), ...(row.letter ? { letter: row.letter } : {}), ...(row.point_of_sale ? { pointOfSale: row.point_of_sale } : {}), ...(row.doc_number ? { docNumber: row.doc_number } : {}), ...(row.legend ? { legend: row.legend } : {}), ...(row.issuer ? { issuer: row.issuer } : {}), ...(row.recipient ? { recipient: row.recipient } : {}), ...(row.issue_date ? { issueDate: row.issue_date } : {}), currency: row.currency, totalCents: cents(String(row.total)), priorReferences: row.prior_references ?? [], taxComponents: ((row.tax_components ?? []) as { label: string; amount_cents: number; semantic: string }[]).map((component) => ({ label: component.label, amountCents: component.amount_cents, semantic: component.semantic })), createdAt: new Date(row.created_at as string | Date).toISOString() })
+
+// prettier-ignore
+const responseManualSource = (row: Row) => ({ id: row.id, tenderId: row.tender_id, accountCodeSnapshot: row.account_code_snapshot, accountNameSnapshot: row.account_name_snapshot, accountPathSnapshot: row.account_path_snapshot, description: row.description, createdAt: new Date(row.created_at as string | Date).toISOString() })
+
 const authorizeForceClose = (role: string) => {
   if (role !== 'ADMIN' && role !== 'TESORERO') {
     throw BusinessError(
@@ -238,6 +293,10 @@ export type TenderCommand = CashCommand & {
   reason?: string
 }
 export type ExpenseCommand = CashCommand & { shiftId: string; gastoId: string; tender: string }
+// prettier-ignore
+export type SupportingTaxComponent = { label: string; amountCents: number; semantic: 'ADDITIVE' | 'CONTAINED' }
+// prettier-ignore
+export type SupportingRecordCommand = CashCommand & { manualSourceId: string; kind: 'EXTERNAL' | 'INTERNAL'; docType?: string; letter?: string; pointOfSale?: string; docNumber?: string; legend?: string; issuer?: string; recipient?: string; issueDate?: string; currency?: string; totalCents: number; priorReferences?: string[]; taxComponents?: SupportingTaxComponent[] }
 export type SettlementTenderInput = CashCommand & {
   shiftId: string
   settlementId: string
@@ -751,6 +810,77 @@ export class CashDeskService {
         }
         throw error
       })
+  }
+
+  async recordSupporting(input: SupportingRecordCommand) {
+    authorizeManualTender(input.role)
+    validateSupportingInput(input)
+    return this.db
+      .transaction(async (tx) => {
+        const source = rows<{ source_id: string; shift_id: string }>(
+          await tx.execute(
+            sql`SELECT s.id AS source_id, t.shift_id FROM tesoreria.dues_cash_manual_sources s JOIN tesoreria.dues_cash_tenders t ON t.id = s.tender_id WHERE s.id = ${input.manualSourceId} FOR UPDATE OF s, t`,
+          ),
+        )[0]
+        if (!source) throw BusinessError(ErrorCode.NOT_FOUND, 'Manual cash source not found')
+        const shift = await this.shift(tx, source.shift_id, input, true)
+        if (shift.status !== 'OPEN') {
+          throw BusinessError(ErrorCode.CONFLICT, 'Supporting records require an open cash shift')
+        }
+        const inserted = rows(
+          await tx.execute(
+            sql`INSERT INTO tesoreria.dues_cash_supporting_records (manual_source_id,kind,doc_type,letter,point_of_sale,doc_number,legend,issuer,recipient,issue_date,currency,total,prior_references,tax_components) VALUES (${input.manualSourceId},${input.kind},${input.docType ?? null},${input.letter ?? null},${input.pointOfSale ?? null},${input.docNumber ?? null},${input.legend ?? null},${input.issuer ?? null},${input.recipient ?? null},${input.issueDate ?? null},${input.currency ?? 'ARS'},${money(input.totalCents)},${JSON.stringify(input.priorReferences ?? [])}::jsonb,${JSON.stringify((input.taxComponents ?? []).map((component) => ({ label: component.label, amount_cents: component.amountCents, semantic: component.semantic })))}::jsonb) ON CONFLICT (manual_source_id) DO NOTHING RETURNING *`,
+          ),
+        )[0]
+        if (!inserted) {
+          throw BusinessError(
+            ErrorCode.CONFLICT,
+            'Manual cash source already has a supporting record',
+          )
+        }
+        await this.audit(tx, input, AuditAction.DUES_CASH_SUPPORTING_RECORDED, inserted.id, {
+          manualSourceId: input.manualSourceId,
+          shiftId: source.shift_id,
+          kind: input.kind,
+          docType: input.docType ?? null,
+          totalCents: input.totalCents,
+        })
+        return responseSupporting(inserted)
+      })
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code === '23505') {
+          throw BusinessError(
+            ErrorCode.CONFLICT,
+            'Manual cash source already has a supporting record',
+          )
+        }
+        throw error
+      })
+  }
+
+  async manualSourceDetail(input: CashCommand & { manualSourceId: string }) {
+    authorizeOpenRead(input.role)
+    const result = rows<{ source: Row; record: Row | null; shift: Row }>(
+      await this.db.execute(
+        sql`SELECT row_to_json(s.*) AS source, row_to_json(r.*) AS record, row_to_json(h.*) AS shift
+          FROM tesoreria.dues_cash_manual_sources s
+          JOIN tesoreria.dues_cash_tenders t ON t.id = s.tender_id
+          JOIN tesoreria.dues_cash_shifts h ON h.id = t.shift_id
+          LEFT JOIN tesoreria.dues_cash_supporting_records r ON r.manual_source_id = s.id
+          WHERE s.id = ${input.manualSourceId}`,
+      ),
+    )[0]
+    if (!result) throw BusinessError(ErrorCode.NOT_FOUND, 'Manual cash source not found')
+    if (input.role === 'OPERADOR' && !isShiftOwner(result.shift, input.actorId)) {
+      throw BusinessError(
+        ErrorCode.INSUFFICIENT_PERMISSIONS,
+        'Cash shift responsibility does not match the operator',
+      )
+    }
+    return {
+      source: responseManualSource(result.source),
+      supportingRecord: result.record ? responseSupporting(result.record) : null,
+    }
   }
 
   async includeExpense(input: ExpenseCommand) {

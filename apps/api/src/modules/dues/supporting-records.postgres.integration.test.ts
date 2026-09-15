@@ -3,11 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { CashDeskService } from './cash-desk.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let admin: ReturnType<typeof createDb>
 let db: ReturnType<typeof createDb>
 let operatorId: string
+let adminId: string
+let secondOperatorId: string
 let shiftId: string
 
 const DUES_PATH =
@@ -22,6 +25,8 @@ beforeAll(async () => {
   dbUrl.pathname = `/${dbName}`
   db = createDb({ connectionString: dbUrl.toString(), poolMax: 4 })
   operatorId = randomUUID()
+  adminId = randomUUID()
+  secondOperatorId = randomUUID()
   shiftId = randomUUID()
   const conn = await db.pool.connect()
   try {
@@ -32,7 +37,8 @@ beforeAll(async () => {
       CREATE TABLE public.operators (id uuid PRIMARY KEY, role char(1) NOT NULL DEFAULT 'O');
       CREATE TABLE tesoreria.gastos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), fecha date NOT NULL DEFAULT CURRENT_DATE, importe text NOT NULL DEFAULT '0.00');
       CREATE TABLE tesoreria.dues_settlements (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), kind text NOT NULL DEFAULT 'MONETARY');
-      INSERT INTO public.operators VALUES ('${operatorId}','O');
+      CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),operator_id uuid,action text NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,old_value jsonb,new_value jsonb,source_ip text,metadata jsonb,idempotency_key text,created_at timestamptz NOT NULL DEFAULT now());
+      INSERT INTO public.operators VALUES ('${operatorId}','O'),('${adminId}','A'),('${secondOperatorId}','O');
     `)
     const directory = join(import.meta.dirname, '../../../../../packages/db/drizzle')
     for (const f of [
@@ -240,5 +246,84 @@ describe('U6-A supporting-record persistence', () => {
     await expect(insertRecord(external(randomUUID()))).rejects.toMatchObject({ code: '23503' })
     const columns = Object.keys(saved.rows[0])
     expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
+  })
+})
+
+describe('U6-B supporting-record service on real PostgreSQL', () => {
+  const command = (
+    actorId: string,
+    role: 'ADMIN' | 'TESORERO' | 'OPERADOR',
+    manualSourceId: string,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    actorId,
+    role,
+    permissions: [] as string[],
+    sourceIp: '127.0.0.1',
+    callerKey: `u6b-${randomUUID()}`,
+    requestFingerprint: 'a'.repeat(64),
+    authorizationEvidence: {},
+    manualSourceId,
+    kind: 'EXTERNAL' as const,
+    docType: 'FACTURA_B',
+    issuer: 'Proveedor Feria',
+    pointOfSale: '00001',
+    docNumber: '00000043',
+    totalCents: 100000,
+    currency: 'ARS',
+    taxComponents: [
+      { label: 'Neto gravado', amountCents: 79000, semantic: 'ADDITIVE' as const },
+      { label: 'IVA 21%', amountCents: 21000, semantic: 'ADDITIVE' as const },
+    ],
+    ...overrides,
+  })
+  const service = () => new CashDeskService(db.db)
+
+  it('creates, audits, and reads back one supporting record per manual source', async () => {
+    const sourceId = await insertManualSource()
+    const created = await service().recordSupporting(command(operatorId, 'OPERADOR', sourceId))
+    expect(created.pointOfSale).toBe('00001')
+    expect(created.docNumber).toBe('00000043')
+    expect(created.totalCents).toBe(100000)
+    expect(created.taxComponents).toHaveLength(2)
+    const audit = await db.pool.query(
+      `SELECT action, metadata FROM public.audit_events WHERE entity_id=$1`,
+      [created.id],
+    )
+    expect(audit.rows[0].action).toBe('DUES_CASH_SUPPORTING_RECORDED')
+    const detail = await service().manualSourceDetail(command(operatorId, 'OPERADOR', sourceId))
+    expect(detail.source.id).toBe(sourceId)
+    expect(detail.supportingRecord?.docNumber).toBe('00000043')
+    await expect(
+      service().recordSupporting(command(operatorId, 'OPERADOR', sourceId)),
+    ).rejects.toThrow('Manual cash source already has a supporting record')
+  })
+
+  it('enforces ownership: foreign operators denied, ADMIN cross-shift allowed', async () => {
+    const sourceId = await insertManualSource()
+    await expect(
+      service().recordSupporting(command(secondOperatorId, 'OPERADOR', sourceId)),
+    ).rejects.toThrow('Cash shift responsibility does not match the operator')
+    await expect(
+      service().manualSourceDetail(command(secondOperatorId, 'OPERADOR', sourceId)),
+    ).rejects.toThrow('Cash shift responsibility does not match the operator')
+    const created = await service().recordSupporting(command(adminId, 'ADMIN', sourceId))
+    expect(created.id).toBeTruthy()
+  })
+
+  it('rejects additive mismatches atomically without leaving a record', async () => {
+    const sourceId = await insertManualSource()
+    await expect(
+      service().recordSupporting(
+        command(operatorId, 'OPERADOR', sourceId, {
+          taxComponents: [{ label: 'Neto gravado', amountCents: 79000, semantic: 'ADDITIVE' }],
+        }),
+      ),
+    ).rejects.toThrow('Additive tax components must reconcile exactly to the document total')
+    const remaining = await db.pool.query(
+      `SELECT COUNT(*)::int AS count FROM tesoreria.dues_cash_supporting_records WHERE manual_source_id=$1`,
+      [sourceId],
+    )
+    expect(remaining.rows[0].count).toBe(0)
   })
 })

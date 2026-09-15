@@ -128,3 +128,19 @@ describe('MANUAL tender attribution validation', () => {
     ).rejects.toThrow('Cash desk action is not authorized')
   })
 })
+
+// prettier-ignore
+describe('supporting record validation',()=>{
+  const unreachable=():never=>{throw new Error('db must not be reached')}
+  const stubDb={transaction:unreachable,execute:unreachable} as unknown as Db
+  // prettier-ignore
+  const support=(overrides:Record<string,unknown>={})=>new CashDeskService(stubDb).recordSupporting({actorId:'a1',role:'ADMIN' as const,permissions:[] as string[],sourceIp:'127.0.0.1',callerKey:'key',requestFingerprint:'f'.repeat(64),authorizationEvidence:{},manualSourceId:'s1',kind:'EXTERNAL' as const,docType:'FACTURA_B',totalCents:100000,...overrides})
+  const component=(label:string,amountCents:number,semantic:string)=>({label,amountCents,semantic})
+  it('rejects unsafe totals before any db access',async()=>{for(const totalCents of [0,-5,10.5,Number.MAX_SAFE_INTEGER+1])await expect(support({totalCents})).rejects.toThrow('Supporting records require a positive exact-cent total')})
+  it('requires a whitelisted external document type',async()=>{for(const docType of [undefined,'FACTURA_Z'])await expect(support({docType})).rejects.toThrow('External supporting records require a whitelisted document type')})
+  it('blocks credit and debit notes without prior references',async()=>{for(const priorReferences of [undefined,[],['   ']])await expect(support({docType:'NOTA_CREDITO',priorReferences})).rejects.toThrow('Credit and debit notes require prior document references')})
+  it('keeps internal evidence unnumbered but accepted',async()=>{await expect(support({kind:'INTERNAL',docNumber:'00000042'})).rejects.toThrow('Internal supporting evidence is unnumbered');await expect(support({kind:'INTERNAL',docType:undefined})).rejects.toThrow('db must not be reached')})
+  it('reconciles additive taxes only, never inferring from equal amounts',async()=>{await expect(support({taxComponents:[component('Neto gravado',79000,'ADDITIVE')]})).rejects.toThrow('Additive tax components must reconcile exactly to the document total');for(const taxComponents of [[component('IVA Contenido',21000,'CONTAINED')],[component('Percepción IIBB',100000,'ADDITIVE'),component('IVA Contenido',100000,'CONTAINED')]])await expect(support({taxComponents})).rejects.toThrow('db must not be reached')})
+  it('rejects malformed tax components',async()=>{for(const taxComponents of [[component('  ',100000,'ADDITIVE')],[component('Monto cero',0,'ADDITIVE')],[component('Fraccionado',10.5,'CONTAINED')],[{label:'Semántica inventada',amountCents:100000,semantic:'MAYBE'}]])await expect(support({taxComponents})).rejects.toThrow('Tax components require a label, positive integer cents, and explicit semantics')})
+  it('authorizes operators for supporting records',async()=>{await expect(support({role:'OPERADOR'})).rejects.toThrow('db must not be reached')})
+})
