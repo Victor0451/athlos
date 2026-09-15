@@ -210,3 +210,141 @@ describe('treasury routes',()=>{
     expect(service.open).not.toHaveBeenCalled()
   })
  })
+
+describe('manual movement API', () => {
+  const shiftId = '00000000-0000-4000-8000-000000000002'
+  const url = `/api/v1/treasury/shifts/${shiftId}/tenders`
+  const manual = {
+    direction: 'INCOME',
+    tender: 'CASH',
+    amount_cents: 1500,
+    source_type: 'MANUAL',
+    reason: 'Rifa',
+    account_code: '4.1.02',
+    description: 'Venta de rifas de la feria',
+  }
+  const okService = () => ({
+    recordTender: vi.fn().mockResolvedValue({
+      id: 'tender-1',
+      shiftId,
+      direction: 'INCOME',
+      tender: 'CASH',
+      amountCents: 1500,
+      sourceType: 'MANUAL',
+      sourceId: null,
+    }),
+  })
+
+  it('records an operator manual movement with required account attribution', async () => {
+    const service = okService()
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', 'manual-op-1'),
+      payload: manual,
+    })
+    expect(response.statusCode).toBe(201)
+    expect(service.recordTender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId,
+        role: 'OPERADOR',
+        shiftId,
+        sourceType: 'MANUAL',
+        accountCode: '4.1.02',
+        description: 'Venta de rifas de la feria',
+      }),
+    )
+  })
+
+  it.each([
+    ['missing account_code', { account_code: undefined }],
+    ['missing description', { description: undefined }],
+    ['blank description', { description: '   ' }],
+  ])('rejects a manual movement with %s before the service', async (label, overrides) => {
+    const service = { recordTender: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', `manual-bad-${label}`),
+      payload: { ...manual, ...overrides },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(service.recordTender).not.toHaveBeenCalled()
+  })
+
+  it('rejects account attribution on settlement tenders', async () => {
+    const service = { recordTender: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-settle-attr'),
+      payload: {
+        direction: 'INCOME',
+        tender: 'CASH',
+        amount_cents: 100,
+        source_type: 'SETTLEMENT',
+        source_id: '00000000-0000-4000-8000-000000000009',
+        account_code: '4.1.01',
+        description: 'Cuota social',
+      },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(service.recordTender).not.toHaveBeenCalled()
+  })
+
+  it('maps a foreign-shift operator rejection to 403 without leaking evidence', async () => {
+    const service = {
+      recordTender: vi
+        .fn()
+        .mockRejectedValue(
+          BusinessError(
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+            'Cash shift responsibility does not match the operator',
+          ),
+        ),
+    }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', 'manual-foreign-shift'),
+      payload: manual,
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.body).not.toContain('authorizationEvidence')
+  })
+
+  it('enforces the manual method matrix at the boundary', async () => {
+    const service = okService()
+    const fastify = await app(service)
+    const expense = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-bank-exp'),
+      payload: { ...manual, direction: 'EXPENSE', tender: 'BANK_DEBIT' },
+    })
+    const income = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-bank-inc'),
+      payload: { ...manual, direction: 'INCOME', tender: 'BANK_DEBIT' },
+    })
+    const unknown = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-unknown'),
+      payload: { ...manual, tender: 'CHECK' },
+    })
+    expect(expense.statusCode).toBe(201)
+    expect(income.statusCode).toBe(400)
+    expect(unknown.statusCode).toBe(400)
+    expect(service.recordTender).toHaveBeenCalledTimes(1)
+  })
+})

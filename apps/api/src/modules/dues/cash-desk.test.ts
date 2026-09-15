@@ -115,4 +115,16 @@ describe('MANUAL tender attribution validation', () => {
     ])
       await expect(record(overrides)).rejects.toThrow('db must not be reached')
   })
+
+  it('authorizes an operator manual tender but never an operator settlement tender', async () => {
+    await expect(record({ role: 'OPERADOR' })).rejects.toThrow('db must not be reached')
+    await expect(
+      record({
+        role: 'OPERADOR',
+        sourceType: 'SETTLEMENT' as const,
+        direction: 'INCOME' as const,
+        sourceId: '00000000-0000-4000-8000-000000000009',
+      }),
+    ).rejects.toThrow('Cash desk action is not authorized')
+  })
 })

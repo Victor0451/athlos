@@ -177,6 +177,13 @@ const authorizeSettlementTender = (role: string) => {
   }
 }
 
+// Manual movements are own-shift OPERADOR work; ownership itself is enforced by shift().
+const authorizeManualTender = (role: string) => {
+  if (!isFinance(role) && role !== 'OPERADOR') {
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Cash desk action is not authorized')
+  }
+}
+
 const authorizeForceClose = (role: string) => {
   if (role !== 'ADMIN' && role !== 'TESORERO') {
     throw BusinessError(
@@ -610,7 +617,8 @@ export class CashDeskService {
   }
 
   async recordTender(input: TenderCommand) {
-    authorize(input.role)
+    if (input.sourceType === 'MANUAL') authorizeManualTender(input.role)
+    else authorize(input.role)
     if (
       !Number.isSafeInteger(input.amountCents) ||
       input.amountCents <= 0 ||
