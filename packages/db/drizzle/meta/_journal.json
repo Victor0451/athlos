@@ -442,6 +442,13 @@
       "when": 1789479500000,
       "tag": "0070_cash_manual_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1789560000000,
+      "tag": "0072_cash_supporting_records",
+      "breakpoints": true
     }
   ]
 }

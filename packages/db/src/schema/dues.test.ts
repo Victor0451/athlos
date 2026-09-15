@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { duesCashManualSources, duesCashShifts } from './dues-cash.ts'
+import { duesCashManualSources, duesCashShifts, duesCashSupportingRecords } from './dues-cash.ts'
 import { duesComponentKind, duesObligationKind, duesPriceKind } from './dues.ts'
 // prettier-ignore
 import { duesBenefitCombinability, duesBenefitKind, duesBenefitPercentageBasis } from './dues-benefits.ts'
@@ -144,7 +144,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0070_cash_manual_sources',
+      tag: '0072_cash_supporting_records',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
@@ -161,6 +161,24 @@ describe('dues pricing and obligation schema', () => {
         'accountNameSnapshot',
         'accountPathSnapshot',
         'description',
+      ]),
+    )
+    expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
+  })
+
+  it('declares supporting records as transcription metadata without money authority', () => {
+    const columns = Object.keys(duesCashSupportingRecords)
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'id',
+        'manualSourceId',
+        'kind',
+        'docType',
+        'pointOfSale',
+        'docNumber',
+        'priorReferences',
+        'taxComponents',
+        'total',
       ]),
     )
     expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
