@@ -3,11 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { CashDeskService } from './cash-desk.ts'
 
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 let admin: ReturnType<typeof createDb>
 let db: ReturnType<typeof createDb>
 let operatorId: string
+let adminId: string
+let secondOperatorId: string
 let shiftId: string
 let closeId: string
 
@@ -23,6 +26,8 @@ beforeAll(async () => {
   dbUrl.pathname = `/${dbName}`
   db = createDb({ connectionString: dbUrl.toString(), poolMax: 4 })
   operatorId = randomUUID()
+  adminId = randomUUID()
+  secondOperatorId = randomUUID()
   shiftId = randomUUID()
   closeId = randomUUID()
   const conn = await db.pool.connect()
@@ -34,7 +39,8 @@ beforeAll(async () => {
       CREATE TABLE public.operators (id uuid PRIMARY KEY, role char(1) NOT NULL DEFAULT 'O');
       CREATE TABLE tesoreria.gastos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), fecha date NOT NULL DEFAULT CURRENT_DATE, importe text NOT NULL DEFAULT '0.00');
       CREATE TABLE tesoreria.dues_settlements (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), kind text NOT NULL DEFAULT 'MONETARY');
-      INSERT INTO public.operators VALUES ('${operatorId}','O');
+      CREATE TABLE IF NOT EXISTS public.audit_events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),operator_id uuid,action text NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,old_value jsonb,new_value jsonb,source_ip text,metadata jsonb,idempotency_key text,created_at timestamptz NOT NULL DEFAULT now());
+      INSERT INTO public.operators VALUES ('${operatorId}','O'),('${adminId}','A'),('${secondOperatorId}','O');
     `)
     const directory = join(import.meta.dirname, '../../../../../packages/db/drizzle')
     for (const f of [
@@ -43,6 +49,8 @@ beforeAll(async () => {
       '0056_cash_recovery_policy.sql',
       '0057_cash_lifecycle_boundaries.sql',
       '0066_plan_cuentas.sql',
+      '0067_personal_cash_shift_owner.sql',
+      '0068_personal_cash_shift_desk_release.sql',
       '0073_cash_close_transfers.sql',
     ]) {
       await conn.query(await readFile(join(directory, f), 'utf8'))
@@ -143,5 +151,151 @@ describe('U8-A close-transfer persistence', () => {
     await expect(
       db.pool.query(`DELETE FROM tesoreria.dues_cash_close_transfers WHERE id=$1`, [id]),
     ).rejects.toMatchObject({ code: '55000' })
+  })
+})
+
+describe('U8-B computed close service on real PostgreSQL', () => {
+  let fixtureSeq = 0
+  async function openShift(opts: { opening?: string; ageHours?: number } = {}) {
+    const id = randomUUID()
+    const owner = randomUUID()
+    await db.pool.query(`INSERT INTO public.operators VALUES ($1,'O')`, [owner])
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint,business_date,opened_at) VALUES ($1,$2,$3,$4::jsonb,$3,'{}',$5,$6,CURRENT_DATE,NOW() - ($7 || ' hours')::interval)`,
+      [
+        id,
+        `u8b-fixture-${++fixtureSeq}`,
+        owner,
+        opts.opening ?? '{}',
+        `u8b-shift-${fixtureSeq}`,
+        'e'.repeat(64),
+        String(opts.ageHours ?? 0),
+      ],
+    )
+    return { id, owner }
+  }
+  async function addTender(
+    id: string,
+    owner: string,
+    direction: string,
+    tender: string,
+    amountCents: number,
+    ageHours?: number,
+  ) {
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_tenders (id,shift_id,direction,tender,amount,source_type,reason,operator_id,caller_key,request_fingerprint,created_at) VALUES ($1,$2,$3,$4,$5,'MANUAL','Fixture',$6,$7,$8,NOW() - (($9)::numeric * interval '1 hour'))`,
+      [
+        randomUUID(),
+        id,
+        direction,
+        tender,
+        (amountCents / 100).toFixed(2),
+        owner,
+        `u8b-tender-${++fixtureSeq}`,
+        'a'.repeat(64),
+        String(ageHours ?? 0),
+      ],
+    )
+  }
+  const closeCommand = (id: string, owner: string, overrides: Record<string, unknown> = {}) => ({
+    actorId: owner,
+    role: 'OPERADOR' as const,
+    permissions: [] as string[],
+    sourceIp: '127.0.0.1',
+    callerKey: `u8b-close-${++fixtureSeq}`,
+    requestFingerprint: 'b'.repeat(64),
+    authorizationEvidence: {},
+    shiftId: id,
+    countedTenders: {} as Record<string, number>,
+    forceClose: false,
+    ...overrides,
+  })
+  const service = () => new CashDeskService(db.db)
+
+  it('creates exactly one computed transfer on a positive mixed-method close', async () => {
+    const { id, owner } = await openShift({ opening: '{"CASH":100000}' })
+    await addTender(id, owner, 'INCOME', 'CASH', 3000000)
+    await addTender(id, owner, 'EXPENSE', 'CASH', 500000)
+    await addTender(id, owner, 'EXPENSE', 'TRANSFER', 400000)
+    const command = closeCommand(id, owner, { countedTenders: { CASH: 2600000 } })
+    const closed = await service().close(command)
+    expect(closed.closeTransfer).toMatchObject({
+      accountCodeSnapshot: '1.1.3.02',
+      accountNameSnapshot: 'Valores a Depositar',
+      amountCents: 2600000,
+    })
+    const audit = await db.pool.query(
+      `SELECT metadata FROM public.audit_events WHERE entity_id=$1 AND action='DUES_CASH_SHIFT_CLOSED'`,
+      [id],
+    )
+    expect(audit.rows[0].metadata.closeTransferId).toBe(closed.closeTransfer?.id)
+    const replay = await service().close({ ...command })
+    expect(replay.id).toBe(closed.id)
+    expect(replay.closeTransfer?.id).toBe(closed.closeTransfer?.id)
+    const count = await db.pool.query(
+      `SELECT COUNT(*)::int AS count FROM tesoreria.dues_cash_close_transfers WHERE shift_id=$1`,
+      [id],
+    )
+    expect(count.rows[0].count).toBe(1)
+    await expect(
+      service().close({ ...command, requestFingerprint: 'c'.repeat(64) }),
+    ).rejects.toThrow('Idempotency key was already used for a different close')
+    const detail = await service().detail(closeCommand(id, owner))
+    expect(detail.close?.closeTransfer?.amountCents).toBe(2600000)
+  })
+
+  it('persists no transfer at zero and blocks negative closes with a breakdown', async () => {
+    const { id: zero, owner: zeroOwner } = await openShift()
+    await addTender(zero, zeroOwner, 'INCOME', 'CASH', 50000)
+    await addTender(zero, zeroOwner, 'EXPENSE', 'CASH', 50000)
+    const closed = await service().close(closeCommand(zero, zeroOwner))
+    expect(closed.closeTransfer).toBeUndefined()
+    const transfers = await db.pool.query(
+      `SELECT COUNT(*)::int AS count FROM tesoreria.dues_cash_close_transfers WHERE shift_id=$1`,
+      [zero],
+    )
+    expect(transfers.rows[0].count).toBe(0)
+
+    const { id: negative, owner: negativeOwner } = await openShift()
+    await addTender(negative, negativeOwner, 'INCOME', 'CASH', 100000)
+    await addTender(negative, negativeOwner, 'EXPENSE', 'CASH', 300000)
+    await expect(
+      service().close(closeCommand(negative, negativeOwner, { reason: 'Conteo físico menor' })),
+    ).rejects.toThrow(
+      'Computed cash is negative (opening 0, cash income 100000, cash expense 300000); refetch the current shift state',
+    )
+    const rows = await db.pool.query(
+      `SELECT COUNT(*)::int AS count FROM tesoreria.dues_cash_closes WHERE shift_id=$1`,
+      [negative],
+    )
+    expect(rows.rows[0].count).toBe(0)
+  })
+
+  it('keeps forced and foreign close authority narrow', async () => {
+    const { id: expired, owner } = await openShift({ ageHours: 25 })
+    // An expired shift cannot receive new movements (0055 interval guard), so a negative forced
+    // close is not fixturable; the computed-cash block in close() is unconditional and proven on
+    // the ordinary path above.
+    await expect(
+      service().close(closeCommand(expired, owner, { actorId: secondOperatorId })),
+    ).rejects.toThrow('Cash shift responsibility does not match the operator')
+    await expect(
+      service().close(closeCommand(expired, owner, { forceClose: true, reason: 'x' })),
+    ).rejects.toThrow('Forced cash close is restricted to finance operators')
+    const forced = await service().close(
+      closeCommand(expired, owner, {
+        role: 'ADMIN',
+        actorId: adminId,
+        forceClose: true,
+        reason: 'Cierre forzado',
+        authorizationEvidence: { role: 'ADMIN' },
+      }),
+    )
+    expect(forced.forceClose).toBe(true)
+    expect(forced.closeTransfer).toBeUndefined()
+    const shift = await db.pool.query(`SELECT status FROM tesoreria.dues_cash_shifts WHERE id=$1`, [
+      expired,
+    ])
+    expect(shift.rows[0].status).toBe('CLOSED')
   })
 })

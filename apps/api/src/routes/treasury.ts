@@ -34,6 +34,18 @@ const closeDto = (row: Awaited<ReturnType<CashDeskService['close']>>) => ({
   reason: row.reason,
   closed_at: row.closedAt,
   ...(row.forceClose ? { force_close: true } : {}),
+  ...(row.closeTransfer
+    ? {
+        close_transfer: {
+          id: row.closeTransfer.id,
+          account_code_snapshot: row.closeTransfer.accountCodeSnapshot,
+          account_name_snapshot: row.closeTransfer.accountNameSnapshot,
+          account_path_snapshot: row.closeTransfer.accountPathSnapshot,
+          amount_cents: row.closeTransfer.amountCents,
+          created_at: row.closeTransfer.createdAt,
+        },
+      }
+    : {}),
 })
 
 // prettier-ignore
@@ -57,7 +69,7 @@ export const treasuryRoutes:FastifyPluginCallback<TreasuryRouteOptions>=(fastify
   // prettier-ignore
   fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/expenses',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(expenseBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,gastoId:body.gasto_id,tender:body.tender} as ExpenseCommand;return reply.code(201).send(await service.includeExpense!(input))})
   // prettier-ignore
-  fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/close',FINANCE_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(closeBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,countedTenders:body.counted_tenders,forceClose:body.force_close,...(body.reason?{reason:body.reason}:{})} as CloseCashCommand,result=await service.close!(input);return reply.code(200).send(closeDto(result))})
+  fastify.post<{Params:{id:string}}>('/api/v1/treasury/shifts/:id/close',TENDER_GATE,async(request,reply)=>{gate(container);const params=throwIfInvalid(id,request.params,'params'),body=throwIfInvalid(closeBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),shiftId:params.id,countedTenders:body.counted_tenders,forceClose:body.force_close,...(body.reason?{reason:body.reason}:{})} as CloseCashCommand,result=await service.close!(input);return reply.code(200).send(closeDto(result))})
   done()
 }
 // prettier-ignore

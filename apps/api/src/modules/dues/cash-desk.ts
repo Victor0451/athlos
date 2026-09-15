@@ -268,7 +268,8 @@ const responseTender = (row: Row) => ({
   sourceId: row.source_id,
 })
 
-const responseClose = (row: Row) => ({
+// prettier-ignore
+const responseClose = (row: Row, transfer?: Row | null) => ({
   id: row.id,
   shiftId: row.shift_id,
   expectedTenders: row.expected_tenders,
@@ -277,6 +278,8 @@ const responseClose = (row: Row) => ({
   reason: row.reason,
   closedAt: new Date(row.closed_at!).toISOString(),
   ...(row.force_close ? { forceClose: true } : {}),
+  // prettier-ignore
+  ...(transfer ? { closeTransfer: { id: transfer.id, accountCodeSnapshot: transfer.account_code_snapshot, accountNameSnapshot: transfer.account_name_snapshot, accountPathSnapshot: transfer.account_path_snapshot, amountCents: cents(String(transfer.amount)), createdAt: new Date(transfer.created_at as string | Date).toISOString() } } : {}),
 })
 
 export type CashCommand = AuditContext & { role: AuditContext['role'] }
@@ -654,11 +657,12 @@ export class CashDeskService {
 
   async detail(input: CashCommand & { shiftId: string }) {
     authorizeOpenRead(input.role)
-    const result = rows<{ shift: Row; close: Row | null }>(
+    const result = rows<{ shift: Row; close: Row | null; transfer: Row | null }>(
       await this.db.execute(sql`
-        SELECT row_to_json(s) AS shift, row_to_json(c) AS close
+        SELECT row_to_json(s) AS shift, row_to_json(c) AS close, row_to_json(t.*) AS transfer
         FROM tesoreria.dues_cash_shifts s
         LEFT JOIN tesoreria.dues_cash_closes c ON c.shift_id = s.id
+        LEFT JOIN tesoreria.dues_cash_close_transfers t ON t.close_id = c.id
         WHERE s.id = ${input.shiftId}
       `),
     )[0]
@@ -671,7 +675,7 @@ export class CashDeskService {
     }
     return {
       shift: responseShift(result.shift),
-      close: result.close ? responseClose(result.close) : null,
+      close: result.close ? responseClose(result.close, result.transfer) : null,
     }
   }
 
@@ -973,9 +977,10 @@ export class CashDeskService {
   }
 
   async close(input: CloseCashCommand) {
-    authorize(input.role)
     const forceClose = input.forceClose === true
+    // Forced/recovery closes stay finance-only; an ordinary close is own-shift OPERADOR work (ownership enforced by shift()).
     if (forceClose) authorizeForceClose(input.role)
+    else authorizeManualTender(input.role)
     if (forceClose && !input.reason?.trim()) {
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A forced cash close requires a reason')
     }
@@ -983,7 +988,7 @@ export class CashDeskService {
       .transaction(async (tx) => {
         const replay = rows(
           await tx.execute(
-            sql`SELECT * FROM tesoreria.dues_cash_closes WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+            sql`SELECT c.*, row_to_json(t.*) AS transfer FROM tesoreria.dues_cash_closes c LEFT JOIN tesoreria.dues_cash_close_transfers t ON t.close_id = c.id WHERE c.operator_id = ${input.actorId} AND c.caller_key = ${input.callerKey}`,
           ),
         )[0]
         if (replay) {
@@ -993,7 +998,7 @@ export class CashDeskService {
               'Idempotency key was already used for a different close',
             )
           }
-          return responseClose(replay)
+          return responseClose(replay, (replay as { transfer?: Row | null }).transfer)
         }
         await tx.execute(
           sql`SELECT gasto_id FROM tesoreria.dues_cash_shift_expenses WHERE shift_id = ${input.shiftId} FOR UPDATE`,
@@ -1002,7 +1007,7 @@ export class CashDeskService {
         if (shift.status !== 'OPEN') {
           const raced = rows(
             await tx.execute(
-              sql`SELECT * FROM tesoreria.dues_cash_closes WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+              sql`SELECT c.*, row_to_json(t.*) AS transfer FROM tesoreria.dues_cash_closes c LEFT JOIN tesoreria.dues_cash_close_transfers t ON t.close_id = c.id WHERE c.operator_id = ${input.actorId} AND c.caller_key = ${input.callerKey}`,
             ),
           )[0]
           if (raced) {
@@ -1012,7 +1017,7 @@ export class CashDeskService {
                 'Idempotency key was already used for a different close',
               )
             }
-            return responseClose(raced)
+            return responseClose(raced, (raced as { transfer?: Row | null }).transfer)
           }
           throw BusinessError(ErrorCode.CONFLICT, 'Cash shift is already closed')
         }
@@ -1034,6 +1039,18 @@ export class CashDeskService {
           direction: row.direction as Direction,
           amountCents: cents(row.amount),
         }))
+        // Server-recomputed CASH: opening once + CASH income − CASH expenses (close transfers live in their own table and never re-enter here).
+        const openingCashCents = clean(shift.opening_tenders).CASH ?? 0
+        let cashIncome = 0
+        let cashExpense = 0
+        for (const movement of movements) {
+          if (movement.tender !== 'CASH') continue
+          if (movement.direction === 'INCOME') cashIncome += movement.amountCents
+          else cashExpense += movement.amountCents
+        }
+        const computedCashCents = openingCashCents + cashIncome - cashExpense
+        // prettier-ignore
+        if (computedCashCents < 0) throw BusinessError(ErrorCode.CONFLICT, `Computed cash is negative (opening ${openingCashCents}, cash income ${cashIncome}, cash expense ${cashExpense}); refetch the current shift state`)
         const totals = reconcileTenders(
           clean(shift.opening_tenders),
           movements,
@@ -1047,16 +1064,30 @@ export class CashDeskService {
         )[0]
         if (!inserted)
           throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Close replay is unavailable')
+        let transfer: Row | null = null
+        if (computedCashCents > 0) {
+          const account = await resolveAccountSnapshot(tx, '1.1.3.02')
+          // prettier-ignore
+          if (!account) throw BusinessError(ErrorCode.CONFLICT, 'The close transfer account is unavailable')
+          transfer =
+            rows(
+              await tx.execute(
+                sql`INSERT INTO tesoreria.dues_cash_close_transfers (close_id,shift_id,account_code_snapshot,account_name_snapshot,account_path_snapshot,amount) VALUES (${inserted.id},${input.shiftId},${account.code},${account.name},${JSON.stringify(account.path)}::jsonb,${money(computedCashCents)}) RETURNING *`,
+              ),
+            )[0] ?? null
+        }
         await this.audit(tx, input, AuditAction.DUES_CASH_SHIFT_CLOSED, input.shiftId, {
           expected: totals.expected,
           counted: totals.counted,
           discrepancy: totals.discrepancy,
           reason: input.reason ?? null,
           forceClose,
+          computedCashCents,
+          closeTransferId: transfer?.id ?? null,
           businessDate: shift.business_date,
           interval: { startInclusive: shift.opened_at, endInclusive: closedAt.toISOString() },
         })
-        return responseClose(inserted)
+        return responseClose(inserted, transfer)
       })
       .catch((error: unknown) => {
         if ((error as { code?: string }).code === '23505') {

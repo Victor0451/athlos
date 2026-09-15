@@ -43,6 +43,8 @@ async function applyMigrations() {
     '0055_cash_policy_atomicity.sql',
     '0056_cash_recovery_policy.sql',
     '0057_cash_lifecycle_boundaries.sql',
+    '0066_plan_cuentas.sql',
+    '0073_cash_close_transfers.sql',
   ]) {
     await db.pool.query(await readFile(join(directory, name), 'utf8'))
   }
@@ -419,7 +421,7 @@ describe('cash desk PostgreSQL policy', () => {
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const gasto = randomUUID()
     const today = businessDateForOpening(new Date(opened.openedAt))
@@ -487,7 +489,7 @@ describe('cash desk PostgreSQL policy', () => {
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const gasto = randomUUID()
     const today = businessDateForOpening(new Date(opened.openedAt))
@@ -578,7 +580,7 @@ describe('cash desk PostgreSQL policy', () => {
         forceClose: true,
         reason: 'Recovery',
       }),
-    ).rejects.toThrow('not authorized')
+    ).rejects.toThrow('Forced cash close is restricted to finance operators')
     const forceInput = {
       ...context(`expired-force-success-${randomUUID()}`),
       shiftId: opened.id,
@@ -770,7 +772,7 @@ describe('cash desk PostgreSQL policy', () => {
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const wrongDate = randomUUID()
     await db.pool.query(
