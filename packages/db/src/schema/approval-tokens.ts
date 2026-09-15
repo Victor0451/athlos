@@ -1,5 +1,14 @@
 import { sql } from 'drizzle-orm'
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core'
 import { operators } from './operators.ts'
 
 /**
@@ -52,6 +61,18 @@ export const approvalTokens = pgTable(
     executionId: uuid('execution_id'),
     callerKey: text('caller_key'),
     requestFingerprint: text('request_fingerprint'),
+    /** Community-work specific snapshot — nullable to preserve legacy condonation rows. */
+    communitySnapshot: jsonb('community_snapshot'),
+    /** Requester key for community-work action tracking. Nullable. */
+    requesterKey: text('requester_key'),
+    /** Agreement UUID context for community-work. Nullable. */
+    agreementUuid: uuid('agreement_uuid'),
+    /** Terms version captured at request time. Nullable. */
+    termsVersion: integer('terms_version'),
+    /** Server-captured actor fingerprint for community-work requests. Required once present. */
+    actorFingerprint: text('actor_fingerprint').notNull(),
+    /** Execution receipt. Populated after successful execution. */
+    receipt: text('receipt'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -61,6 +82,10 @@ export const approvalTokens = pgTable(
     )
       .on(table.createdByOperatorId, table.callerKey)
       .where(sql`${table.actionType} = 'dues.condonation' AND ${table.callerKey} IS NOT NULL`),
+    /** Index for community-work lookup by action/requester. */
+    communityWorkIdx: index('approval_tokens_community_work_idx')
+      .on(table.actionType, table.requesterKey)
+      .where(sql`${table.actionType} = 'dues.community-work-request'`),
   }),
 )
 
