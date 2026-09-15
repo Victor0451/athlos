@@ -474,6 +474,221 @@ export async function decideCondonationApproval(
 }
 
 /**
+ * Unresolved-obligation snapshot for a community-work request. Same shape as
+ * the condonation snapshot: member plus the obligations the request covered.
+ */
+export type CommunityWorkSnapshot = CondonationSnapshot
+
+export interface CreateCommunityWorkApprovalRequest {
+  requestId: string
+  contextSummary: string
+  requesterId: string
+  /** Stable server-generated claim key, separate from HTTP identity. */
+  requesterKey: string
+  approverChannel: 'whatsapp' | 'email'
+  approverAddress: string
+  snapshot: CommunityWorkSnapshot
+  reason: string
+  evidence: string
+  callerKey: string
+  agreementUuid?: string | null
+  termsVersion?: number | null
+  expiresInHours?: number
+}
+
+export interface CommunityWorkDecision {
+  requestId: string
+  actorId: string
+  decision: 'approved' | 'rejected'
+  reason: string
+  evidence: string
+  /** Server-captured decider fingerprint; part of exact-decision identity. */
+  actorFingerprint?: string | null
+}
+
+export function communityWorkRequestFingerprint(req: CreateCommunityWorkApprovalRequest): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        requesterId: req.requesterId,
+        requesterKey: req.requesterKey,
+        contextSummary: req.contextSummary,
+        approverChannel: req.approverChannel,
+        approverAddress: req.approverAddress,
+        snapshot: {
+          memberId: req.snapshot.memberId,
+          obligations: [...req.snapshot.obligations].sort((left, right) =>
+            left.obligationId.localeCompare(right.obligationId),
+          ),
+        },
+        reason: req.reason,
+        evidence: req.evidence,
+        agreementUuid: req.agreementUuid ?? null,
+        termsVersion: req.termsVersion ?? null,
+      }),
+    )
+    .digest('hex')
+}
+
+export async function findCommunityWorkRequest(db: Db, requesterId: string, callerKey: string) {
+  const [row] = await db
+    .select()
+    .from(approvalTokens)
+    .where(
+      and(
+        eq(approvalTokens.actionType, 'dues.community-work-request'),
+        eq(approvalTokens.createdByOperatorId, requesterId),
+        eq(approvalTokens.callerKey, callerKey),
+      ),
+    )
+    .limit(1)
+  return row
+}
+
+/** Persist a financially inert, immutable community-work request in approval_tokens. */
+export async function createCommunityWorkApprovalRequest(
+  db: Db,
+  req: CreateCommunityWorkApprovalRequest,
+): Promise<{ expiresAt: Date; record: ApprovalToken }> {
+  assertCondonationSnapshot(req.snapshot)
+  if (
+    !req.requestId ||
+    !req.contextSummary ||
+    !req.reason ||
+    !req.evidence ||
+    !req.callerKey.trim() ||
+    !req.requesterKey.trim()
+  ) {
+    throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Community work request details are required')
+  }
+  const requestFingerprint = communityWorkRequestFingerprint(req)
+  const existing = await findCommunityWorkRequest(db, req.requesterId, req.callerKey)
+  if (existing) {
+    if (existing.requestFingerprint !== requestFingerprint)
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different request',
+      )
+    return { expiresAt: existing.expiresAt, record: existing }
+  }
+  const { hash } = generateApprovalToken()
+  const expiresAt = new Date(Date.now() + (req.expiresInHours ?? 48) * 60 * 60 * 1000)
+  let row: ApprovalToken | undefined
+  try {
+    ;[row] = await db
+      .insert(approvalTokens)
+      .values({
+        tokenHash: hash,
+        actionType: 'dues.community-work-request',
+        actionId: req.requestId,
+        contextSummary: req.contextSummary,
+        createdByOperatorId: req.requesterId,
+        approverChannel: req.approverChannel,
+        approverAddress: req.approverAddress,
+        expiresAt,
+        communitySnapshot: req.snapshot,
+        requesterKey: req.requesterKey,
+        agreementUuid: req.agreementUuid ?? null,
+        termsVersion: req.termsVersion ?? null,
+        requestReason: req.reason,
+        requestEvidence: req.evidence,
+        callerKey: req.callerKey,
+        requestFingerprint,
+      })
+      .returning()
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error
+    const raced = await findCommunityWorkRequest(db, req.requesterId, req.callerKey)
+    if (!raced) throw error
+    if (raced.requestFingerprint !== requestFingerprint)
+      throw BusinessError(
+        ErrorCode.CONFLICT,
+        'Idempotency key was already used for a different request',
+      )
+    return { expiresAt: raced.expiresAt, record: raced }
+  }
+  if (!row) throw BusinessError(ErrorCode.INTERNAL_ERROR, 'approval_tokens insert returned no row')
+  return { expiresAt, record: row }
+}
+
+function isExactCommunityWorkDecision(row: ApprovalToken, input: CommunityWorkDecision): boolean {
+  return (
+    row.status === input.decision &&
+    row.decidedByOperatorId === input.actorId &&
+    row.decisionReason === input.reason &&
+    row.decisionEvidence === input.evidence &&
+    row.actorFingerprint === (input.actorFingerprint ?? null)
+  )
+}
+
+/**
+ * Record one authenticated decision for a scoped community-work request. This
+ * only authorizes later execution: it never consumes the token or touches
+ * financial facts.
+ */
+export async function decideCommunityWorkApproval(
+  db: Db,
+  input: CommunityWorkDecision,
+): Promise<ApprovalToken> {
+  const [current] = await db
+    .select()
+    .from(approvalTokens)
+    .where(
+      and(
+        eq(approvalTokens.actionType, 'dues.community-work-request'),
+        eq(approvalTokens.actionId, input.requestId),
+      ),
+    )
+    .limit(1)
+  if (!current) throw BusinessError(ErrorCode.NOT_FOUND, 'Community work request not found')
+  if (current.createdByOperatorId === input.actorId) {
+    throw BusinessError(
+      ErrorCode.INSUFFICIENT_PERMISSIONS,
+      'Requester cannot decide this community work request',
+    )
+  }
+  if (current.status !== 'pending' || current.decidedAt || current.usedAt) {
+    if (isExactCommunityWorkDecision(current, input)) return current
+    throw BusinessError(ErrorCode.CONFLICT, 'Community work request already decided')
+  }
+  if (current.expiresAt <= new Date()) {
+    throw BusinessError(ErrorCode.APPROVAL_LINK_EXPIRED, 'Community work request has expired')
+  }
+
+  const decisionAt = new Date()
+  const [updated] = await db
+    .update(approvalTokens)
+    .set({
+      status: input.decision,
+      decidedByOperatorId: input.actorId,
+      decisionReason: input.reason,
+      decisionEvidence: input.evidence,
+      actorFingerprint: input.actorFingerprint ?? null,
+      decidedAt: decisionAt,
+      executionId: input.decision === 'approved' ? randomUUID() : null,
+    })
+    .where(
+      and(
+        eq(approvalTokens.id, current.id),
+        eq(approvalTokens.status, 'pending'),
+        isNull(approvalTokens.decidedAt),
+        isNull(approvalTokens.usedAt),
+        gt(approvalTokens.expiresAt, decisionAt),
+      ),
+    )
+    .returning()
+  if (updated) return updated
+
+  const [raced] = await db
+    .select()
+    .from(approvalTokens)
+    .where(eq(approvalTokens.id, current.id))
+    .limit(1)
+  if (raced && isExactCommunityWorkDecision(raced, input)) return raced
+  throw BusinessError(ErrorCode.CONFLICT, 'Community work request lifecycle changed')
+}
+
+/**
  * Create a fresh approval link. Returns the raw token (the one and only
  * time the caller sees it) plus the DB record. The service layer
  * downstream should embed `raw` in the link and pass `record.id` to

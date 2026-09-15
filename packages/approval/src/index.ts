@@ -17,6 +17,10 @@ export {
   createCondonationApprovalRequest,
   decideCondonationApproval,
   findCondonationRequest,
+  createCommunityWorkApprovalRequest,
+  decideCommunityWorkApproval,
+  findCommunityWorkRequest,
+  communityWorkRequestFingerprint,
   listCondonationLifecycle,
   listCondonationQueue,
   getApprovalToken,
@@ -32,4 +36,7 @@ export type {
   ListCondonationQueueInput,
   CreateApprovalLinkRequest,
   CreateCondonationApprovalRequest,
+  CommunityWorkSnapshot,
+  CommunityWorkDecision,
+  CreateCommunityWorkApprovalRequest,
 } from './service.ts'
