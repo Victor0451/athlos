@@ -64,6 +64,12 @@ function seedApprovalToken(
     executionId: overrides.executionId ?? null,
     callerKey: overrides.callerKey ?? null,
     requestFingerprint: overrides.requestFingerprint ?? null,
+    communitySnapshot: overrides.communitySnapshot ?? null,
+    requesterKey: overrides.requesterKey ?? null,
+    agreementUuid: overrides.agreementUuid ?? null,
+    termsVersion: overrides.termsVersion ?? null,
+    actorFingerprint: overrides.actorFingerprint ?? null,
+    receipt: overrides.receipt ?? null,
     createdAt: overrides.createdAt ?? new Date(),
   })
   return standin.state.approvalTokens[standin.state.approvalTokens.length - 1]!

@@ -69,8 +69,8 @@ export const approvalTokens = pgTable(
     agreementUuid: uuid('agreement_uuid'),
     /** Terms version captured at request time. Nullable. */
     termsVersion: integer('terms_version'),
-    /** Server-captured actor fingerprint for community-work requests. Required once present. */
-    actorFingerprint: text('actor_fingerprint').notNull(),
+    /** Server-captured actor fingerprint for community-work requests. Nullable (SQL is canonical: all extension columns are nullable to preserve legacy condonation rows). */
+    actorFingerprint: text('actor_fingerprint'),
     /** Execution receipt. Populated after successful execution. */
     receipt: text('receipt'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

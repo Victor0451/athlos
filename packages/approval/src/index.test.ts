@@ -109,6 +109,12 @@ function createStandinDb(): StandinDb {
         executionId: values.executionId ?? null,
         callerKey: values.callerKey ?? null,
         requestFingerprint: values.requestFingerprint ?? null,
+        communitySnapshot: values.communitySnapshot ?? null,
+        requesterKey: values.requesterKey ?? null,
+        agreementUuid: values.agreementUuid ?? null,
+        termsVersion: values.termsVersion ?? null,
+        actorFingerprint: values.actorFingerprint ?? null,
+        receipt: values.receipt ?? null,
         createdAt: values.createdAt ?? new Date(),
       }
       rows.push(row)

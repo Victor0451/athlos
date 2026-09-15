@@ -31,6 +31,7 @@ const migrationFiles = [
   '0062_approval_condonation_lifecycle.sql',
   '0063_approval_condonation_request_idempotency.sql',
   '0064_dues_condonation_treatments.sql',
+  '0071_community_work_approval.sql',
 ]
 const immutableFinancialState = [
   'SELECT id,socio_id,kind,amount::text,snapshot FROM tesoreria.dues_obligations ORDER BY id',
