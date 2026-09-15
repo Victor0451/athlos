@@ -271,6 +271,7 @@ describe('migrate:status', () => {
         '0063_approval_condonation_request_idempotency',
         '0064_dues_condonation_treatments',
         '0065_dues_range_receipts',
+        '0071_community_work_approval',
       ],
       divergence: [],
       exitCode: 1,
