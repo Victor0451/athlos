@@ -110,6 +110,12 @@ function makeApprovalRow(overrides: Partial<ApprovalToken> = {}): ApprovalToken 
     executionId: null,
     callerKey: null,
     requestFingerprint: null,
+    communitySnapshot: null,
+    requesterKey: null,
+    agreementUuid: null,
+    termsVersion: null,
+    actorFingerprint: null,
+    receipt: null,
     createdAt: new Date(),
     ...overrides,
   }
