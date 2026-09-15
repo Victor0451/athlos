@@ -487,3 +487,61 @@
 - Quality: web typecheck, lint, `pnpm format:check`, build, and `git diff --check` passed; `next-env.d.ts` retained SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`.
 - Correction stats versus tree `15810a911267f7a3b414fdfbfb5b97aaea416198`: 62 additions, 5 deletions, 67 changed lines (tests, source, exact E2E copy, and this evidence); carried 381 plus correction 67 is 448, within the explicit 450 exception.
 - Workload/PR boundary: A correction only, stacked-to-main; rollback only this pending-reconciliation presentation wiring, regression/exact-copy assertions, and evidence. U4bB remains four unchecked tasks; no checkbox changed and whole-change verify remains blocked. Status: `applyState=ready`, `actionContext.mode=repo-local`, authoritative allowed root observed; QA001 remains pending.
+
+## Unit 4bB — deferred payment recovery and mobile hardening
+
+- Completed persisted tasks: U4bB RED/GREEN/TRIANGULATE/REFACTOR are `[x]` in `tasks.md`.
+- Changed: payment-dialog recovery copy/block; actor-scoped payment-context refresh; focused unit tests; one 320×900 keyboard-only operator 403 recovery scenario.
+- Behavior: 403/permission and 409/conflict remain distinct Spanish blockers. A failed/stale refresh stays blocked; only a true current debt+shift refresh unblocks manual replay with the existing key. Actor/member races publish neither old context nor a ready state; stale/foreign shift pre-POST denial and confirmed-POST/failed-GET reconciliation remain unchanged.
+
+### TDD Cycle Evidence
+
+| Task | Layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U4bB.1–4 | component/hook + headless E2E | Vitest 16/16 | 3 failures: 403 copy/block and actor race | Vitest 20/20 | Dues/HTTP 403, existing 409, failed refresh/key replay, actor race, stale foreign shift, and keyboard 403 recovery | Prettier; focused tests 20/20 |
+
+### Verification and boundary
+
+- RED: focused Vitest — 17 passed, 3 failed; first required Playwright `--grep '403'` found 0 tests, then test setup exposed localStorage and stale-fixture failures before the green 1/1 run.
+- GREEN/final: `pnpm --filter @athlos/web exec vitest run src/components/collections/PaymentDialog.test.tsx src/components/collections/useCollectionsPayments.test.tsx` — 2 files, 20 passed, 0 failed, 0 skipped. Exact 403 Playwright command — 1 passed, 0 failed, 0 skipped; final cash workflow plus `operator-caja-entry` — 5 passed, 0 failed, 0 skipped.
+- Quality: LSP unavailable (`LSP_AVAILABLE=0`), so web typecheck passed; web lint, root format check, web build, and diff check passed. `next-env.d.ts` restored to `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`; port 3101 was absent before/after. No external/live service, API/DB/finance/reversal change, commit, or QA001 closure.
+- Workload/PR boundary: U4bB only, stacked-to-main; 302 source/test additions+deletions before task/progress evidence, under 400. Rollback only the five changed web files and U4bB evidence; whole-change verify remains blocked by later units. Status consumed: `gentle-ai.sdd-status/v2`, `applyState=ready`, `actionContext.mode=repo-local`, authoritative root and allowlist observed.
+- Remaining exact unchecked persisted tasks:
+  - [ ] 1. **RED:** create failing source/route/persistence cases for missing or multiple methods, non-imputable/inactive/group accounts, missing description, fractional/unsafe/overflow amounts, foreign/closed shift, and BANK_DEBIT income rejection.
+  - [ ] 2. **GREEN:** add append-only source persistence and routes under the existing Caja authorization/locking model. Store method as validated text—not a database enum—accept income CASH/DEBIT/CREDIT/TRANSFER and expense CASH/DEBIT/CREDIT/TRANSFER/BANK_DEBIT; snapshot code/name/path at write time.
+  - [ ] 3. **TRIANGULATE:** prove DEBIT and BANK_DEBIT remain distinct, all non-CASH methods leave expected CASH unchanged, and a later catalog edit cannot change a stored snapshot; verify transaction rollback and idempotent/replay behavior on disposable PostgreSQL.
+  - [ ] 4. **REFACTOR:** share exact-cent and account-eligibility validation with close/settlement-ready helpers without permitting split tender or an additional payment. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
+  - [ ] 1. **RED:** add failing tests for optional absence, one-record maximum, leading zeroes, allowed printed types, note-without-prior-reference, internal unnumbered evidence, additive mismatch, and contained IVA not added twice.
+  - [ ] 2. **GREEN:** persist/display transcription against manual sources in the same transaction boundary; preserve printed fields as text and classify taxes from explicit semantics only.
+  - [ ] 3. **TRIANGULATE:** prove equal amounts do not infer tax class; rollback a source plus invalid supporting record atomically; prove historical/legacy readers remain readable with absent metadata using disposable PostgreSQL.
+  - [ ] 4. **REFACTOR:** keep document validation separate from payment/allocation logic. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
+  - [ ] 1. **RED:** add failing cases for mixed methods (30,000 CASH income − 5,000 CASH expense − 4,000 TRANSFER expense = 25,000), forged caller transfer/handoff fields, positive/zero/negative states, missing variance reason, exact replay versus changed replay conflict, failed-transfer rollback, source/close contention, and no opening double count.
+  - [ ] 2. **GREEN:** lock the shift and all writers, recompute server-side, reject client transfer/handoff/custody input, preserve existing variance safeguards, and atomically persist the close plus unique stable-ID `CLOSE_TRANSFER` account snapshot/read DTO/history. Keep transfer out of operational pre-transfer calculation and out of operating expenses/bank-deposit claims.
+  - [ ] 3. **TRIANGULATE:** test physical shortage/surplus with reason while transfer remains computed cash; verify zero creates none, negative blocks normal and recovery close, and concurrent/replayed calls cannot duplicate a close/audit/transfer on real disposable PostgreSQL.
+  - [ ] 4. **REFACTOR:** extract closed-history DTO/calculation helpers while retaining append-only behavior and existing finance reversal policy. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
+  - [ ] 1. **RED:** add rendering/interaction failures for required fields, account eligibility/search, exact one-method matrix, explicit `Tarjeta de débito` versus `Débito bancario`, optional evidence, linked automatic source/totals, non-cash exclusion from expected cash, and no handoff field; add failing planned Playwright flows for success, no-shift, validation, replay/conflict, and negative-close refetch.
+  - [ ] 2. **GREEN:** consume the completed endpoints and render only approved Caja/Collections behavior using Premium Tailwind tokens; retain historical absent metadata as absent and do not display `Próximamente` for this authorized journey.
+  - [ ] 3. **TRIANGULATE:** exercise mobile/keyboard layout, stale preview/recompute, zero/positive/negative close presentation, variance reason, and a BANK_DEBIT expense that never lowers displayed physical CASH. Assert negotiated/condonation/reversal/CTACTE/bank claims remain absent.
+  - [ ] 4. **REFACTOR:** split presentational components/hooks only after all behavior is covered; run planned focused web/Playwright selectors, record exact passed/failed/skipped counts, then confirmed shared quality commands.
+  - [ ] 1. Reconcile every unit's recorded RED/GREEN/TRIANGULATE/REFACTOR evidence, migration status, changed-line count, and rollback boundary against the human-selected delivery choice and, if split was selected, its chain strategy. Re-run the confirmed aggregate quality commands from the integrated base.
+  - [ ] 2. Run the applicable planned Playwright selectors through the confirmed web E2E command and record exact pass/fail/skip counts. Automated evidence proves only the local/disposable contract.
+  - [ ] 3. Leave **QA001 pending** until an authorized live operational observation is separately approved and recorded. Do not replace it with simulation, BETA/production access, secrets, or a synthetic receipt.
+
+## U4bB correction — restored failed-refresh regression registration
+
+- Reason: the new 403 E2E scenario had replaced, rather than followed, the existing confirmed-payment failed-refresh regression. Restored the exact `HEAD` registration; the new 403 scenario is unchanged.
+- Baseline: `HEAD=07ec78eb21a4f9f51a59fa82c3ef93c75c142fe4`; the native correction-start tree is `72245e72ba99254c3f29801ab86d7937f3f91a75`. Its candidate delta was 337 additions + 12 deletions = 349 lines.
+- Persisted tasks: U4bB tasks 1–4 remain visibly `[x]`; this restores omitted coverage only and does not complete any new task or whole-change verification.
+
+### TDD Cycle Evidence
+
+| Task | Test/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U4bB omitted regression restoration | Playwright E2E | current five registered scenarios: 5 passed | N/A—restored deleted existing coverage, not new behavior | restored registration: 6 passed | failed refresh, 403 recovery, and three Caja journeys executed | none |
+
+### Verification and boundary
+
+- `env -u ATHLOS_CASH_QA_MODE -u ATHLOS_CASH_QA_ROLE PLAYWRIGHT_PORT=3101 NATIVE_COLLECTIONS_WEB_ENABLED=true DUES_CASH_ENABLED=true COLLECTIONS_CASH_MOBILE_KEYBOARD_ENABLED=true pnpm --filter @athlos/web exec playwright test e2e/collections-cash-workflow.spec.ts e2e/operator-caja-entry.spec.ts` — final 6 passed, 0 failed, 0 skipped; QA mode was unset.
+- Independent focused Vitest evidence remains 6 files, 73 passed, 0 failed, 0 skipped; no production or unit-test source changed, so it was not rerun.
+- `next-env.d.ts` was restored to SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`; port 3101 was absent before and after.
+- Workload/PR boundary: U4bB correction only, stacked-to-main. Parent readback measured 25 correction lines against the native start tree, not 19 net-growth lines; plus 4 lines of this evidence correction, total authored work is 349 + 25 + 4 = 378, below 400. Final HEAD delta is 368. QA001 remains pending; parent owns verification/settlement.

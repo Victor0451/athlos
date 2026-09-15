@@ -21,7 +21,7 @@ type Props = {
   onPayment: (
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<{ replayed?: boolean } | void>
-  onRefreshDebt: () => Promise<void>
+  onRefreshDebt: () => Promise<boolean | void>
   onClose: () => void
   initialSelection?: string[] | undefined
   onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
@@ -30,6 +30,8 @@ type Props = {
 const disabledClass = 'disabled:cursor-not-allowed disabled:opacity-60'
 const staleBalanceMessage =
   'El saldo cambió. Revisá la deuda actualizada antes de volver a confirmar.'
+const permissionMessage =
+  'No tenés permiso para registrar este pago. Actualizá la deuda y los turnos antes de volver a confirmar.'
 
 export function PaymentDialog({
   open,
@@ -128,7 +130,7 @@ export function PaymentDialog({
     setBusy(true)
     setError('')
     try {
-      await onRefreshDebt()
+      if ((await onRefreshDebt()) === false) throw new Error('Payment context unavailable')
       setPaymentConflict(false)
     } catch {
       setError('No se pudo actualizar la deuda. Intentá nuevamente.')
@@ -183,6 +185,12 @@ export function PaymentDialog({
       ) {
         setPaymentConflict(true)
         setError(staleBalanceMessage)
+      } else if (
+        (cause instanceof ApiError && cause.status === 403) ||
+        (cause instanceof DuesOperationError && cause.kind === 'permission')
+      ) {
+        setPaymentConflict(true)
+        setError(permissionMessage)
       } else setError('No se pudo registrar el pago.')
     } finally {
       if (activeRequestIdRef.current !== requestId) return

@@ -139,10 +139,10 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 ## Unit 4bB — Deferred payment recovery and mobile hardening
 
-- [ ] 1. **RED:** add focused failures distinguishing operator 403 denial from 409 stale state, refresh, replay failure, and mobile keyboard recovery.
-- [ ] 2. **GREEN:** preserve the existing payment recovery hook while presenting each authorized recovery state.
-- [ ] 3. **TRIANGULATE:** exercise refresh/replay after conflict and mobile keyboard completion without duplicate payment POSTs.
-- [ ] 4. **REFACTOR:** retain the isolated operator payment gate and record focused web/Playwright evidence.
+- [x] 1. **RED:** add focused failures distinguishing operator 403 denial from 409 stale state, refresh, replay failure, and mobile keyboard recovery.
+- [x] 2. **GREEN:** preserve the existing payment recovery hook while presenting each authorized recovery state.
+- [x] 3. **TRIANGULATE:** exercise refresh/replay after conflict and mobile keyboard completion without duplicate payment POSTs.
+- [x] 4. **REFACTOR:** retain the isolated operator payment gate and record focused web/Playwright evidence.
 
 **Rollback boundary:** revert only the U4bA/B Collections payment-gate UI/tests; keep U4a Caja access and U7 payment API intact.
 

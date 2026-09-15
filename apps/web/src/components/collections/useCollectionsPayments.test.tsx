@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/lib/api'
 import { DuesOperationError } from '@/lib/api/dues'
 import { useCollectionsPayments } from './useCollectionsPayments'
 
@@ -140,6 +141,99 @@ describe('useCollectionsPayments', () => {
     expect(createFullSelectionPayment).toHaveBeenCalledTimes(1)
     expect(getDebt).toHaveBeenCalledTimes(3)
     expect(getOpenCashShifts).toHaveBeenCalledTimes(3)
+  })
+
+  it('retains a denied payment key through a failed refresh and replays it only after context recovery', async () => {
+    const getDebt = vi
+      .fn()
+      .mockResolvedValueOnce(debt)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(debt)
+    const getOpenCashShifts = vi
+      .fn()
+      .mockResolvedValueOnce([shift])
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue([shift])
+    const createFullSelectionPayment = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(403, 'FORBIDDEN', 'denied'))
+      .mockResolvedValueOnce({
+        settlement_id: 'settlement-1',
+        amount_cents: 10_000,
+        currency: 'ARS',
+        allocations: [],
+      })
+    const { result } = renderHook(() =>
+      useCollectionsPayments({
+        user: { operator_id: 'operator-1', role: 'OPERADOR' },
+        api: { getDebt, getOpenCashShifts, createFullSelectionPayment },
+      }),
+    )
+    const draft = {
+      obligation_ids: ['obligation-1'],
+      shift_id: shift.id,
+      tender: 'TRANSFER' as const,
+      selection_fingerprint: 'selection-fingerprint',
+    }
+
+    await act(() => result.current.selectSocio(socio))
+    await expect(result.current.pay(draft)).rejects.toMatchObject({ status: 403 })
+    const key = JSON.parse(sessionStorage.getItem('athlos:collections:idempotency')!)[0].key
+    await act(async () => {
+      await expect(result.current.refreshPaymentContext()).rejects.toThrow('offline')
+    })
+    expect(JSON.parse(sessionStorage.getItem('athlos:collections:idempotency')!)[0].key).toBe(key)
+
+    await act(() => result.current.refreshPaymentContext())
+    await act(() => result.current.pay(draft))
+    expect(createFullSelectionPayment.mock.calls.map(([, requestKey]) => requestKey)).toEqual([
+      key,
+      key,
+    ])
+  })
+
+  it('does not publish payment context from an actor that changed during its refresh', async () => {
+    let resolveDebt!: (detail: typeof debt) => void
+    let resolveShifts!: (items: (typeof shift)[]) => void
+    const getDebt = vi
+      .fn()
+      .mockResolvedValueOnce(debt)
+      .mockImplementationOnce(
+        () =>
+          new Promise<typeof debt>((resolve) => {
+            resolveDebt = resolve
+          }),
+      )
+    const getOpenCashShifts = vi
+      .fn()
+      .mockResolvedValueOnce([shift])
+      .mockImplementationOnce(
+        () =>
+          new Promise<(typeof shift)[]>((resolve) => {
+            resolveShifts = resolve
+          }),
+      )
+    const { result, rerender } = renderHook(
+      ({ user }) => useCollectionsPayments({ user, api: { getDebt, getOpenCashShifts } }),
+      { initialProps: { user: { operator_id: 'operator-1', role: 'OPERADOR' as const } } },
+    )
+
+    await act(() => result.current.selectSocio(socio))
+    let refresh!: Promise<boolean>
+    act(() => {
+      refresh = result.current.refreshPaymentContext()
+    })
+    const rejected = expect(refresh).rejects.toMatchObject({ kind: 'unavailable' })
+    act(() => rerender({ user: { operator_id: 'operator-2', role: 'OPERADOR' } }))
+    await act(async () => {
+      resolveDebt({ ...debt, total_debt_cents: 9_000 })
+      resolveShifts([{ ...shift, id: 'shift-2', assigned_operator_id: 'operator-2' }])
+      await rejected
+    })
+
+    expect(result.current.debt).toEqual(debt)
+    expect(result.current.openShifts).toEqual([])
+    expect(result.current.openShiftAvailability).toBe('loading')
   })
 
   it('does not show an older member payment outcome when the POST resolves after selection changes', async () => {
