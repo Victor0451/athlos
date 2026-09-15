@@ -5,6 +5,8 @@ import type { ApiError } from '@athlos/errors'
 import {
   createCondonationApprovalRequest,
   decideCondonationApproval,
+  createCommunityWorkApprovalRequest,
+  decideCommunityWorkApproval,
   consumeApprovalToken,
   createApprovalToken,
   getApprovalToken,
@@ -545,5 +547,155 @@ describe('condonation approval lifecycle', () => {
     ).rejects.toMatchObject({
       code: ErrorCode.CONFLICT,
     })
+  })
+})
+
+describe('community-work approval lifecycle', () => {
+  const snapshot = {
+    memberId: 'member-1',
+    obligations: [{ obligationId: 'obligation-1', currency: 'ARS', outstandingAmountCents: 12500 }],
+  }
+
+  function makeRequest(overrides: Record<string, unknown> = {}) {
+    return {
+      requestId: 'cw-request-1',
+      contextSummary: 'Community work for January membership fee',
+      requesterId: 'operator-1',
+      requesterKey: 'requester-key-1',
+      approverChannel: 'email' as const,
+      approverAddress: 'treasury@example.test',
+      snapshot,
+      reason: 'Member offered community work',
+      evidence: 'case-cw-1',
+      callerKey: 'community-work-request-1',
+      ...overrides,
+    }
+  }
+
+  it('persists an inert community-work request with snapshot, requesterKey and agreement terms', async () => {
+    const standin = createStandinDb()
+    const result = await createCommunityWorkApprovalRequest(
+      asDrizzle(standin),
+      makeRequest({
+        agreementUuid: '00000000-0000-4000-8000-0000000000a1',
+        termsVersion: 3,
+      }),
+    )
+
+    expect(result.record).toMatchObject({
+      actionType: 'dues.community-work-request',
+      actionId: 'cw-request-1',
+      communitySnapshot: snapshot,
+      requesterKey: 'requester-key-1',
+      agreementUuid: '00000000-0000-4000-8000-0000000000a1',
+      termsVersion: 3,
+      requestReason: 'Member offered community work',
+      requestEvidence: 'case-cw-1',
+      status: 'pending',
+      usedAt: null,
+      executionId: null,
+      condonationSnapshot: null,
+    })
+    // financially inert: exactly one approval row, nothing else
+    expect(standin.rows).toHaveLength(1)
+  })
+
+  it('replays an identical request and conflicts when inputs change under the same caller key', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    const request = makeRequest()
+
+    const first = await createCommunityWorkApprovalRequest(db, request)
+    const replay = await createCommunityWorkApprovalRequest(db, request)
+
+    expect(replay.record).toEqual(first.record)
+    expect(standin.rows).toHaveLength(1)
+
+    await expect(
+      createCommunityWorkApprovalRequest(db, makeRequest({ reason: 'Different reason' })),
+    ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+  })
+
+  it('allows multiple pending requests for the same member under distinct caller keys', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+
+    await createCommunityWorkApprovalRequest(db, makeRequest())
+    const second = await createCommunityWorkApprovalRequest(
+      db,
+      makeRequest({ requestId: 'cw-request-2', callerKey: 'community-work-request-2' }),
+    )
+
+    expect(second.record.status).toBe('pending')
+    expect(standin.rows).toHaveLength(2)
+  })
+
+  it('records one approved decision with actor fingerprint without consuming or executing', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await createCommunityWorkApprovalRequest(db, makeRequest())
+
+    const result = await decideCommunityWorkApproval(db, {
+      requestId: 'cw-request-1',
+      actorId: 'treasurer-1',
+      decision: 'approved',
+      reason: 'Work plan accepted',
+      evidence: 'treasury-note-1',
+      actorFingerprint: 'fp-treasurer-1',
+    })
+
+    expect(result).toMatchObject({
+      status: 'approved',
+      decidedByOperatorId: 'treasurer-1',
+      decisionReason: 'Work plan accepted',
+      decisionEvidence: 'treasury-note-1',
+      actorFingerprint: 'fp-treasurer-1',
+      usedAt: null,
+    })
+    expect(result.decidedAt).toBeInstanceOf(Date)
+    expect(result.executionId).toMatch(/^[0-9a-f-]{36}$/)
+    // decision authorizes later execution only: still one row, no financial facts
+    expect(standin.rows).toHaveLength(1)
+  })
+
+  it('rejects self-decision, replays the exact decision, conflicts on divergence, and rejects expiry', async () => {
+    const standin = createStandinDb()
+    const db = asDrizzle(standin)
+    await createCommunityWorkApprovalRequest(db, makeRequest())
+
+    await expect(
+      decideCommunityWorkApproval(db, {
+        requestId: 'cw-request-1',
+        actorId: 'operator-1',
+        decision: 'approved',
+        reason: 'Self approve',
+        evidence: 'x',
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_PERMISSIONS })
+
+    const input = {
+      requestId: 'cw-request-1',
+      actorId: 'treasurer-1',
+      decision: 'approved' as const,
+      reason: 'Work plan accepted',
+      evidence: 'treasury-note-1',
+      actorFingerprint: 'fp-treasurer-1',
+    }
+    const first = await decideCommunityWorkApproval(db, input)
+    await expect(decideCommunityWorkApproval(db, input)).resolves.toEqual(first)
+    await expect(
+      decideCommunityWorkApproval(db, { ...input, actorFingerprint: 'fp-other' }),
+    ).rejects.toMatchObject({ code: ErrorCode.CONFLICT })
+
+    // expired requests cannot be decided
+    const expired = makeRequest({
+      requestId: 'cw-request-2',
+      callerKey: 'community-work-request-2',
+      expiresInHours: -1,
+    })
+    await createCommunityWorkApprovalRequest(db, expired)
+    await expect(
+      decideCommunityWorkApproval(db, { ...input, requestId: 'cw-request-2' }),
+    ).rejects.toMatchObject({ code: ErrorCode.APPROVAL_LINK_EXPIRED })
   })
 })
