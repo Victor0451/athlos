@@ -545,3 +545,45 @@
 - Independent focused Vitest evidence remains 6 files, 73 passed, 0 failed, 0 skipped; no production or unit-test source changed, so it was not rerun.
 - `next-env.d.ts` was restored to SHA-256 `d222d721b06bc9259ca86571da8ebf893d384c8c253ea6033b05c9f43cba160e`; port 3101 was absent before and after.
 - Workload/PR boundary: U4bB correction only, stacked-to-main. Parent readback measured 25 correction lines against the native start tree, not 19 net-growth lines; plus 4 lines of this evidence correction, total authored work is 349 + 25 + 4 = 378, below 400. Final HEAD delta is 368. QA001 remains pending; parent owns verification/settlement.
+
+## Unit 5A — Latent manual-source persistence
+
+- Completed persisted tasks: U5A RED, GREEN, TRIANGULATE, and REFACTOR are visibly `[x]` in `tasks.md`; U5B remains `[ ]`. Unit 5 overall is not complete.
+- Changed: `0070_cash_manual_sources.sql`, journal/frontier/schema metadata, and a disposable PostgreSQL persistence test. No service, route, permission, UI, tender writer, settlement, automatic-source, or reconciliation code changed.
+- DB guarantee: a new source has one unique authoritative tender FK, immutable code/name/path/description, and may attach only to an OPEN `MANUAL` tender by its owner or a persisted ADMIN actor, with a supported direction/method matrix and an active imputable catalog leaf. Update/delete is blocked. The source has no amount, tender, or direction columns.
+- Limitation: U5A does not prevent a new orphan manual tender or claim atomic/exactly-once creation; U5B must create tender plus source in one locked transaction and validate request fractional/unsafe/bounded cents before database numeric coercion. Historical manual, gasto, and automatic records are not altered or newly constrained.
+
+### TDD Cycle Evidence
+
+| Task | Test/layer | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+| --- | --- | --- | --- | --- | --- | --- |
+| U5A.1–4 | `cash-sources.postgres.integration.test.ts` / disposable real PostgreSQL | production source 3/3; DB frontier/schema 21/21 | absent `0070`: 1 suite failed, 4 skipped (`ENOENT`) | 4/4 | 7/7: Asset income, Liability BANK_DEBIT expense, snapshots, foreign/closed links, matrix, group, append-only | target Prettier; final 7/7 |
+
+### Verification and boundary
+
+- Final DB: `scripts/lib/disposable-postgres.sh run --caller caja-u5a-manual-db-final-proof -- pnpm --filter @athlos/db exec vitest run src/migration-journal.test.ts src/schema/dues.test.ts` — 2 files, 22 passed, 0 failed, 0 skipped; lifecycle `1789479775-1175776-0718dd3ba92d1fd1` removed container/volume and reported both absent.
+- Final API: `scripts/lib/disposable-postgres.sh run --caller caja-u5a-manual-source-final-closed -- pnpm --filter @athlos/api exec vitest run src/modules/dues/cash-sources.postgres.integration.test.ts src/modules/dues/production-source.postgres.integration.test.ts` — 2 files, 10 passed, 0 failed, 0 skipped; lifecycle `1789479892-1181523-7f1615e4e01ba881` removed container/volume and reported both absent.
+- `pnpm --filter @athlos/db typecheck`, DB/API lint, `pnpm format:check`, `git diff --check`, `pnpm --filter @athlos/api typecheck`, and API build passed. `typescript-language-server` was unavailable; typecheck was the static-analysis fallback. No aggregate, UI, external DB, BETA, production, secrets, or live service was used.
+- Workload/PR boundary: U5A only, stacked-to-main. Before this evidence, the complete tracked-plus-untracked diff is 299 additions + 13 deletions = 312 changed lines. Roll back only U5A schema/migration/tests; U5B, Unit 6, close, and UI remain out of scope.
+- Status consumed: `gentle-ai.sdd-status/v2`, `caja-accounted-shift-close`, openspec, 48/67, apply ready, `nextRecommended=apply`; parent supplied attempt `proceed`. Readback is 52/71 complete, apply ready, verify blocked. `actionContext.mode=repo-local` and the supplied allowlist were observed. CodeGraph MCP initialization failed, so targeted filesystem reads followed. QA001 remains pending.
+- Remaining exact U5B tasks:
+  - [ ] 1. **RED:** add source/writer/route failures for description, missing or multiple methods, fractional/unsafe/overflow amounts, inactive/group accounts, closed/foreign shifts, replay conflicts, and BANK_DEBIT income rejection.
+  - [ ] 2. **GREEN:** implement only the atomic authorized manual writer and route: income CASH/DEBIT/CREDIT/TRANSFER; expense CASH/DEBIT/CREDIT/TRANSFER/BANK_DEBIT; one tender plus one source with immutable snapshots and no split payment.
+  - [ ] 3. **TRIANGULATE:** prove one committed tender/source or no write on rollback, replay/idempotency without duplicate tender/source, CASH-only reconciliation preservation, and historical readers with absent manual-source metadata.
+  - [ ] 4. **REFACTOR:** share request exact-cent/account eligibility validation without altering legacy MANUAL/GASTO/automatic history or broadening permissions; run focused API/disposable-PG evidence. UI runtime evidence is **N/A (API-only unit)**.
+
+- Evidence hash receipt: SHA-256 of `apply-progress.md` immediately before this receipt: `ca7b2a28fef78e86d8b43210009fc4c40e0c4fdcc6312eab8decec5384e62704`.
+
+### U5A ADMIN cross-shift predicate correction
+- `0070` now allows an OPEN foreign-shift tender only for persisted `public.operators.role = 'A'`; ordinary foreign actors remain rejected and the tender actor is unchanged.
+
+### TDD Cycle Evidence
+| Task | Safety net | RED | GREEN / REFACTOR |
+| --- | --- | --- | --- |
+| U5A ADMIN predicate | 10/10 | 7 passed, 1 failed (`23514`) | required API DB run 11/11; target Prettier |
+
+- DB schema/journal: 22/22; API/DB typecheck and lint plus `git diff --check` passed. No U5B/API/permission change; U5A `[x]`, U5B `[ ]`. U5A only, stacked-to-main; status 52/71, apply ready, repo-local allowlist.
+
+### U5A authorized budget disposition
+- The maintainer explicitly authorized a U5-A-only size exception to 420 cumulative lines and the audited budget reset, preserving the recorded 364 + 38 = 402 authored lines (runtime `last_reset` revision `sha256:7bd800077dc1fcd0935ac724b5fe4841a139d8519725fb9778fe66ca699c439f`). U5-B and later units remain at 400.
+- Corrected ADMIN cross-shift predicate (`public.operators.role = 'A'`) with behavioral RED (7 passed / 1 failed `23514`), then final disposable-PostgreSQL runs: API 11 passed and DB 22 passed, zero failed/skipped; quality checks green. Candidate tree `453e1a8acbfd47d6047f08c0331c31d25e462e16` unchanged by this note.

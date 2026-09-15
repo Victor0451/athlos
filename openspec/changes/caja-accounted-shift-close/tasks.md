@@ -159,18 +159,27 @@ These are candidates for the human split decision, not an automatic chain. Each 
 
 **Rollback boundary:** revert only the Unit 4c Treasury history component/page/tests/E2E changes; retain the U3c server owner filter and all U4a opening behavior.
 
-## Unit 5 — Account-linked manual Caja sources and method matrix
+## Unit 5A — Latent manual-source persistence
 
-**Estimate:** 380–520 changed lines. **Depends on:** Units 1–3. **Spec:** `specs/cash-supporting-records/spec.md` — Account-Linked Manual Sources With One Mandatory Method; BANK_DEBIT Representation Compatibility; `specs/account-chart/spec.md` — Searchable Valid Movement Accounts (writer validation).  
-**Start / finish:** start from active imputable account lookup and personal shift lock; finish when append-only manual income/expense accepts one active imputable account, description, positive exact-cent amount, and exactly one validated-text method, saving immutable account snapshots. Supporting-document data is explicitly deferred to Unit 6.
-**Files:** `packages/db/src/schema/dues-cash.ts`, `packages/db/src/schema/index.ts`, new `packages/db/drizzle/<next-index>_cash_manual_sources.sql`, journal, new `apps/api/src/modules/dues/cash-sources.ts`, new `apps/api/src/modules/dues/cash-sources.test.ts`, new `apps/api/src/modules/dues/cash-sources.postgres.integration.test.ts`, `apps/api/src/routes/treasury.ts`, `apps/api/src/routes/treasury-routes.test.ts`; discovery target: `apps/api/src/modules/dues/cash-desk.ts` locking/idempotency patterns.
+**Scope:** additive DB substrate only: one append-only manual-source identity per authoritative existing tender, immutable active/imputable-leaf account snapshots, description, and no duplicate amount/method/direction fields. No API, service, route, permissions, or tender writer is reachable in this slice.
 
-- [ ] 1. **RED:** create failing source/route/persistence cases for missing or multiple methods, non-imputable/inactive/group accounts, missing description, fractional/unsafe/overflow amounts, foreign/closed shift, and BANK_DEBIT income rejection.
-- [ ] 2. **GREEN:** add append-only source persistence and routes under the existing Caja authorization/locking model. Store method as validated text—not a database enum—accept income CASH/DEBIT/CREDIT/TRANSFER and expense CASH/DEBIT/CREDIT/TRANSFER/BANK_DEBIT; snapshot code/name/path at write time.
-- [ ] 3. **TRIANGULATE:** prove DEBIT and BANK_DEBIT remain distinct, all non-CASH methods leave expected CASH unchanged, and a later catalog edit cannot change a stored snapshot; verify transaction rollback and idempotent/replay behavior on disposable PostgreSQL.
-- [ ] 4. **REFACTOR:** share exact-cent and account-eligibility validation with close/settlement-ready helpers without permitting split tender or an additional payment. Run planned focused API/disposable-PG selectors and confirmed shared quality commands; UI runtime evidence is **N/A (API-only unit)**.
+- [x] 1. **RED:** add a disposable real-PostgreSQL test requiring absent `0070` persistence, a unique tender link, immutable snapshots, and rejection of invalid origin, method matrix, account metadata, and missing/foreign tender links.
+- [x] 2. **GREEN:** add `0070_cash_manual_sources`, journal/schema metadata, and trigger guards for an OPEN MANUAL tender by its owner or a persisted ADMIN actor, one-to-one tender link, validated-text method matrix, and active imputable leaf snapshot.
+- [x] 3. **TRIANGULATE:** prove an Asset income and Liability `BANK_DEBIT` expense, historical snapshot after catalog rename, duplicate/missing/foreign/closed link rejection, append-only update/delete rejection, and non-imputable/group rejection on disposable PostgreSQL.
+- [x] 4. **REFACTOR:** retain the narrow source-to-tender foreign-key boundary, target-format it, and run the scoped DB/API persistence regressions. UI runtime evidence is **N/A (persistence-only)**.
 
-**Rollback boundary:** remove only manual-source schema/migration, writer/routes, and their tests; do not remove chart, shift, or legacy tender records.
+**Rollback boundary:** revert only `0070`, its journal/schema metadata, focused persistence/frontier tests, and this latent table; do not remove chart, shift, legacy tenders, automatic sources, or settlement behavior.
+
+## Unit 5B — Deferred atomic manual-source writer and API
+
+**Scope:** the remaining full manual-income/expense contract. U5B MUST provide the dedicated atomic writer that creates the required tender and source together, validates request exact cents and bounds before numeric persistence, locks the current own OPEN shift, and supplies the authorized route/service surface. U5A alone does not claim orphan prevention, idempotency, or exactly-once source/tender creation.
+
+- [ ] 1. **RED:** add source/writer/route failures for description, missing or multiple methods, fractional/unsafe/overflow amounts, inactive/group accounts, closed/foreign shifts, replay conflicts, and BANK_DEBIT income rejection.
+- [ ] 2. **GREEN:** implement only the atomic authorized manual writer and route: income CASH/DEBIT/CREDIT/TRANSFER; expense CASH/DEBIT/CREDIT/TRANSFER/BANK_DEBIT; one tender plus one source with immutable snapshots and no split payment.
+- [ ] 3. **TRIANGULATE:** prove one committed tender/source or no write on rollback, replay/idempotency without duplicate tender/source, CASH-only reconciliation preservation, and historical readers with absent manual-source metadata.
+- [ ] 4. **REFACTOR:** share request exact-cent/account eligibility validation without altering legacy MANUAL/GASTO/automatic history or broadening permissions; run focused API/disposable-PG evidence. UI runtime evidence is **N/A (API-only unit)**.
+
+**Rollback boundary:** U5B reverts only its future writer/routes/tests; U5A latent persistence remains independently safe.
 
 ## Unit 6 — Optional supporting-record transcription
 
