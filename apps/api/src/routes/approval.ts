@@ -13,6 +13,7 @@ import {
   findCommunityWorkRequest,
   findCondonationRequest,
   getApprovalToken,
+  listCommunityWorkLifecycle,
   listCondonationLifecycle,
   listCondonationQueue,
   type CondonationQueueEntry,
@@ -73,6 +74,10 @@ const condonationDecisionSchema = z
 const condonationIdSchema = z.object({ id: z.string().uuid() })
 const condonationMemberSchema = z.object({ memberId: z.string().uuid() }).strict()
 const condonationHistoryQuerySchema = z
+  .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
+  .strict()
+const communityWorkMemberSchema = z.object({ memberId: z.string().uuid() }).strict()
+const communityWorkHistoryQuerySchema = z
   .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
   .strict()
 const condonationQueueQuerySchema = z
@@ -197,6 +202,39 @@ function condonationQueueDto(row: CondonationQueueEntry) {
   }
 }
 
+function communityWorkLifecycleDto(
+  row: Awaited<ReturnType<typeof listCommunityWorkLifecycle>>[number],
+) {
+  const snapshot = row.communitySnapshot as CondonationSnapshot
+  const executed = row.executionReceiptId !== null
+  const expired = row.expiresAt <= new Date()
+  const state = executed
+    ? 'executed'
+    : expired
+      ? 'expired'
+      : row.status === 'rejected'
+        ? 'rejected'
+        : row.status === 'pending'
+          ? 'pending'
+          : 'approved_awaiting_execution'
+  return {
+    id: row.actionId,
+    state,
+    expires_at: row.expiresAt.toISOString(),
+    decided_at: row.decidedAt?.toISOString() ?? null,
+    execution_id: row.executionId,
+    execution_status: executed ? 'executed' : row.executionId ? 'recoverable' : 'unavailable',
+    snapshot: {
+      member_id: snapshot.memberId,
+      obligations: snapshot.obligations.map((item) => ({
+        obligation_id: item.obligationId,
+        currency: item.currency,
+        outstanding_amount_cents: item.outstandingAmountCents,
+      })),
+    },
+  }
+}
+
 const createLinkSchema = z.object({
   action_type: z.string().min(1).max(64),
   action_id: z.string().min(1).max(64),
@@ -277,6 +315,25 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         ...(treasury ? {} : { requesterId: request.operator.sub }),
       })
       return reply.code(200).send({ items: rows.map(condonationLifecycleDto) })
+    },
+  )
+
+  // Community-work member-history — gated by rollout flag, mirrors condonation lifecycle.
+  fastify.get<{ Params: { memberId: string }; Querystring: unknown }>(
+    '/api/v1/members/:memberId/community-work-requests',
+    { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') },
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const { memberId } = throwIfInvalid(communityWorkMemberSchema, request.params, 'params')
+      const { limit } = throwIfInvalid(communityWorkHistoryQuerySchema, request.query, 'query')
+      const treasury = request.operator.role === 'ADMIN' || request.operator.role === 'TESORERO'
+      const rows = await listCommunityWorkLifecycle(container.db, {
+        memberId,
+        limit: limit ?? 25,
+        ...(treasury ? {} : { requesterId: request.operator.sub }),
+      })
+      return reply.code(200).send({ items: rows.map(communityWorkLifecycleDto) })
     },
   )
 

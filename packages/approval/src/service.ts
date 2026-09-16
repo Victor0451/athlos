@@ -1,6 +1,7 @@
 import type { Db } from '@athlos/db'
 import {
   approvalTokens,
+  duesCommunityWorkExecutions,
   duesCondonationExecutions,
   operators,
   socios,
@@ -106,6 +107,53 @@ export async function listCondonationLifecycle(
       decidedAt: approval.decidedAt,
       executionId: approval.executionId,
       condonationSnapshot: approval.condonationSnapshot,
+      executionReceiptId,
+    }))
+}
+
+export type CommunityWorkLifecycle = Pick<
+  ApprovalToken,
+  'actionId' | 'status' | 'expiresAt' | 'decidedAt' | 'executionId' | 'communitySnapshot'
+> & { executionReceiptId: string | null }
+
+export type ListCommunityWorkLifecycleInput = {
+  memberId: string
+  requesterId?: string
+  limit: number
+}
+
+/** Read persisted community-work approval rows joined to execution receipts; approval alone never implies execution. */
+export async function listCommunityWorkLifecycle(
+  db: Db,
+  input: ListCommunityWorkLifecycleInput,
+): Promise<CommunityWorkLifecycle[]> {
+  const where = and(
+    eq(approvalTokens.actionType, 'dues.community-work-request'),
+    sql`${approvalTokens.communitySnapshot}->>'memberId' = ${input.memberId}`,
+    ...(input.requesterId ? [eq(approvalTokens.createdByOperatorId, input.requesterId)] : []),
+  )
+  const rows = await db
+    .select({ approval: approvalTokens, executionReceiptId: duesCommunityWorkExecutions.id })
+    .from(approvalTokens)
+    .leftJoin(
+      duesCommunityWorkExecutions,
+      eq(duesCommunityWorkExecutions.approvalTokenId, approvalTokens.id),
+    )
+    .where(where)
+    .orderBy(desc(approvalTokens.createdAt), desc(approvalTokens.id))
+    .limit(input.limit)
+  return rows
+    .filter(
+      (row) =>
+        (row.approval.communitySnapshot as CondonationSnapshot | null)?.memberId === input.memberId,
+    )
+    .map(({ approval, executionReceiptId }) => ({
+      actionId: approval.actionId,
+      status: approval.status,
+      expiresAt: approval.expiresAt,
+      decidedAt: approval.decidedAt,
+      executionId: approval.executionId,
+      communitySnapshot: approval.communitySnapshot,
       executionReceiptId,
     }))
 }
