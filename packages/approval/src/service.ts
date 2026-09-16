@@ -329,6 +329,119 @@ export async function listCondonationQueue(
   })
 }
 
+export type CommunityWorkQueueEntry = CommunityWorkLifecycle & {
+  id: string
+  createdAt: Date
+  createdAtCursor: string
+  contextSummary: string
+  requestReason: string
+  requestEvidence: string
+  currentMember: { id: string; numeroSocio: string; nombre: string; apellido: string }
+  requester: { id: string; username: string }
+}
+export type ListCommunityWorkQueueInput = {
+  view: 'actionable' | 'all'
+  limit: number
+  cursor?: string
+}
+
+/** Central read model only: decisions and execution retain their dedicated authenticated services. */
+export async function listCommunityWorkQueue(
+  db: Db,
+  input: ListCommunityWorkQueueInput,
+): Promise<CommunityWorkQueueEntry[]> {
+  const cursor = decodeQueueCursor(input.cursor)
+  const conditions = [eq(approvalTokens.actionType, 'dues.community-work-request')]
+  if (input.view === 'actionable')
+    conditions.push(
+      eq(approvalTokens.status, 'pending'),
+      isNull(approvalTokens.usedAt),
+      gt(approvalTokens.expiresAt, new Date()),
+      isNull(duesCommunityWorkExecutions.id),
+    )
+  if (cursor)
+    conditions.push(
+      sql`(${approvalTokens.createdAt}, ${approvalTokens.id}) < (${cursor.t}::timestamptz, ${cursor.id}::uuid)`,
+    )
+  const rows = await db
+    .select({
+      id: approvalTokens.id,
+      actionId: approvalTokens.actionId,
+      status: approvalTokens.status,
+      expiresAt: approvalTokens.expiresAt,
+      decidedAt: approvalTokens.decidedAt,
+      executionId: approvalTokens.executionId,
+      executionReceiptId: duesCommunityWorkExecutions.id,
+      communitySnapshot: approvalTokens.communitySnapshot,
+      createdAt: approvalTokens.createdAt,
+      createdAtCursor: sql<string>`to_char(${approvalTokens.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      contextSummary: approvalTokens.contextSummary,
+      requestReason: approvalTokens.requestReason,
+      requestEvidence: approvalTokens.requestEvidence,
+      memberId: socios.id,
+      numeroSocio: socios.numeroSocio,
+      nombre: socios.nombre,
+      apellido: socios.apellido,
+      requesterId: operators.id,
+      username: operators.username,
+    })
+    .from(approvalTokens)
+    .leftJoin(
+      duesCommunityWorkExecutions,
+      eq(duesCommunityWorkExecutions.approvalTokenId, approvalTokens.id),
+    )
+    .leftJoin(
+      socios,
+      sql`${socios.id}::text = lower(${approvalTokens.communitySnapshot}->>'memberId')`,
+    )
+    .leftJoin(operators, eq(operators.id, approvalTokens.createdByOperatorId))
+    .where(and(...conditions))
+    .orderBy(desc(approvalTokens.createdAt), desc(approvalTokens.id))
+    .limit(input.limit)
+  return rows.map((row) => {
+    assertQueueSnapshot(row.communitySnapshot)
+    if (
+      !['pending', 'approved', 'rejected'].includes(row.status) ||
+      !queueUuid.test(row.actionId) ||
+      !row.memberId ||
+      !row.numeroSocio ||
+      !row.nombre ||
+      !row.apellido ||
+      !row.requesterId ||
+      !row.username ||
+      !row.contextSummary.trim() ||
+      !row.requestReason?.trim() ||
+      !row.requestEvidence?.trim() ||
+      row.memberId !== row.communitySnapshot.memberId.toLowerCase() ||
+      (row.executionReceiptId !== null &&
+        (row.executionReceiptId !== row.executionId || row.status !== 'approved'))
+    )
+      throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Community work queue data is unavailable')
+    return {
+      id: row.id,
+      actionId: row.actionId,
+      status: row.status,
+      expiresAt: row.expiresAt,
+      decidedAt: row.decidedAt,
+      executionId: row.executionId,
+      executionReceiptId: row.executionReceiptId,
+      communitySnapshot: row.communitySnapshot,
+      createdAt: row.createdAt,
+      createdAtCursor: row.createdAtCursor,
+      contextSummary: row.contextSummary,
+      requestReason: row.requestReason,
+      requestEvidence: row.requestEvidence,
+      currentMember: {
+        id: row.memberId,
+        numeroSocio: row.numeroSocio,
+        nombre: row.nombre,
+        apellido: row.apellido,
+      },
+      requester: { id: row.requesterId, username: row.username },
+    }
+  })
+}
+
 function assertCondonationSnapshot(snapshot: CondonationSnapshot): void {
   const ids = new Set(snapshot.obligations.map((obligation) => obligation.obligationId))
   const currencies = new Set(snapshot.obligations.map((obligation) => obligation.currency))
