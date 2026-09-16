@@ -15,12 +15,18 @@ import { signAccessToken } from '@athlos/auth'
 import { BusinessError, ErrorCode } from '@athlos/errors'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import type * as AllocationsModule from '../modules/dues/allocations.ts'
+import { findActiveCommunityWorkAgreement } from '../modules/dues/agreements.ts'
+import type * as AgreementsModule from '../modules/dues/agreements.ts'
 
 const executeApproved = vi.fn()
 
 vi.mock('../modules/dues/allocations.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof AllocationsModule>()),
   selectFullOutstanding: vi.fn(),
+}))
+vi.mock('../modules/dues/agreements.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof AgreementsModule>()),
+  findActiveCommunityWorkAgreement: vi.fn(),
 }))
 vi.mock('../modules/dues/condonations.ts', () => ({
   CondonationExecutionService: class {
@@ -67,7 +73,7 @@ function makeEnv(): Env {
   } as Env
 }
 
-async function bootstrap(): Promise<{
+async function bootstrap(extraEnv: NodeJS.ProcessEnv = {}): Promise<{
   app: FastifyInstance
   standin: ReturnType<typeof createStandinDb>
 }> {
@@ -80,6 +86,7 @@ async function bootstrap(): Promise<{
       JWT_REFRESH_SECRET: makeEnv().JWT_REFRESH_SECRET,
       DATABASE_URL: makeEnv().DATABASE_URL,
       LEGACY_DB_PATH: makeEnv().LEGACY_DB_PATH,
+      ...extraEnv,
     },
     containerOverrides: { db: standin.drizzle as unknown as Db },
     quietLogger: true,
@@ -720,6 +727,269 @@ describe('authenticated condonation requests and decisions', () => {
         memberId,
         limit: 25,
       })
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('community-work requests and decisions', () => {
+  const CW_ON = { COMMUNITY_WORK_APPROVALS_ENABLED: 'true' }
+  const communityPayload = {
+    member_id: memberId,
+    obligation_id: obligationId,
+    context: 'Member offers community work',
+    reason: 'Documented commitment',
+    evidence: 'cw-case-1',
+  }
+  const outstanding = () => ({
+    socioId: memberId,
+    currency: 'ARS',
+    totalCents: 12500,
+    allocations: [{ obligationId, amountCents: 12500 }],
+    fingerprint: 'a'.repeat(64),
+  })
+
+  beforeEach(() => {
+    vi.mocked(selectFullOutstanding).mockReset()
+    vi.mocked(findActiveCommunityWorkAgreement).mockReset()
+  })
+
+  it('hides the write surface while the rollout flag is off', async () => {
+    const { app } = await bootstrap()
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/community-work-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-off-1' },
+        payload: communityPayload,
+      })
+      const decided = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${memberId}/decision`,
+        headers: auth('TESORERO', approverId),
+        payload: { decision: 'approved', reason: 'x', evidence: 'y' },
+      })
+      expect(created.statusCode).toBe(404)
+      expect(decided.statusCode).toBe(404)
+      expect(selectFullOutstanding).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('creates an inert audited request with a server-captured snapshot and replays the caller key exactly', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue(outstanding())
+    const { app, standin } = await bootstrap(CW_ON)
+    try {
+      const request = {
+        method: 'POST' as const,
+        url: '/api/v1/community-work-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-request-1' },
+        payload: communityPayload,
+      }
+      const first = await app.inject(request)
+      const replay = await app.inject(request)
+
+      expect(first.statusCode).toBe(201)
+      expect(replay.statusCode).toBe(201)
+      expect(replay.json()).toEqual(first.json())
+      expect(standin.state.approvalTokens).toHaveLength(1)
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        actionType: 'dues.community-work-request',
+        createdByOperatorId: requesterId,
+        communitySnapshot: {
+          memberId,
+          obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+        },
+        requesterKey: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        agreementUuid: null,
+        termsVersion: null,
+        condonationSnapshot: null,
+        usedAt: null,
+        executionId: null,
+      })
+      expect(standin.state.auditEvents).toHaveLength(1)
+      expect(standin.state.auditEvents[0]).toMatchObject({
+        operatorId: requesterId,
+        action: 'COMMUNITY_WORK_REQUEST_CREATED',
+        entityType: 'community_work_request',
+      })
+
+      // the finance-access policy is preserved: ADMIN may also request
+      const byAdmin = await app.inject({
+        ...request,
+        headers: { ...auth('ADMIN', approverId), 'idempotency-key': 'cw-request-2' },
+      })
+      expect(byAdmin.statusCode).toBe(201)
+      expect(standin.state.approvalTokens).toHaveLength(2)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('validates supplied agreement context server-side and rejects ownership mismatch', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue(outstanding())
+    const agreementId = '00000000-0000-4000-8000-0000000000a1'
+    vi.mocked(findActiveCommunityWorkAgreement)
+      .mockResolvedValueOnce({ termsVersion: 7 })
+      .mockResolvedValueOnce(null)
+    const { app, standin } = await bootstrap(CW_ON)
+    try {
+      const ok = await app.inject({
+        method: 'POST',
+        url: '/api/v1/community-work-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-agreement-1' },
+        payload: { ...communityPayload, agreement_id: agreementId },
+      })
+      const mismatch = await app.inject({
+        method: 'POST',
+        url: '/api/v1/community-work-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-agreement-2' },
+        payload: { ...communityPayload, agreement_id: agreementId },
+      })
+      expect(ok.statusCode).toBe(201)
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        agreementUuid: agreementId,
+        termsVersion: 7,
+      })
+      expect(findActiveCommunityWorkAgreement).toHaveBeenCalledWith(expect.anything(), {
+        agreementId,
+        socioId: memberId,
+        obligationId,
+      })
+      expect(mismatch.statusCode).toBe(409)
+      expect(standin.state.approvalTokens).toHaveLength(1)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects strict-schema violations and a missing idempotency key', async () => {
+    const { app, standin } = await bootstrap(CW_ON)
+    try {
+      for (const payload of [
+        { ...communityPayload, extra_field: 'x' },
+        { ...communityPayload, member_id: 'not-a-uuid' },
+        { ...communityPayload, obligation_id: undefined },
+        { ...communityPayload, context: '' },
+      ]) {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/v1/community-work-requests',
+          headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-invalid-1' },
+          payload,
+        })
+        expect(response.statusCode, JSON.stringify(payload)).toBe(400)
+      }
+      const noKey = await app.inject({
+        method: 'POST',
+        url: '/api/v1/community-work-requests',
+        headers: auth('OPERADOR'),
+        payload: communityPayload,
+      })
+      expect(noKey.statusCode).toBe(400)
+      expect(standin.state.approvalTokens).toHaveLength(0)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('records an audited Treasury decision with fingerprint, exact replay and denial matrix', async () => {
+    vi.mocked(selectFullOutstanding).mockResolvedValue(outstanding())
+    const { app, standin } = await bootstrap(CW_ON)
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/community-work-requests',
+        headers: { ...auth('OPERADOR'), 'idempotency-key': 'cw-decide-1' },
+        payload: communityPayload,
+      })
+      const { id } = created.json() as { id: string }
+
+      const asOperator = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${id}/decision`,
+        headers: auth('OPERADOR', approverId),
+        payload: { decision: 'approved', reason: 'Nope', evidence: 'e' },
+      })
+      const selfDecision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${id}/decision`,
+        headers: auth('TESORERO'), // sub defaults to requesterId
+        payload: { decision: 'approved', reason: 'Self', evidence: 'e' },
+      })
+      expect(asOperator.statusCode).toBe(403)
+      expect(selfDecision.statusCode).toBe(403)
+
+      const decisionPayload = {
+        decision: 'approved',
+        reason: 'Plan accepted',
+        evidence: 'treasury-9',
+      }
+      const headers = auth('TESORERO', approverId)
+      const decision = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${id}/decision`,
+        headers,
+        payload: decisionPayload,
+      })
+      const replay = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${id}/decision`,
+        headers,
+        payload: decisionPayload,
+      })
+      const divergent = await app.inject({
+        method: 'POST',
+        url: `/api/v1/community-work-requests/${id}/decision`,
+        headers,
+        payload: { ...decisionPayload, reason: 'Changed' },
+      })
+
+      expect(decision.statusCode).toBe(200)
+      expect(decision.json()).toMatchObject({ id, status: 'approved' })
+      expect(decision.json()).not.toHaveProperty('execution_id')
+      expect(replay.statusCode).toBe(200)
+      expect(replay.json()).toEqual(decision.json())
+      expect(divergent.statusCode).toBe(409)
+      expect(standin.state.approvalTokens[0]).toMatchObject({
+        status: 'approved',
+        decidedByOperatorId: approverId,
+        actorFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        usedAt: null,
+      })
+      expect(standin.state.approvalTokens[0]?.executionId).toMatch(/^[0-9a-f-]{36}$/)
+      // only new transitions audit: request + decision; replays dedupe
+      expect(standin.state.auditEvents).toHaveLength(2)
+      expect(standin.state.auditEvents[1]).toMatchObject({
+        operatorId: approverId,
+        action: 'COMMUNITY_WORK_DECISION_RECORDED',
+        entityType: 'community_work_request',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('does not allow a public token decision to consume a community-work request', async () => {
+    const { app, standin } = await bootstrap()
+    try {
+      const { raw, hash } = generateApprovalToken()
+      standin.state.approvalTokens.push(
+        makeApprovalRow({
+          actionType: 'dues.community-work-request',
+          actionId: 'cw-1',
+          tokenHash: hash,
+        }),
+      )
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/approval/${raw}`,
+        payload: { decision: 'approve' },
+      })
+      expect(response.statusCode).toBe(403)
+      expect(standin.state.approvalTokens[0]?.usedAt).toBeNull()
     } finally {
       await app.close()
     }
