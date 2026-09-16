@@ -46,7 +46,7 @@ export const navigation: NavigationItem[] = [
     label: 'Aprobaciones',
     icon: Stamp,
     section: 'Operations',
-    roles: ['ADMIN'],
+    roles: ['ADMIN', 'TESORERO'],
   },
   {
     href: '/tesoreria',

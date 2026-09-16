@@ -7,6 +7,7 @@ import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
 import { collectionButtonClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel } from '@/components/collections/DebtPanel'
+import { SettlementReceiptDialog } from '@/components/collections/SettlementReceiptDialog'
 import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
@@ -48,6 +49,11 @@ import {
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
 import { getSocio, getSocios, type Socio } from '@/lib/api/socios'
 import { buildCashContextHref, parseCashContext } from '@/lib/collections-cash-context'
+import {
+  buildCondonationContextCleanupHref,
+  parseCondonationContext,
+  type CollectionsCondonationContext,
+} from '@/lib/collections-condonation-context'
 import {
   createCollectionsIdempotencyStore,
   type CollectionsIdempotencyStore,
@@ -97,6 +103,11 @@ export default function CollectionsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const cashContext = useMemo(() => parseCashContext(searchParams), [searchParams])
+  const condonationContext = useMemo(() => parseCondonationContext(searchParams), [searchParams])
+  const condonationQuery = searchParams.toString()
+  const hasCondonationContext =
+    searchParams.getAll('condonation_member').length > 0 ||
+    searchParams.getAll('condonation_request').length > 0
   const cashContextKey = cashContext
     ? `${cashContext.memberId}:${cashContext.obligationIds.join(',')}`
     : null
@@ -167,8 +178,30 @@ export default function CollectionsPage() {
   const [focusDebtMemberId, setFocusDebtMemberId] = useState<string | null>(null)
   const lifecycleLoad = useRef(0)
   const restoredCashContext = useRef<string | null>(null)
+  const restoredCondonationContext = useRef<string | null>(null)
+  const condonationRestoreVersion = useRef(0)
+  const focusedCondonationContext = useRef<string | null>(null)
+  const [condonationHandoff, setCondonationHandoff] = useState<{
+    context: CollectionsCondonationContext | null
+    status:
+      | 'loading'
+      | 'selected'
+      | 'invalid'
+      | 'member_error'
+      | 'member_mismatch'
+      | 'selection_error'
+  } | null>(null)
   const [initialPaymentSelection, setInitialPaymentSelection] = useState<string[] | undefined>()
   const [resumePaymentKey, setResumePaymentKey] = useState<string>()
+  const [receiptRequest, setReceiptRequest] = useState<{
+    memberId: string
+    settlementId: string
+    actorId: string
+    role: string
+  } | null>(null)
+  const paymentResultRef = useRef<HTMLElement>(null)
+  const focusedPaymentResult = useRef<string | null>(null)
+  const paymentResultOrigin = useRef<{ settlementId: string; scope: string } | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
   const financeCapability = user?.role === 'ADMIN' || user?.role === 'TESORERO'
@@ -191,6 +224,64 @@ export default function CollectionsPage() {
   } = useCollectionsPayments({ user, idempotency })
   const canPayFullSelection =
     financeCapability || (user?.role === 'OPERADOR' && cashShiftAvailability === 'ready')
+
+  const receiptScope =
+    user && selectedSocio ? `${user.operator_id}:${user.role}:${selectedSocio.id}` : null
+  useEffect(() => {
+    setReceiptRequest(null)
+  }, [receiptScope])
+  const resultSettlementId =
+    paymentOutcome?.memberId === selectedSocio?.id ? paymentOutcome?.settlementId : undefined
+  const resultKey =
+    authorized && canSettle && receiptScope && resultSettlementId
+      ? `${receiptScope}:${resultSettlementId}`
+      : null
+  useEffect(() => {
+    if (
+      !resultKey ||
+      !receiptScope ||
+      !resultSettlementId ||
+      focusedPaymentResult.current === resultKey
+    )
+      return
+    if (
+      paymentResultOrigin.current?.settlementId === resultSettlementId &&
+      paymentResultOrigin.current.scope !== receiptScope
+    )
+      return
+    paymentResultOrigin.current = { settlementId: resultSettlementId, scope: receiptScope }
+    let frame = 0
+    const hasModal = () => document.querySelector('[aria-modal="true"]') !== null
+    const scheduleFocus = () => {
+      if (frame || hasModal()) return
+      // A new modal before the frame cancels this focus, preserving its opener on close.
+      observer.disconnect()
+      // Modal restores its opener on cleanup; move focus only after that finishes.
+      frame = window.requestAnimationFrame(() => {
+        const result = paymentResultRef.current
+        if (!result || result.dataset.paymentResultKey !== resultKey || hasModal()) return
+        result.focus({ preventScroll: true })
+        result.scrollIntoView({ block: 'center', behavior: 'auto' })
+        focusedPaymentResult.current = resultKey
+      })
+    }
+    const observer = new MutationObserver(scheduleFocus)
+    observer.observe(document.body, { childList: true, subtree: true })
+    scheduleFocus()
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [resultKey, receiptScope, resultSettlementId])
+  const openReceipt = (settlementId: string) => {
+    if (!canSettle || !user?.operator_id || !selectedSocio) return
+    setReceiptRequest({
+      memberId: selectedSocio.id,
+      settlementId,
+      actorId: user.operator_id,
+      role: user.role,
+    })
+  }
   const generationUser =
     user?.role === 'ADMIN' || user?.role === 'TESORERO'
       ? (user as Pick<CurrentUser, 'operator_id'> & { role: 'ADMIN' | 'TESORERO' })
@@ -314,6 +405,73 @@ export default function CollectionsPage() {
       })
       .catch(() => undefined)
   }, [authorized, cashContext, cashContextKey])
+
+  useEffect(() => {
+    if (!hasCondonationContext || restoredCondonationContext.current === condonationQuery) return
+    restoredCondonationContext.current = condonationQuery
+    router.replace(buildCondonationContextCleanupHref(searchParams), { scroll: false })
+    if (!authorized || !condonationContext) {
+      if (authorized) setCondonationHandoff({ context: null, status: 'invalid' })
+      return
+    }
+    const restore = ++condonationRestoreVersion.current
+    const selection = selectionVersion.current
+    setCondonationHandoff({ context: condonationContext, status: 'loading' })
+    void getSocio(condonationContext.memberId)
+      .then(async (socio) => {
+        if (restore !== condonationRestoreVersion.current || selection !== selectionVersion.current)
+          return
+        if (socio.id.toLowerCase() !== condonationContext.memberId) {
+          setCondonationHandoff({ context: condonationContext, status: 'member_mismatch' })
+          return
+        }
+        const detail = await selectSocio(socio, true)
+        if (
+          restore !== condonationRestoreVersion.current ||
+          selectedMember.current?.toLowerCase() !== condonationContext.memberId
+        )
+          return
+        setCondonationHandoff({
+          context: condonationContext,
+          status: detail ? 'selected' : 'selection_error',
+        })
+      })
+      .catch(() => {
+        if (restore === condonationRestoreVersion.current && selection === selectionVersion.current)
+          setCondonationHandoff({ context: condonationContext, status: 'member_error' })
+      })
+  }, [
+    authorized,
+    condonationContext,
+    condonationQuery,
+    hasCondonationContext,
+    router,
+    searchParams,
+  ])
+
+  const contextualLifecycle =
+    condonationHandoff?.status === 'selected' &&
+    condonationHandoff.context &&
+    selectedSocio?.id.toLowerCase() === condonationHandoff.context.memberId
+      ? lifecycle.find(
+          (item) =>
+            item.id.toLowerCase() === condonationHandoff.context!.requestId &&
+            item.snapshot.member_id.toLowerCase() === condonationHandoff.context!.memberId,
+        )
+      : undefined
+
+  useEffect(() => {
+    if (!contextualLifecycle || focusedCondonationContext.current === contextualLifecycle.id) return
+    const frame = window.requestAnimationFrame(() => {
+      const heading = document.getElementById(`condonation-lifecycle-${contextualLifecycle.id}`)
+      const section = heading?.closest<HTMLElement>('section')
+      if (!section) return
+      section.focus({ preventScroll: true })
+      section.scrollIntoView({ block: 'start', behavior: 'auto' })
+      focusedCondonationContext.current = contextualLifecycle.id
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [contextualLifecycle])
 
   useEffect(() => {
     if (!authorized) return
@@ -472,6 +630,10 @@ export default function CollectionsPage() {
     }
   }
   async function selectSocio(socio: DebtSocio, returnDetail = false) {
+    if (!returnDetail && condonationHandoff) {
+      condonationRestoreVersion.current += 1
+      setCondonationHandoff(null)
+    }
     selectionVersion.current += 1
     assessmentLoad.current += 1
     assessmentRequest.current = null
@@ -758,6 +920,34 @@ export default function CollectionsPage() {
     }
   }
 
+  const handoffFeedback = (() => {
+    if (!condonationHandoff) return null
+    if (condonationHandoff.status === 'invalid')
+      return { error: true, text: 'El enlace de condonación está incompleto o no es válido.' }
+    if (condonationHandoff.status === 'member_error')
+      return { error: true, text: 'No se pudo cargar el socio vinculado a la condonación.' }
+    if (condonationHandoff.status === 'member_mismatch')
+      return { error: true, text: 'El enlace no corresponde a un socio disponible.' }
+    if (condonationHandoff.status === 'selection_error')
+      return { error: true, text: 'No se pudo cargar el detalle del socio vinculado.' }
+    if (condonationHandoff.status === 'loading')
+      return { error: false, text: 'Abriendo la solicitud de condonación…' }
+    if (lifecycleStatus === 'error')
+      return { error: true, text: 'No se pudo cargar el estado de la condonación indicada.' }
+    if (lifecycleStatus === 'ready' && !contextualLifecycle)
+      return { error: true, text: 'No se encontró la solicitud de condonación indicada.' }
+    if (!contextualLifecycle) return { error: false, text: 'Abriendo la solicitud de condonación…' }
+    const copy: Record<CondonationLifecycle['state'], string> = {
+      pending: 'La solicitud todavía está pendiente de decisión.',
+      rejected: 'La solicitud fue rechazada y no modificó la deuda.',
+      expired: 'La solicitud venció y no modificó la deuda.',
+      approved_awaiting_execution:
+        'La solicitud está aprobada. La ejecución sigue siendo explícita en el botón de la solicitud.',
+      executed: 'La condonación ya fue ejecutada según el estado actualizado.',
+    }
+    return { error: false, text: copy[contextualLifecycle.state] }
+  })()
+
   return (
     <main
       aria-labelledby="collections-title"
@@ -860,17 +1050,59 @@ export default function CollectionsPage() {
             status={debtStatus}
             debt={debt}
             error={debtError}
+            {...(canSettle ? { onViewSettlement: openReceipt } : {})}
             onSearch={searchSocios}
             onSelectSocio={(socio) => void selectSocio(socio)}
           />
+          {handoffFeedback && (
+            <p
+              role={handoffFeedback.error ? 'alert' : 'status'}
+              aria-label="Acceso contextual de condonación"
+              className={handoffFeedback.error ? 'text-danger' : 'text-ink-700'}
+            >
+              {handoffFeedback.text}
+            </p>
+          )}
           {paymentOutcome && paymentOutcome.memberId === selectedSocio?.id && (
-            <section aria-label="Resultado del pago" className="space-y-2">
-              <p
-                role={paymentOutcome.reconciliation === 'pending' ? 'alert' : 'status'}
-                aria-live={paymentOutcome.reconciliation === 'pending' ? 'assertive' : 'polite'}
-              >
-                {`Pago confirmado. Operación ${paymentOutcome.settlementId}. Importe confirmado: ${(paymentOutcome.amountCents / 100).toLocaleString('es-AR', { style: 'currency', currency: paymentOutcome.currency })}. Medio seleccionado por la persona operadora: ${paymentOutcome.tender}.${paymentOutcome.reconciliation === 'pending' ? ' No se pudo actualizar el saldo.' : ''}`}
+            <section
+              ref={paymentResultRef}
+              data-payment-result-key={resultKey ?? undefined}
+              aria-label="Resultado del pago"
+              tabIndex={-1}
+              className="min-w-0 space-y-4 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-5 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-4"
+            >
+              <div role="status" aria-live="polite" className="space-y-2">
+                <h2 className="font-display text-2xl font-bold text-emerald-950">
+                  Pago registrado
+                </h2>
+                <p className="text-sm text-emerald-950">
+                  Importe confirmado:{' '}
+                  <strong className="block text-3xl font-bold">
+                    {(paymentOutcome.amountCents / 100).toLocaleString('es-AR', {
+                      style: 'currency',
+                      currency: paymentOutcome.currency,
+                    })}
+                  </strong>
+                </p>
+              </div>
+              <p className="break-words text-sm text-ink-700">
+                Referencia:{' '}
+                <span className="break-all font-mono">{paymentOutcome.settlementId}</span>
+                <br />
+                Medio de pago: {paymentOutcome.tender}
               </p>
+              {paymentOutcome.reconciliation === 'pending' && (
+                <p role="alert">No se pudo actualizar el saldo.</p>
+              )}
+              {canSettle && (
+                <button
+                  type="button"
+                  className={collectionButtonClass.primary}
+                  onClick={() => openReceipt(paymentOutcome.settlementId)}
+                >
+                  Ver e imprimir constancia
+                </button>
+              )}
               {paymentOutcome.reconciliation === 'pending' && (
                 <button type="button" onClick={() => void reconcilePayment()}>
                   Actualizar saldo
@@ -1001,6 +1233,18 @@ export default function CollectionsPage() {
           )}
         </>
       )}
+      {receiptRequest &&
+        canSettle &&
+        selectedSocio?.id === receiptRequest.memberId &&
+        user?.operator_id === receiptRequest.actorId &&
+        user?.role === receiptRequest.role && (
+          <SettlementReceiptDialog
+            key={`${receiptRequest.actorId}:${receiptRequest.role}:${receiptRequest.memberId}:${receiptRequest.settlementId}`}
+            open
+            onClose={() => setReceiptRequest(null)}
+            {...receiptRequest}
+          />
+        )}
     </main>
   )
 }

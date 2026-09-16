@@ -446,12 +446,19 @@
     {
       "idx": 63,
       "version": "7",
+      "when": 1789479500001,
+      "tag": "0071_community_work_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
       "when": 1789560000000,
       "tag": "0072_cash_supporting_records",
       "breakpoints": true
     },
     {
-      "idx": 64,
+      "idx": 65,
       "version": "7",
       "when": 1789650000000,
       "tag": "0073_cash_close_transfers",

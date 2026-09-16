@@ -3,7 +3,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AuditAction, emitAudit } from '@athlos/audit'
 import { createDb } from '@athlos/db'
-import { createCondonationApprovalRequest, decideCondonationApproval } from '@athlos/approval'
+import {
+  createCondonationApprovalRequest,
+  decideCondonationApproval,
+  listCondonationQueue,
+} from '@athlos/approval'
 import { ErrorCode } from '@athlos/errors'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { CondonationExecutionService } from '../modules/dues/condonations.ts'
@@ -27,6 +31,7 @@ const migrationFiles = [
   '0062_approval_condonation_lifecycle.sql',
   '0063_approval_condonation_request_idempotency.sql',
   '0064_dues_condonation_treatments.sql',
+  '0071_community_work_approval.sql',
 ]
 const immutableFinancialState = [
   'SELECT id,socio_id,kind,amount::text,snapshot FROM tesoreria.dues_obligations ORDER BY id',
@@ -269,6 +274,170 @@ afterAll(async () => {
   }
   if (closeError) throw closeError
 }, 60_000)
+
+it('reads a cross-member queue with exact timestamp pagination and no financial writes', async () => {
+  const createdAt = `${new Date().getUTCFullYear() + 1}-01-01T00:00:00.`
+  const rows = [await approval('pending'), await approval('pending'), await approval('pending')]
+  const otherMember = randomUUID()
+  await db.pool.query('INSERT INTO socios.socios VALUES ($1,$2,$3,$4,$5,$6,$7)', [
+    otherMember,
+    '0042',
+    'Ana',
+    'Gorriti',
+    'queue-dni',
+    '2024-01-01',
+    'activo',
+  ])
+  for (const [index, row] of rows.entries()) {
+    await db.pool.query('UPDATE approval_tokens SET created_at=$1::timestamptz WHERE id=$2', [
+      `${createdAt}${index === 2 ? '000002' : '000001'}Z`,
+      row.id,
+    ])
+  }
+  await db.pool.query(
+    "UPDATE approval_tokens SET condonation_snapshot=jsonb_set(condonation_snapshot,'{memberId}',to_jsonb($1::text)) WHERE id=$2",
+    [otherMember, rows[2]!.id],
+  )
+  const before = await Promise.all([financialSnapshot(), treatmentSnapshot()])
+  const first = await listCondonationQueue(db.db, { view: 'all', limit: 2 })
+  const tied = rows.slice(0, 2).sort((a, b) => b.id.localeCompare(a.id))
+  expect(first.map((row) => row.id)).toEqual([rows[2]!.id, tied[0]!.id])
+  expect(first[0]).toMatchObject({
+    createdAtCursor: `${createdAt}000002Z`,
+    currentMember: { id: otherMember, numeroSocio: '0042', nombre: 'Ana' },
+    requester: { id: requesterId, username: 'operator' },
+  })
+  const cursor = Buffer.from(
+    JSON.stringify({ t: first[1]!.createdAtCursor, id: first[1]!.id }),
+  ).toString('base64url')
+  const tail = await listCondonationQueue(db.db, { view: 'all', limit: 1, cursor })
+  expect(tail.map((row) => row.id)).toEqual([tied[1]!.id])
+  expect(new Set([...first, ...tail].map((row) => row.id)).size).toBe(3)
+  expect(await Promise.all([financialSnapshot(), treatmentSnapshot()])).toEqual(before)
+
+  await db.pool.query(
+    "UPDATE approval_tokens SET expires_at=now()-interval '1 second' WHERE id=$1",
+    [rows[0]!.id],
+  )
+  await db.pool.query('UPDATE approval_tokens SET used_at=now() WHERE id=$1', [rows[1]!.id])
+  const rejected = await approval('rejected')
+  const approved = await approval('approved')
+  const wrongType = await approval('pending')
+  await db.pool.query("UPDATE approval_tokens SET action_type='other.action' WHERE id=$1", [
+    wrongType.id,
+  ])
+  const executed = await approval('approved')
+  await db.pool.query(
+    'INSERT INTO tesoreria.dues_condonation_executions (execution_id,approval_token_id,socio_id,actor_id,currency,total_amount,approved_snapshot,reason,evidence) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)',
+    [
+      executed.executionId,
+      executed.id,
+      memberId,
+      approverId,
+      'ARS',
+      '100.00',
+      JSON.stringify(executed.condonationSnapshot),
+      'Queue fixture',
+      'Queue evidence',
+    ],
+  )
+  await db.pool.query('UPDATE approval_tokens SET used_at=now() WHERE id=$1', [executed.id])
+  const beforeReads = await Promise.all([financialSnapshot(), treatmentSnapshot()])
+  const actionable = await listCondonationQueue(db.db, { view: 'actionable', limit: 100 })
+  expect(actionable.map((row) => row.id)).toContain(rows[2]!.id)
+  for (const id of [rows[0]!.id, rows[1]!.id, rejected.id, approved.id, executed.id, wrongType.id])
+    expect(actionable.map((row) => row.id)).not.toContain(id)
+  const all = await listCondonationQueue(db.db, { view: 'all', limit: 100 })
+  expect(all.find((row) => row.id === approved.id)).toMatchObject({
+    status: 'approved',
+    executionReceiptId: null,
+    executionId: approved.executionId,
+  })
+  expect(all.find((row) => row.id === executed.id)).toMatchObject({
+    executionReceiptId: executed.executionId,
+  })
+  expect(all.find((row) => row.id === rejected.id)).toMatchObject({ status: 'rejected' })
+  expect(all.find((row) => row.id === rows[0]!.id)?.expiresAt.getTime()).toBeLessThan(Date.now())
+  expect(all.map((row) => row.id)).not.toContain(wrongType.id)
+  expect(await Promise.all([financialSnapshot(), treatmentSnapshot()])).toEqual(beforeReads)
+
+  await db.pool.query("UPDATE approval_tokens SET status='unknown' WHERE id=$1", [rows[2]!.id])
+  try {
+    await expect(listCondonationQueue(db.db, { view: 'all', limit: 1 })).rejects.toMatchObject({
+      code: ErrorCode.SERVICE_UNAVAILABLE,
+    })
+  } finally {
+    await db.pool.query("UPDATE approval_tokens SET status='pending' WHERE id=$1", [rows[2]!.id])
+  }
+  const valid = rows[2]!.condonationSnapshot as {
+    memberId: string
+    obligations: Array<{ obligationId: string; currency: string; outstandingAmountCents: number }>
+  }
+  const base = { ...valid, memberId: otherMember }
+  for (const corrupted of [
+    null,
+    { ...base, memberId: randomUUID() },
+    { ...base, obligations: [] },
+    { ...base, obligations: [base.obligations[0], base.obligations[0]] },
+    {
+      ...base,
+      obligations: [
+        ...base.obligations,
+        { ...base.obligations[0], obligationId: randomUUID(), currency: 'USD' },
+      ],
+    },
+    {
+      ...base,
+      obligations: [
+        { ...base.obligations[0], outstandingAmountCents: Number.MAX_SAFE_INTEGER + 1 },
+      ],
+    },
+  ]) {
+    await db.pool.query('UPDATE approval_tokens SET condonation_snapshot=$1::jsonb WHERE id=$2', [
+      JSON.stringify(corrupted),
+      rows[2]!.id,
+    ])
+    await expect(listCondonationQueue(db.db, { view: 'all', limit: 1 })).rejects.toMatchObject({
+      code: ErrorCode.SERVICE_UNAVAILABLE,
+    })
+  }
+  await db.pool.query('UPDATE approval_tokens SET condonation_snapshot=$1::jsonb WHERE id=$2', [
+    JSON.stringify(base),
+    rows[2]!.id,
+  ])
+  const encode = (t: string, id = rows[2]!.id) =>
+    Buffer.from(JSON.stringify({ t, id })).toString('base64url')
+  for (const bad of [
+    '!',
+    cursor + '=',
+    encode('2026-02-29T00:00:00.000001Z'),
+    encode('2026-13-01T00:00:00.000001Z'),
+    encode('0000-01-01T00:00:00.000001Z'),
+    encode('2026-01-01T00:00:00.001Z'),
+    encode(`${createdAt}000001Z`, 'bad-id'),
+  ]) {
+    await expect(
+      listCondonationQueue(db.db, { view: 'all', limit: 1, cursor: bad }),
+    ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR })
+  }
+  // Restore only this test's fixture rows so the existing execution audit assertions remain independent.
+  await db.pool.query(
+    'DELETE FROM tesoreria.dues_condonation_executions WHERE approval_token_id=$1',
+    [executed.id],
+  )
+  const ownIds = [...rows.map((row) => row.id), rejected.id, approved.id, wrongType.id, executed.id]
+  await db.pool.query('DELETE FROM audit_events WHERE entity_id = ANY($1::text[])', [
+    [
+      ...ownIds,
+      ...rows.map((row) => row.actionId),
+      rejected.actionId,
+      approved.actionId,
+      wrongType.actionId,
+      executed.actionId,
+    ],
+  ])
+  await db.pool.query('DELETE FROM approval_tokens WHERE id = ANY($1::uuid[])', [ownIds])
+})
 
 it('executes an approved condonation once without cash or accounting mutation', async () => {
   const approved = await approval()

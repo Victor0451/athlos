@@ -156,6 +156,13 @@ export type {
   GastosCtacteLinkMotivo,
 } from './tesoreria'
 
+// community-work approval execution (U1a persistence — Unit 1)
+export { duesCommunityWorkExecutions } from './dues-community-work-executions'
+export type {
+  DuesCommunityWorkExecution,
+  NewDuesCommunityWorkExecution,
+} from './dues-community-work-executions'
+
 // native dues pricing and immutable obligations ─────────────────
 export * from './dues'
 export * from './dues-benefits'

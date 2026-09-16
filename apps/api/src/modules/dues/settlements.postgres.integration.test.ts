@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
+import { ErrorCode } from '@athlos/errors'
 import { sql } from 'drizzle-orm'
 import { AuditAction } from '@athlos/audit'
 import { afterAll, beforeAll, expect, it } from 'vitest'
@@ -12,6 +13,7 @@ import { AgreementService } from './agreements.ts'
 import { CommunityWorkService } from './community-work.ts'
 import { CtacteProjectionService } from './ctacte-projection.ts'
 import { CashDeskService } from './cash-desk.ts'
+import { getSettlementDetail } from './settlement-detail.ts'
 import { AssessmentService, PricingService, type AuditContext } from './service.ts'
 
 const automaticDuesPath = [
@@ -1295,6 +1297,134 @@ it('repairs a historical SPORT price gap across three months and replays generat
     ),
   ).toEqual(paidAllocationIdsByObligationId)
   expect(await counts()).toEqual(beforeReplay)
+})
+
+it('reads a persisted payment without writes and retains its reversal reference', async () => {
+  const socioId = await member()
+  const first = await obligation(socioId, 12_345, period(2600, 1))
+  const second = await obligation(socioId, 6_789, period(2600, 2))
+  const service = new SettlementService(db.db)
+  const shift = await new CashDeskService(db.db).open({
+    ...context(),
+    deskId: `settlement-detail-${randomUUID()}`,
+    openingTenders: {},
+  })
+  const selected = await selectFullOutstanding(db.db, { socioId, obligationIds: [first, second] })
+  const paid = await service.create({
+    ...context(),
+    socioId,
+    obligationIds: [first, second],
+    shiftId: shift.id,
+    tender: 'TRANSFER',
+    selectionFingerprint: selected.fingerprint,
+  })
+  await db.pool.query(`UPDATE socios.socios SET nombre='Current',apellido='Identity' WHERE id=$1`, [
+    socioId,
+  ])
+  const counts = async () =>
+    (
+      await db.pool.query(
+        `SELECT
+    (SELECT count(*)::int FROM tesoreria.dues_settlements WHERE socio_id=$1) settlements,
+    (SELECT count(*)::int FROM tesoreria.dues_allocations a JOIN tesoreria.dues_obligations o ON o.id=a.obligation_id WHERE o.socio_id=$1) allocations,
+    (SELECT count(*)::int FROM tesoreria.dues_cash_tenders t JOIN tesoreria.dues_settlements s ON s.id=t.source_id WHERE s.socio_id=$1) tenders,
+    (SELECT count(*)::int FROM public.audit_events) audits`,
+        [socioId],
+      )
+    ).rows[0]
+  const before = await counts()
+  const detail = await getSettlementDetail(db.db, 'ADMIN', paid.settlementId)
+  expect(detail).toMatchObject({
+    settlement_id: paid.settlementId,
+    socio_id: socioId,
+    member: {
+      id: socioId,
+      numero_socio: `settlement-${socioId}`,
+      nombre: 'Current',
+      apellido: 'Identity',
+    },
+    confirmed_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
+    amount_cents: 19_134,
+    currency: 'ARS',
+    tender: 'TRANSFER',
+    reversal: null,
+  })
+  expect(detail.allocations).toHaveLength(2)
+  expect(detail.allocations).toEqual(
+    expect.arrayContaining([
+      {
+        id: paid.allocations.find(({ obligationId }) => obligationId === first)!.id,
+        obligation_id: first,
+        period_start: '2600-01-01',
+        period_end: '2600-02-01',
+        amount_cents: 12_345,
+      },
+      {
+        id: paid.allocations.find(({ obligationId }) => obligationId === second)!.id,
+        obligation_id: second,
+        period_start: '2600-02-01',
+        period_end: '2600-03-01',
+        amount_cents: 6_789,
+      },
+    ]),
+  )
+  await expect(getSettlementDetail(db.db, 'TESORERO', paid.settlementId)).resolves.toEqual(detail)
+  expect(await counts()).toEqual(before)
+  const reversed = await service.reverse({
+    ...context(),
+    settlementId: paid.settlementId,
+    reason: 'Settlement detail fixture reversal',
+  })
+  const afterReversal = await counts()
+  await expect(getSettlementDetail(db.db, 'ADMIN', paid.settlementId)).resolves.toEqual({
+    ...detail,
+    reversal: {
+      settlement_id: reversed.settlementId,
+      confirmed_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T.*Z$/),
+    },
+  })
+  await expect(getSettlementDetail(db.db, 'ADMIN', reversed.settlementId)).rejects.toMatchObject({
+    code: ErrorCode.NOT_FOUND,
+  })
+  expect(await counts()).toEqual(afterReversal)
+})
+
+it('does not invent receipt data for non-cash, absent or incomplete payments', async () => {
+  const socioId = await member()
+  const target = await obligation(socioId, 500, period(2600, 3))
+  const nonCash = await new SettlementService(db.db).create({
+    ...context(),
+    socioId,
+    kind: 'NON_CASH',
+    amountCents: 500,
+    currency: 'ARS',
+    evidence: { approval: 'fixture' },
+    reason: 'Approved fixture',
+    allocations: [{ obligationId: target, amountCents: 500 }],
+  })
+  await expect(getSettlementDetail(db.db, 'ADMIN', nonCash.settlementId)).rejects.toMatchObject({
+    code: ErrorCode.NOT_FOUND,
+  })
+  await expect(getSettlementDetail(db.db, 'ADMIN', randomUUID())).rejects.toMatchObject({
+    code: ErrorCode.NOT_FOUND,
+  })
+  const missingIncomeTarget = await obligation(socioId, 500, period(2600, 4))
+  const missingIncomeId = randomUUID()
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_settlements
+    (id,socio_id,kind,amount,currency,evidence,operator_id,authorization_evidence,caller_key,request_fingerprint)
+    VALUES ($1,$2,'MONETARY',5.00,'ARS','{}',$3,'{}',$4,$5)`,
+    [missingIncomeId, socioId, operatorId, `missing-income-${missingIncomeId}`, 'a'.repeat(64)],
+  )
+  await insertAllocation(db.db, {
+    settlementId: missingIncomeId,
+    socioId,
+    obligationId: missingIncomeTarget,
+    amountCents: 500,
+  })
+  await expect(getSettlementDetail(db.db, 'ADMIN', missingIncomeId)).rejects.toMatchObject({
+    code: ErrorCode.SERVICE_UNAVAILABLE,
+  })
 })
 
 it('limits operator payments to an own current shift while preserving exact replay', async () => {

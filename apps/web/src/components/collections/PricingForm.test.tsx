@@ -50,6 +50,8 @@ describe('PricingForm', () => {
     await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
     await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
 
+    expect(screen.getByLabelText('Importe mensual (ARS)')).toHaveValue('125,00')
+    await user.click(screen.getByLabelText('Importe mensual (ARS)'))
     expect(screen.getByLabelText('Importe mensual (ARS)')).toHaveValue('125')
     expect(screen.getByLabelText('Vigente desde')).toHaveValue('01/01/2026')
   })
@@ -99,18 +101,27 @@ describe('PricingForm', () => {
     )
   })
 
-  it('submits ARS major units and comma decimals as cents', async () => {
+  it.each([
+    ['10000', '10.000,00', 1000000],
+    ['10000,25', '10.000,25', 1000025],
+  ])('formats %s pesos on blur and submits exact cents', async (raw, formatted, cents) => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
     render(<PricingForm disciplines={[]} onCreate={onCreate} />)
 
-    await user.type(screen.getByLabelText('Importe mensual (ARS)'), '10000,25')
+    const input = screen.getByLabelText('Importe mensual (ARS)')
+    await user.type(input, raw)
+    await user.tab()
+    expect(input).toHaveValue(formatted)
+    await user.click(input)
+    expect(input).toHaveValue(raw)
+    await user.tab()
     await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
     await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
 
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount_cents: 1_000_025,
+        amount_cents: cents,
         kind: 'BASE',
         disciplina_id: null,
         effective_from: '2026-01-01',
@@ -125,7 +136,10 @@ describe('PricingForm', () => {
       const onCreate = vi.fn()
       render(<PricingForm disciplines={[]} onCreate={onCreate} />)
 
-      await user.type(screen.getByLabelText('Importe mensual (ARS)'), amount)
+      const input = screen.getByLabelText('Importe mensual (ARS)')
+      await user.type(input, amount)
+      await user.tab()
+      expect(input).toHaveValue(amount)
       await user.type(screen.getByLabelText('Vigente desde'), '01/01/2026')
       await user.click(screen.getByRole('button', { name: 'Guardar cuota' }))
 

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
+import { PesoAmountInput } from '@/components/ui/PesoAmountInput'
 import { CashCloseSummary, closedAtLabel } from '@/components/treasury/CashCloseSummary'
 import { ManualMovementForm } from '@/components/treasury/ManualMovementForm'
 import {
@@ -426,11 +427,11 @@ export default function TreasuryPage() {
         </label>
         <label>
           Efectivo inicial (pesos)
-          <input
+          <PesoAmountInput
             className="mt-1 block w-full rounded border p-2"
-            inputMode="decimal"
             maxLength={32}
             value={cash}
+            parseCents={parseCashAmount}
             disabled={locked}
             onChange={(event) => setCash(event.target.value)}
           />
@@ -443,7 +444,10 @@ export default function TreasuryPage() {
           Abrir turno
         </button>
       </form>
-      <p>Importes en pesos, con coma o punto decimal y sin separadores de miles.</p>
+      <p>
+        Ingresá pesos sin separadores de miles, por ejemplo 15600. Los centavos son opcionales, con
+        coma o punto decimal. El formato se aplica al salir del campo.
+      </p>
       <p>El motivo es obligatorio si existe diferencia de efectivo.</p>
       <section
         aria-label="Cerrar turno de caja"
@@ -451,11 +455,11 @@ export default function TreasuryPage() {
       >
         <label>
           Efectivo contado (pesos)
-          <input
+          <PesoAmountInput
             className="mt-1 block w-full rounded border p-2"
-            inputMode="decimal"
             maxLength={32}
             value={counted}
+            parseCents={parseCashAmount}
             disabled={locked}
             onChange={(event) => setCounted(event.target.value)}
           />

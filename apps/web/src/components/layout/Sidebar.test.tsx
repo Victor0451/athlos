@@ -7,7 +7,7 @@ import { render, screen, within } from '@testing-library/react'
  * Covers the `web-frontend/spec.md` AppShell Layout scenarios:
  *   - All roles see Panel de control, Socios, Cuenta corriente, Padrones
  *   - ADMIN sees admin items (Tareas programadas, Configuración); CONSULTA does not
- *   - TESORERO and OPERADOR see the same items as CONSULTA (no admin)
+ *   - TESORERO also sees Aprobaciones; OPERADOR has no admin destinations
  *   - The active item is visually marked (a "current page" link)
  */
 
@@ -100,13 +100,14 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('region', { name: 'Operaciones' })).not.toBeInTheDocument()
   })
 
-  it('hides admin destinations for TESORERO and OPERADOR too', () => {
+  it('shows approvals to TESORERO but not to a separately mounted OPERADOR session', () => {
     seedUser('TESORERO')
-    render(<Sidebar />)
+    const view = render(<Sidebar />)
     expect(screen.queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /aprobaciones/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /aprobaciones/i })).toBeInTheDocument()
 
-    authState.user = { ...authState.user!, role: 'OPERADOR' }
+    view.unmount()
+    seedUser('OPERADOR')
     render(<Sidebar />)
     expect(screen.queryByRole('link', { name: /tareas programadas/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /aprobaciones/i })).not.toBeInTheDocument()

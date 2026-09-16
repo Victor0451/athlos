@@ -287,14 +287,34 @@ describe('treasury page', () => {
   })
 
   it.each([
-    ['25,50', 2550],
-    ['25.50', 2550],
-    ['0,29', 29],
-    ['0', 0],
-  ])('converts opening pesos %s to %i cents without rounding', async (value, cents) => {
+    ['1000', 100000, '1.000,00'],
+    ['10000', 1000000, '10.000,00'],
+    ['15600', 1560000, '15.600,00'],
+    ['25,50', 2550, '25,50'],
+    ['25.50', 2550, '25,50'],
+    ['0,29', 29, '0,29'],
+    ['0', 0, '0,00'],
+    ['90071992547409,91', Number.MAX_SAFE_INTEGER, '90.071.992.547.409,91'],
+  ])('formats opening pesos %s and submits %i exact cents', async (value, cents, formatted) => {
     mocks.openCashShift.mockRejectedValueOnce(new Error('Request interrupted'))
     render(<TreasuryPage />)
-    fireEvent.change(screen.getByLabelText('Efectivo inicial (pesos)'), { target: { value } })
+    const input = screen.getByLabelText('Efectivo inicial (pesos)')
+    await act(async () => {
+      input.focus()
+    })
+    fireEvent.change(input, { target: { value } })
+    expect(input).toHaveValue(value)
+    await act(async () => {
+      input.blur()
+    })
+    expect(input).toHaveValue(formatted)
+    await act(async () => {
+      input.focus()
+    })
+    expect(input).toHaveValue(value)
+    await act(async () => {
+      input.blur()
+    })
     fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
     await screen.findByText('No se pudo ejecutar la operación de caja.')
     expect(mocks.openCashShift).toHaveBeenCalledWith(
@@ -308,12 +328,32 @@ describe('treasury page', () => {
     'rejects invalid opening pesos %s before POST',
     (value) => {
       render(<TreasuryPage />)
-      fireEvent.change(screen.getByLabelText('Efectivo inicial (pesos)'), { target: { value } })
+      const input = screen.getByLabelText('Efectivo inicial (pesos)')
+      fireEvent.change(input, { target: { value } })
+      fireEvent.blur(input)
+      expect(input).toHaveValue(value)
       fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
       expect(screen.getByRole('alert')).toHaveTextContent(/importe.*pesos/i)
       expect(mocks.openCashShift).not.toHaveBeenCalled()
     },
   )
+
+  it('formats counted pesos without changing the editable amount', async () => {
+    render(<TreasuryPage />)
+    const input = screen.getByLabelText('Efectivo contado (pesos)')
+    await act(async () => {
+      input.focus()
+    })
+    fireEvent.change(input, { target: { value: '15600' } })
+    await act(async () => {
+      input.blur()
+    })
+    expect(input).toHaveValue('15.600,00')
+    await act(async () => {
+      input.focus()
+    })
+    expect(input).toHaveValue('15600')
+  })
 
   it('shows server-confirmed cash reconciliation in pesos with its reason', async () => {
     mocks.query.data = {
