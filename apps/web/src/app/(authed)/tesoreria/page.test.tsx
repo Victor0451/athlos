@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   openCashShift: vi.fn(),
   closeCashShift: vi.fn(),
   forceCloseCashShift: vi.fn(),
+  recordCashTender: vi.fn(),
   query: {
     data: { items: [] as CashShift[] } as { items: CashShift[] } | undefined,
     isPending: false,
@@ -31,6 +32,7 @@ vi.mock('@/lib/api/treasury', () => ({
   openCashShift: mocks.openCashShift,
   closeCashShift: mocks.closeCashShift,
   forceCloseCashShift: mocks.forceCloseCashShift,
+  recordCashTender: mocks.recordCashTender,
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQuery: () => mocks.query,
@@ -598,6 +600,7 @@ describe('treasury page', () => {
     expect(screen.getByText('Tenés un turno abierto en front.')).toBeInTheDocument()
     expect(screen.queryByRole('form', { name: 'Abrir turno de caja' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
+    expect(screen.getByRole('form', { name: 'Registrar movimiento manual' })).toBeInTheDocument()
   })
 
   it('shows an OPERADOR only their own closed Caja history without finance controls', () => {
@@ -657,6 +660,9 @@ describe('treasury page', () => {
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /recuperar turno vencido/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('form', { name: 'Registrar movimiento manual' }),
     ).not.toBeInTheDocument()
   })
 

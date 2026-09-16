@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
 import { CashCloseSummary, closedAtLabel } from '@/components/treasury/CashCloseSummary'
+import { ManualMovementForm } from '@/components/treasury/ManualMovementForm'
 import {
   closeCashShift,
   forceCloseCashShift,
@@ -23,15 +24,7 @@ import {
   isCashShiftEligible,
   isCashShiftExpired,
 } from '@/lib/cash-shift-eligibility'
-
-const parseCashAmount = (value: string): number | null => {
-  const text = value.trim()
-  if (text.length > 32) return null
-  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(text)
-  if (!match) return null
-  const cents = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'))
-  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null
-}
+import { parseCashAmount } from '@/lib/cash-amount'
 
 export default function TreasuryPage() {
   const { user } = useAuth()
@@ -346,7 +339,14 @@ export default function TreasuryPage() {
                 Tu turno en {ownOpenShift.desk_id} está vencido. Pedí la recuperación a Finanzas.
               </p>
             ) : (
-              <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
+              <>
+                <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
+                <ManualMovementForm
+                  shiftId={ownOpenShift.id}
+                  operatorId={user!.operator_id}
+                  onRecorded={setMessage}
+                />
+              </>
             )}
           </section>
         )}
