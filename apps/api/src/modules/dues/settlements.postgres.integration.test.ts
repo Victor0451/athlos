@@ -1304,6 +1304,12 @@ it('reads a persisted payment without writes and retains its reversal reference'
   const first = await obligation(socioId, 12_345, period(2600, 1))
   const second = await obligation(socioId, 6_789, period(2600, 2))
   const service = new SettlementService(db.db)
+  // Union-journal hygiene: the per-operator OPEN guard (0070+ semantics) rejects a
+  // second open for the shared actor, so retire any OPEN shift this file left behind.
+  await db.pool.query(
+    `UPDATE tesoreria.dues_cash_shifts SET status='CLOSED', closed_at=now() WHERE assigned_operator_id=$1 AND status='OPEN'`,
+    [operatorId],
+  )
   const shift = await new CashDeskService(db.db).open({
     ...context(),
     deskId: `settlement-detail-${randomUUID()}`,
