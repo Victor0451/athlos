@@ -9,6 +9,7 @@ import {
   generateApprovalToken,
   listCondonationLifecycle,
   listCondonationQueue,
+  listCommunityWorkLifecycle,
 } from '@athlos/approval'
 import type * as ApprovalModule from '@athlos/approval'
 import { signAccessToken } from '@athlos/auth'
@@ -37,6 +38,7 @@ vi.mock('@athlos/approval', async (importOriginal) => ({
   ...(await importOriginal<typeof ApprovalModule>()),
   listCondonationLifecycle: vi.fn(),
   listCondonationQueue: vi.fn(),
+  listCommunityWorkLifecycle: vi.fn(),
 }))
 
 /**
@@ -990,6 +992,260 @@ describe('community-work requests and decisions', () => {
       })
       expect(response.statusCode).toBe(403)
       expect(standin.state.approvalTokens[0]?.usedAt).toBeNull()
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('GET /api/v1/members/:memberId/community-work-requests', () => {
+  const CW_ON = { COMMUNITY_WORK_APPROVALS_ENABLED: 'true' }
+  const readHistory = (
+    app: FastifyInstance,
+    role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | null = 'ADMIN',
+    query = '',
+    member = memberId,
+  ) =>
+    app.inject({
+      method: 'GET',
+      url: `/api/v1/members/${member}/community-work-requests${query}`,
+      ...(role === null
+        ? {}
+        : { headers: auth(role, role === 'OPERADOR' ? requesterId : approverId) }),
+    })
+  beforeEach(() => {
+    vi.mocked(listCommunityWorkLifecycle).mockReset()
+    vi.mocked(listCondonationLifecycle).mockReset()
+  })
+  type CwLifecycleRow = Awaited<ReturnType<typeof listCommunityWorkLifecycle>>[number]
+  const cwRow = (overrides: Partial<CwLifecycleRow>): CwLifecycleRow => ({
+    actionId: '00000000-0000-4000-8000-0000000000c1',
+    status: 'pending',
+    expiresAt: new Date('2099-09-01T00:00:00.000Z'),
+    decidedAt: null,
+    executionId: null,
+    communitySnapshot: {
+      memberId,
+      obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 1000 }],
+    },
+    executionReceiptId: null,
+    ...overrides,
+  })
+
+  it('hides the read surface while the rollout flag is off', async () => {
+    const { app } = await bootstrap()
+    try {
+      // All authenticated roles see 404 when flag is off.
+      expect((await readHistory(app, 'ADMIN')).statusCode).toBe(404)
+      expect((await readHistory(app, 'OPERADOR')).statusCode).toBe(404)
+      expect(listCommunityWorkLifecycle).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns 401 when unauthenticated', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      expect((await readHistory(app, null)).statusCode).toBe(401)
+      expect(listCommunityWorkLifecycle).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it.each([
+    ['non-UUID memberId', 'not-a-uuid', ''],
+    ['limit=0', memberId, '?limit=0'],
+    ['limit=101', memberId, '?limit=101'],
+    ['unknown query keys via strict schema', memberId, '?foo=bar'],
+  ] as const)('rejects invalid query: %s', async (_case, member, query) => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      expect((await readHistory(app, 'ADMIN', query, member)).statusCode).toBe(400)
+      expect(listCommunityWorkLifecycle).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it.each([
+    ['ADMIN', { memberId, limit: 25 }],
+    ['TESORERO', { memberId, limit: 25 }],
+    ['OPERADOR', { memberId, requesterId, limit: 25 }],
+  ] as const)(
+    'scopes the lifecycle read for %s to the route contract',
+    async (role, expectedInput) => {
+      vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([])
+      const { app } = await bootstrap(CW_ON)
+      try {
+        expect((await readHistory(app, role)).statusCode).toBe(200)
+        expect(listCommunityWorkLifecycle).toHaveBeenCalledWith(expect.anything(), expectedInput)
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
+  it('accepts limit boundaries 1 and 100 and forwards them unchanged', async () => {
+    vi.mocked(listCommunityWorkLifecycle).mockResolvedValue([])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      expect((await readHistory(app, 'ADMIN', '?limit=1')).statusCode).toBe(200)
+      expect(listCommunityWorkLifecycle).toHaveBeenLastCalledWith(expect.anything(), {
+        memberId,
+        limit: 1,
+      })
+      expect((await readHistory(app, 'ADMIN', '?limit=100')).statusCode).toBe(200)
+      expect(listCommunityWorkLifecycle).toHaveBeenLastCalledWith(expect.anything(), {
+        memberId,
+        limit: 100,
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns every pending request for one member without collapsing them', async () => {
+    vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([
+      cwRow({ actionId: '00000000-0000-4000-8000-0000000000c1' }),
+      cwRow({
+        actionId: '00000000-0000-4000-8000-0000000000c2',
+        expiresAt: new Date('2099-10-01T00:00:00.000Z'),
+      }),
+    ])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await readHistory(app, 'ADMIN')
+      expect(response.statusCode).toBe(200)
+      const items = response.json().items as Array<{ id: string; state: string }>
+      expect(items).toHaveLength(2)
+      expect(items.map((item) => item.id)).toEqual([
+        '00000000-0000-4000-8000-0000000000c1',
+        '00000000-0000-4000-8000-0000000000c2',
+      ])
+      expect(items.every((item) => item.state === 'pending')).toBe(true)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('never reads the condonation lifecycle from the community-work endpoint', async () => {
+    vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      expect((await readHistory(app, 'ADMIN')).statusCode).toBe(200)
+      expect(listCommunityWorkLifecycle).toHaveBeenCalledTimes(1)
+      expect(listCondonationLifecycle).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns full DTO shape for approved_awaiting_execution', async () => {
+    vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([
+      cwRow({
+        actionId: '00000000-0000-4000-8000-000000000060',
+        status: 'approved',
+        decidedAt: new Date('2026-08-27T00:00:00.000Z'),
+        executionId: '00000000-0000-4000-8000-000000000061',
+        communitySnapshot: {
+          memberId,
+          obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+        },
+      }),
+    ])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await readHistory(app, 'ADMIN', '?limit=1')
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        items: [
+          {
+            id: '00000000-0000-4000-8000-000000000060',
+            state: 'approved_awaiting_execution',
+            expires_at: '2099-09-01T00:00:00.000Z',
+            decided_at: '2026-08-27T00:00:00.000Z',
+            execution_id: '00000000-0000-4000-8000-000000000061',
+            execution_status: 'recoverable',
+            snapshot: {
+              member_id: memberId,
+              obligations: [
+                {
+                  obligation_id: obligationId,
+                  currency: 'ARS',
+                  outstanding_amount_cents: 12500,
+                },
+              ],
+            },
+          },
+        ],
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  const stateCases: Array<{
+    name: string
+    overrides: Partial<CwLifecycleRow>
+    expectedState: string
+    expectedExecutionStatus: string
+  }> = [
+    {
+      name: 'executed when executionReceiptId is set',
+      overrides: {
+        status: 'approved',
+        decidedAt: new Date('2026-08-27T00:00:00.000Z'),
+        executionId: '00000000-0000-4000-8000-000000000071',
+        executionReceiptId: '00000000-0000-4000-8000-000000000080',
+      },
+      expectedState: 'executed',
+      expectedExecutionStatus: 'executed',
+    },
+    {
+      name: 'expired when past expiry and not executed',
+      overrides: { expiresAt: new Date('2020-01-01T00:00:00.000Z') },
+      expectedState: 'expired',
+      expectedExecutionStatus: 'unavailable',
+    },
+    {
+      name: 'rejected when status is rejected',
+      overrides: { status: 'rejected', decidedAt: new Date('2026-08-27T00:00:00.000Z') },
+      expectedState: 'rejected',
+      expectedExecutionStatus: 'unavailable',
+    },
+    {
+      name: 'pending when status is pending and not expired',
+      overrides: {},
+      expectedState: 'pending',
+      expectedExecutionStatus: 'unavailable',
+    },
+  ]
+  it.each(stateCases)(
+    'maps state: $name',
+    async ({ overrides, expectedState, expectedExecutionStatus }) => {
+      vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([cwRow(overrides)])
+      const { app } = await bootstrap(CW_ON)
+      try {
+        const response = await readHistory(app, 'ADMIN')
+        expect(response.statusCode).toBe(200)
+        const item = response.json().items[0] as { state: string; execution_status: string }
+        expect(item.state).toBe(expectedState)
+        expect(item.execution_status).toBe(expectedExecutionStatus)
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
+  it('returns empty list for an unknown member', async () => {
+    vi.mocked(listCommunityWorkLifecycle).mockResolvedValueOnce([])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await readHistory(app, 'ADMIN', '', '00000000-0000-4000-8000-0000000000ff')
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ items: [] })
     } finally {
       await app.close()
     }
