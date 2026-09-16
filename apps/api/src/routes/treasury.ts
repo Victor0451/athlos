@@ -56,7 +56,8 @@ export const treasuryRoutes:FastifyPluginCallback<TreasuryRouteOptions>=(fastify
     gate(container)
     const params = throwIfInvalid(id, request.params, 'params')
     const result = await service.detail!({ ...context(request, key(request, false), {}), shiftId: params.id })
-    return reply.send({ shift: dto(result.shift), close: result.close ? closeDto(result.close) : null })
+    // prettier-ignore
+    return reply.send({ shift: dto(result.shift), close: result.close ? closeDto(result.close) : null, ...(result.movements ? { opening_tenders: result.openingTenders, expected_tenders: result.expectedTenders, movements: result.movements.map((movement: any) => ({ id: movement.id, direction: movement.direction, tender: movement.tender, amount_cents: movement.amountCents, source_type: movement.sourceType, ...(movement.sourceId ? { source_id: movement.sourceId } : {}), created_at: movement.createdAt, ...(movement.accountCodeSnapshot ? { account_code_snapshot: movement.accountCodeSnapshot, account_name_snapshot: movement.accountNameSnapshot, description: movement.description } : {}) })) } : {}) }) // eslint-disable-line @typescript-eslint/no-explicit-any
   })
   // prettier-ignore
   fastify.post('/api/v1/treasury/shifts',SHIFT_OPEN_READ_GATE,async(request,reply)=>{gate(container);const body=throwIfInvalid(openBody,request.body??{},'body'),callerKey=key(request),input={...context(request,callerKey,body),deskId:body.desk_id,openingTenders:body.opening_tenders} as OpenCashCommand;return reply.code(201).send(dto(await service.open!(input)))})

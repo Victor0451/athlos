@@ -122,12 +122,8 @@ export function requestFingerprintConflict(expected: string, actual: string): bo
   return expected !== actual
 }
 
-export function reconcileTenders(
-  opening: Totals,
-  movements: Tender[],
-  counted: Totals,
-  reason?: string,
-) {
+// Expected physical CASH: opening once + CASH income − CASH expenses. Non-cash methods never enter.
+export function expectedCashTenders(opening: Totals, movements: Tender[]): Totals {
   const openingCash = clean(opening).CASH
   const expected: Totals = openingCash === undefined ? {} : { CASH: openingCash }
   for (const movement of movements) {
@@ -136,6 +132,16 @@ export function reconcileTenders(
       (expected.CASH ?? 0) +
       (movement.direction === 'INCOME' ? movement.amountCents : -movement.amountCents)
   }
+  return expected
+}
+
+export function reconcileTenders(
+  opening: Totals,
+  movements: Tender[],
+  counted: Totals,
+  reason?: string,
+) {
+  const expected = expectedCashTenders(opening, movements)
   const normalized = clean(counted)
   const discrepancy: Totals = {}
   for (const tender of new Set([...Object.keys(expected), ...Object.keys(normalized)])) {
@@ -673,9 +679,30 @@ export class CashDeskService {
         'Cash shift responsibility does not match the operator',
       )
     }
+    // Movement list with manual attribution for the informational close preview; expectation is
+    // recomputed from persisted rows and stays CASH-only, never client-supplied.
+    const movements = rows(
+      await this.db.execute(sql`
+            SELECT t.id,t.direction,t.tender,t.amount::text,t.source_type,t.source_id,t.created_at,
+                   ms.account_code_snapshot,ms.account_name_snapshot,ms.description
+            FROM tesoreria.dues_cash_tenders t
+            LEFT JOIN tesoreria.dues_cash_manual_sources ms ON ms.tender_id = t.id
+            WHERE t.shift_id = ${input.shiftId}
+            ORDER BY t.created_at,t.id
+          `),
+    )
+    const openingTenders = clean(result.shift.opening_tenders)
+    // Expected CASH is recomputed only while OPEN (close preview); a CLOSED shift reads its
+    // stored close as the authority and is never recomputed.
+    // prettier-ignore
+    const expectedTenders = result.shift.status === 'OPEN' ? expectedCashTenders(openingTenders, movements.map((row) => ({ tender: row.tender, direction: row.direction as Direction, amountCents: cents(row.amount) }))) : undefined
     return {
       shift: responseShift(result.shift),
       close: result.close ? responseClose(result.close, result.transfer) : null,
+      openingTenders,
+      ...(expectedTenders ? { expectedTenders } : {}),
+      // prettier-ignore
+      movements: movements.map((row) => ({ id: row.id, direction: row.direction, tender: row.tender, amountCents: cents(row.amount), sourceType: row.source_type, ...(row.source_id ? { sourceId: row.source_id } : {}), createdAt: new Date(row.created_at as string | Date).toISOString(), ...(row.account_code_snapshot ? { accountCodeSnapshot: row.account_code_snapshot, accountNameSnapshot: row.account_name_snapshot, description: row.description } : {}) })),
     }
   }
 

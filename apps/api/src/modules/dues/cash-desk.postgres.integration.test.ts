@@ -44,6 +44,7 @@ async function applyMigrations() {
     '0056_cash_recovery_policy.sql',
     '0057_cash_lifecycle_boundaries.sql',
     '0066_plan_cuentas.sql',
+    '0070_cash_manual_sources.sql',
     '0073_cash_close_transfers.sql',
   ]) {
     await db.pool.query(await readFile(join(directory, name), 'utf8'))
@@ -162,7 +163,13 @@ describe('cash desk PostgreSQL policy', () => {
         role: 'TESORERO' as const,
         shiftId: shift.id,
       }
-      expect(await service.detail(reader)).toEqual({ shift, close: null })
+      expect(await service.detail(reader)).toEqual({
+        shift,
+        close: null,
+        openingTenders: { CASH: 1000 },
+        expectedTenders: { CASH: 1000 },
+        movements: [],
+      })
       now = new Date(forceClose ? '2026-08-20T12:00:00.000Z' : '2026-08-19T12:00:00.000Z')
       const close = await service.close({
         ...context(),
@@ -175,6 +182,8 @@ describe('cash desk PostgreSQL policy', () => {
       expect(historical).toEqual({
         shift: { ...shift, status: 'CLOSED', closedAt: now.toISOString() },
         close,
+        openingTenders: { CASH: 1000 },
+        movements: [],
       })
       expect(historical.close).toMatchObject({
         expectedTenders: { CASH: 1000 },
@@ -213,13 +222,22 @@ describe('cash desk PostgreSQL policy', () => {
     await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
       shift: own,
       close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
     })
     await expect(service.detail({ ...operator, shiftId: foreign.id })).rejects.toThrow(
       'Cash shift responsibility does not match the operator',
     )
     await expect(
       service.detail({ ...operator, role: 'TESORERO', shiftId: foreign.id }),
-    ).resolves.toEqual({ shift: foreign, close: null })
+    ).resolves.toEqual({
+      shift: foreign,
+      close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
+    })
   })
 
   it('returns no foreign shifts to an OPERADOR without one and replays that operator’s own opening', async () => {
@@ -260,6 +278,9 @@ describe('cash desk PostgreSQL policy', () => {
     await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
       shift: own,
       close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
     })
     await expect(
       service.open({

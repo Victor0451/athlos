@@ -51,6 +51,7 @@ beforeAll(async () => {
       '0066_plan_cuentas.sql',
       '0067_personal_cash_shift_owner.sql',
       '0068_personal_cash_shift_desk_release.sql',
+      '0070_cash_manual_sources.sql',
       '0073_cash_close_transfers.sql',
     ]) {
       await conn.query(await readFile(join(directory, f), 'utf8'))
@@ -297,5 +298,91 @@ describe('U8-B computed close service on real PostgreSQL', () => {
       expired,
     ])
     expect(shift.rows[0].status).toBe('CLOSED')
+  })
+})
+
+describe('U9-A detail movements on real PostgreSQL', () => {
+  let seq = 0
+  async function openShift(opening = '{}') {
+    const id = randomUUID()
+    const owner = randomUUID()
+    await db.pool.query(`INSERT INTO public.operators VALUES ($1,'O')`, [owner])
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint,business_date,opened_at) VALUES ($1,$2,$3,$4::jsonb,$3,'{}',$5,$6,CURRENT_DATE,NOW())`,
+      [id, `u9a-fixture-${++seq}`, owner, opening, `u9a-shift-${seq}`, 'e'.repeat(64)],
+    )
+    return { id, owner }
+  }
+  const base = <T extends Record<string, unknown>>(owner: string, overrides: T = {} as T) => ({
+    actorId: owner,
+    role: 'OPERADOR' as const,
+    permissions: [] as string[],
+    sourceIp: '127.0.0.1',
+    callerKey: `u9a-${++seq}`,
+    requestFingerprint: 'b'.repeat(64),
+    authorizationEvidence: {},
+    ...overrides,
+  })
+
+  it('exposes attributed movements, per-method rows, and the computed expectation', async () => {
+    const { id, owner } = await openShift('{"CASH":100000}')
+    const service = new CashDeskService(db.db)
+    await service.recordTender(
+      base(owner, {
+        shiftId: id,
+        direction: 'INCOME',
+        tender: 'CASH',
+        amountCents: 3000000,
+        sourceType: 'MANUAL',
+        reason: 'Venta buffet',
+        accountCode: '4.1.01',
+        description: 'Cuota septiembre',
+      }) as never,
+    )
+    for (const [direction, tender, amountCents] of [
+      ['EXPENSE', 'CASH', 500000],
+      ['EXPENSE', 'TRANSFER', 400000],
+      ['EXPENSE', 'BANK_DEBIT', 700000],
+    ] as const) {
+      await db.pool.query(
+        `INSERT INTO tesoreria.dues_cash_tenders (id,shift_id,direction,tender,amount,source_type,reason,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,$3,$4,$5,'MANUAL','Fixture',$6,$7,$8)`,
+        [
+          randomUUID(),
+          id,
+          direction,
+          tender,
+          (amountCents / 100).toFixed(2),
+          owner,
+          `u9a-tender-${++seq}`,
+          'a'.repeat(64),
+        ],
+      )
+    }
+    const detail = await service.detail(base(owner, { shiftId: id }))
+    expect(detail.openingTenders).toEqual({ CASH: 100000 })
+    // expected CASH = 1000 + 30000 − 5000; TRANSFER/BANK_DEBIT expenses stay outside physical cash.
+    expect(detail.expectedTenders).toEqual({ CASH: 2600000 })
+    expect(detail.movements).toHaveLength(4)
+    const attributed = detail.movements.find(
+      (movement) => movement.sourceType === 'MANUAL' && movement.direction === 'INCOME',
+    )
+    expect(attributed).toMatchObject({
+      tender: 'CASH',
+      amountCents: 3000000,
+      accountCodeSnapshot: '4.1.01',
+      accountNameSnapshot: 'Cuotas sociales',
+      description: 'Cuota septiembre',
+    })
+    expect(attributed?.id).toBeTruthy()
+    expect(attributed?.createdAt).toBeTruthy()
+    const bankDebit = detail.movements.find((movement) => movement.tender === 'BANK_DEBIT')
+    expect(bankDebit?.amountCents).toBe(700000)
+    // A closed shift reads its stored close as the authority: movements persist, no recomputation.
+    await service.close(base(owner, { shiftId: id, countedTenders: { CASH: 2600000 } }))
+    const closed = await service.detail(base(owner, { shiftId: id }))
+    expect(closed).not.toHaveProperty('expectedTenders')
+    expect(closed.close?.expectedTenders).toEqual({ CASH: 2600000 })
+    expect(closed.movements).toHaveLength(4)
+    expect(closed.close?.closeTransfer?.amountCents).toBe(2600000)
   })
 })
