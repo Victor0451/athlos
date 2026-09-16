@@ -6,9 +6,11 @@ import {
   createCondonationApprovalRequest,
   decideCommunityWorkApproval,
   listCommunityWorkLifecycle,
+  listCommunityWorkQueue,
 } from '@athlos/approval'
 import type { CommunityWorkLifecycle, CreateCommunityWorkApprovalRequest } from '@athlos/approval'
 import { createDb } from '@athlos/db'
+import { ErrorCode } from '@athlos/errors'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 
 const testUrl = process.env.ATHLOS_TEST_DATABASE_URL
@@ -69,6 +71,20 @@ const createRequest = async (
 /** Same state derivation as the route DTO: a receipt row implies executed. */
 const executionStatusOf = (row: CommunityWorkLifecycle) =>
   row.executionReceiptId === null ? (row.executionId ? 'recoverable' : 'unavailable') : 'executed'
+
+/** The queue joins socios on the snapshot memberId; every queued member needs a matching row. */
+const insertSocio = (id: string) =>
+  db.pool.query(
+    `INSERT INTO socios.socios (id, numero_socio, nombre, apellido, dni, fecha_alta, estado)
+         VALUES ($1, '0042', 'Ana', 'Gorriti', '30000000', '2020-01-01', 'activo')`,
+    [id],
+  )
+
+/** Same encoding the route uses to build next_cursor from a page's last row. */
+const cursorOf = (row: { createdAtCursor: string; id: string } | undefined) =>
+  row
+    ? Buffer.from(JSON.stringify({ t: row.createdAtCursor, id: row.id })).toString('base64url')
+    : undefined
 
 beforeAll(async () => {
   if (!testUrl) throw new Error('ATHLOS_TEST_DATABASE_URL is required')
@@ -253,4 +269,129 @@ it('derives execution_status from the executions receipt join', async () => {
   })
   expect(byActionId.get(executed.actionId)?.executionReceiptId).not.toBeNull()
   expect(statusByActionId.get(executed.actionId)).toBe('executed')
+})
+
+it("view 'actionable' excludes used, expired, and executed requests while 'all' includes them", async () => {
+  // The queue reads across members; earlier fixtures have no socios match, so start clean.
+  await db.pool.query('DELETE FROM tesoreria.dues_community_work_executions')
+  await db.pool.query(
+    "DELETE FROM approval_tokens WHERE action_type = 'dues.community-work-request'",
+  )
+  const member = randomUUID()
+  await insertSocio(member)
+  const fresh = await createRequest(db.db, member)
+  const used = await createRequest(db.db, member)
+  const expired = await createRequest(db.db, member)
+  const executed = await createRequest(db.db, member)
+  await db.pool.query('UPDATE approval_tokens SET used_at = now() WHERE id = $1', [used.id])
+  await db.pool.query(
+    "UPDATE approval_tokens SET expires_at = now() - interval '1 hour' WHERE id = $1",
+    [expired.id],
+  )
+  const decided = await decideCommunityWorkApproval(db.db, {
+    requestId: executed.actionId,
+    actorId: approverId,
+    decision: 'approved',
+    reason: 'Approved review',
+    evidence: 'Treasury evidence',
+  })
+  await db.pool.query(
+    `INSERT INTO tesoreria.dues_community_work_executions
+           (id, approval_token_id, action_id, requester_key, snapshot_actor_fingerprint, receipt)
+         VALUES ($1, $2, $3, $4, $5, 'fixture-receipt')`,
+    [
+      decided.executionId,
+      decided.id,
+      decided.actionId,
+      decided.requesterKey ?? 'fixture-requester-key',
+      decided.actorFingerprint ?? 'fixture-fingerprint',
+    ],
+  )
+  const actionable = await listCommunityWorkQueue(db.db, { view: 'actionable', limit: 100 })
+  const actionableIds = actionable.map((row) => row.id)
+  expect(actionableIds).toContain(fresh.id)
+  expect(actionableIds).not.toContain(used.id)
+  expect(actionableIds).not.toContain(expired.id)
+  expect(actionableIds).not.toContain(executed.id)
+  const all = await listCommunityWorkQueue(db.db, { view: 'all', limit: 100 })
+  const allIds = all.map((row) => row.id)
+  for (const request of [fresh, used, expired, executed]) expect(allIds).toContain(request.id)
+})
+
+it('never mixes condonation rows into the community-work queue', async () => {
+  await db.pool.query('DELETE FROM tesoreria.dues_community_work_executions')
+  await db.pool.query(
+    "DELETE FROM approval_tokens WHERE action_type = 'dues.community-work-request'",
+  )
+  const member = randomUUID()
+  await insertSocio(member)
+  const community = await createRequest(db.db, member)
+  const condonation = (
+    await createCondonationApprovalRequest(db.db, {
+      requestId: randomUUID(),
+      contextSummary: 'Condonation review',
+      requesterId,
+      approverChannel: 'email' as const,
+      approverAddress: 'treasury@example.test',
+      snapshot: {
+        memberId: member,
+        obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 10_000 }],
+      },
+      reason: 'Hardship review',
+      evidence: 'Fixture evidence',
+      callerKey: `cond-${randomUUID()}`,
+    })
+  ).record
+  const rows = await listCommunityWorkQueue(db.db, { view: 'all', limit: 100 })
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.id).toBe(community.id)
+  expect(rows.map((row) => row.id)).not.toContain(condonation.id)
+})
+
+it('paginates by the (createdAt, id) keyset with the desc(id) tiebreak, gap-free', async () => {
+  await db.pool.query('DELETE FROM tesoreria.dues_community_work_executions')
+  await db.pool.query(
+    "DELETE FROM approval_tokens WHERE action_type = 'dues.community-work-request'",
+  )
+  const member = randomUUID()
+  await insertSocio(member)
+  await db.db.transaction(async (tx) => {
+    for (let index = 0; index < 5; index += 1) await createRequest(tx, member)
+  })
+  const { rows: tokens } = await db.pool.query<{ id: string; action_id: string }>(
+    `SELECT id, action_id FROM approval_tokens WHERE action_type = 'dues.community-work-request'
+           AND community_snapshot->>'memberId' = $1`,
+    [member],
+  )
+  const expectedOrder = [...tokens]
+    .sort((left, right) => (left.id < right.id ? 1 : -1))
+    .map((token) => token.action_id)
+  const page = async (cursor?: string) =>
+    listCommunityWorkQueue(db.db, {
+      view: 'all',
+      limit: 2,
+      ...(cursor === undefined ? {} : { cursor }),
+    })
+  const first = await page()
+  const second = await page(cursorOf(first.at(-1)))
+  const third = await page(cursorOf(second.at(-1)))
+  expect([first, second, third].map((rows) => rows.length)).toEqual([2, 2, 1])
+  expect([...first, ...second, ...third].map((row) => row.actionId)).toEqual(expectedOrder)
+  expect(await page(cursorOf(third.at(-1)))).toEqual([])
+})
+
+it('rejects a malformed cursor and never restarts from page one on a stale one', async () => {
+  const member = randomUUID()
+  await insertSocio(member)
+  await createRequest(db.db, member)
+  await expect(
+    listCommunityWorkQueue(db.db, { view: 'all', limit: 10, cursor: 'not-a-cursor' }),
+  ).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR })
+  const fullPage = await listCommunityWorkQueue(db.db, { view: 'all', limit: 100 })
+  const beyond = await listCommunityWorkQueue(db.db, {
+    view: 'all',
+    limit: 10,
+    cursor: cursorOf(fullPage.at(-1)) ?? '',
+  })
+  expect(beyond).toEqual([])
 })

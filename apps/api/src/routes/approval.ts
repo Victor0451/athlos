@@ -14,8 +14,10 @@ import {
   findCondonationRequest,
   getApprovalToken,
   listCommunityWorkLifecycle,
+  listCommunityWorkQueue,
   listCondonationLifecycle,
   listCondonationQueue,
+  type CommunityWorkQueueEntry,
   type CondonationQueueEntry,
   type CondonationSnapshot,
   type ApprovalTokenRecord,
@@ -79,6 +81,13 @@ const condonationHistoryQuerySchema = z
 const communityWorkMemberSchema = z.object({ memberId: z.string().uuid() }).strict()
 const communityWorkHistoryQuerySchema = z
   .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
+  .strict()
+const communityWorkQueueQuerySchema = z
+  .object({
+    view: z.literal('all').optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    cursor: z.string().min(1).max(256).optional(),
+  })
   .strict()
 const condonationQueueQuerySchema = z
   .object({
@@ -235,6 +244,23 @@ function communityWorkLifecycleDto(
   }
 }
 
+function communityWorkQueueDto(row: CommunityWorkQueueEntry) {
+  return {
+    ...communityWorkLifecycleDto(row),
+    created_at: row.createdAt.toISOString(),
+    current_member: {
+      id: row.currentMember.id,
+      numero_socio: row.currentMember.numeroSocio,
+      nombre: row.currentMember.nombre,
+      apellido: row.currentMember.apellido,
+    },
+    requester: row.requester,
+    context: row.contextSummary,
+    reason: row.requestReason,
+    evidence: row.requestEvidence,
+  }
+}
+
 const createLinkSchema = z.object({
   action_type: z.string().min(1).max(64),
   action_id: z.string().min(1).max(64),
@@ -334,6 +360,34 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         ...(treasury ? {} : { requesterId: request.operator.sub }),
       })
       return reply.code(200).send({ items: rows.map(communityWorkLifecycleDto) })
+    },
+  )
+
+  // Community-work treasury queue — gated by rollout flag, mirrors the condonation queue.
+  fastify.get<{ Querystring: unknown }>(
+    '/api/v1/community-work-requests',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const query = throwIfInvalid(communityWorkQueueQuerySchema, request.query, 'query')
+      const limit = query.limit ?? 25
+      const rows = await listCommunityWorkQueue(container.db, {
+        view: query.view ?? 'actionable',
+        limit: limit + 1,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      })
+      const page = rows.slice(0, limit)
+      const last = page.at(-1)
+      const nextCursor =
+        rows.length > limit && last
+          ? Buffer.from(JSON.stringify({ t: last.createdAtCursor, id: last.id })).toString(
+              'base64url',
+            )
+          : null
+      return reply
+        .header('Cache-Control', 'no-store')
+        .send({ items: page.map(communityWorkQueueDto), next_cursor: nextCursor })
     },
   )
 

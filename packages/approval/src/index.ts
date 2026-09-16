@@ -24,6 +24,7 @@ export {
   listCondonationLifecycle,
   listCommunityWorkLifecycle,
   listCondonationQueue,
+  listCommunityWorkQueue,
   getApprovalToken,
   consumeApprovalToken,
 } from './service.ts'
@@ -37,6 +38,8 @@ export type {
   ListCommunityWorkLifecycleInput,
   CondonationQueueEntry,
   ListCondonationQueueInput,
+  CommunityWorkQueueEntry,
+  ListCommunityWorkQueueInput,
   CreateApprovalLinkRequest,
   CreateCondonationApprovalRequest,
   CommunityWorkSnapshot,
