@@ -10,6 +10,7 @@ import {
   listCondonationLifecycle,
   listCondonationQueue,
   listCommunityWorkLifecycle,
+  listCommunityWorkQueue,
 } from '@athlos/approval'
 import type * as ApprovalModule from '@athlos/approval'
 import { signAccessToken } from '@athlos/auth'
@@ -39,6 +40,7 @@ vi.mock('@athlos/approval', async (importOriginal) => ({
   listCondonationLifecycle: vi.fn(),
   listCondonationQueue: vi.fn(),
   listCommunityWorkLifecycle: vi.fn(),
+  listCommunityWorkQueue: vi.fn(),
 }))
 
 /**
@@ -1250,4 +1252,152 @@ describe('GET /api/v1/members/:memberId/community-work-requests', () => {
       await app.close()
     }
   })
+})
+
+describe('GET /api/v1/community-work-requests', () => {
+  const CW_ON = { COMMUNITY_WORK_APPROVALS_ENABLED: 'true' }
+  type CwQueueRow = Awaited<ReturnType<typeof listCommunityWorkQueue>>[number]
+  const cwQueueRow = (overrides: Partial<CwQueueRow> = {}): CwQueueRow => ({
+    id: '00000000-0000-4000-8000-000000000060',
+    actionId: '00000000-0000-4000-8000-000000000070',
+    status: 'pending' as const,
+    expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+    decidedAt: null,
+    executionId: null,
+    executionReceiptId: null,
+    communitySnapshot: {
+      memberId,
+      obligations: [{ obligationId, currency: 'ARS', outstandingAmountCents: 12500 }],
+    },
+    createdAt: new Date('2026-01-01T00:00:00.123Z'),
+    createdAtCursor: '2026-01-01T00:00:00.123456Z',
+    contextSummary: 'Verified community commitment',
+    requestReason: 'Documented commitment',
+    requestEvidence: 'case-456',
+    currentMember: { id: memberId, numeroSocio: '0042', nombre: 'Ana', apellido: 'Gorriti' },
+    requester: { id: requesterId, username: 'operator' },
+    ...overrides,
+  })
+  const readQueue = (
+    app: FastifyInstance,
+    role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | null,
+    query = '',
+  ) =>
+    app.inject({
+      method: 'GET',
+      url: `/api/v1/community-work-requests${query}`,
+      ...(role === null ? {} : { headers: auth(role, approverId) }),
+    })
+  beforeEach(() => {
+    vi.mocked(listCommunityWorkQueue).mockReset()
+  })
+
+  it('hides the queue while the rollout flag is off', async () => {
+    const { app } = await bootstrap()
+    try {
+      expect((await readQueue(app, 'ADMIN')).statusCode).toBe(404)
+      expect(listCommunityWorkQueue).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('requires authenticated Treasury authority before reading across members', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      expect((await readQueue(app, null)).statusCode).toBe(401)
+      expect((await readQueue(app, 'OPERADOR')).statusCode).toBe(403)
+      expect(listCommunityWorkQueue).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it.each(['ADMIN', 'TESORERO'] as const)(
+    'returns the actionable treasury queue to %s with no-store and the full DTO shape',
+    async (role) => {
+      const row = cwQueueRow()
+      vi.mocked(listCommunityWorkQueue).mockResolvedValue([row])
+      const { app } = await bootstrap(CW_ON)
+      try {
+        const response = await readQueue(app, role)
+        expect(response.statusCode).toBe(200)
+        expect(response.headers['cache-control']).toBe('no-store')
+        expect(response.json()).toEqual({
+          items: [
+            {
+              id: '00000000-0000-4000-8000-000000000070',
+              state: 'pending',
+              created_at: '2026-01-01T00:00:00.123Z',
+              expires_at: '2099-01-01T00:00:00.000Z',
+              decided_at: null,
+              execution_id: null,
+              execution_status: 'unavailable',
+              snapshot: {
+                member_id: memberId,
+                obligations: [
+                  { obligation_id: obligationId, currency: 'ARS', outstanding_amount_cents: 12500 },
+                ],
+              },
+              current_member: {
+                id: memberId,
+                numero_socio: '0042',
+                nombre: 'Ana',
+                apellido: 'Gorriti',
+              },
+              requester: { id: requesterId, username: 'operator' },
+              context: 'Verified community commitment',
+              reason: 'Documented commitment',
+              evidence: 'case-456',
+            },
+          ],
+          next_cursor: null,
+        })
+        expect(listCommunityWorkQueue).toHaveBeenCalledWith(expect.anything(), {
+          view: 'actionable',
+          limit: 26,
+        })
+      } finally {
+        await app.close()
+      }
+    },
+  )
+
+  it('emits a base64url cursor when the +1 probe finds another page and forwards view and cursor verbatim', async () => {
+    const row = cwQueueRow()
+    vi.mocked(listCommunityWorkQueue).mockResolvedValueOnce([row, { ...row, id: approverId }])
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await readQueue(app, 'ADMIN', '?limit=1')
+      const { next_cursor: cursor } = response.json()
+      expect(response.json().items).toHaveLength(1)
+      expect(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))).toEqual({
+        t: row.createdAtCursor,
+        id: row.id,
+      })
+      vi.mocked(listCommunityWorkQueue).mockResolvedValueOnce([])
+      const next = await readQueue(app, 'ADMIN', `?view=all&limit=1&cursor=${cursor}`)
+      expect(next.json()).toEqual({ items: [], next_cursor: null })
+      expect(listCommunityWorkQueue).toHaveBeenLastCalledWith(expect.anything(), {
+        view: 'all',
+        limit: 2,
+        cursor,
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it.each(['limit=0', 'limit=101', 'other=1', `cursor=${'a'.repeat(257)}`])(
+    'rejects invalid queue filter %s before calling the read service',
+    async (query) => {
+      const { app } = await bootstrap(CW_ON)
+      try {
+        expect((await readQueue(app, 'ADMIN', `?${query}`)).statusCode).toBe(400)
+        expect(listCommunityWorkQueue).not.toHaveBeenCalled()
+      } finally {
+        await app.close()
+      }
+    },
+  )
 })
