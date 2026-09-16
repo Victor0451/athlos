@@ -56,4 +56,13 @@ describe('EligibleAccountPicker', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Buscar cuenta' }))
     expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
+
+  it('blocks searching and selecting while disabled', () => {
+    render(<EligibleAccountPicker selected={null} onSelect={vi.fn()} disabled />)
+    expect(screen.getByLabelText('Buscar cuenta')).toBeDisabled()
+    const searchButton = screen.getByRole('button', { name: 'Buscar cuenta' })
+    expect(searchButton).toBeDisabled()
+    fireEvent.click(searchButton)
+    expect(mocks.searchEligibleAccounts).not.toHaveBeenCalled()
+  })
 })

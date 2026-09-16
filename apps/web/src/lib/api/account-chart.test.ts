@@ -48,4 +48,11 @@ describe('account chart client', () => {
       'Account chart response was incomplete',
     )
   })
+
+  it('keeps only the first occurrence of a duplicated account code', async () => {
+    apiFetchMock.mockResolvedValue({
+      items: [item, { ...item, name: 'Cuotas sociales (duplicada)' }],
+    })
+    await expect(searchEligibleAccounts('cuota')).resolves.toEqual([item])
+  })
 })

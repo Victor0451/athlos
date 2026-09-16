@@ -166,7 +166,7 @@ describe('treasury page', () => {
   })
 
   it('does not let an older operator completion unlock a newer opening', async () => {
-    let resolveOld!: (result: object) => void
+    let resolveOld!: (result: unknown) => void
     let rejectNew!: (error: Error) => void
     mocks.openCashShift
       .mockReturnValueOnce(

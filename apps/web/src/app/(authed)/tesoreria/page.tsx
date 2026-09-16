@@ -32,6 +32,7 @@ export default function TreasuryPage() {
   const router = useRouter()
   const cashContext = parseCashContext(useSearchParams())
   const isOperator = user?.role === 'OPERADOR'
+  const operatorId = user?.operator_id
   const allowed = isOperator || user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const [desk, setDesk] = useState('front-desk')
   const [cash, setCash] = useState('0')
@@ -329,7 +330,7 @@ export default function TreasuryPage() {
           </form>
         )}
         <p>Importes en pesos, con coma o punto decimal y sin separadores de miles.</p>
-        {ownOpenShift && (
+        {ownOpenShift && operatorId && (
           <section
             aria-label="Tu turno de caja"
             className="rounded-lg border border-ink-100 bg-surface p-4"
@@ -343,7 +344,7 @@ export default function TreasuryPage() {
                 <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
                 <ManualMovementForm
                   shiftId={ownOpenShift.id}
-                  operatorId={user!.operator_id}
+                  operatorId={operatorId}
                   onRecorded={setMessage}
                 />
               </>

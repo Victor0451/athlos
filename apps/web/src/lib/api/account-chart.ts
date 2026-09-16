@@ -54,10 +54,16 @@ export async function searchEligibleAccounts(name: string): Promise<AccountChart
   if (!isRecord(value) || !Array.isArray(value.items))
     throw new Error('Account chart response was incomplete')
   const items: AccountChartItem[] = []
+  const seen = new Set<string>()
   for (const raw of value.items) {
     const item = decodeItem(raw)
     if (!item) throw new Error('Account chart response was incomplete')
-    if (item.eligible) items.push(item)
+    // A duplicated code would break the picker's radio group (two checked inputs), so the
+    // first occurrence wins and later rows with the same code are dropped.
+    if (item.eligible && !seen.has(item.code)) {
+      seen.add(item.code)
+      items.push(item)
+    }
   }
   return items
 }
