@@ -3,6 +3,7 @@ import { expect, test } from './fixtures/authenticated-dashboard'
 test('OPERADOR opens Caja on mobile without finance-only controls', async ({
   authenticatedPage: page,
 }) => {
+  test.skip(process.env.DUES_CASH_ENABLED !== 'true', 'Requires the local cash feature flag.')
   const openingRequests: unknown[] = []
   let opened = false
 
@@ -71,6 +72,11 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
 test('OPERADOR enters Collections from Caja and records one full selected payment', async ({
   authenticatedPage: page,
 }) => {
+  test.skip(
+    process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
+      process.env.DUES_CASH_ENABLED !== 'true',
+    'Requires the local Collections and cash feature flags.',
+  )
   let ownShiftOpen = false
   const settlementRequests: unknown[] = []
   const member = {
@@ -185,6 +191,7 @@ test('OPERADOR enters Collections from Caja and records one full selected paymen
 test('OPERADOR reads only own closed Caja history with GET detail', async ({
   authenticatedPage: page,
 }) => {
+  test.skip(process.env.DUES_CASH_ENABLED !== 'true', 'Requires the local cash feature flag.')
   const detailRequests: string[] = []
 
   await page.addInitScript(() => {
