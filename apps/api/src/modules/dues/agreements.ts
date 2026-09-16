@@ -629,3 +629,22 @@ export class AgreementService {
     })
   }
 }
+
+/**
+ * Validate a supplied agreement context for a community-work request capture:
+ * the agreement must exist, belong to the given member and obligation, and be
+ * ACTIVE. Returns the captured terms version, or null when the context does
+ * not match (the caller rejects the request rather than trusting the client).
+ */
+export async function findActiveCommunityWorkAgreement(
+  db: DuesDb,
+  input: { agreementId: string; socioId: string; obligationId: string },
+): Promise<{ termsVersion: number } | null> {
+  return (
+    rows<{ termsVersion: number }>(
+      await db.execute(
+        sql`SELECT terms_version AS "termsVersion" FROM tesoreria.dues_agreements WHERE id=${input.agreementId} AND socio_id=${input.socioId} AND obligation_id=${input.obligationId} AND status='ACTIVE' LIMIT 1`,
+      ),
+    )[0] ?? null
+  )
+}

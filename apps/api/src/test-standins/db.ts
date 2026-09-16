@@ -744,6 +744,13 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
         executionId: (v['executionId'] as string | null) ?? null,
         callerKey: (v['callerKey'] as string | null) ?? null,
         requestFingerprint: (v['requestFingerprint'] as string | null) ?? null,
+        communitySnapshot:
+          (v['communitySnapshot'] as ApprovalTokenRow['communitySnapshot']) ?? null,
+        requesterKey: (v['requesterKey'] as string | null) ?? null,
+        agreementUuid: (v['agreementUuid'] as string | null) ?? null,
+        termsVersion: (v['termsVersion'] as number | null) ?? null,
+        actorFingerprint: (v['actorFingerprint'] as string | null) ?? null,
+        receipt: (v['receipt'] as ApprovalTokenRow['receipt']) ?? null,
         createdAt: (v['createdAt'] as Date) ?? new Date(),
       } as ApprovalTokenRow
     }

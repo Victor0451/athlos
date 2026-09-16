@@ -6,6 +6,7 @@ const betaFlags = [
   'DUES_ASSESSMENT_ENABLED',
   'DUES_AGREEMENTS_ENABLED',
   'DUES_CASH_ENABLED',
+  'COMMUNITY_WORK_APPROVALS_ENABLED',
 ] as const
 
 // prettier-ignore
@@ -31,6 +32,7 @@ it('keeps every BETA flag disabled by schema defaults', () => {
     DUES_ASSESSMENT_ENABLED: false,
     DUES_AGREEMENTS_ENABLED: false,
     DUES_CASH_ENABLED: false,
+    COMMUNITY_WORK_APPROVALS_ENABLED: false,
   })
 })
 
