@@ -78,3 +78,84 @@ describe('Treasury shift read client', () => {
     await expect(getOpenCashShifts()).rejects.toThrow('Treasury shift response was incomplete')
   })
 })
+
+describe('Treasury attributed movement client', () => {
+  beforeEach(() => {
+    apiFetchMock.mockReset()
+  })
+  const openShift = {
+    id: 'open-1',
+    desk_id: 'front',
+    status: 'OPEN',
+    assigned_operator_id: 'operator-1',
+    business_date: '2026-09-16',
+    opened_at: '2026-09-16T10:00:00Z',
+    closed_at: null,
+  }
+  const movement = {
+    id: 'mv-1',
+    direction: 'INCOME',
+    tender: 'CASH',
+    amount_cents: 3000000,
+    source_type: 'MANUAL',
+    created_at: '2026-09-16T10:05:00Z',
+    account_code_snapshot: '4.1.01',
+    account_name_snapshot: 'Cuotas sociales',
+    description: 'Cuota septiembre',
+  }
+  it('decodes movements, expectation, and opening from an open-shift detail', async () => {
+    apiFetchMock.mockResolvedValue({
+      shift: openShift,
+      close: null,
+      movements: [movement],
+      expected_tenders: { CASH: 2600000 },
+      opening_tenders: { CASH: 100000 },
+    })
+    const detail = await getCashShiftDetail('open-1')
+    expect(detail.movements).toEqual([movement])
+    expect(detail.expected_tenders).toEqual({ CASH: 2600000 })
+    expect(detail.opening_tenders).toEqual({ CASH: 100000 })
+  })
+  it('keeps legacy details without movement fields readable', async () => {
+    apiFetchMock.mockResolvedValue({ shift: openShift, close: null })
+    const detail = await getCashShiftDetail('open-1')
+    expect(detail.movements).toBeUndefined()
+    expect(detail.expected_tenders).toBeUndefined()
+  })
+  it('rejects malformed movements instead of guessing', async () => {
+    apiFetchMock.mockResolvedValue({
+      shift: openShift,
+      close: null,
+      movements: [{ id: 'mv-bad' }],
+      expected_tenders: {},
+      opening_tenders: {},
+    })
+    await expect(getCashShiftDetail('open-1')).rejects.toThrow(
+      'Treasury shift detail response was incomplete',
+    )
+  })
+  it('sends manual account attribution through the tender body', async () => {
+    const { recordCashTender } = await import('./treasury')
+    apiFetchMock.mockResolvedValue({ id: 'tender-1' })
+    await recordCashTender(
+      'open-1',
+      {
+        direction: 'INCOME',
+        tender: 'CASH',
+        amount_cents: 3000000,
+        source_type: 'MANUAL',
+        reason: 'Venta buffet',
+        account_code: '4.1.01',
+        description: 'Cuota septiembre',
+      },
+      'key-1',
+    )
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/v1/treasury/shifts/open-1/tenders',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ account_code: '4.1.01', description: 'Cuota septiembre' }),
+      }),
+    )
+  })
+})
