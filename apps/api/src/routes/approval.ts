@@ -26,6 +26,7 @@ import type { AppContainer } from '../container.ts'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
 import { findActiveCommunityWorkAgreement } from '../modules/dues/agreements.ts'
 import { CondonationExecutionService } from '../modules/dues/condonations.ts'
+import { CommunityWorkExecutionService } from '../modules/dues/community-work-execution.ts'
 import { validateIdempotencyKey } from '../lib/idempotency.ts'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -97,6 +98,7 @@ const condonationQueueQuerySchema = z
   })
   .strict()
 const condonationExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
+const communityWorkExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
 const communityWorkRequestSchema = z
   .object({
     member_id: z.string().uuid(),
@@ -712,6 +714,52 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         return decided
       })
       return reply.code(200).send(condonationDto(result))
+    },
+  )
+
+  // POST /api/v1/community-work-requests/:id/execution
+  // Executes an APPROVED community-work request through the atomic U4
+  // executor. The execution identity is the server-generated token UUID
+  // minted at decision time (never the HTTP Idempotency-Key: the header
+  // flows into audit metadata only). Same-decider-executes is enforced
+  // inside the executor; this gate only keeps Treasury roles on the door.
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/community-work-requests/:id/execution',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const { id } = throwIfInvalid(condonationIdSchema, request.params, 'params')
+      const { execution_id: executionId } = throwIfInvalid(
+        communityWorkExecutionSchema,
+        request.body,
+        'body',
+      )
+      const permissions = Object.entries(request.operator.permissions)
+        .filter(([, granted]) => granted)
+        .map(([permission]) => permission)
+      const result = await new CommunityWorkExecutionService(container.db).executeApproved({
+        requestId: id,
+        executionId,
+        actorId: request.operator.sub,
+        role: request.operator.role,
+        permissions,
+        callerKey: callerKey(request),
+        sourceIp: request.ip ?? null,
+      })
+      return reply.code(200).send({
+        execution_id: result.executionId,
+        approval_id: result.approvalId,
+        request_id: result.requestId,
+        work_id: result.workId,
+        settlement_id: result.settlementId,
+        allocation_id: result.allocationId,
+        socio_id: result.socioId,
+        obligation_id: result.obligationId,
+        amount_cents: result.amountCents,
+        currency: result.currency,
+        status: result.status,
+      })
     },
   )
   fastify.post<{ Params: { id: string }; Body: unknown }>(
