@@ -4,6 +4,7 @@ import { COLLECTIONS_IDEMPOTENCY_STORAGE_KEY } from '@/lib/collections-idempoten
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type * as CondonationApi from '@/lib/api/condonation'
+import type * as CommunityWorkApi from '@/lib/api/community-work-approval'
 type CondonationQueueItem = CondonationApi.CondonationQueueItem
 type CondonationQueuePage = CondonationApi.CondonationQueuePage
 
@@ -27,7 +28,22 @@ vi.mock('@/lib/api/condonation', async (importOriginal) => {
     listCondonationLifecycle: (...args: unknown[]) => listLifecycleMock(...args),
   }
 })
+const communityQueueMock = vi.fn()
+const communityDecideMock = vi.fn()
+const communityExecuteMock = vi.fn()
+const communityLifecycleMock = vi.fn()
+vi.mock('@/lib/api/community-work-approval', async (importOriginal) => {
+  const actual = await importOriginal<typeof CommunityWorkApi>()
+  return {
+    ...actual,
+    listCommunityWorkQueue: (...args: unknown[]) => communityQueueMock(...args),
+    decideCommunityWorkRequest: (...args: unknown[]) => communityDecideMock(...args),
+    executeCommunityWorkRequest: communityExecuteMock,
+    listCommunityWorkLifecycle: (...args: unknown[]) => communityLifecycleMock(...args),
+  }
+})
 const { CondonationOperationError } = await import('@/lib/api/condonation')
+const { CommunityWorkOperationError } = await import('@/lib/api/community-work-approval')
 const { CondonationDecisionDialog } =
   await import('@/components/collections/CondonationDecisionDialog')
 const { default: ApprovalsListPage } = await import('./page')
@@ -98,6 +114,7 @@ describe('Approvals queue', () => {
     vi.clearAllMocks()
     useAuthMock.mockReturnValue(auth())
     listQueueMock.mockReset().mockResolvedValue(page())
+    communityQueueMock.mockReset().mockResolvedValue({ items: [], next_cursor: null })
     decideMock.mockReset()
     executeMock.mockReset()
     listLifecycleMock.mockReset().mockImplementation(() => {
@@ -751,5 +768,189 @@ describe('Approvals queue', () => {
     await user.type(input, '  token/a  ')
     await user.click(submit)
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/admin/approvals/token%2Fa'))
+  })
+})
+
+describe('Approvals community queue', () => {
+  const cwUuids = [
+    '00000000-0000-4000-8000-000000000101',
+    '00000000-0000-4000-8000-000000000102',
+    '00000000-0000-4000-8000-000000000103',
+    '00000000-0000-4000-8000-000000000104',
+    '00000000-0000-4000-8000-000000000105',
+  ]
+  const cwRequesterId = cwUuids[1]!
+  const cwMemberId = cwUuids[2]!
+  const cwExecutionId = cwUuids[4]!
+  const communityItem = (
+    state: 'pending' | 'approved_awaiting_execution' | 'executed' = 'pending',
+    requesterId: string = cwRequesterId,
+  ): CommunityWorkApi.CommunityWorkQueueItem => ({
+    id: cwUuids[0]!,
+    state,
+    expires_at: '2030-01-01T12:00:00.000Z',
+    decided_at: state === 'pending' ? null : '2026-09-01T13:00:00.000Z',
+    execution_id: state === 'pending' ? null : cwExecutionId,
+    execution_status:
+      state === 'approved_awaiting_execution'
+        ? 'recoverable'
+        : state === 'executed'
+          ? 'executed'
+          : 'unavailable',
+    created_at: '2026-09-01T12:00:00.000Z',
+    snapshot: {
+      member_id: cwMemberId,
+      obligations: [
+        {
+          obligation_id: cwUuids[3]!,
+          currency: 'ARS',
+          outstanding_amount_cents: 1250,
+        },
+      ],
+    },
+    current_member: {
+      id: cwMemberId,
+      numero_socio: '77',
+      nombre: 'Bruno',
+      apellido: 'Díaz',
+    },
+    requester: { id: requesterId, username: 'operador-turno' },
+    context: 'Trabajo comunitario acordado',
+    reason: 'Plan comunitario 2026',
+    evidence: 'Acta 21',
+  })
+  const communityPage = (
+    items: CommunityWorkApi.CommunityWorkQueueItem[],
+    next: string | null = null,
+  ) => ({
+    items,
+    next_cursor: next,
+  })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useAuthMock.mockReturnValue(auth())
+    listQueueMock.mockReset().mockResolvedValue(page())
+    communityQueueMock.mockReset().mockResolvedValue(communityPage([]))
+    communityDecideMock.mockReset()
+    communityExecuteMock.mockReset()
+    communityLifecycleMock.mockReset()
+    window.sessionStorage.removeItem(COLLECTIONS_IDEMPOTENCY_STORAGE_KEY)
+  })
+
+  it('renders the independent community queue beside the preserved condonation queue', async () => {
+    listQueueMock.mockResolvedValue(page([item()]))
+    communityQueueMock.mockResolvedValue(communityPage([communityItem()]))
+    renderPage()
+    await member('Ana')
+    expect(communityQueueMock).toHaveBeenCalledWith({ view: 'all' })
+    const community = await screen.findByRole('region', {
+      name: 'Bandeja de trabajo comunitario',
+    })
+    expect(within(community).getByRole('heading', { name: /bruno díaz/i })).toBeInTheDocument()
+    expect(within(community).getByText('Trabajo comunitario acordado')).toBeInTheDocument()
+    expect(within(community).getByText('Plan comunitario 2026')).toBeInTheDocument()
+    expect(within(community).getByText('Acta 21')).toBeInTheDocument()
+    expect(within(community).getByText('operador-turno')).toBeInTheDocument()
+    expect(within(community).getByText(/12,50/)).toBeInTheDocument()
+    expect(within(community).getByRole('button', { name: 'Revisar solicitud' })).toBeEnabled()
+    expect(within(community).getByText('Pendiente')).toBeInTheDocument()
+  })
+
+  it('appends independent community pages and stops at the end', async () => {
+    const user = userEvent.setup()
+    communityQueueMock
+      .mockResolvedValueOnce(communityPage([communityItem()], 'cursor-2'))
+      .mockResolvedValueOnce(communityPage([communityItem('executed')]))
+    renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    await user.click(screen.getByRole('button', { name: 'Traer más' }))
+    expect(await screen.findByText('Ejecutada')).toBeInTheDocument()
+    expect(communityQueueMock).toHaveBeenLastCalledWith({ view: 'all', cursor: 'cursor-2' })
+  })
+
+  it('reports community permission failures without disturbing the condonation queue', async () => {
+    const user = userEvent.setup()
+    listQueueMock.mockResolvedValue(page([item()]))
+    communityQueueMock.mockRejectedValue(
+      new CommunityWorkOperationError('permission', new Error('403')),
+    )
+    renderPage()
+    await member('Ana')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no tenés permisos/i)
+    expect(screen.getByRole('button', { name: 'Volver a intentar' })).toBeEnabled()
+    communityQueueMock.mockResolvedValue(communityPage([communityItem()]))
+    await user.click(screen.getByRole('button', { name: 'Volver a intentar' }))
+    expect(await screen.findByRole('heading', { name: /bruno díaz/i })).toBeInTheDocument()
+  })
+
+  it('keeps the decision away from the requesting operator and offers it to the other', async () => {
+    communityQueueMock.mockResolvedValue(communityPage([communityItem('pending', 'operator-1')]))
+    const { unmount } = renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    expect(
+      screen.getByText(/otro admin o tesorero debe decidir esta solicitud que enviaste vos/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revisar solicitud' })).not.toBeInTheDocument()
+    unmount()
+
+    communityQueueMock.mockResolvedValue(communityPage([communityItem()]))
+    renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    expect(screen.getByRole('button', { name: 'Revisar solicitud' })).toBeEnabled()
+  })
+
+  it('opens the community decision dialog from the queue row', async () => {
+    const user = userEvent.setup()
+    communityQueueMock.mockResolvedValue(communityPage([communityItem()]))
+    renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    await user.click(screen.getByRole('button', { name: 'Revisar solicitud' }))
+    expect(
+      await screen.findByRole('dialog', { name: /decidir trabajo comunitario/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Motivo de la decisión')).toBeInTheDocument()
+  })
+
+  it('ignores the previous actor community response after switching operators', async () => {
+    communityQueueMock.mockImplementation(() => new Promise(() => undefined))
+    const { rerender } = render(<ApprovalsListPage />, {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={clients[0] ?? new QueryClient()}>
+          {children}
+        </QueryClientProvider>
+      ),
+    })
+    await act(async () => {
+      useAuthMock.mockReturnValue(auth('ADMIN', 'operator-2'))
+      rerender(<ApprovalsListPage />)
+    })
+    expect(communityQueueMock).toHaveBeenCalledTimes(2)
+    expect(communityQueueMock).toHaveBeenNthCalledWith(2, { view: 'all' })
+  })
+
+  it('prevents overlapping community pagination and refresh requests', async () => {
+    const user = userEvent.setup()
+    communityQueueMock
+      .mockResolvedValueOnce(communityPage([communityItem()], 'cursor-2'))
+      .mockImplementation(() => new Promise(() => undefined))
+    renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    const loadMore = screen.getByRole('button', { name: 'Traer más' })
+    await user.click(loadMore)
+    await user.click(screen.getByRole('button', { name: 'Refrescar bandeja' }))
+    expect(communityQueueMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('offers execution of an approved request through the dialog while marking recovery', async () => {
+    const user = userEvent.setup()
+    communityQueueMock.mockResolvedValue(
+      communityPage([communityItem('approved_awaiting_execution')]),
+    )
+    renderPage()
+    await screen.findByRole('heading', { name: /bruno díaz/i })
+    expect(screen.getByText('Recuperación requerida')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Ejecutar trabajo comunitario' }))
+    const dialog = await screen.findByRole('dialog', { name: /decidir trabajo comunitario/i })
+    expect(within(dialog).getByRole('button', { name: /reintentar ejecución/i })).toBeEnabled()
   })
 })

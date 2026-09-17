@@ -16,6 +16,7 @@ const {
   decideCommunityWorkRequest,
   executeCommunityWorkRequest,
   listCommunityWorkLifecycle,
+  listCommunityWorkQueue,
 } = await import('./community-work-approval')
 
 const uuids = [
@@ -73,6 +74,83 @@ const executionDto = () => ({
   amount_cents: 1000,
   currency: 'ARS',
   status: 'executed',
+})
+
+describe('community-work approval queue client', () => {
+  const queueLifecycle = () => ({
+    id: uuids[0]!,
+    state: 'pending',
+    expires_at: '2026-09-01T00:00:00.000Z',
+    decided_at: null,
+    execution_id: null,
+    execution_status: 'unavailable',
+    snapshot: {
+      member_id: uuids[2]!,
+      obligations: [{ obligation_id: uuids[3]!, currency: 'ARS', outstanding_amount_cents: 1250 }],
+    },
+  })
+  const queueEntry = () => ({
+    ...queueLifecycle(),
+    created_at: '2026-08-20T10:00:00.000Z',
+    current_member: {
+      id: uuids[2]!,
+      numero_socio: '42',
+      nombre: 'Ana',
+      apellido: 'Gorriti',
+    },
+    requester: { id: uuids[1]!, username: 'tesoreria' },
+    context: 'Deuda revisada en mesa',
+    reason: 'Plan comunitario',
+    evidence: 'Acta 12',
+  })
+
+  beforeEach(() => apiFetchMock.mockReset())
+
+  it('fetches the first page with view all and decodes queue entries', async () => {
+    apiFetchMock.mockResolvedValue({ items: [queueEntry()], next_cursor: null })
+    const page = await listCommunityWorkQueue({ view: 'all' })
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/community-work-requests?limit=25&view=all')
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]!.requester).toEqual({ id: uuids[1]!, username: 'tesoreria' })
+    expect(page.items[0]!.current_member.numero_socio).toBe('42')
+    expect(page.next_cursor).toBeNull()
+  })
+
+  it('passes the opaque cursor on subsequent pages', async () => {
+    apiFetchMock.mockResolvedValue({ items: [queueEntry()], next_cursor: 'opaque-cursor' })
+    await listCommunityWorkQueue({ view: 'all', cursor: 'opaque-cursor' })
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/v1/community-work-requests?limit=25&view=all&cursor=opaque-cursor',
+    )
+    const page = await listCommunityWorkQueue({ view: 'all', cursor: 'opaque-cursor' })
+    expect(page.next_cursor).toBe('opaque-cursor')
+  })
+
+  it('rejects the whole page when one queue entry is malformed', async () => {
+    const broken = { ...queueEntry(), requester: { id: uuids[1]!, username: '' } }
+    apiFetchMock.mockResolvedValue({ items: [queueEntry(), broken], next_cursor: null })
+    await expect(listCommunityWorkQueue({ view: 'all' })).rejects.toMatchObject({
+      kind: 'partial_data',
+    })
+  })
+
+  it('rejects queue entries whose member identity disagrees with the snapshot', async () => {
+    const mismatched = {
+      ...queueEntry(),
+      current_member: { ...queueEntry().current_member, id: uuids[1]! },
+    }
+    apiFetchMock.mockResolvedValue({ items: [mismatched], next_cursor: null })
+    await expect(listCommunityWorkQueue({ view: 'all' })).rejects.toMatchObject({
+      kind: 'partial_data',
+    })
+  })
+
+  it('maps authorization failures to the permission kind', async () => {
+    const { ApiError } = await import('@/lib/api')
+    apiFetchMock.mockRejectedValueOnce(new ApiError(403, 'INSUFFICIENT_PERMISSIONS', 'Forbidden'))
+    const failure = await listCommunityWorkQueue({ view: 'all' }).catch((error: unknown) => error)
+    expect((failure as InstanceType<typeof CommunityWorkOperationError>).kind).toBe('permission')
+  })
 })
 
 describe('community-work approval client', () => {

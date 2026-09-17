@@ -56,6 +56,23 @@ export interface CommunityWorkExecution {
   currency: string
   status: 'executed' | 'replayed'
 }
+export interface CommunityWorkQueueItem extends CommunityWorkApprovalLifecycle {
+  created_at: string
+  current_member: { id: string; numero_socio: string; nombre: string; apellido: string }
+  requester: { id: string; username: string }
+  context: string
+  reason: string
+  evidence: string
+}
+export interface CommunityWorkQueuePage {
+  items: CommunityWorkQueueItem[]
+  next_cursor: string | null
+}
+export interface CommunityWorkQueueOptions {
+  view?: 'all'
+  limit?: number
+  cursor?: string
+}
 export class CommunityWorkOperationError extends Error {
   // prettier-ignore
   constructor(readonly kind: 'partial_data' | 'permission' | 'conflict' | 'unavailable', cause?: unknown) {
@@ -218,6 +235,86 @@ const requestInput = (input: CommunityWorkRequestInput): CommunityWorkRequestInp
   return input
 }
 
+const queueText = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0 && value.length <= 1000
+const queueCursor = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256
+const queueItem = (value: unknown): CommunityWorkQueueItem | null => {
+  if (!record(value)) return null
+  const { created_at, current_member, requester, context, reason, evidence, ...state } = value
+  const item = lifecycle(state)
+  if (
+    !item ||
+    !time(created_at) ||
+    !exactRecord(current_member, ['id', 'numero_socio', 'nombre', 'apellido']) ||
+    !uuid(current_member.id) ||
+    current_member.id.toLowerCase() !== item.snapshot.member_id.toLowerCase() ||
+    !queueText(current_member.numero_socio) ||
+    !queueText(current_member.nombre) ||
+    !queueText(current_member.apellido) ||
+    !exactRecord(requester, ['id', 'username']) ||
+    !uuid(requester.id) ||
+    !queueText(requester.username) ||
+    !queueText(context) ||
+    !queueText(reason) ||
+    !queueText(evidence)
+  )
+    return null
+  return {
+    ...item,
+    created_at,
+    current_member: {
+      id: current_member.id,
+      numero_socio: current_member.numero_socio,
+      nombre: current_member.nombre,
+      apellido: current_member.apellido,
+    },
+    requester: { id: requester.id, username: requester.username },
+    context,
+    reason,
+    evidence,
+  }
+}
+/** Read one authoritative community-work queue page; callers choose when to follow the cursor. */
+export const listCommunityWorkQueue = async ({
+  view,
+  limit = 25,
+  cursor,
+}: CommunityWorkQueueOptions = {}): Promise<CommunityWorkQueuePage> => {
+  try {
+    if (
+      (view !== undefined && view !== 'all') ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      (cursor !== undefined && !queueCursor(cursor))
+    )
+      throw new CommunityWorkOperationError('partial_data')
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (view) query.set('view', view)
+    if (cursor) query.set('cursor', cursor)
+    const value = await apiFetch<unknown>(`/api/v1/community-work-requests?${query}`)
+    if (
+      !exactRecord(value, ['items', 'next_cursor']) ||
+      !Array.isArray(value.items) ||
+      (value.next_cursor !== null && !queueCursor(value.next_cursor))
+    )
+      throw new CommunityWorkOperationError('partial_data')
+    const items = value.items.map(queueItem)
+    if (
+      items.some((item) => item === null) ||
+      new Set(items.map((item) => item?.id.toLowerCase())).size !== items.length
+    )
+      throw new CommunityWorkOperationError('partial_data')
+    return {
+      items: items.filter((item): item is CommunityWorkQueueItem => item !== null),
+      next_cursor: value.next_cursor,
+    }
+  } catch (cause) {
+    if (cause instanceof CommunityWorkOperationError) throw cause
+    throw operationError(cause)
+  }
+}
 export const createCommunityWorkRequest = async (
   input: CommunityWorkRequestInput,
   key: string,
