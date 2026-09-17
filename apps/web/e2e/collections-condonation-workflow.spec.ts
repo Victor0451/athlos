@@ -278,6 +278,10 @@ test(`condonation ${mode}: separate request, decision and execution`, async ({
         })
       }
     }
+    // The Approvals page also fetches the additive community-work queue (Unit 6) on
+    // mount; the read is authoritative and financially inert, so it is expected here.
+    if (method === 'GET' && path === '/api/v1/community-work-requests')
+      return send(route, 200, { items: [], next_cursor: null })
     unexpected.push(`${actor} ${method} ${path}`)
     return fail(route, 400, 'Esta ruta no está habilitada en la prueba.')
   }
