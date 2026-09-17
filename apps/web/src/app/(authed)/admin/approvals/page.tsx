@@ -88,7 +88,7 @@ function CommunityApprovalsQueue({
           disabled={queue.isFetching}
           className={queueButtonClass}
         >
-          Actualizar bandeja
+          Refrescar bandeja
         </button>
       </div>
       <p className="text-sm text-ink-500">
@@ -106,7 +106,7 @@ function CommunityApprovalsQueue({
             disabled={queue.isFetching}
             className={queueButtonClass}
           >
-            Reintentar bandeja
+            Volver a intentar
           </button>
         </div>
       ) : rows.length === 0 ? (
@@ -181,10 +181,10 @@ function CommunityApprovalsQueue({
           onClick={() => void queue.fetchNextPage({ cancelRefetch: false })}
         >
           {queue.isFetchingNextPage
-            ? 'Cargando más…'
+            ? 'Trayendo más…'
             : queue.isFetchNextPageError
-              ? 'Reintentar cargar más'
-              : 'Cargar más'}
+              ? 'Reintentar la carga'
+              : 'Traer más'}
         </button>
       )}
       {selected && !denied && (
