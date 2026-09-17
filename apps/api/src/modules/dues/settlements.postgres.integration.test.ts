@@ -297,6 +297,24 @@ it('keeps original agreement debt terms immutable and records work outside cash 
   expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.caja_movimiento')).rows[0].count).toBe(beforeCash)
 })
 
+// prettier-ignore
+it('composes the community-work primitive inside an enclosing transaction and rolls back all its writes when the enclosing transaction fails', async () => {
+  const socioId = await member(), target = await obligation(socioId, 6_000, period(2601, 1)), rollbackTarget = await obligation(socioId, 4_000, period(2601, 2)), service = new CommunityWorkService(db.db), command = { ...context(`work-primitive-${randomUUID()}`), socioId, obligationId: target, amountCents: 6_000, evidence: { approvalId: 'fixture' }, reason: 'Approved work' }
+  let committedId = ''
+  await db.db.transaction(async (tx) => { committedId = (await service.createInTransaction(tx, command)).id })
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_community_work WHERE id=$1', [committedId])).rows[0].count).toBe(1)
+  await db.db.transaction(async (tx) => { const replay = await service.createInTransaction(tx, command); expect(replay).toMatchObject({ id: committedId, replayed: true }) })
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1', [target])).rows[0].count).toBe(1)
+  const rollbackKey = `work-primitive-${randomUUID()}`
+  let rolledBackId = ''
+  await expect(db.db.transaction(async (tx) => { const outcome = await service.createInTransaction(tx, { ...command, obligationId: rollbackTarget, amountCents: 4_000, callerKey: rollbackKey }); rolledBackId = outcome.id; throw new Error('force rollback') })).rejects.toThrow('force rollback')
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_community_work WHERE id=$1', [rolledBackId])).rows[0].count).toBe(0)
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_settlements WHERE operator_id=$1 AND caller_key=$2', [command.actorId, rollbackKey])).rows[0].count).toBe(0)
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1', [rollbackTarget])).rows[0].count).toBe(0)
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_community_work WHERE id=$1', [committedId])).rows[0].count).toBe(1)
+  expect((await db.pool.query('SELECT count(*)::int AS count FROM tesoreria.dues_allocations WHERE obligation_id=$1', [target])).rows[0].count).toBe(1)
+})
+
 it('validates agreement ownership, outstanding debt, and preserves obligation history', async () => {
   const socioId = await member()
   const otherSocioId = await member()
