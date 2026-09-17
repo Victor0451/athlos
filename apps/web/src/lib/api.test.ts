@@ -67,6 +67,24 @@ describe('api client', () => {
       expect(result).toEqual({ id: 1, name: 'admin' })
     })
 
+    it('surfaces a 200 with an unreadable body as ApiError MALFORMED_RESPONSE', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValueOnce(
+          new Response('<html>gateway</html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+        ),
+      )
+
+      await expect(apiFetch<{ id: number }>('/api/v1/health')).rejects.toMatchObject({
+        name: 'ApiError',
+        status: 200,
+        code: 'MALFORMED_RESPONSE',
+      })
+    })
+
     it('injects Authorization: Bearer <access_token> when a token is set', async () => {
       const authModule = await import('./auth.ts')
       authModule.setAccessToken('test.jwt.token')

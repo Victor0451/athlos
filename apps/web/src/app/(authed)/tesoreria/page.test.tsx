@@ -99,6 +99,30 @@ describe('treasury page', () => {
     )
   })
 
+  it('differentiates an illegible server response from a generic failure', async () => {
+    mocks.openCashShift.mockRejectedValueOnce(
+      new ApiError(200, 'MALFORMED_RESPONSE', 'La respuesta del servidor no se pudo interpretar.'),
+    )
+    render(<TreasuryPage />)
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    await waitFor(() =>
+      expect(
+        screen.getByText('El servidor respondió con datos ilegibles. Reintentá la operación.'),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  it('differentiates a connection failure from a server rejection', async () => {
+    mocks.openCashShift.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    render(<TreasuryPage />)
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+    await waitFor(() =>
+      expect(
+        screen.getByText('No hay conexión con el servidor. Verificá tu red e intentá de nuevo.'),
+      ).toBeInTheDocument(),
+    )
+  })
+
   it.each(['resolved error', 'rejected promise'])(
     'keeps confirmed cash opening and return available after a %s refresh',
     async (failure) => {

@@ -27,6 +27,22 @@ import {
 } from '@/lib/cash-shift-eligibility'
 import { parseCashAmount } from '@/lib/cash-amount'
 
+/**
+ * Finding #2 of the caja #537 B2a review: a failed cash command can be a
+ * network failure or a 2xx with an unreadable body (proxy-injected HTML).
+ * Both used to fall through to the generic message; differentiate them so
+ * operators know whether to retry or to check connectivity.
+ */
+const connectionMessage = (error: unknown): string | null => {
+  if (error instanceof ApiError && error.code === 'MALFORMED_RESPONSE') {
+    return 'El servidor respondió con datos ilegibles. Reintentá la operación.'
+  }
+  if (error instanceof TypeError) {
+    return 'No hay conexión con el servidor. Verificá tu red e intentá de nuevo.'
+  }
+  return null
+}
+
 export default function TreasuryPage() {
   const { user } = useAuth()
   const { cashEnabled } = useFeatureConfig()
@@ -138,7 +154,11 @@ export default function TreasuryPage() {
         result = await request(keys.current.getOrCreate(input))
       } catch (error) {
         if (isCurrent(token))
-          reportError(errorMessage?.(error) ?? 'No se pudo ejecutar la operación de caja.')
+          reportError(
+            connectionMessage(error) ??
+              errorMessage?.(error) ??
+              'No se pudo ejecutar la operación de caja.',
+          )
         return
       }
       keys.current.complete(input)

@@ -58,11 +58,20 @@ describe('EligibleAccountPicker', () => {
   })
 
   it('blocks searching and selecting while disabled', () => {
-    render(<EligibleAccountPicker selected={null} onSelect={vi.fn()} disabled />)
+    const onSelect = vi.fn()
+    render(<EligibleAccountPicker selected={null} onSelect={onSelect} disabled />)
     expect(screen.getByLabelText('Buscar cuenta')).toBeDisabled()
     const searchButton = screen.getByRole('button', { name: 'Buscar cuenta' })
     expect(searchButton).toBeDisabled()
     fireEvent.click(searchButton)
+    // Whether or not the synthetic click reaches the handler (react-dom
+    // suppresses pointer events on disabled form elements), the disabled
+    // contract holds on the observable state: no search runs, no results
+    // render, no error surfaces, no busy state, and nothing gets selected.
     expect(mocks.searchEligibleAccounts).not.toHaveBeenCalled()
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Buscar cuenta' })).toBeDisabled()
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })
