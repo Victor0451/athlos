@@ -4,6 +4,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { CondonationLifecycle } from '@/components/collections/CondonationLifecycle'
+import { CommunityWorkApprovalLifecycle } from '@/components/collections/CommunityWorkApprovalLifecycle'
+import { CommunityWorkDecisionDialog } from '@/components/collections/CommunityWorkDecisionDialog'
+import {
+  CommunityWorkOperationError,
+  listCommunityWorkQueue,
+  type CommunityWorkQueueItem,
+} from '@/lib/api/community-work-approval'
 import {
   CondonationOperationError,
   listCondonationQueue,
@@ -21,6 +28,177 @@ const errorMessage = (error: unknown) => {
       return 'La bandeja recibió datos incompletos. Intentá recargarla.'
   }
   return 'No se pudo cargar la bandeja de condonaciones. Intentá nuevamente.'
+}
+
+const communityErrorMessage = (error: unknown) => {
+  if (error instanceof CommunityWorkOperationError) {
+    if (error.kind === 'permission') return 'No tenés permisos para consultar esta bandeja.'
+    if (error.kind === 'partial_data')
+      return 'La bandeja recibió datos incompletos. Intentá recargarla.'
+  }
+  return 'No se pudo cargar la bandeja de trabajo comunitario. Intentá nuevamente.'
+}
+
+/** The community queue is independent: its own cache, pagination, and errors. */
+function CommunityApprovalsQueue({
+  operatorId,
+  role,
+}: {
+  operatorId: string
+  role: 'ADMIN' | 'TESORERO'
+}) {
+  const [selected, setSelected] = useState<CommunityWorkQueueItem | null>(null)
+  const queue = useInfiniteQuery({
+    queryKey: ['community-work-queue', operatorId, role],
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      pageParam === undefined
+        ? listCommunityWorkQueue({ view: 'all' })
+        : listCommunityWorkQueue({ view: 'all', cursor: pageParam }),
+    getNextPageParam: (lastPage) => lastPage?.next_cursor ?? undefined,
+    retry: false,
+  })
+  const rows = [
+    ...new Map(
+      queue.data?.pages
+        .flatMap((page) => page?.items ?? [])
+        .map((item) => [item.id.toLowerCase(), item]),
+    ).values(),
+  ]
+  const denied =
+    queue.error instanceof CommunityWorkOperationError && queue.error.kind === 'permission'
+  useEffect(() => {
+    if (denied) setSelected(null)
+  }, [denied])
+  const fatalError = queue.isError && (!queue.isFetchNextPageError || denied)
+  const refresh = () => {
+    void queue.refetch({ cancelRefetch: false })
+  }
+
+  return (
+    <section
+      aria-label="Bandeja de trabajo comunitario"
+      className="space-y-4 rounded-lg border border-ink-100 bg-surface p-4 shadow-sm"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-lg font-semibold text-ink-900">Trabajo comunitario</h2>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={queue.isFetching}
+          className={queueButtonClass}
+        >
+          Actualizar bandeja
+        </button>
+      </div>
+      <p className="text-sm text-ink-500">
+        Aprobar y ejecutar conserva la validación del servidor y requiere acciones explícitas. La
+        deuda solo cambia con la ejecución confirmada.
+      </p>
+      {queue.isPending ? (
+        <p aria-live="polite">Cargando solicitudes de trabajo comunitario…</p>
+      ) : fatalError ? (
+        <div role="alert" className="space-y-3">
+          <p>{communityErrorMessage(queue.error)}</p>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={queue.isFetching}
+            className={queueButtonClass}
+          >
+            Reintentar bandeja
+          </button>
+        </div>
+      ) : rows.length === 0 ? (
+        <p>No hay solicitudes de trabajo comunitario para revisar.</p>
+      ) : (
+        <ol className="space-y-4">
+          {rows.map((item) => (
+            <li
+              key={item.id}
+              className="min-w-0 space-y-4 border-t border-ink-200 pt-4 [overflow-wrap:anywhere]"
+            >
+              <h3 className="font-display text-lg font-semibold text-ink-900">
+                {item.current_member.nombre} {item.current_member.apellido} · N.º{' '}
+                {item.current_member.numero_socio}
+              </h3>
+              <p className="text-sm text-ink-500">Datos actuales del socio</p>
+              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="font-semibold">Solicitó</dt>
+                  <dd>{item.requester.username}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">Contexto</dt>
+                  <dd className="whitespace-pre-wrap">{item.context}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">Motivo</dt>
+                  <dd className="whitespace-pre-wrap">{item.reason}</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold">Evidencia</dt>
+                  <dd className="whitespace-pre-wrap">{item.evidence}</dd>
+                </div>
+              </dl>
+              <CommunityWorkApprovalLifecycle lifecycle={item} role={role} headingLevel={4} />
+              {item.state === 'pending' &&
+                (item.requester.id.toLowerCase() === operatorId.toLowerCase() ? (
+                  <p>Otro ADMIN o TESORERO debe decidir esta solicitud que enviaste vos.</p>
+                ) : (
+                  <button
+                    type="button"
+                    className={queueButtonClass}
+                    onClick={() => setSelected(item)}
+                  >
+                    Revisar solicitud
+                  </button>
+                ))}
+              {item.state === 'approved_awaiting_execution' &&
+                (item.requester.id.toLowerCase() === operatorId.toLowerCase() ? (
+                  <p>La persona que aprobó debe ejecutar este trabajo comunitario.</p>
+                ) : (
+                  <button
+                    type="button"
+                    className={queueButtonClass}
+                    onClick={() => setSelected(item)}
+                  >
+                    Ejecutar trabajo comunitario
+                  </button>
+                ))}
+            </li>
+          ))}
+        </ol>
+      )}
+      {queue.isFetchNextPageError && !fatalError && (
+        <p role="alert">{communityErrorMessage(queue.error)}</p>
+      )}
+      {!fatalError && queue.hasNextPage && (
+        <button
+          type="button"
+          className={queueButtonClass}
+          disabled={queue.isFetching}
+          onClick={() => void queue.fetchNextPage({ cancelRefetch: false })}
+        >
+          {queue.isFetchingNextPage
+            ? 'Cargando más…'
+            : queue.isFetchNextPageError
+              ? 'Reintentar cargar más'
+              : 'Cargar más'}
+        </button>
+      )}
+      {selected && !denied && (
+        <CommunityWorkDecisionDialog
+          key={selected.id}
+          request={selected}
+          operatorId={operatorId}
+          role={role}
+          onClose={() => setSelected(null)}
+          onRefresh={refresh}
+        />
+      )}
+    </section>
+  )
 }
 
 /** The URL is shared with Treasury; generic token details remain ADMIN-only. */
@@ -222,6 +400,8 @@ function ApprovalsQueue({ operatorId, role }: { operatorId: string; role: 'ADMIN
           onRefresh={refresh}
         />
       )}
+
+      <CommunityApprovalsQueue operatorId={operatorId} role={role} />
 
       {role === 'ADMIN' && (
         <section
