@@ -123,6 +123,25 @@ function buildUrl(path: string, query?: Record<string, string | number | undefin
   return qs ? `${base}?${qs}` : base
 }
 
+/**
+ * Parse the JSON body of a successful response. A 2xx with an unreadable
+ * body (e.g. an HTML page injected by a proxy) is a server-data failure,
+ * not a connection one: surface it as ApiError('MALFORMED_RESPONSE') so
+ * callers can differentiate it from network failures (finding #2 of the
+ * caja #537 B2a review).
+ */
+async function parseJsonBody<T>(res: Response): Promise<T> {
+  try {
+    return (await res.json()) as T
+  } catch {
+    throw new ApiError(
+      res.status,
+      'MALFORMED_RESPONSE',
+      'La respuesta del servidor no se pudo interpretar.',
+    )
+  }
+}
+
 /** Issue a single fetch with auth + JSON handling. Does NOT handle 401. */
 async function rawFetch<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init)
@@ -130,7 +149,7 @@ async function rawFetch<T>(url: string, init: RequestInit): Promise<T> {
     throw buildApiError(res, await readEnvelope(res))
   }
   if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  return parseJsonBody<T>(res)
 }
 
 /**
@@ -215,7 +234,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
     throw buildApiError(res, await readEnvelope(res))
   }
   if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  return parseJsonBody<T>(res)
 }
 
 /** Single-flight refresh: N concurrent callers share one Promise. */
