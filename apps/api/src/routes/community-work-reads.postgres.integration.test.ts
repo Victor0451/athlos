@@ -70,7 +70,7 @@ const createRequest = async (
 
 /** Same state derivation as the route DTO: a receipt row implies executed. */
 const executionStatusOf = (row: CommunityWorkLifecycle) =>
-  row.executionReceiptId !== null ? 'executed' : row.executionId ? 'recoverable' : 'unavailable'
+  row.executionReceiptId === null ? (row.executionId ? 'recoverable' : 'unavailable') : 'executed'
 
 /** The queue joins socios on the snapshot memberId; every queued member needs a matching row. */
 const insertSocio = (id: string) =>

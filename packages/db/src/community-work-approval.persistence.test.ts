@@ -23,6 +23,20 @@ import { createCanonicalHarness, requireDatabaseUrl } from './community-work-app
 const harness = createCanonicalHarness(requireDatabaseUrl(), 'athlos_test')
 const { pool, resetDatabase, buildMinStubSchemas, applyCanonicalChain, seedFKReferences } = harness
 
+/**
+ * Journal index of the 0071 entry, derived at call time — the union journal
+ * interleaves it between the caja chain (0066-0070) and 0072, so its position
+ * is not a constant. Chains "including 0071" slice through this index.
+ */
+function canonicalChainUpTo0071(): number {
+  const journal = JSON.parse(
+    readFileSync(join(__dirname, '..', 'drizzle', 'meta', '_journal.json'), 'utf8'),
+  ) as { entries: Array<{ idx: number; tag: string }> }
+  const cwIdx = journal.entries.findIndex((e) => e.tag === '0071_community_work_approval')
+  if (cwIdx < 0) throw new Error('0071_community_work_approval missing from the journal')
+  return cwIdx
+}
+
 beforeAll(async () => {
   await harness.connect()
 })
@@ -48,19 +62,23 @@ describe('Migration journal', () => {
 
     expect(journal.entries.map((e) => e.tag)).toEqual(files)
     expect(journal.entries.map((e) => e.idx)).toEqual(files.map((_, i) => i))
-    expect(journal.entries.at(-1)?.tag).toBe('0071_community_work_approval')
+    // Union journal: caja 0066-0073 intercalates 0071 in numeric order; 0073 closes the chain.
+    expect(journal.entries.at(-1)?.tag).toBe('0073_cash_close_transfers')
     expect(journal.entries.at(-1)?.when).toBeGreaterThan(1789479500000)
   })
 
-  it('includes 0071_community_work_approval at idx 58', async () => {
+  it('registers 0071_community_work_approval after the caja chain in numeric order', async () => {
     const dbDir = join(__dirname, '..', 'drizzle')
     const journalRaw = readFileSync(join(dbDir, 'meta', '_journal.json'), 'utf8')
     const journal = JSON.parse(journalRaw) as {
       entries: Array<{ idx: number; tag: string }>
     }
-    const last = journal.entries.at(-1)!
-    expect(last.idx).toBe(58)
-    expect(last.tag).toBe('0071_community_work_approval')
+    // Derived, not hard-coded: the union journal interleaves 0071 between 0070 and 0072.
+    const cwEntry = journal.entries.find((e) => e.tag === '0071_community_work_approval')
+    expect(cwEntry).toBeDefined()
+    const sortedTags = journal.entries.map((e) => e.tag).sort()
+    expect(sortedTags.indexOf('0071_community_work_approval')).toBe(cwEntry!.idx)
+    expect(journal.entries.at(-1)!.tag).toBe('0073_cash_close_transfers')
   })
 
   it('migration file contains expected DDL patterns', async () => {
@@ -77,14 +95,20 @@ describe('Migration journal', () => {
 /* ═══════════════════════════════════════════
    Red discrimination — chain WITHOUT 0071
    ═══════════════════════════════════════════ */
-describe('RED: chain without 0071 (idx 0..57)', () => {
+describe('RED: chain without 0071', () => {
   beforeAll(async () => {
     await resetDatabase()
     await buildMinStubSchemas()
   }, 60_000)
 
-  it('chain 0..57 applies but does NOT create tesoreria.dues_community_work_executions', async () => {
-    const result = await applyCanonicalChain(57)
+  it('chain without 0071 applies but does NOT create tesoreria.dues_community_work_executions', async () => {
+    const dbDir = join(__dirname, '..', 'drizzle')
+    const journal = JSON.parse(readFileSync(join(dbDir, 'meta', '_journal.json'), 'utf8')) as {
+      entries: Array<{ idx: number; tag: string }>
+    }
+    const cwIdx = journal.entries.findIndex((e) => e.tag === '0071_community_work_approval')
+    expect(cwIdx).toBeGreaterThan(0)
+    const result = await applyCanonicalChain(cwIdx - 1)
     expect(result.ok).toBe(true)
 
     const checkTableExists = await pool
@@ -98,7 +122,7 @@ describe('RED: chain without 0071 (idx 0..57)', () => {
     expect(checkTableExists).toBe(false)
   })
 
-  it('chain 0..57 creates approval_tokens in public', async () => {
+  it('chain without 0071 creates approval_tokens in public', async () => {
     const exists = await pool
       .query(
         `SELECT EXISTS (
@@ -118,7 +142,7 @@ describe('GREEN: full canonical chain incl. 0071', () => {
   beforeAll(async () => {
     await resetDatabase()
     await buildMinStubSchemas()
-    const result = await applyCanonicalChain(58)
+    const result = await applyCanonicalChain(canonicalChainUpTo0071())
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error(`Full chain failed: ${result.error}`)
     // Seed one row per FK-prerequisite table so assertion INSERTs can succeed

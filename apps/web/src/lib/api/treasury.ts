@@ -27,9 +27,56 @@ const decodeShift = (value: unknown): CashShift | null => {
     closed_at: value.closed_at,
   }
 }
+export interface CashMovement {
+  id: string
+  direction: 'INCOME' | 'EXPENSE'
+  tender: string
+  amount_cents: number
+  source_type: string
+  source_id?: string
+  created_at: string
+  account_code_snapshot?: string
+  account_name_snapshot?: string
+  description?: string
+}
+
+const decodeMovement = (value: unknown): CashMovement | null => {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    (value.direction !== 'INCOME' && value.direction !== 'EXPENSE') ||
+    typeof value.tender !== 'string' ||
+    typeof value.amount_cents !== 'number' ||
+    !Number.isSafeInteger(value.amount_cents) ||
+    typeof value.source_type !== 'string' ||
+    (value.source_id !== undefined && typeof value.source_id !== 'string') ||
+    typeof value.created_at !== 'string' ||
+    (value.account_code_snapshot !== undefined &&
+      typeof value.account_code_snapshot !== 'string') ||
+    (value.account_name_snapshot !== undefined &&
+      typeof value.account_name_snapshot !== 'string') ||
+    (value.description !== undefined && typeof value.description !== 'string')
+  )
+    return null
+  return {
+    id: value.id,
+    direction: value.direction,
+    tender: value.tender,
+    amount_cents: value.amount_cents,
+    source_type: value.source_type,
+    ...(value.source_id === undefined ? {} : { source_id: value.source_id }),
+    created_at: value.created_at,
+    // prettier-ignore
+    ...(value.account_code_snapshot === undefined ? {} : { account_code_snapshot: value.account_code_snapshot, account_name_snapshot: value.account_name_snapshot as string, description: value.description as string }),
+  }
+}
+
 export interface CashShiftDetail {
   shift: CashShift
   close: CashClose | null
+  movements?: CashMovement[]
+  expected_tenders?: Record<string, number>
+  opening_tenders?: Record<string, number>
 }
 
 const isTotals = (value: unknown): value is Record<string, number> =>
@@ -42,7 +89,28 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
   if (!isRecord(value)) throw invalid()
   const shift = decodeShift(value.shift)
   if (!shift || shift.id !== shiftId) throw invalid()
-  if (value.close === null) return { shift, close: null }
+  // U9-A additive fields: present for fresh details, absent for legacy shapes; never guessed.
+  let extension: Pick<CashShiftDetail, 'movements' | 'expected_tenders' | 'opening_tenders'> = {}
+  if (value.movements !== undefined) {
+    if (
+      !Array.isArray(value.movements) ||
+      !isTotals(value.expected_tenders) ||
+      !isTotals(value.opening_tenders)
+    )
+      throw invalid()
+    const movements: CashMovement[] = []
+    for (const raw of value.movements) {
+      const movement = decodeMovement(raw)
+      if (!movement || movement.amount_cents < 0) throw invalid()
+      movements.push(movement)
+    }
+    extension = {
+      movements,
+      expected_tenders: value.expected_tenders,
+      opening_tenders: value.opening_tenders,
+    }
+  }
+  if (value.close === null) return { shift, close: null, ...extension }
   const close = value.close
   if (
     !isRecord(close) ||
@@ -69,6 +137,7 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
       closed_at: close.closed_at,
       ...(close.force_close === undefined ? {} : { force_close: close.force_close }),
     },
+    ...extension,
   }
 }
 
@@ -113,6 +182,8 @@ export function recordCashTender(
     source_type: 'SETTLEMENT' | 'MANUAL'
     source_id?: string
     reason?: string
+    account_code?: string
+    description?: string
   },
   key: string,
 ) {

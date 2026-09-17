@@ -105,7 +105,7 @@ describe('cash shift detail reads', () => {
   )
 
   it.each([
-    ['OPERADOR', true, shiftId, 403, false],
+    ['OPERADOR', true, shiftId, 404, true],
     ['TESORERO', false, shiftId, 404, false],
     ['ADMIN', true, 'not-a-uuid', 400, false],
     ['ADMIN', true, shiftId, 404, true],
@@ -139,10 +139,239 @@ describe('treasury routes',()=>{
   // prettier-ignore
   it('opens a shift for finance and returns a privacy-safe close DTO',async()=>{const service={open:vi.fn().mockResolvedValue({id:'shift-1',deskId:'front',status:'OPEN'}),close:vi.fn()},fastify=await app(service),opened=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{desk_id:'front',opening_tenders:{CASH:100}}});expect(opened.statusCode).toBe(201);expect(opened.json()).toEqual({id:'shift-1',desk_id:'front',status:'OPEN'});expect(service.open).toHaveBeenCalledWith(expect.objectContaining({deskId:'front',openingTenders:{CASH:100}}))})
   // prettier-ignore
-   it('rejects operators and remains disabled behind the cash gate',async()=>{const service={open:vi.fn()};expect((await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('OPERADOR'),payload:{}})).statusCode).toBe(403);expect((await(await app(service,false)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{}})).statusCode).toBe(404)})
+   it('remains disabled behind the cash gate',async()=>{const service={open:vi.fn()};expect((await(await app(service,false)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO'),payload:{}})).statusCode).toBe(404);expect(service.open).not.toHaveBeenCalled()})
    it('requires an explicit idempotency key for every financial command',async()=>{const service={open:vi.fn()};const response=await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts',headers:auth('TESORERO',''),payload:{desk_id:'front',opening_tenders:{}}});expect(response.statusCode).toBe(400);expect(service.open).not.toHaveBeenCalled()})
   // prettier-ignore
    it('maps an authorized discrepancy close and never returns authorization evidence',async()=>{const service={close:vi.fn().mockResolvedValue({id:'close-1',shiftId:'shift-1',expectedTenders:{CASH:100},countedTenders:{CASH:90},discrepancy:{CASH:-10},reason:'Counted short',closedAt:'2026-08-19T10:00:00.000Z'})},fastify=await app(service),response=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('TESORERO','close-1'),payload:{counted_tenders:{CASH:90},reason:'Counted short'}});expect(response.statusCode).toBe(200);expect(response.json()).toEqual({id:'close-1',shift_id:'shift-1',expected_tenders:{CASH:100},counted_tenders:{CASH:90},discrepancy:{CASH:-10},reason:'Counted short',closed_at:'2026-08-19T10:00:00.000Z'});expect(response.body).not.toContain('authorizationEvidence')})
    it('passes force-close intent and reason only to an authorized finance operator',async()=>{const service={close:vi.fn().mockResolvedValue({id:'close-force',shiftId:'shift-1',expectedTenders:{},countedTenders:{},discrepancy:{},reason:'Recovery',closedAt:'2026-08-20T10:00:00.000Z',forceClose:true})},fastify=await app(service),response=await fastify.inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('TESORERO','force-close-1'),payload:{counted_tenders:{},force_close:true,reason:'Recovery'}});expect(response.statusCode).toBe(200);expect(service.close).toHaveBeenCalledWith(expect.objectContaining({forceClose:true,reason:'Recovery'}));expect(response.json()).toMatchObject({force_close:true,reason:'Recovery'});expect(response.body).not.toContain('authorizationEvidence')})
-   it('rejects force-close for an ordinary operator',async()=>{const service={close:vi.fn()};const response=await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('OPERADOR','force-close-operator'),payload:{counted_tenders:{},force_close:true,reason:'Recovery'}});expect(response.statusCode).toBe(403);expect(service.close).not.toHaveBeenCalled()})
+   it('rejects force-close for an ordinary operator at the service, mapped to 403 without evidence',async()=>{const service={close:vi.fn().mockRejectedValue(BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS,'Forced cash close is restricted to finance operators'))};const response=await(await app(service)).inject({method:'POST',url:'/api/v1/treasury/shifts/00000000-0000-4000-8000-000000000002/close',headers:auth('OPERADOR','force-close-operator'),payload:{counted_tenders:{},force_close:true,reason:'Recovery'}});expect(response.statusCode).toBe(403);expect(response.body).not.toContain('authorizationEvidence');expect(service.close).toHaveBeenCalledWith(expect.objectContaining({role:'OPERADOR',forceClose:true}))})
+
+  it('permits an operator through only the Caja open and read routes', async () => {
+    const shiftId = '00000000-0000-4000-8000-000000000002'
+    const ownShift = {
+      id: shiftId,
+      deskId: 'front',
+      status: 'OPEN',
+      assignedOperatorId: actorId,
+      businessDate: '2026-08-19',
+      openedAt: '2026-08-19T10:00:00.000Z',
+      closedAt: null,
+    }
+    const service = {
+      open: vi.fn().mockResolvedValue(ownShift),
+      list: vi.fn().mockResolvedValue([ownShift]),
+      detail: vi.fn().mockResolvedValue({ shift: ownShift, close: null }),
+    }
+    const fastify = await app(service)
+
+    const opened = await fastify.inject({
+      method: 'POST',
+      url: '/api/v1/treasury/shifts',
+      headers: auth('OPERADOR', 'operator-open'),
+      payload: { desk_id: 'front', opening_tenders: {} },
+    })
+    const listed = await fastify.inject({
+      method: 'GET',
+      url: '/api/v1/treasury/shifts',
+      headers: { authorization: auth('OPERADOR').authorization },
+    })
+    const detail = await fastify.inject({
+      method: 'GET',
+      url: `/api/v1/treasury/shifts/${shiftId}`,
+      headers: { authorization: auth('OPERADOR').authorization },
+    })
+
+    expect(opened.statusCode).toBe(201)
+    expect(listed.json()).toEqual({ items: [expect.objectContaining({ id: shiftId })] })
+    expect(detail.json()).toMatchObject({ shift: { id: shiftId, assigned_operator_id: actorId } })
+    expect(service.open).toHaveBeenCalledWith(expect.objectContaining({ actorId }))
+    expect(service.list).toHaveBeenCalledWith(expect.objectContaining({ actorId, role: 'OPERADOR' }))
+    expect(service.detail).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId, role: 'OPERADOR', shiftId }),
+    )
+  })
+
+  it('rejects an owner-spoofing opening payload before calling the service', async () => {
+    const service = { open: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url: '/api/v1/treasury/shifts',
+      headers: auth('OPERADOR', 'operator-spoof'),
+      payload: {
+        desk_id: 'front',
+        opening_tenders: {},
+        assigned_operator_id: '00000000-0000-4000-8000-000000000099',
+      },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(service.open).not.toHaveBeenCalled()
+  })
  })
+
+describe('manual movement API', () => {
+  const shiftId = '00000000-0000-4000-8000-000000000002'
+  const url = `/api/v1/treasury/shifts/${shiftId}/tenders`
+  const manual = {
+    direction: 'INCOME',
+    tender: 'CASH',
+    amount_cents: 1500,
+    source_type: 'MANUAL',
+    reason: 'Rifa',
+    account_code: '4.1.02',
+    description: 'Venta de rifas de la feria',
+  }
+  const okService = () => ({
+    recordTender: vi.fn().mockResolvedValue({
+      id: 'tender-1',
+      shiftId,
+      direction: 'INCOME',
+      tender: 'CASH',
+      amountCents: 1500,
+      sourceType: 'MANUAL',
+      sourceId: null,
+    }),
+  })
+
+  it('records an operator manual movement with required account attribution', async () => {
+    const service = okService()
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', 'manual-op-1'),
+      payload: manual,
+    })
+    expect(response.statusCode).toBe(201)
+    expect(service.recordTender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId,
+        role: 'OPERADOR',
+        shiftId,
+        sourceType: 'MANUAL',
+        accountCode: '4.1.02',
+        description: 'Venta de rifas de la feria',
+      }),
+    )
+  })
+
+  it.each([
+    ['missing account_code', { account_code: undefined }],
+    ['missing description', { description: undefined }],
+    ['blank description', { description: '   ' }],
+  ])('rejects a manual movement with %s before the service', async (label, overrides) => {
+    const service = { recordTender: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', `manual-bad-${label}`),
+      payload: { ...manual, ...overrides },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(service.recordTender).not.toHaveBeenCalled()
+  })
+
+  it('rejects account attribution on settlement tenders', async () => {
+    const service = { recordTender: vi.fn() }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-settle-attr'),
+      payload: {
+        direction: 'INCOME',
+        tender: 'CASH',
+        amount_cents: 100,
+        source_type: 'SETTLEMENT',
+        source_id: '00000000-0000-4000-8000-000000000009',
+        account_code: '4.1.01',
+        description: 'Cuota social',
+      },
+    })
+    expect(response.statusCode).toBe(400)
+    expect(service.recordTender).not.toHaveBeenCalled()
+  })
+
+  it('maps a foreign-shift operator rejection to 403 without leaking evidence', async () => {
+    const service = {
+      recordTender: vi
+        .fn()
+        .mockRejectedValue(
+          BusinessError(
+            ErrorCode.INSUFFICIENT_PERMISSIONS,
+            'Cash shift responsibility does not match the operator',
+          ),
+        ),
+    }
+    const response = await (
+      await app(service)
+    ).inject({
+      method: 'POST',
+      url,
+      headers: auth('OPERADOR', 'manual-foreign-shift'),
+      payload: manual,
+    })
+    expect(response.statusCode).toBe(403)
+    expect(response.body).not.toContain('authorizationEvidence')
+  })
+
+  it('enforces the manual method matrix at the boundary', async () => {
+    const service = okService()
+    const fastify = await app(service)
+    const expense = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-bank-exp'),
+      payload: { ...manual, direction: 'EXPENSE', tender: 'BANK_DEBIT' },
+    })
+    const income = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-bank-inc'),
+      payload: { ...manual, direction: 'INCOME', tender: 'BANK_DEBIT' },
+    })
+    const unknown = await fastify.inject({
+      method: 'POST',
+      url,
+      headers: auth('TESORERO', 'manual-unknown'),
+      payload: { ...manual, tender: 'CHECK' },
+    })
+    expect(expense.statusCode).toBe(201)
+    expect(income.statusCode).toBe(400)
+    expect(unknown.statusCode).toBe(400)
+    expect(service.recordTender).toHaveBeenCalledTimes(1)
+  })
+})
+
+// prettier-ignore
+describe('supporting record routes',()=>{
+  const sourceId='00000000-0000-4000-8000-000000000003',url=`/api/v1/treasury/manual-sources/${sourceId}/supporting-record`,readUrl=`/api/v1/treasury/manual-sources/${sourceId}`
+  const body={kind:'EXTERNAL',doc_type:'FACTURA_B',issuer:'Proveedor Feria',point_of_sale:'00001',doc_number:'00000042',total_cents:100000,tax_components:[{label:'IVA 21%',amount_cents:21000,semantic:'ADDITIVE'}]}
+  it('maps an operator supporting-record command and returns the service DTO',async()=>{const service={recordSupporting:vi.fn().mockResolvedValue({id:'rec-1',kind:'EXTERNAL',pointOfSale:'00001',totalCents:100000})},response=await(await app(service)).inject({method:'POST',url,headers:auth('OPERADOR','support-op-1'),payload:body});expect(response.statusCode).toBe(201);expect(response.json()).toMatchObject({id:'rec-1',pointOfSale:'00001'});expect(service.recordSupporting).toHaveBeenCalledWith(expect.objectContaining({actorId,role:'OPERADOR',manualSourceId:sourceId,kind:'EXTERNAL',docType:'FACTURA_B',pointOfSale:'00001',docNumber:'00000042',totalCents:100000,taxComponents:[{label:'IVA 21%',amountCents:21000,semantic:'ADDITIVE'}]}))})
+  it('rejects unknown fields and missing idempotency keys strictly',async()=>{const service={recordSupporting:vi.fn()},fastify=await app(service),unknown=await fastify.inject({method:'POST',url,headers:auth('OPERADOR','support-unknown'),payload:{...body,amount:1000}}),keyless=await fastify.inject({method:'POST',url,headers:auth('OPERADOR',''),payload:body});expect(unknown.statusCode).toBe(400);expect(keyless.statusCode).toBe(400);expect(service.recordSupporting).not.toHaveBeenCalled()})
+  it('reads a manual source with its optional supporting record',async()=>{const service={manualSourceDetail:vi.fn().mockResolvedValue({source:{id:sourceId},supportingRecord:null})},response=await(await app(service)).inject({method:'GET',url:readUrl,headers:{authorization:auth('OPERADOR').authorization}});expect(response.statusCode).toBe(200);expect(response.json()).toEqual({source:{id:sourceId},supportingRecord:null});expect(service.manualSourceDetail).toHaveBeenCalledWith(expect.objectContaining({actorId,role:'OPERADOR',manualSourceId:sourceId}))})
+  it('remains disabled behind the cash gate',async()=>{const service={recordSupporting:vi.fn(),manualSourceDetail:vi.fn()},fastify=await app(service,false),created=await fastify.inject({method:'POST',url,headers:auth('OPERADOR','support-gate'),payload:body}),read=await fastify.inject({method:'GET',url:readUrl,headers:{authorization:auth('OPERADOR').authorization}});expect(created.statusCode).toBe(404);expect(read.statusCode).toBe(404);expect(service.recordSupporting).not.toHaveBeenCalled();expect(service.manualSourceDetail).not.toHaveBeenCalled()})
+})
+
+// prettier-ignore
+describe('computed close routes',()=>{
+  const shiftId='00000000-0000-4000-8000-000000000004',url=`/api/v1/treasury/shifts/${shiftId}/close`
+  const closeResult={id:'close-1',shiftId,expectedTenders:{CASH:2600000},countedTenders:{CASH:2600000},discrepancy:{},reason:null,closedAt:'2026-09-15T20:00:00.000Z',closeTransfer:{id:'transfer-1',accountCodeSnapshot:'1.1.3.02',accountNameSnapshot:'Valores a Depositar',accountPathSnapshot:[{code:'1.1.3.02',name:'Valores a Depositar'}],amountCents:2600000,createdAt:'2026-09-15T20:00:00.000Z'}}
+  it('lets an operator close an own shift and maps the computed close transfer DTO',async()=>{const service={close:vi.fn().mockResolvedValue(closeResult)},response=await(await app(service)).inject({method:'POST',url,headers:auth('OPERADOR','close-op-1'),payload:{counted_tenders:{CASH:2600000}}});expect(response.statusCode).toBe(200);expect(response.json()).toMatchObject({id:'close-1',shift_id:shiftId,close_transfer:{id:'transfer-1',account_code_snapshot:'1.1.3.02',amount_cents:2600000}});expect(service.close).toHaveBeenCalledWith(expect.objectContaining({actorId,role:'OPERADOR',shiftId,countedTenders:{CASH:2600000},forceClose:false}))})
+  it('omits close_transfer when the computed cash was zero',async()=>{const {closeTransfer:_drop,...zero}=closeResult;const service={close:vi.fn().mockResolvedValue(zero)},response=await(await app(service)).inject({method:'POST',url,headers:auth('TESORERO','close-zero'),payload:{counted_tenders:{}}});expect(response.statusCode).toBe(200);expect(response.json()).not.toHaveProperty('close_transfer')})
+  it('rejects forged transfer, handoff, and custody fields before the service',async()=>{const service={close:vi.fn()},fastify=await app(service);for(const [index,payload] of [{counted_tenders:{},declared_handoff_cash_cents:2600000},{counted_tenders:{},custody_handoff:true},{counted_tenders:{},transfer_amount_cents:1},{counted_tenders:{},account_code:'1.1.3.02'}].entries()){const response=await fastify.inject({method:'POST',url,headers:auth('OPERADOR',`close-forged-${index}`),payload});expect(response.statusCode).toBe(400)}expect(service.close).not.toHaveBeenCalled()})
+})
+
+// prettier-ignore
+describe('shift detail movements route',()=>{
+  const shiftId='00000000-0000-4000-8000-000000000005',url=`/api/v1/treasury/shifts/${shiftId}`
+  const detailResult={shift:{id:shiftId,deskId:'front',status:'OPEN',assignedOperatorId:actorId,businessDate:'2026-09-16',openedAt:'2026-09-16T10:00:00.000Z',closedAt:null},close:null,openingTenders:{CASH:100000},expectedTenders:{CASH:2600000},movements:[{id:'mv-1',direction:'INCOME',tender:'CASH',amountCents:3000000,sourceType:'MANUAL',createdAt:'2026-09-16T10:05:00.000Z',accountCodeSnapshot:'4.1.01',accountNameSnapshot:'Cuotas sociales',description:'Cuota septiembre'},{id:'mv-2',direction:'INCOME',tender:'TRANSFER',amountCents:400000,sourceType:'SETTLEMENT',sourceId:'set-1',createdAt:'2026-09-16T10:06:00.000Z'}]}
+  it('maps movements, expectation, and opening for the close preview',async()=>{const service={detail:vi.fn().mockResolvedValue(detailResult)},response=await(await app(service)).inject({method:'GET',url,headers:auth('OPERADOR','detail-mv')});expect(response.statusCode).toBe(200);expect(response.json()).toMatchObject({shift:{id:shiftId},close:null,opening_tenders:{CASH:100000},expected_tenders:{CASH:2600000},movements:[{id:'mv-1',direction:'INCOME',tender:'CASH',amount_cents:3000000,source_type:'MANUAL',account_code_snapshot:'4.1.01',account_name_snapshot:'Cuotas sociales',description:'Cuota septiembre'},{id:'mv-2',tender:'TRANSFER',amount_cents:400000,source_type:'SETTLEMENT',source_id:'set-1'}]})})
+  it('omits movement fields for legacy detail results',async()=>{const {movements:_m,expectedTenders:_e,openingTenders:_o,...legacy}=detailResult;const service={detail:vi.fn().mockResolvedValue(legacy)},response=await(await app(service)).inject({method:'GET',url,headers:auth('TESORERO','detail-legacy')});expect(response.statusCode).toBe(200);const body=response.json();expect(body).not.toHaveProperty('movements');expect(body).not.toHaveProperty('expected_tenders')})
+})

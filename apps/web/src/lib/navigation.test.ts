@@ -24,6 +24,17 @@ describe('cash navigation feature gate', () => {
       visibleNavigation(user, { cashEnabled: true }).some((item) => item.href === '/tesoreria'),
     ).toBe(true)
   })
+
+  it('shows the enabled Caja entry to an operator without requiring an active shift', () => {
+    const operator = { role: 'OPERADOR', permissions: { data_steward: false } } as never
+
+    expect(visibleNavigation(operator, { cashEnabled: true })).toContainEqual(
+      expect.objectContaining({ href: '/tesoreria', label: 'Cash desk' }),
+    )
+    expect(visibleNavigation(operator, { cashEnabled: false })).not.toContainEqual(
+      expect.objectContaining({ href: '/tesoreria' }),
+    )
+  })
 })
 
 describe('Collections navigation feature gate', () => {

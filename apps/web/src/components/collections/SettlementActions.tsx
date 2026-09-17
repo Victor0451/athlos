@@ -26,7 +26,7 @@ type Props = {
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<{ replayed?: boolean } | void>
   onRefreshDebt: () => Promise<void>
-  onReverse: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
+  onReverse?: ((input: ReversalRequest) => Promise<{ replayed?: boolean } | void>) | undefined
   headingLevel?: 3 | 4
   initialPaymentSelection?: string[] | undefined
   resumePaymentKey?: string | undefined
@@ -103,7 +103,7 @@ export function SettlementActions({
     setReversalStatus('')
   }
   const submitReversal = async () => {
-    if (!reversal || !reason.trim()) return
+    if (!onReverse || !reversal || !reason.trim()) return
     setReversalBusy(true)
     setReversalError('')
     try {
@@ -141,7 +141,7 @@ export function SettlementActions({
         >
           Acciones de pago
         </Heading>
-        <Badge>Pagos y reversión</Badge>
+        <Badge>{onReverse ? 'Pagos y reversión' : 'Pagos'}</Badge>
       </div>
       {reversalStatus && (
         <p
@@ -163,18 +163,19 @@ export function SettlementActions({
         >
           Registrar pago
         </button>
-        {reversible.map((settlement, index) => (
-          <button
-            key={settlement.id}
-            type="button"
-            onClick={(event) => openReversal(settlement, event.currentTarget)}
-            className={collectionButtonClass.danger}
-          >
-            Revertir pago {index + 1} ·{' '}
-            {formatObligationPeriod(settlement.allocations[0]!.period_start)} ·{' '}
-            {money(settlement.amount_cents, settlement.currency)}
-          </button>
-        ))}
+        {onReverse &&
+          reversible.map((settlement, index) => (
+            <button
+              key={settlement.id}
+              type="button"
+              onClick={(event) => openReversal(settlement, event.currentTarget)}
+              className={collectionButtonClass.danger}
+            >
+              Revertir pago {index + 1} ·{' '}
+              {formatObligationPeriod(settlement.allocations[0]!.period_start)} ·{' '}
+              {money(settlement.amount_cents, settlement.currency)}
+            </button>
+          ))}
       </div>
       <PaymentDialog
         open={paymentOpen}

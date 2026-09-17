@@ -17,6 +17,7 @@ import { CtacteProjectionService } from '../modules/dues/ctacte-projection.ts'
 
 const ADMIN_GATE = { preHandler: requireRole('ADMIN') }
 const FINANCE_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
+const OPERATOR_PAYMENT_GATE = { preHandler: requireRole('ADMIN', 'TESORERO', 'OPERADOR') }
 const datePattern = /^\d{4}-\d{2}-\d{2}$/
 const periodPattern = /^\d{4}-(0[1-9]|1[0-2])$/
 const dateSchema = z
@@ -543,7 +544,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
     // prettier-ignore
     // prettier-ignore
     // prettier-ignore
-    fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',FINANCE_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id}),body={status:result.status,socio_id:result.socioId,currency:result.currency,total_debt_cents:result.totalCents,obligations:result.obligations.map((obligation)=>({id:obligation.id,period_start:obligation.periodStart,period_end:obligation.periodEnd,original_amount_cents:obligation.originalCents,outstanding_cents:obligation.outstandingCents,currency:obligation.currency,status:obligation.status,components:obligation.components.map(({id,kind,componentKey,amountCents})=>({id,kind,component_key:componentKey,amount_cents:amountCents})),benefits:obligation.benefits.map(({id,componentKey,amountCents})=>({id,component_key:componentKey,amount_cents:amountCents})),allocations:obligation.allocations.map(({id,settlementId,settlementKind,settlementAmountCents,currency,amountCents,kind,compensatesAllocationId,reversalEligible})=>({id,settlement_id:settlementId,settlement_kind:settlementKind,settlement_amount_cents:settlementAmountCents,currency,amount_cents:amountCents,kind,compensates_allocation_id:compensatesAllocationId,reversal_eligible:reversalEligible}))}))};return reply.code(result.status === 'not_found' ? 404 : 200).send(body)})
+    fastify.get<{Params:{socioId:string}}>('/api/v1/dues/debt/:socioId',OPERATOR_PAYMENT_GATE,async(request,reply)=>{enabled(container);const params=throwIfInvalid(idParamSchema,{id:request.params.socioId},'params'),result=await settlementService.debt!({role:request.operator!.role,socioId:params.id}),body={status:result.status,socio_id:result.socioId,currency:result.currency,total_debt_cents:result.totalCents,obligations:result.obligations.map((obligation)=>({id:obligation.id,period_start:obligation.periodStart,period_end:obligation.periodEnd,original_amount_cents:obligation.originalCents,outstanding_cents:obligation.outstandingCents,currency:obligation.currency,status:obligation.status,components:obligation.components.map(({id,kind,componentKey,amountCents})=>({id,kind,component_key:componentKey,amount_cents:amountCents})),benefits:obligation.benefits.map(({id,componentKey,amountCents})=>({id,component_key:componentKey,amount_cents:amountCents})),allocations:obligation.allocations.map(({id,settlementId,settlementKind,settlementAmountCents,currency,amountCents,kind,compensatesAllocationId,reversalEligible})=>({id,settlement_id:settlementId,settlement_kind:settlementKind,settlement_amount_cents:settlementAmountCents,currency,amount_cents:amountCents,kind,compensates_allocation_id:compensatesAllocationId,reversal_eligible:reversalEligible}))}))};return reply.code(result.status === 'not_found' ? 404 : 200).send(body)})
     fastify.get<{ Params: { id: string } }>(
       '/api/v1/dues/settlements/:id',
       FINANCE_GATE,
@@ -555,7 +556,7 @@ export const duesRoutes: FastifyPluginCallback<DuesRouteOptions> = (fastify, opt
         return reply.code(200).send(result)
       },
     )
-    fastify.post('/api/v1/dues/settlements', FINANCE_GATE, async (request, reply) => {
+    fastify.post('/api/v1/dues/settlements', OPERATOR_PAYMENT_GATE, async (request, reply) => {
       enabled(container)
       const body = throwIfInvalid(settlementPaymentBodySchema, request.body ?? {}, 'body'),
         key = callerKey(request, true)

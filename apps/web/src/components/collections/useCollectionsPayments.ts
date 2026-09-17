@@ -68,7 +68,9 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
   >('ready')
   const localIdempotency = useRef<CollectionsIdempotencyStore | null>(null)
   const selectedMember = useRef<string | null>(null)
+  const currentUser = useRef(user)
   const debtLoad = useRef(0)
+  currentUser.current = user
   const paymentRequest = useRef<{
     input: { operatorId: string; action: string; draftFingerprint: string }
     memberId: string
@@ -152,14 +154,20 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
     if (!selectedSocio || selectedMember.current !== selectedSocio.id)
       throw new DuesOperationError('unavailable', 'Payment context unavailable')
     const memberId = selectedSocio.id
+    const actor = user
     const load = ++debtLoad.current
+    const isCurrentContext = () =>
+      load === debtLoad.current &&
+      selectedMember.current === memberId &&
+      currentUser.current?.operator_id === actor?.operator_id &&
+      currentUser.current?.role === actor?.role
     setOpenShiftAvailability('loading')
     try {
       const [detail, shifts] = await Promise.all([
         apiDependencies.getDebt(memberId),
         apiDependencies.getOpenCashShifts(),
       ])
-      if (load !== debtLoad.current || selectedMember.current !== memberId)
+      if (!isCurrentContext())
         throw new DuesOperationError('unavailable', 'Payment context unavailable')
       setDebt(detail)
       setDebtStatus(detail.status)
@@ -168,8 +176,7 @@ export function useCollectionsPayments({ user, idempotency: sharedIdempotency, a
       setOpenShiftAvailability('ready')
       return true
     } catch (reason) {
-      if (load === debtLoad.current && selectedMember.current === memberId)
-        setOpenShiftAvailability('unavailable')
+      if (isCurrentContext()) setOpenShiftAvailability('unavailable')
       throw reason
     }
   }

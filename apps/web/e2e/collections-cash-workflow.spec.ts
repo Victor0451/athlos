@@ -37,6 +37,158 @@ test('confirmed cash payment survives failed balance refresh without another cha
   await cashJourney(authenticatedPage, true)
 })
 
+test('operator recovers a 403 denied mobile payment only after an explicit context refresh', async ({
+  authenticatedPage: page,
+}) => {
+  test.skip(
+    process.env.NATIVE_COLLECTIONS_WEB_ENABLED !== 'true' ||
+      process.env.DUES_CASH_ENABLED !== 'true' ||
+      process.env.COLLECTIONS_CASH_MOBILE_KEYBOARD_ENABLED !== 'true',
+    'Requires local Collections, cash, and mobile-keyboard flags.',
+  )
+  const memberId = '00000000-0000-4000-8000-000000000110'
+  const obligationId = '00000000-0000-4000-8000-000000000111'
+  const shiftId = '00000000-0000-4000-8000-000000000112'
+  await page.goto('/login')
+  const operatorId = await page.evaluate(() => {
+    const auth = JSON.parse(localStorage.getItem('athlos.auth')!)
+    auth.currentUser.role = 'OPERADOR'
+    localStorage.setItem('athlos.auth', JSON.stringify(auth))
+    return auth.currentUser.operator_id
+  })
+  const member = { id: memberId, nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+  const shift: CashShift = {
+    id: shiftId,
+    desk_id: 'operator-desk',
+    status: 'OPEN',
+    assigned_operator_id: operatorId,
+    business_date: new Date().toISOString().slice(0, 10),
+    opened_at: new Date().toISOString(),
+    closed_at: null,
+  }
+  let debtGets = 0
+  let paymentAttempts = 0
+  let confirmedSettlements = 0
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/v1/socios')
+      return route.fulfill({
+        json: { items: [member], page: 1, limit: 20, total: 1, has_more: false },
+      })
+    if (request.method() === 'GET' && path === `/api/v1/socios/${memberId}`)
+      return route.fulfill({ json: member })
+    if (request.method() === 'GET' && path === `/api/v1/dues/debt/${memberId}`) {
+      debtGets += 1
+      if (debtGets === 2) {
+        allowExpectedResponseFailure(page, {
+          url: request.url(),
+          status: 503,
+          request: { method: request.method(), postData: request.postData() },
+          context: 'operator payment context refresh',
+        })
+        return route.fulfill({ status: 503, json: { detail: 'offline' } })
+      }
+      return route.fulfill({
+        json: {
+          status: 'ready',
+          socio_id: memberId,
+          currency: 'ARS',
+          total_debt_cents: 10_000,
+          obligations: [
+            {
+              id: obligationId,
+              period_start: '2026-01-01',
+              period_end: '2026-02-01',
+              original_amount_cents: 10_000,
+              outstanding_cents: 10_000,
+              currency: 'ARS',
+              status: 'OPEN',
+              components: [],
+              benefits: [],
+              allocations: [],
+            },
+          ],
+        },
+      })
+    }
+    if (request.method() === 'GET' && path === '/api/v1/treasury/shifts')
+      return route.fulfill({ json: { items: [shift] } })
+    if (request.method() === 'POST' && path === '/api/v1/dues/settlements') {
+      paymentAttempts += 1
+      if (paymentAttempts === 1) {
+        allowExpectedResponseFailure(page, {
+          url: request.url(),
+          status: 403,
+          request: { method: request.method(), postData: request.postData() },
+          context: 'operator payment denial',
+        })
+        return route.fulfill({ status: 403, json: { detail: 'denied' } })
+      }
+      confirmedSettlements += 1
+      return route.fulfill({
+        status: 201,
+        json: {
+          settlement_id: '00000000-0000-4000-8000-000000000113',
+          kind: 'MONETARY',
+          amount_cents: 10_000,
+          currency: 'ARS',
+          allocations: [],
+        },
+      })
+    }
+    return route.fulfill({ json: { items: [] } })
+  })
+  const traverseTo = async (locator: Locator, key = 'Tab') => {
+    for (let index = 0; index < 60; index += 1) {
+      if (await locator.evaluate((element) => document.activeElement === element)) break
+      await page.keyboard.press(key)
+    }
+    await expect(locator).toBeFocused()
+  }
+  const activate = async (locator: Locator) => {
+    await traverseTo(locator)
+    await page.keyboard.press('Enter')
+  }
+
+  await page.goto('/collections')
+  await assertNoPageOverflow(page)
+  await traverseTo(page.getByRole('searchbox', { name: 'Buscar socio' }))
+  await page.keyboard.insertText('Gorriti')
+  await activate(page.getByRole('button', { name: 'Buscar socio', exact: true }))
+  await activate(page.getByRole('button', { name: /Gorriti, Ana/ }))
+  await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
+  const dialog = page.getByRole('dialog', { name: 'Revisar pago', exact: true })
+  const confirm = dialog.getByRole('button', { name: 'Confirmar pago', exact: true })
+  await traverseTo(confirm)
+  await page.keyboard.press('Space')
+  await expect(dialog.getByRole('alert')).toContainText('No tenés permiso para registrar este pago')
+  await expect(confirm).toBeDisabled()
+  await activate(dialog.getByRole('button', { name: 'Actualizar deuda', exact: true }))
+  await expect(
+    dialog.getByText('No se pudo actualizar la deuda. Intentá nuevamente.'),
+  ).toBeVisible()
+  await expect(confirm).toBeDisabled()
+  await activate(dialog.getByRole('button', { name: 'Actualizar deuda', exact: true }))
+  await expect(confirm).toBeEnabled()
+  await traverseTo(confirm, 'Shift+Tab')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('region', { name: 'Resultado del pago' })).toContainText(
+    '00000000-0000-4000-8000-000000000113',
+  )
+  expect({ paymentAttempts, confirmedSettlements }).toEqual({
+    paymentAttempts: 2,
+    confirmedSettlements: 1,
+  })
+  await expect(page.getByRole('button', { name: /revertir pago/i })).toHaveCount(0)
+  await assertNoPageOverflow(page)
+  await activate(page.getByRole('button', { name: 'Registrar pago', exact: true }))
+  await activate(dialog.getByRole('button', { name: 'Cancelar', exact: true }))
+  await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeFocused()
+  await assertInteractiveNames(page)
+})
+
 async function cashJourney(page: Page, failRefresh: boolean) {
   test.setTimeout(qaMode === 'manual' ? 30 * 60_000 : 90_000)
   test.skip(

@@ -1113,13 +1113,11 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
                       )) {
                         fkCandidates.push({ fk: innerKey, fkValue: innerValue })
                       }
-                    } else {
-                      if (i === 1) {
-                        fkCandidates.push({ fk: key, fkValue: value })
-                      }
+                    } else if (i === 1) {
+                      fkCandidates.push({ fk: key, fkValue: value })
                     }
                   }
-                  let chosenValue: unknown = undefined
+                  let chosenValue: unknown
                   let chosen = false
                   for (const c of fkCandidates) {
                     if (
@@ -1310,7 +1308,6 @@ function buildDrizzleInterface(state: StandinState): StandinDrizzle {
       }
       if (left[sqlName] !== undefined) {
         out[alias] = left[sqlName]
-        continue
       }
     }
     return out

@@ -16,8 +16,8 @@ describe('Drizzle migration journal', () => {
 
     expect(journal.entries.map((entry) => entry.tag)).toEqual(files)
     expect(journal.entries.map((entry) => entry.idx)).toEqual(files.map((_, index) => index))
-    expect(journal.entries.at(-1)?.tag).toBe('0071_community_work_approval')
-    // 0071 uses timestamp > peer 0070's 1789479500000
+    expect(journal.entries.at(-1)?.tag).toBe('0073_cash_close_transfers')
+    // 0071 (community-work) intercala el journal del peer; 0073 cierra la unión
     expect(journal.entries.at(-1)?.when).toBeGreaterThan(1789479500000)
     expect(
       journal.entries.findIndex((entry) => entry.tag === '0036_padrones_inscription_lifecycle'),

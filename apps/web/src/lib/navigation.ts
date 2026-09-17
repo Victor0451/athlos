@@ -53,7 +53,7 @@ export const navigation: NavigationItem[] = [
     label: 'Cash desk',
     icon: Wallet,
     section: 'Operations',
-    roles: ['ADMIN', 'TESORERO'],
+    roles: ['ADMIN', 'TESORERO', 'OPERADOR'],
   },
   {
     href: '/admin/gastos',

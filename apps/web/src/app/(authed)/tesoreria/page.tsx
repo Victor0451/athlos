@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
 import { PesoAmountInput } from '@/components/ui/PesoAmountInput'
 import { CashCloseSummary, closedAtLabel } from '@/components/treasury/CashCloseSummary'
+import { ManualMovementForm } from '@/components/treasury/ManualMovementForm'
 import {
   closeCashShift,
   forceCloseCashShift,
@@ -14,6 +15,7 @@ import {
   type CashShift,
   type CashClose,
 } from '@/lib/api/treasury'
+import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/use-auth'
 import { useFeatureConfig } from '@/lib/features'
 import { buildCashContextHref, parseCashContext } from '@/lib/collections-cash-context'
@@ -23,22 +25,16 @@ import {
   isCashShiftEligible,
   isCashShiftExpired,
 } from '@/lib/cash-shift-eligibility'
-
-const parseCashAmount = (value: string): number | null => {
-  const text = value.trim()
-  if (text.length > 32) return null
-  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(text)
-  if (!match) return null
-  const cents = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'))
-  return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cents) : null
-}
+import { parseCashAmount } from '@/lib/cash-amount'
 
 export default function TreasuryPage() {
   const { user } = useAuth()
   const { cashEnabled } = useFeatureConfig()
   const router = useRouter()
   const cashContext = parseCashContext(useSearchParams())
-  const allowed = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const isOperator = user?.role === 'OPERADOR'
+  const operatorId = user?.operator_id
+  const allowed = isOperator || user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const [desk, setDesk] = useState('front-desk')
   const [cash, setCash] = useState('0')
   const [counted, setCounted] = useState('0')
@@ -117,6 +113,7 @@ export default function TreasuryPage() {
     request: (key: string) => Promise<T>,
     confirm: (result: T) => void,
     reportError = setCommandError,
+    errorMessage?: (error: unknown) => string,
   ) => {
     if (
       activeCommand.current ||
@@ -139,8 +136,9 @@ export default function TreasuryPage() {
       let result: T
       try {
         result = await request(keys.current.getOrCreate(input))
-      } catch {
-        if (isCurrent(token)) reportError('No se pudo ejecutar la operación de caja.')
+      } catch (error) {
+        if (isCurrent(token))
+          reportError(errorMessage?.(error) ?? 'No se pudo ejecutar la operación de caja.')
         return
       }
       keys.current.complete(input)
@@ -183,6 +181,11 @@ export default function TreasuryPage() {
         setCloseResult(null)
         setMessage('Turno abierto.')
       },
+      setCommandError,
+      (error) =>
+        isOperator && error instanceof ApiError && error.status === 409
+          ? 'La apertura de Caja entró en conflicto. Actualizá la Caja antes de volver a intentar.'
+          : 'No se pudo ejecutar la operación de caja.',
     )
   }
 
@@ -220,6 +223,16 @@ export default function TreasuryPage() {
       ? buildCashContextHref('/collections', cashContext.memberId, cashContext.obligationIds)
       : null
   const expired = (shift: CashShift) => isCashShiftExpired(shift)
+  const ownOpenShift = isOperator
+    ? shifts.find(
+        (shift) => shift.status === 'OPEN' && shift.assigned_operator_id === user?.operator_id,
+      )
+    : null
+  const ownClosedShifts = isOperator
+    ? shifts.filter(
+        (shift) => shift.status === 'CLOSED' && shift.assigned_operator_id === user?.operator_id,
+      )
+    : []
   const recoverableShifts = shifts
     .filter(expired)
     .filter((shift) => canOperateCashShift(shift, user))
@@ -254,6 +267,113 @@ export default function TreasuryPage() {
         setMessage('Turno vencido recuperado y cerrado.')
       },
       setRecoveryError,
+    )
+  }
+
+  if (isOperator) {
+    return (
+      <main className="space-y-6" aria-labelledby="treasury-title">
+        <header>
+          <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
+          <h1 id="treasury-title" className="font-display text-2xl font-bold text-ink-900">
+            Caja
+          </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Abrí y consultá tu turno asignado sin exponer acciones de Finanzas.
+          </p>
+        </header>
+        {query.isPending && <p role="status">Cargando turnos de caja…</p>}
+        {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
+        {commandError && <p role="alert">{commandError}</p>}
+        {message && <p role="status">{message}</p>}
+        {refreshWarning && (
+          <div>
+            <p role="alert">{refreshWarning}</p>
+            <button type="button" onClick={() => void retryRefresh()} disabled={recoveryPending}>
+              Actualizar turnos
+            </button>
+          </div>
+        )}
+        {!ownOpenShift && <p role="status">No hay turnos.</p>}
+        {!ownOpenShift && (
+          <form
+            onSubmit={open}
+            aria-label="Abrir turno de caja"
+            className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
+          >
+            <label>
+              Puesto
+              <input
+                className="mt-1 block w-full rounded border p-2"
+                value={desk}
+                disabled={locked}
+                onChange={(event) => setDesk(event.target.value)}
+              />
+            </label>
+            <label>
+              Efectivo inicial (pesos)
+              <input
+                className="mt-1 block w-full rounded border p-2"
+                inputMode="decimal"
+                maxLength={32}
+                value={cash}
+                disabled={locked}
+                onChange={(event) => setCash(event.target.value)}
+              />
+            </label>
+            <button
+              className="rounded bg-accent px-3 py-2 text-accent-foreground"
+              type="submit"
+              disabled={locked}
+            >
+              Abrir turno
+            </button>
+          </form>
+        )}
+        <p>Importes en pesos, con coma o punto decimal y sin separadores de miles.</p>
+        {ownOpenShift && operatorId && (
+          <section
+            aria-label="Tu turno de caja"
+            className="rounded-lg border border-ink-100 bg-surface p-4"
+          >
+            {expired(ownOpenShift) ? (
+              <p>
+                Tu turno en {ownOpenShift.desk_id} está vencido. Pedí la recuperación a Finanzas.
+              </p>
+            ) : (
+              <>
+                <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
+                <ManualMovementForm
+                  shiftId={ownOpenShift.id}
+                  operatorId={operatorId}
+                  onRecorded={setMessage}
+                />
+              </>
+            )}
+          </section>
+        )}
+        {ownClosedShifts.length > 0 && (
+          <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
+            <h2 className="font-display text-lg">Turnos cerrados</h2>
+            <p>Consultá el detalle histórico de conciliación de tus turnos cargados.</p>
+            <ul className="space-y-2">
+              {ownClosedShifts.map((shift) => (
+                <li key={shift.id}>
+                  <strong>{shift.desk_id}</strong>
+                  <p>
+                    {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
+                  </p>
+                  <CashCloseHistoryDetail
+                    shift={shift}
+                    actorId={user?.operator_id}
+                    role={user?.role}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </main>
     )
   }
 

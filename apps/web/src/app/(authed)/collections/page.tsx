@@ -204,7 +204,8 @@ export default function CollectionsPage() {
   const paymentResultOrigin = useRef<{ settlementId: string; scope: string } | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
-  const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const financeCapability = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const canSettle = financeCapability
   const {
     cashShiftAvailability,
     debt,
@@ -221,6 +222,9 @@ export default function CollectionsPage() {
     selectSocio: selectPaymentSocio,
     selectedSocio,
   } = useCollectionsPayments({ user, idempotency })
+  const canPayFullSelection =
+    financeCapability || (user?.role === 'OPERADOR' && cashShiftAvailability === 'ready')
+
   const receiptScope =
     user && selectedSocio ? `${user.operator_id}:${user.role}:${selectedSocio.id}` : null
   useEffect(() => {
@@ -1172,16 +1176,17 @@ export default function CollectionsPage() {
                 debt={debt}
                 role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
                 canSettle={canSettle}
+                canPayFullSelection={canPayFullSelection}
                 canRequestCondonation
                 agreementsEnabled={agreementWorkflowEnabled}
                 agreementStates={agreementStates}
                 shifts={openShifts}
                 shiftAvailability={openShiftAvailability}
                 lifecycle={lifecycle}
-                {...(canSettle && paymentOutcome?.reconciliation !== 'pending'
+                {...(canPayFullSelection && paymentOutcome?.reconciliation !== 'pending'
                   ? { onPayment: pay }
                   : {})}
-                {...(canSettle ? { onReverse: reverse } : {})}
+                {...(financeCapability ? { onReverse: reverse } : {})}
                 onRefreshDebt={refreshPaymentContext}
                 onCreateAgreement={createAgreement}
                 onReviseAgreement={reviseAgreement}
@@ -1209,6 +1214,19 @@ export default function CollectionsPage() {
                   const href = buildCashContextHref('/tesoreria', memberId, obligationIds)
                   if (href) router.push(href)
                 }}
+                paymentReconciliationPending={paymentOutcome?.reconciliation === 'pending'}
+                paymentUnavailableHref={
+                  buildCashContextHref(
+                    '/tesoreria',
+                    selectedSocio.id,
+                    debt.obligations
+                      .filter(
+                        ({ outstanding_cents, status }) =>
+                          outstanding_cents > 0 && status === 'OPEN',
+                      )
+                      .map(({ id }) => id),
+                  ) ?? '/tesoreria'
+                }
                 executionFeedback={executionFeedback}
               />
             </>

@@ -782,7 +782,7 @@ export const internalApprovalLinksRoutes: FastifyPluginCallback = (fastify, _opt
         operatorId: request.operator.sub,
         approverChannel: channel.channel,
         approverAddress: channel.address,
-        ...(body.expires_in_hours !== undefined ? { expiresInHours: body.expires_in_hours } : {}),
+        ...(body.expires_in_hours === undefined ? {} : { expiresInHours: body.expires_in_hours }),
       })
 
       const baseUrl = process.env['APP_BASE_URL'] ?? 'http://localhost:3000'

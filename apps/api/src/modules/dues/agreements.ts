@@ -328,12 +328,7 @@ export async function createAgreement(
       )
     return { outcome: 'replayed', agreement: map(existing) }
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      Object.prototype.hasOwnProperty.call(error, 'statusCode')
-    )
+    if (error && typeof error === 'object' && 'code' in error && Object.hasOwn(error, 'statusCode'))
       throw error
     return mapDatabaseError(error)
   }
@@ -387,12 +382,7 @@ async function reviseAgreementCore(
     if (!inserted) throw BusinessError(ErrorCode.CONFLICT, 'Agreement changed concurrently')
     return { outcome: 'created', agreement: map(inserted) }
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      Object.prototype.hasOwnProperty.call(error, 'statusCode')
-    )
+    if (error && typeof error === 'object' && 'code' in error && Object.hasOwn(error, 'statusCode'))
       throw error
     return mapDatabaseError(error)
   }

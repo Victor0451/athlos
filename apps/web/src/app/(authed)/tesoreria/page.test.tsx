@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TreasuryPage from './page'
 import { FeatureConfigProvider } from '@/lib/features'
 import type { CashClose, CashShift } from '@/lib/api/treasury'
+import { ApiError } from '@/lib/api'
 
 const authState = vi.hoisted(() => ({ user: { role: 'TESORERO', operator_id: 'operator-1' } }))
 const navigationMocks = vi.hoisted(() => ({ params: new URLSearchParams(), push: vi.fn() }))
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   openCashShift: vi.fn(),
   closeCashShift: vi.fn(),
   forceCloseCashShift: vi.fn(),
+  recordCashTender: vi.fn(),
   query: {
     data: { items: [] as CashShift[] } as { items: CashShift[] } | undefined,
     isPending: false,
@@ -30,6 +32,7 @@ vi.mock('@/lib/api/treasury', () => ({
   openCashShift: mocks.openCashShift,
   closeCashShift: mocks.closeCashShift,
   forceCloseCashShift: mocks.forceCloseCashShift,
+  recordCashTender: mocks.recordCashTender,
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQuery: () => mocks.query,
@@ -163,7 +166,7 @@ describe('treasury page', () => {
   })
 
   it('does not let an older operator completion unlock a newer opening', async () => {
-    let resolveOld!: (result: object) => void
+    let resolveOld!: (result: unknown) => void
     let rejectNew!: (error: Error) => void
     mocks.openCashShift
       .mockReturnValueOnce(
@@ -583,6 +586,158 @@ describe('treasury page', () => {
       await waitFor(() => expect(mocks.forceCloseCashShift).not.toHaveBeenCalled())
     },
   )
+
+  it('shows an OPERADOR the Caja opening form without finance-only actions', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    render(<TreasuryPage />)
+
+    expect(screen.getByRole('form', { name: 'Abrir turno de caja' })).toBeInTheDocument()
+    expect(screen.getByText('No hay turnos.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Turnos cerrados')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Recuperación de turnos vencidos')).not.toBeInTheDocument()
+  })
+
+  it('keeps a foreign Caja out of an OPERADOR read and opening state', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.query.data = {
+      items: [
+        {
+          id: 'foreign-open',
+          desk_id: 'back',
+          status: 'OPEN',
+          assigned_operator_id: 'operator-2',
+          business_date: '2026-01-01',
+          opened_at: new Date().toISOString(),
+          closed_at: null,
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+
+    expect(screen.getByText('No hay turnos.')).toBeInTheDocument()
+    expect(screen.getByRole('form', { name: 'Abrir turno de caja' })).toBeInTheDocument()
+    expect(screen.queryByText(/back/)).not.toBeInTheDocument()
+  })
+
+  it('shows an OPERADOR their existing open Caja instead of another opening action', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.query.data = {
+      items: [
+        {
+          id: 'own-open',
+          desk_id: 'front',
+          status: 'OPEN',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: new Date().toISOString(),
+          closed_at: null,
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+
+    expect(screen.getByText('Tenés un turno abierto en front.')).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: 'Abrir turno de caja' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
+    expect(screen.getByRole('form', { name: 'Registrar movimiento manual' })).toBeInTheDocument()
+  })
+
+  it('shows an OPERADOR only their own closed Caja history without finance controls', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.query.data = {
+      items: [
+        {
+          id: 'own-closed',
+          desk_id: 'front',
+          status: 'CLOSED',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: '2026-01-01T09:00:00Z',
+          closed_at: '2026-01-01T20:00:00Z',
+        },
+        {
+          id: 'foreign-closed',
+          desk_id: 'back',
+          status: 'CLOSED',
+          assigned_operator_id: 'operator-2',
+          business_date: '2026-01-01',
+          opened_at: '2026-01-01T09:00:00Z',
+          closed_at: '2026-01-01T20:00:00Z',
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+
+    const history = screen.getByRole('region', { name: 'Turnos cerrados' })
+    expect(
+      within(history).getByRole('button', { name: 'Ver conciliación de front' }),
+    ).toBeInTheDocument()
+    expect(within(history).queryByText('back')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cerrar turno de caja')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Recuperación de turnos vencidos')).not.toBeInTheDocument()
+  })
+
+  it('directs an OPERADOR with an expired Caja to finance without offering recovery', () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.query.data = {
+      items: [
+        {
+          id: 'own-expired',
+          desk_id: 'front',
+          status: 'OPEN',
+          assigned_operator_id: 'operator-1',
+          business_date: '2026-01-01',
+          opened_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+          closed_at: null,
+        },
+      ],
+    }
+    render(<TreasuryPage />)
+
+    expect(
+      screen.getByText(/Tu turno en front está vencido\. Pedí la recuperación a Finanzas\./),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /recuperar turno vencido/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('form', { name: 'Registrar movimiento manual' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('explains a stale duplicate open response to an OPERADOR', async () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.openCashShift.mockRejectedValueOnce(
+      new ApiError(409, 'CONFLICT', 'A desk or operator already has an open shift'),
+    )
+    render(<TreasuryPage />)
+
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+
+    expect(
+      await screen.findByText(
+        'La apertura de Caja entró en conflicto. Actualizá la Caja antes de volver a intentar.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('does not mislabel an idempotency payload conflict as an existing open Caja', async () => {
+    authState.user = { role: 'OPERADOR', operator_id: 'operator-1' }
+    mocks.openCashShift.mockRejectedValueOnce(
+      new ApiError(409, 'CONFLICT', 'Idempotency key was already used for a different shift'),
+    )
+    render(<TreasuryPage />)
+
+    fireEvent.submit(screen.getByRole('form', { name: 'Abrir turno de caja' }))
+
+    expect(
+      await screen.findByText(
+        'La apertura de Caja entró en conflicto. Actualizá la Caja antes de volver a intentar.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Ya tenés un turno abierto/)).not.toBeInTheDocument()
+  })
 
   it('shows recovery loading and error states without closing the confirmation dialog', async () => {
     const shift = {

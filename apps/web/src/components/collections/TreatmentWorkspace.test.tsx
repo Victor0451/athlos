@@ -138,6 +138,24 @@ describe('TreatmentWorkspace', () => {
     expect(communityHeading.id).not.toBe(agreementHeading.id)
   })
 
+  it('lets an operator with an own active shift pay without granting reversals', () => {
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="OPERADOR"
+        canPayFullSelection
+        agreementStates={{}}
+        shifts={shifts}
+        onPayment={vi.fn()}
+        onRefreshDebt={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /revertir pago/i })).not.toBeInTheDocument()
+  })
+
   it('forwards unavailable open-shift state to payment actions', () => {
     render(
       <TreatmentWorkspace

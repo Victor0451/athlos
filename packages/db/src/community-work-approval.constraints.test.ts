@@ -15,6 +15,8 @@
  * Strict TDD cycle: RED→GREEN→TRIANGULATE→REFACTOR.
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -39,7 +41,13 @@ describe('GREEN: constraint behavior & legacy compatibility (chain incl. 0071)',
   beforeAll(async () => {
     await resetDatabase()
     await buildMinStubSchemas()
-    const result = await applyCanonicalChain(58)
+    // Derived from the journal: the union interleaves 0071 between 0070 and 0072.
+    const journal = JSON.parse(
+      readFileSync(join(__dirname, '..', 'drizzle', 'meta', '_journal.json'), 'utf8'),
+    ) as { entries: Array<{ idx: number; tag: string }> }
+    const cwIdx = journal.entries.findIndex((e) => e.tag === '0071_community_work_approval')
+    expect(cwIdx).toBeGreaterThan(0)
+    const result = await applyCanonicalChain(cwIdx)
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error(`Full chain failed: ${result.error}`)
     // Seed one row per FK-prerequisite table so assertion INSERTs can succeed

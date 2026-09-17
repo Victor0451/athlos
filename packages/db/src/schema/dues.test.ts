@@ -1,8 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { getTableConfig } from 'drizzle-orm/pg-core'
 import { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  duesCashCloseTransfers,
+  duesCashManualSources,
+  duesCashShifts,
+  duesCashSupportingRecords,
+} from './dues-cash.ts'
 import { duesComponentKind, duesObligationKind, duesPriceKind } from './dues.ts'
 // prettier-ignore
 import { duesBenefitCombinability, duesBenefitKind, duesBenefitPercentageBasis } from './dues-benefits.ts'
@@ -98,6 +105,18 @@ afterAll(async () => {
 })
 
 describe('dues pricing and obligation schema', () => {
+  it('declares only the personal OPEN-shift uniqueness guard', () => {
+    expect(
+      getTableConfig(duesCashShifts)
+        .indexes.map((index) => index.config.name)
+        .sort(),
+    ).toEqual([
+      'dues_cash_shift_desk_idx',
+      'dues_cash_shift_open_operator_unique',
+      'dues_cash_shift_operator_key_unique',
+    ])
+  })
+
   it('exports enums and registers migration 0049 in order', async () => {
     expect(duesPriceKind.enumValues).toEqual(['BASE', 'SPORT'])
     expect(duesObligationKind.enumValues).toEqual(['MONTHLY_DUES', 'COMPENSATION'])
@@ -130,11 +149,60 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0071_community_work_approval',
+      tag: '0073_cash_close_transfers',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),
     )
+  })
+
+  it('declares a one-to-one manual source identity without duplicate tender fields', () => {
+    const columns = Object.keys(duesCashManualSources)
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'id',
+        'tenderId',
+        'accountCodeSnapshot',
+        'accountNameSnapshot',
+        'accountPathSnapshot',
+        'description',
+      ]),
+    )
+    expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
+  })
+
+  it('declares supporting records as transcription metadata without money authority', () => {
+    const columns = Object.keys(duesCashSupportingRecords)
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'id',
+        'manualSourceId',
+        'kind',
+        'docType',
+        'pointOfSale',
+        'docNumber',
+        'priorReferences',
+        'taxComponents',
+        'total',
+      ]),
+    )
+    expect(columns).not.toEqual(expect.arrayContaining(['amount', 'tender', 'direction']))
+  })
+
+  it('declares close transfers as one computed outflow per close without tender duplication', () => {
+    const columns = Object.keys(duesCashCloseTransfers)
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        'id',
+        'closeId',
+        'shiftId',
+        'accountCodeSnapshot',
+        'accountNameSnapshot',
+        'accountPathSnapshot',
+        'amount',
+      ]),
+    )
+    expect(columns).not.toEqual(expect.arrayContaining(['tender', 'direction', 'sourceType']))
   })
 
   it('allows dated memberships but rejects overlapping active groups for one socio', async () => {

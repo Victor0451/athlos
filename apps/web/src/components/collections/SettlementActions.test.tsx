@@ -70,6 +70,42 @@ describe('SettlementActions', () => {
     expect(screen.queryByRole('dialog', { name: /revisar pago/i })).not.toBeInTheDocument()
   })
 
+  it('hides reversal controls when no reversal callback is available', () => {
+    render(
+      <SettlementActions
+        debt={{
+          ...debt,
+          obligations: [
+            {
+              ...debt.obligations[0]!,
+              allocations: [
+                {
+                  id: 'allocation-1',
+                  settlement_id: 'settlement-1',
+                  settlement_kind: 'MONETARY',
+                  settlement_amount_cents: 10_000,
+                  currency: 'ARS',
+                  amount_cents: 10_000,
+                  kind: 'ALLOCATION',
+                  compensates_allocation_id: null,
+                  reversal_eligible: true,
+                },
+              ],
+            },
+          ],
+        }}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={vi.fn()}
+        onRefreshDebt={vi.fn()}
+        onReverse={undefined}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /revertir pago/i })).not.toBeInTheDocument()
+  })
+
   it('uses human reversal labels without exposing settlement identifiers and retains callback IDs', async () => {
     const settlementId = 'a6c9531b-831f-4d11-8c63-67c2f3c3f4cb'
     const onReverse = vi.fn().mockResolvedValue(undefined)

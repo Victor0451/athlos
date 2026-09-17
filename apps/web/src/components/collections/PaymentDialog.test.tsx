@@ -118,6 +118,37 @@ describe('PaymentDialog', () => {
     },
   )
 
+  it.each([
+    new DuesOperationError('permission', 'denied'),
+    new ApiError(403, 'FORBIDDEN', 'denied'),
+  ])(
+    'keeps a denied payment blocked through a failed refresh and requires an explicit retry',
+    async (cause) => {
+      const user = userEvent.setup()
+      const onPayment = vi.fn().mockRejectedValueOnce(cause).mockResolvedValueOnce(undefined)
+      const onRefreshDebt = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce(undefined)
+      renderDialog(onPayment, onRefreshDebt)
+
+      await confirm(user)
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'No tenés permiso para registrar este pago. Actualizá la deuda y los turnos antes de volver a confirmar.',
+      )
+      await user.click(screen.getByRole('button', { name: /actualizar deuda/i }))
+      expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+      expect(screen.getByRole('alert')).toHaveTextContent('No se pudo actualizar la deuda.')
+      await user.click(screen.getByRole('button', { name: /actualizar deuda/i }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeEnabled(),
+      )
+      expect(onPayment).toHaveBeenCalledOnce()
+      await confirm(user)
+      expect(onPayment).toHaveBeenCalledTimes(2)
+    },
+  )
+
   it('excludes paid obligations and prevents stale or duplicate pre-POST submission', async () => {
     const user = userEvent.setup()
     const onPayment = vi.fn().mockResolvedValue(undefined)

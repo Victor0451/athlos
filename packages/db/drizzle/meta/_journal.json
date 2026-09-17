@@ -411,8 +411,57 @@
     {
       "idx": 58,
       "version": "7",
+      "when": 1787853605000,
+      "tag": "0066_plan_cuentas",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789387438026,
+      "tag": "0067_personal_cash_shift_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1789391012423,
+      "tag": "0068_personal_cash_shift_desk_release",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1789417700000,
+      "tag": "0069_settlement_production_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1789479500000,
+      "tag": "0070_cash_manual_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
       "when": 1789479500001,
       "tag": "0071_community_work_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1789560000000,
+      "tag": "0072_cash_supporting_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1789650000000,
+      "tag": "0073_cash_close_transfers",
       "breakpoints": true
     }
   ]
