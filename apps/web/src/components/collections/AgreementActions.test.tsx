@@ -257,3 +257,21 @@ describe('AgreementActions', () => {
     expect(agreementOnly.container.textContent).not.toContain('prettier-ignore')
   })
 })
+
+describe('AgreementActions additive community approval slot', () => {
+  it('renders the additive community-work approval surface only when provided', () => {
+    renderActions({
+      treatment: 'community',
+      communityApproval: (
+        <div data-testid="community-approval-slot">Trabajo comunitario con aprobación</div>
+      ),
+    })
+    expect(screen.getByTestId('community-approval-slot')).toBeInTheDocument()
+    expect(screen.getByText('Trabajo comunitario con aprobación')).toBeInTheDocument()
+  })
+
+  it('keeps the direct registration surface unchanged without the approval slot', () => {
+    renderActions({ treatment: 'community' })
+    expect(screen.queryByTestId('community-approval-slot')).not.toBeInTheDocument()
+  })
+})
