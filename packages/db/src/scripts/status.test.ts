@@ -279,6 +279,7 @@ describe('migrate:status', () => {
         '0071_community_work_approval',
         '0072_cash_supporting_records',
         '0073_cash_close_transfers',
+        '0074_manual_tender_reversals',
       ],
       divergence: [],
       exitCode: 1,
