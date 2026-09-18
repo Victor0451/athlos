@@ -64,6 +64,8 @@ export DUES_ASSESSMENT_ENABLED=true
 
 API_PID=""
 WEB_PID=""
+# Invoked through the EXIT/INT/TERM traps below; shellcheck cannot see trap calls.
+# shellcheck disable=SC2329
 cleanup() {
   [[ -n "$API_PID" ]] && kill "$API_PID" 2>/dev/null || true
   [[ -n "$WEB_PID" ]] && kill "$WEB_PID" 2>/dev/null || true
