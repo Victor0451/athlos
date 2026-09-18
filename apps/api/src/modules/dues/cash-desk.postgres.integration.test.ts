@@ -46,6 +46,7 @@ async function applyMigrations() {
     '0066_plan_cuentas.sql',
     '0070_cash_manual_sources.sql',
     '0073_cash_close_transfers.sql',
+    '0074_manual_tender_reversals.sql',
   ]) {
     await db.pool.query(await readFile(join(directory, name), 'utf8'))
   }
@@ -202,6 +203,151 @@ describe('cash desk PostgreSQL policy', () => {
       )
     },
   )
+
+  it('sweeps only computed cash above the declared drawer float and rejects invalid floats', async () => {
+    const service = new CashDeskService(db.db)
+    const shift = await service.open({
+      ...context(`float-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 1000 },
+    })
+    // No movements: computed cash equals the opening. Float 400 → transfer 600, and the
+    // drawer keeps 400 (counted − transferred) for the next auto-opened period.
+    const close = await service.close({
+      ...context(`float-close-${randomUUID()}`),
+      shiftId: shift.id,
+      countedTenders: { CASH: 1000 },
+      drawerFloatCents: 400,
+    })
+    expect(close.closeTransfer).toMatchObject({ amountCents: 600 })
+
+    // A float equal to the computed cash sweeps nothing.
+    const keepAllShift = await service.open({
+      ...context(`float-keep-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 700 },
+    })
+    const keepAll = await service.close({
+      ...context(`float-keep-close-${randomUUID()}`),
+      shiftId: keepAllShift.id,
+      countedTenders: { CASH: 700 },
+      drawerFloatCents: 700,
+    })
+    expect(keepAll.closeTransfer).toBeUndefined()
+
+    // Validation: float above the counted cash, negative float, float on a forced close.
+    const guarded = await service.open({
+      ...context(`float-guard-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 500 },
+    })
+    await expect(
+      service.close({
+        ...context(`float-guard-over-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        drawerFloatCents: 501,
+      }),
+    ).rejects.toThrow('The drawer float cannot exceed the counted cash')
+    await expect(
+      service.close({
+        ...context(`float-guard-negative-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        drawerFloatCents: -1,
+      }),
+    ).rejects.toThrow('The drawer float must be a non-negative integer amount in cents')
+    await expect(
+      service.close({
+        ...context(`float-guard-forced-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        reason: 'Recovery sweep',
+        forceClose: true,
+        drawerFloatCents: 100,
+      }),
+    ).rejects.toThrow('A forced close sweeps all computed cash and does not take a drawer float')
+  })
+
+  it('auto-opens periods from the last close remainder and replays idempotently', async () => {
+    const service = new CashDeskService(db.db)
+
+    // First-ever drawer: opening 0 on the canonical desk.
+    const first = await service.ensureOpenShift(context(`ensure-first-${randomUUID()}`))
+    expect(first.deskId).toBe('front-desk')
+    const firstDetail = await service.detail({
+      ...context(`ensure-first-detail-${randomUUID()}`),
+      shiftId: first.id,
+    })
+    expect(firstDetail.openingTenders).toEqual({ CASH: 0 })
+
+    // Idempotent: a different caller key resolves to the same open shift.
+    await expect(
+      service.ensureOpenShift(context(`ensure-replay-${randomUUID()}`)),
+    ).resolves.toMatchObject({ id: first.id })
+
+    // Cash production lands on the auto-opened shift, then the operator declares a float:
+    // computed 1000, counted 1000, float 400 → transfer 600, and the next period
+    // auto-opens with exactly the float, on the same desk.
+    const settlement = randomUUID()
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',10.00,'ARS',$3,$4,$5)`,
+      [settlement, socioId, operatorId, randomUUID(), 'a'.repeat(64)],
+    )
+    await service.recordTender({
+      ...context(`ensure-income-${randomUUID()}`),
+      shiftId: first.id,
+      direction: 'INCOME',
+      tender: 'CASH',
+      amountCents: 1000,
+      sourceType: 'SETTLEMENT',
+      sourceId: settlement,
+    })
+    await service.close({
+      ...context(`ensure-close-${randomUUID()}`),
+      shiftId: first.id,
+      countedTenders: { CASH: 1000 },
+      drawerFloatCents: 400,
+    })
+    const second = await service.ensureOpenShift(context(`ensure-second-${randomUUID()}`))
+    expect(second.id).not.toBe(first.id)
+    expect(second.deskId).toBe(first.deskId)
+    const secondDetail = await service.detail({
+      ...context(`ensure-second-detail-${randomUUID()}`),
+      shiftId: second.id,
+    })
+    expect(secondDetail.openingTenders).toEqual({ CASH: 400 })
+
+    // Overage (counted 500 over computed 400): the 100 discrepancy stays in the drawer and
+    // opens the next period.
+    await service.close({
+      ...context(`ensure-close2-${randomUUID()}`),
+      shiftId: second.id,
+      countedTenders: { CASH: 500 },
+      reason: 'Counted over',
+    })
+    const third = await service.ensureOpenShift(context(`ensure-third-${randomUUID()}`))
+    const thirdDetail = await service.detail({
+      ...context(`ensure-third-detail-${randomUUID()}`),
+      shiftId: third.id,
+    })
+    expect(thirdDetail.openingTenders).toEqual({ CASH: 100 })
+
+    // Shortage (counted 50 under computed 100): the recorded shortage is a debt, the
+    // drawer opens at 0.
+    await service.close({
+      ...context(`ensure-close3-${randomUUID()}`),
+      shiftId: third.id,
+      countedTenders: { CASH: 50 },
+      reason: 'Counted short',
+    })
+    const fourth = await service.ensureOpenShift(context(`ensure-fourth-${randomUUID()}`))
+    const fourthDetail = await service.detail({
+      ...context(`ensure-fourth-detail-${randomUUID()}`),
+      shiftId: fourth.id,
+    })
+    expect(fourthDetail.openingTenders).toEqual({ CASH: 0 })
+  })
 
   it('limits an OPERADOR to own Caja shifts while finance keeps cross-owner reads', async () => {
     const service = new CashDeskService(db.db)

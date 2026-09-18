@@ -31,6 +31,7 @@ type Row = {
   reason: string | null
   force_close: boolean
   request_fingerprint: string
+  reverses_tender_id: string | null
   kind: string
   original_gasto_id: string
   compensating_gasto_id: string
@@ -302,6 +303,11 @@ export type TenderCommand = CashCommand & {
   reason?: string
 }
 export type ExpenseCommand = CashCommand & { shiftId: string; gastoId: string; tender: string }
+export type ReverseTenderCommand = CashCommand & {
+  shiftId: string
+  tenderId: string
+  reason: string
+}
 // prettier-ignore
 export type SupportingTaxComponent = { label: string; amountCents: number; semantic: 'ADDITIVE' | 'CONTAINED' }
 // prettier-ignore
@@ -320,6 +326,9 @@ export type CloseCashCommand = CashCommand & {
   countedTenders: Totals
   reason?: string
   forceClose?: boolean
+  /** Cash the operator declares to keep in the drawer for change; the excess sweeps to
+   * Valores a Depositar. Defaults to 0 (full sweep). Ordinary closes only. */
+  drawerFloatCents?: number
 }
 
 const settlementTenders = new Set(['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'])
@@ -661,6 +670,56 @@ export class CashDeskService {
     ).map(responseShift)
   }
 
+  /**
+   * P9 auto-open: the operator's working period opens itself — there is no manual "open
+   * shift" step. The opening anchor is the remainder of the operator's last close
+   * (counted − transferred, clamped to 0: a counted overage stays in the drawer and opens
+   * the next period; a recorded shortage opens at 0). A first-ever drawer opens at 0 on
+   * the canonical desk. Idempotent: an existing own OPEN shift always wins regardless of
+   * caller key, and a concurrent opener's conflict resolves to that shift.
+   */
+  async ensureOpenShift(input: CashCommand) {
+    authorizeOpenRead(input.role)
+    const existing = rows(
+      await this.db.execute(
+        sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE assigned_operator_id = ${input.actorId} AND status = 'OPEN' ORDER BY opened_at LIMIT 1`,
+      ),
+    )[0]
+    if (existing) return responseShift(existing)
+    const last = rows<{
+      desk_id: string
+      counted_tenders: Totals | null
+      transfer_amount: string | null
+    }>(
+      await this.db.execute(sql`
+        SELECT s.desk_id, c.counted_tenders, t.amount AS transfer_amount
+        FROM tesoreria.dues_cash_closes c
+        JOIN tesoreria.dues_cash_shifts s ON s.id = c.shift_id
+        LEFT JOIN tesoreria.dues_cash_close_transfers t ON t.close_id = c.id
+        WHERE c.operator_id = ${input.actorId}
+        ORDER BY c.closed_at DESC, c.id DESC
+        LIMIT 1
+      `),
+    )[0]
+    const countedCents = clean(last?.counted_tenders ?? {}).CASH ?? 0
+    const transferredCents = last?.transfer_amount == null ? 0 : cents(last.transfer_amount)
+    const openingCents = Math.max(0, countedCents - transferredCents)
+    const deskId = last?.desk_id ?? 'front-desk'
+    try {
+      return await this.open({ ...input, deskId, openingTenders: { CASH: openingCents } })
+    } catch (error) {
+      // A concurrent ensure/open may have won the race after our check; that shift is
+      // exactly what the caller needs, so resolve to it instead of failing.
+      const raced = rows(
+        await this.db.execute(
+          sql`SELECT * FROM tesoreria.dues_cash_shifts WHERE assigned_operator_id = ${input.actorId} AND status = 'OPEN' ORDER BY opened_at LIMIT 1`,
+        ),
+      )[0]
+      if (raced) return responseShift(raced)
+      throw error
+    }
+  }
+
   async detail(input: CashCommand & { shiftId: string }) {
     authorizeOpenRead(input.role)
     const result = rows<{ shift: Row; close: Row | null; transfer: Row | null }>(
@@ -684,6 +743,7 @@ export class CashDeskService {
     const movements = rows(
       await this.db.execute(sql`
             SELECT t.id,t.direction,t.tender,t.amount::text,t.source_type,t.source_id,t.created_at,
+                   t.reverses_tender_id,t.reason,
                    ms.account_code_snapshot,ms.account_name_snapshot,ms.description
             FROM tesoreria.dues_cash_tenders t
             LEFT JOIN tesoreria.dues_cash_manual_sources ms ON ms.tender_id = t.id
@@ -702,7 +762,7 @@ export class CashDeskService {
       openingTenders,
       ...(expectedTenders ? { expectedTenders } : {}),
       // prettier-ignore
-      movements: movements.map((row) => ({ id: row.id, direction: row.direction, tender: row.tender, amountCents: cents(row.amount), sourceType: row.source_type, ...(row.source_id ? { sourceId: row.source_id } : {}), createdAt: new Date(row.created_at as string | Date).toISOString(), ...(row.account_code_snapshot ? { accountCodeSnapshot: row.account_code_snapshot, accountNameSnapshot: row.account_name_snapshot, description: row.description } : {}) })),
+      movements: movements.map((row) => ({ id: row.id, direction: row.direction, tender: row.tender, amountCents: cents(row.amount), sourceType: row.source_type, ...(row.source_id ? { sourceId: row.source_id } : {}), createdAt: new Date(row.created_at as string | Date).toISOString(), ...(row.reverses_tender_id ? { reversesTenderId: row.reverses_tender_id } : {}), ...(row.reason ? { reason: row.reason } : {}), ...(row.account_code_snapshot ? { accountCodeSnapshot: row.account_code_snapshot, accountNameSnapshot: row.account_name_snapshot, description: row.description } : {}) })),
     }
   }
 
@@ -1003,6 +1063,76 @@ export class CashDeskService {
       })
   }
 
+  // prettier-ignore
+  async reverseTender(input: ReverseTenderCommand) {
+    authorizeManualTender(input.role)
+    if (!input.reason.trim()) {
+      throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A reversal reason is required')
+    }
+    return this.db
+      .transaction(async (tx) => {
+        const replay = rows(
+          await tx.execute(
+            sql`SELECT * FROM tesoreria.dues_cash_tenders WHERE operator_id = ${input.actorId} AND caller_key = ${input.callerKey}`,
+          ),
+        )[0]
+        if (replay) {
+          if (requestFingerprintConflict(replay.request_fingerprint, input.requestFingerprint)) {
+            throw BusinessError(
+              ErrorCode.CONFLICT,
+              'Idempotency key was already used for a different reversal',
+            )
+          }
+          return responseTender(replay)
+        }
+        const shift = await this.shift(tx, input.shiftId, input, true)
+        this.assertWithinPolicy(shift, this.now())
+        const original = rows(
+          await tx.execute(
+            sql`SELECT * FROM tesoreria.dues_cash_tenders WHERE id = ${input.tenderId} AND shift_id = ${input.shiftId} FOR UPDATE`,
+          ),
+        )[0]
+        if (!original) throw BusinessError(ErrorCode.NOT_FOUND, 'Tender not found')
+        if (original.source_type !== 'MANUAL' || original.reverses_tender_id) {
+          throw BusinessError(
+            ErrorCode.CONFLICT,
+            'Only manual movements that are not themselves reversals can be reversed',
+          )
+        }
+        const existing = rows(
+          await tx.execute(
+            sql`SELECT id FROM tesoreria.dues_cash_tenders WHERE reverses_tender_id = ${original.id} FOR UPDATE`,
+          ),
+        )[0]
+        if (existing) {
+          throw BusinessError(ErrorCode.CONFLICT, 'This movement was already reversed')
+        }
+        const direction = original.direction === 'INCOME' ? 'EXPENSE' : 'INCOME'
+        const inserted = rows(
+          await tx.execute(
+            sql`INSERT INTO tesoreria.dues_cash_tenders (shift_id,direction,tender,amount,source_type,reason,operator_id,caller_key,request_fingerprint,reverses_tender_id) VALUES (${input.shiftId},${direction},${original.tender},${original.amount},'MANUAL',${input.reason},${input.actorId},${input.callerKey},${input.requestFingerprint},${original.id}) RETURNING *`,
+          ),
+        )[0]
+        if (!inserted) {
+          throw BusinessError(ErrorCode.INTERNAL_ERROR, 'Reversal tender was not recorded')
+        }
+        await this.audit(tx, input, AuditAction.DUES_CASH_TENDER_RECORDED, inserted.id, {
+          shiftId: input.shiftId,
+          reversesTenderId: original.id,
+          direction,
+          tender: original.tender,
+          amountCents: cents(original.amount),
+        })
+        return responseTender(inserted)
+      })
+      .catch((error: unknown) => {
+        if ((error as { code?: string }).code === '23505') {
+          throw BusinessError(ErrorCode.CONFLICT, 'This movement was already reversed')
+        }
+        throw error
+      })
+  }
+
   async close(input: CloseCashCommand) {
     const forceClose = input.forceClose === true
     // Forced/recovery closes stay finance-only; an ordinary close is own-shift OPERADOR work (ownership enforced by shift()).
@@ -1010,6 +1140,30 @@ export class CashDeskService {
     else authorizeManualTender(input.role)
     if (forceClose && !input.reason?.trim()) {
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'A forced cash close requires a reason')
+    }
+    // Drawer float (P9): the operator declares how much counted cash stays in the drawer
+    // for change; only the excess sweeps to Valores a Depositar. Forced closes sweep
+    // fully (finance recovery never leaves undeclared cash behind). Input-only checks run
+    // before the transaction so they win over the recovery window gate.
+    const drawerFloatCents = input.drawerFloatCents ?? 0
+    if (forceClose && input.drawerFloatCents !== undefined) {
+      throw BusinessError(
+        ErrorCode.VALIDATION_ERROR,
+        'A forced close sweeps all computed cash and does not take a drawer float',
+      )
+    }
+    if (!Number.isSafeInteger(drawerFloatCents) || drawerFloatCents < 0) {
+      throw BusinessError(
+        ErrorCode.VALIDATION_ERROR,
+        'The drawer float must be a non-negative integer amount in cents',
+      )
+    }
+    const countedCashCents = input.countedTenders.CASH ?? 0
+    if (drawerFloatCents > countedCashCents) {
+      throw BusinessError(
+        ErrorCode.VALIDATION_ERROR,
+        'The drawer float cannot exceed the counted cash',
+      )
     }
     return this.db
       .transaction(async (tx) => {
@@ -1092,14 +1246,15 @@ export class CashDeskService {
         if (!inserted)
           throw BusinessError(ErrorCode.SERVICE_UNAVAILABLE, 'Close replay is unavailable')
         let transfer: Row | null = null
-        if (computedCashCents > 0) {
+        const transferCents = Math.max(0, computedCashCents - drawerFloatCents)
+        if (transferCents > 0) {
           const account = await resolveAccountSnapshot(tx, '1.1.3.02')
           // prettier-ignore
           if (!account) throw BusinessError(ErrorCode.CONFLICT, 'The close transfer account is unavailable')
           transfer =
             rows(
               await tx.execute(
-                sql`INSERT INTO tesoreria.dues_cash_close_transfers (close_id,shift_id,account_code_snapshot,account_name_snapshot,account_path_snapshot,amount) VALUES (${inserted.id},${input.shiftId},${account.code},${account.name},${JSON.stringify(account.path)}::jsonb,${money(computedCashCents)}) RETURNING *`,
+                sql`INSERT INTO tesoreria.dues_cash_close_transfers (close_id,shift_id,account_code_snapshot,account_name_snapshot,account_path_snapshot,amount) VALUES (${inserted.id},${input.shiftId},${account.code},${account.name},${JSON.stringify(account.path)}::jsonb,${money(transferCents)}) RETURNING *`,
               ),
             )[0] ?? null
         }
