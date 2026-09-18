@@ -416,7 +416,10 @@ export default function TreasuryPage() {
         </div>
       )}
       {closeResult && (
-        <section aria-label="Resumen de conciliación" className="space-y-2 rounded border p-4">
+        <section
+          aria-label="Resumen de conciliación"
+          className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4"
+        >
           <h2 className="font-display text-lg">Último corte confirmado</h2>
           <CashCloseSummary close={closeResult} />
         </section>
@@ -731,12 +734,18 @@ export default function TreasuryPage() {
         </div>
       </Modal>
       {ownClosedShifts.length > 0 && (
-        <section aria-label="Cortes del día" className="space-y-2 rounded border p-4">
+        <section
+          aria-label="Cortes del día"
+          className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4"
+        >
           <h2 className="font-display text-lg">Cortes del día</h2>
           <p className="text-sm text-ink-600">Consultá el detalle de conciliación de tus cortes.</p>
           <ul className="space-y-2">
             {ownClosedShifts.map((shift) => (
-              <li key={shift.id} className="space-y-2 rounded border border-ink-200 bg-surface p-3">
+              <li
+                key={shift.id}
+                className="space-y-2 rounded border border-ink-100 bg-surface-sunken p-3"
+              >
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                   <p className="text-sm font-semibold text-ink-900">{shift.desk_id}</p>
                   <p className="text-sm text-ink-500">{closedAtLabel(shift.closed_at)}</p>
