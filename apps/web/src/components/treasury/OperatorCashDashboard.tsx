@@ -98,6 +98,7 @@ export function OperatorCashDashboard({
     const time = new Date(movement.created_at).toLocaleTimeString('es-AR', {
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false,
     })
     const method = TENDER_LABELS[movement.tender] ?? movement.tender
     const account = movement.account_code_snapshot
