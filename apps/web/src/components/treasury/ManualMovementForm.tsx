@@ -52,7 +52,7 @@ export function ManualMovementForm({
 }: ManualMovementFormProps) {
   const [direction, setDirection] = useState<'INCOME' | 'EXPENSE'>(initialDirection)
   const [tender, setTender] = useState('CASH')
-  const [amount, setAmount] = useState(initialAmount ?? '0')
+  const [amount, setAmount] = useState(initialAmount ?? '')
   const [description, setDescription] = useState(initialDescription ?? '')
   const [selected, setSelected] = useState<AccountChartItem | null>(initialAccount ?? null)
   const [pending, setPending] = useState(false)
@@ -144,9 +144,33 @@ export function ManualMovementForm({
       className="space-y-4"
     >
       <p className="text-sm text-ink-500">
-        Cada movimiento manual requiere cuenta, descripción, importe y un único método de pago.
+        Cada movimiento manual requiere descripción, importe, un único método de pago y la cuenta
+        contable donde se imputa.
       </p>
       {error && <Alert tone="error">{error}</Alert>}
+      <label className="block text-sm font-medium text-ink-700">
+        Descripción / motivo
+        <input
+          className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
+          value={description}
+          disabled={pending}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+      </label>
+      <label className="block text-sm font-medium text-ink-700">
+        Importe (pesos)
+        <input
+          className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
+          inputMode="decimal"
+          maxLength={32}
+          value={amount}
+          disabled={pending}
+          onChange={(event) => setAmount(event.target.value)}
+        />
+        <span className="mt-1 block text-xs font-normal text-ink-500">
+          Con coma o punto decimal, sin separadores de miles.
+        </span>
+      </label>
       <label className="block text-sm font-medium text-ink-700">
         Método de pago
         <select
@@ -167,30 +191,15 @@ export function ManualMovementForm({
           Débito bancario registra un débito por banco en la Caja; no integra con el banco.
         </p>
       )}
-      <label className="block text-sm font-medium text-ink-700">
-        Importe (pesos)
-        <input
-          className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
-          inputMode="decimal"
-          maxLength={32}
-          value={amount}
-          disabled={pending}
-          onChange={(event) => setAmount(event.target.value)}
-        />
+      <div>
+        <p className="text-sm font-medium text-ink-700">Cuenta contable</p>
+        <div className="mt-1">
+          <AccountCombobox selected={selected} onSelect={setSelected} disabled={pending} />
+        </div>
         <span className="mt-1 block text-xs font-normal text-ink-500">
-          Con coma o punto decimal, sin separadores de miles.
+          Cuenta del plan de cuentas donde se imputa el movimiento.
         </span>
-      </label>
-      <label className="block text-sm font-medium text-ink-700">
-        Descripción / motivo
-        <input
-          className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
-          value={description}
-          disabled={pending}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
-      <AccountCombobox selected={selected} onSelect={setSelected} disabled={pending} />
+      </div>
     </form>
   )
 }

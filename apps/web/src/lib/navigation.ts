@@ -50,7 +50,7 @@ export const navigation: NavigationItem[] = [
   },
   {
     href: '/tesoreria',
-    label: 'Cash desk',
+    label: 'Caja',
     icon: Wallet,
     section: 'Operations',
     roles: ['ADMIN', 'TESORERO', 'OPERADOR'],
