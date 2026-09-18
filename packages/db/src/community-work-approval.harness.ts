@@ -62,7 +62,12 @@ export function splitStatements(sql: string): string[] {
 
 /** Replace the pathname of a connection URL with `/<databaseName>`. */
 function withDatabaseName(databaseUrl: string, databaseName: string): string {
-  const url = new URL(databaseUrl)
+  let url: URL
+  try {
+    url = new URL(databaseUrl)
+  } catch (error) {
+    throw new Error(`Harness database URL is not a valid URL: ${String(error)}`)
+  }
   url.pathname = `/${databaseName}`
   return url.toString()
 }
@@ -126,9 +131,11 @@ export function createCanonicalHarness(
   }
 
   async function applyCanonicalChain(toIdx: number): Promise<ApplyChainResult> {
-    const dbDir = join(__dirname, '..', 'drizzle')
+    // import.meta.dirname keeps the path runtime-correct under ESM (tsx scripts and vitest
+    // alike); __dirname only exists in vitest's CJS-shaped module transform.
+    const dbDir = join(import.meta.dirname, '..', 'drizzle')
     const metaPath = join(dbDir, 'meta', '_journal.json')
-    const journal = JSON.parse(readFileSync(metaPath, 'utf8')) as {
+    let journal: {
       entries: Array<{
         idx: number
         tag: string
@@ -136,6 +143,11 @@ export function createCanonicalHarness(
         version: string
         breakpoints?: boolean
       }>
+    }
+    try {
+      journal = JSON.parse(readFileSync(metaPath, 'utf8')) as typeof journal
+    } catch (error) {
+      throw new Error(`Cannot read the canonical drizzle journal at ${metaPath}: ${String(error)}`)
     }
 
     const entries = journal.entries.sort((a, b) => a.idx - b.idx)

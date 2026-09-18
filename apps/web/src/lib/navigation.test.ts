@@ -29,7 +29,7 @@ describe('cash navigation feature gate', () => {
     const operator = { role: 'OPERADOR', permissions: { data_steward: false } } as never
 
     expect(visibleNavigation(operator, { cashEnabled: true })).toContainEqual(
-      expect.objectContaining({ href: '/tesoreria', label: 'Cash desk' }),
+      expect.objectContaining({ href: '/tesoreria', label: 'Caja' }),
     )
     expect(visibleNavigation(operator, { cashEnabled: false })).not.toContainEqual(
       expect.objectContaining({ href: '/tesoreria' }),

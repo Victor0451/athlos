@@ -1,19 +1,25 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
 import { PesoAmountInput } from '@/components/ui/PesoAmountInput'
 import { CashCloseSummary, closedAtLabel } from '@/components/treasury/CashCloseSummary'
 import { ManualMovementForm } from '@/components/treasury/ManualMovementForm'
+import { OperatorCashDashboard } from '@/components/treasury/OperatorCashDashboard'
+import { Modal } from '@/components/ui/Modal'
+import { Alert } from '@/components/ui/Alert'
 import {
   closeCashShift,
+  ensureOpenCashShift,
   forceCloseCashShift,
+  getCashShiftDetail,
   getCashShifts,
-  openCashShift,
+  reverseCashTender,
   type CashShift,
   type CashClose,
+  type CashMovement,
 } from '@/lib/api/treasury'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/use-auth'
@@ -43,33 +49,54 @@ const connectionMessage = (error: unknown): string | null => {
   return null
 }
 
+const formatPesos = (cents: number): string => (cents / 100).toFixed(2).replace('.', ',')
+
 export default function TreasuryPage() {
   const { user } = useAuth()
   const { cashEnabled } = useFeatureConfig()
   const router = useRouter()
   const cashContext = parseCashContext(useSearchParams())
-  const isOperator = user?.role === 'OPERADOR'
+  const isFinanceRole = user?.role === 'ADMIN' || user?.role === 'TESORERO'
   const operatorId = user?.operator_id
-  const allowed = isOperator || user?.role === 'ADMIN' || user?.role === 'TESORERO'
-  const [desk, setDesk] = useState('front-desk')
-  const [cash, setCash] = useState('0')
-  const [counted, setCounted] = useState('0')
-  const [reason, setReason] = useState('')
+  const allowed = isFinanceRole || user?.role === 'OPERADOR'
+  // Bumped after every confirmed command so the open-shift movement list refetches.
+  const [movementsToken, setMovementsToken] = useState(0)
+  // erpgw-style load modals: the open-shift section shows two explicit load buttons and the
+  // form lives inside a modal with the direction implied by the button that opened it.
+  const [movementModal, setMovementModal] = useState<'INCOME' | 'EXPENSE' | null>(null)
+  // P6 edit/delete flows over MANUAL movements (the ledger is append-only: delete = reversal,
+  // edit = reversal + corrected re-record).
+  const [editMovement, setEditMovement] = useState<CashMovement | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CashMovement | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
+  const [deletePending, setDeletePending] = useState(false)
+  // P9 corte de caja: count the drawer, declare the float that stays for change, sweep the
+  // rest to Valores a Depositar.
+  const [corteOpen, setCorteOpen] = useState(false)
+  const [corteCounted, setCorteCounted] = useState('')
+  const [corteFloat, setCorteFloat] = useState('')
+  // While false, the drawer float follows the server expectation; the operator's own edit
+  // freezes it so a late-arriving fresh fetch cannot override a deliberate value.
+  const [corteFloatTouched, setCorteFloatTouched] = useState(false)
+  const [corteReason, setCorteReason] = useState('')
+  const [recoveryCounted, setRecoveryCounted] = useState('')
   const [recoveryReason, setRecoveryReason] = useState('')
   const [recoveryShift, setRecoveryShift] = useState<CashShift | null>(null)
   const [recoveryPending, setCommandPending] = useState(false)
   const [refreshWarning, setRefreshWarning] = useState('')
+  const [ensureError, setEnsureError] = useState(false)
   const [closedIds, setClosedIds] = useState<string[]>([])
+  const [ensuring, setEnsuring] = useState(false)
   const activeCommand = useRef<symbol | null>(null)
   const needsRefresh = useRef(false)
   const keys = useRef<ReturnType<typeof createCollectionsIdempotencyStore> | null>(null)
+  const ensuringRef = useRef(false)
   const owner = `${user?.operator_id}:${user?.role}:${cashEnabled}`
   const currentOwner = useRef(owner)
   currentOwner.current = owner
   const [recoveryError, setRecoveryError] = useState('')
   const [message, setMessage] = useState('')
   const [commandError, setCommandError] = useState('')
-  const [openedShift, setOpenedShift] = useState<CashShift | null>(null)
   const [closeResult, setCloseResult] = useState<CashClose | null>(null)
   const query = useQuery({
     queryKey: ['cash-shifts', user?.operator_id, user?.role],
@@ -84,7 +111,6 @@ export default function TreasuryPage() {
     setRefreshWarning('')
     setMessage('')
     setCommandError('')
-    setOpenedShift(null)
     setCloseResult(null)
     setClosedIds([])
     setRecoveryShift(null)
@@ -112,7 +138,6 @@ export default function TreasuryPage() {
       if (result?.isError) throw result.error
       if (isCurrent(token)) {
         needsRefresh.current = false
-        if (result?.data) setOpenedShift(null)
         setRefreshWarning('')
       }
     } catch {
@@ -187,75 +212,105 @@ export default function TreasuryPage() {
       reportError('Revisá el importe en pesos: debe ser no negativo y tener hasta dos decimales.')
     return amount
   }
-  const open = async (event: FormEvent) => {
-    event.preventDefault()
-    const amount = cashAmount(cash)
-    if (amount === null) return
-    const opening = { CASH: amount }
-    await runCommand(
-      'open',
-      { desk, opening },
-      (key) => openCashShift(desk, opening, key),
-      (result) => {
-        setOpenedShift(result)
-        setCloseResult(null)
-        setMessage('Turno abierto.')
-      },
-      setCommandError,
-      (error) =>
-        isOperator && error instanceof ApiError && error.status === 409
-          ? 'La apertura de Caja entró en conflicto. Actualizá la Caja antes de volver a intentar.'
-          : 'No se pudo ejecutar la operación de caja.',
-    )
-  }
 
-  const close = async (shift: CashShift) => {
-    const currentShift = shifts.find(({ id }) => id === shift.id)
-    if (!currentShift || !isCashShiftEligible(currentShift, user)) {
-      setCommandError(
-        'El turno ya no está disponible para cierre normal. Actualizá los turnos e intentá de nuevo.',
-      )
-      return
-    }
-    const amount = cashAmount(counted)
-    if (amount === null) return
-    const closing = { CASH: amount }
-    await runCommand(
-      'close',
-      { shiftId: shift.id, closing, reason },
-      (key) => closeCashShift(shift.id, closing, reason, key),
-      (result) => {
-        setClosedIds((ids) => [...ids, shift.id])
-        setCloseResult(result)
-        setMessage('Turno cerrado.')
-      },
-    )
-  }
+  const ownOpenShift = shifts.find(
+    (shift) => shift.status === 'OPEN' && shift.assigned_operator_id === operatorId,
+  )
+  const ownClosedShifts = shifts.filter(
+    (shift) => shift.status === 'CLOSED' && shift.assigned_operator_id === operatorId,
+  )
+  const recoverableShifts = isFinanceRole
+    ? shifts
+        .filter((shift) => isCashShiftExpired(shift))
+        .filter((shift) => canOperateCashShift(shift, user))
+    : []
 
-  const isOwnShift = (shift: CashShift) => shift.assigned_operator_id === user!.operator_id
+  // P9 auto-open: the working period opens itself. Whenever this operator has no OPEN shift
+  // (first visit of the day, or right after a corte), ensure-open bootstraps it with the
+  // last close remainder; the refetch then shows the fresh period. Failures surface as a
+  // retryable alert instead of a silent spinner.
+  const startEnsure = useCallback(() => {
+    if (!allowed || !cashEnabled || !operatorId || ensuringRef.current) return
+    ensuringRef.current = true
+    setEnsureError(false)
+    setEnsuring(true)
+    ensureOpenCashShift(crypto.randomUUID())
+      .then(() => query.refetch())
+      .catch(() => setEnsureError(true))
+      .finally(() => {
+        ensuringRef.current = false
+        setEnsuring(false)
+      })
+  }, [allowed, cashEnabled, operatorId, query])
+
+  useEffect(() => {
+    if (query.isPending || ownOpenShift) return
+    startEnsure()
+  }, [startEnsure, ownOpenShift, query.isPending])
+
   const canReturnToCollections =
-    cashContext &&
-    [...shifts, ...(openedShift ? [openedShift] : [])].some(
-      (shift) => !closedIds.includes(shift.id) && isCashShiftEligible(shift, user),
-    )
+    cashContext && ownOpenShift && isCashShiftEligible(ownOpenShift, user)
   const collectionsHref =
     cashContext && canReturnToCollections
       ? buildCashContextHref('/collections', cashContext.memberId, cashContext.obligationIds)
       : null
   const expired = (shift: CashShift) => isCashShiftExpired(shift)
-  const ownOpenShift = isOperator
-    ? shifts.find(
-        (shift) => shift.status === 'OPEN' && shift.assigned_operator_id === user?.operator_id,
+
+  const corteDetail = useQuery({
+    queryKey: ['cash-shift-detail', ownOpenShift?.id ?? 'none', movementsToken],
+    queryFn: () => getCashShiftDetail(ownOpenShift!.id),
+    enabled: corteOpen && Boolean(ownOpenShift),
+    // Cash amounts must never be served stale: the global 5-minute staleTime would let the
+    // corte modal show an outdated expectation after a payment recorded moments earlier.
+    staleTime: 0,
+  })
+  const corteExpectedCents = corteDetail.data?.expected_tenders?.CASH ?? null
+  // Prefill "dejás en cajón" with everything counted: keeping cash in the drawer is the safe
+  // default (the operator lowers the float to sweep the excess to Valores a Depositar).
+  useEffect(() => {
+    if (!corteOpen) return
+    if (!corteFloatTouched && corteExpectedCents !== null) {
+      setCorteFloat(formatPesos(corteExpectedCents))
+    }
+  }, [corteOpen, corteExpectedCents, corteFloatTouched])
+
+  const confirmCorte = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!ownOpenShift) return
+    const currentShift = shifts.find(({ id }) => id === ownOpenShift.id)
+    if (!currentShift || !isCashShiftEligible(currentShift, user)) {
+      setCommandError(
+        'El turno ya no está disponible para corte normal. Actualizá los turnos e intentá de nuevo.',
       )
-    : null
-  const ownClosedShifts = isOperator
-    ? shifts.filter(
-        (shift) => shift.status === 'CLOSED' && shift.assigned_operator_id === user?.operator_id,
-      )
-    : []
-  const recoverableShifts = shifts
-    .filter(expired)
-    .filter((shift) => canOperateCashShift(shift, user))
+      return
+    }
+    const countedCents = cashAmount(corteCounted)
+    if (countedCents === null) return
+    const floatCents = cashAmount(corteFloat)
+    if (floatCents === null) return
+    if (floatCents > countedCents) {
+      setCommandError('El efectivo que dejás en cajón no puede superar lo contado.')
+      return
+    }
+    const discrepancy = corteExpectedCents === null ? 0 : countedCents - corteExpectedCents
+    if (discrepancy !== 0 && !corteReason.trim()) return
+    const closing = { CASH: countedCents }
+    await runCommand(
+      'close',
+      { shiftId: currentShift.id, closing, reason: corteReason, drawerFloatCents: floatCents },
+      (key) => closeCashShift(currentShift.id, closing, corteReason.trim(), key, floatCents),
+      (result) => {
+        setClosedIds((ids) => [...ids, currentShift.id])
+        setCloseResult(result)
+        setMessage('Corte realizado.')
+        setCorteOpen(false)
+        setCorteCounted('')
+        setCorteFloat('')
+        setCorteFloatTouched(false)
+        setCorteReason('')
+      },
+    )
+  }
 
   const confirmRecovery = async (event: FormEvent) => {
     event.preventDefault()
@@ -271,7 +326,7 @@ export default function TreasuryPage() {
       )
       return
     }
-    const amount = cashAmount(counted, setRecoveryError)
+    const amount = cashAmount(recoveryCounted, setRecoveryError)
     if (amount === null) return
     const closing = { CASH: amount }
     const explanation = recoveryReason.trim()
@@ -290,112 +345,35 @@ export default function TreasuryPage() {
     )
   }
 
-  if (isOperator) {
-    return (
-      <main className="space-y-6" aria-labelledby="treasury-title">
-        <header>
-          <p className="font-mono text-xs uppercase tracking-widest text-accent">Tesorería</p>
-          <h1 id="treasury-title" className="font-display text-2xl font-bold text-ink-900">
-            Caja
-          </h1>
-          <p className="mt-1 text-sm text-ink-500">
-            Abrí y consultá tu turno asignado sin exponer acciones de Finanzas.
-          </p>
-        </header>
-        {query.isPending && <p role="status">Cargando turnos de caja…</p>}
-        {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
-        {commandError && <p role="alert">{commandError}</p>}
-        {message && <p role="status">{message}</p>}
-        {refreshWarning && (
-          <div>
-            <p role="alert">{refreshWarning}</p>
-            <button type="button" onClick={() => void retryRefresh()} disabled={recoveryPending}>
-              Actualizar turnos
-            </button>
-          </div>
-        )}
-        {!ownOpenShift && <p role="status">No hay turnos.</p>}
-        {!ownOpenShift && (
-          <form
-            onSubmit={open}
-            aria-label="Abrir turno de caja"
-            className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
-          >
-            <label>
-              Puesto
-              <input
-                className="mt-1 block w-full rounded border p-2"
-                value={desk}
-                disabled={locked}
-                onChange={(event) => setDesk(event.target.value)}
-              />
-            </label>
-            <label>
-              Efectivo inicial (pesos)
-              <input
-                className="mt-1 block w-full rounded border p-2"
-                inputMode="decimal"
-                maxLength={32}
-                value={cash}
-                disabled={locked}
-                onChange={(event) => setCash(event.target.value)}
-              />
-            </label>
-            <button
-              className="rounded bg-accent px-3 py-2 text-accent-foreground"
-              type="submit"
-              disabled={locked}
-            >
-              Abrir turno
-            </button>
-          </form>
-        )}
-        <p>Importes en pesos, con coma o punto decimal y sin separadores de miles.</p>
-        {ownOpenShift && operatorId && (
-          <section
-            aria-label="Tu turno de caja"
-            className="rounded-lg border border-ink-100 bg-surface p-4"
-          >
-            {expired(ownOpenShift) ? (
-              <p>
-                Tu turno en {ownOpenShift.desk_id} está vencido. Pedí la recuperación a Finanzas.
-              </p>
-            ) : (
-              <>
-                <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
-                <ManualMovementForm
-                  shiftId={ownOpenShift.id}
-                  operatorId={operatorId}
-                  onRecorded={setMessage}
-                />
-              </>
-            )}
-          </section>
-        )}
-        {ownClosedShifts.length > 0 && (
-          <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
-            <h2 className="font-display text-lg">Turnos cerrados</h2>
-            <p>Consultá el detalle histórico de conciliación de tus turnos cargados.</p>
-            <ul className="space-y-2">
-              {ownClosedShifts.map((shift) => (
-                <li key={shift.id}>
-                  <strong>{shift.desk_id}</strong>
-                  <p>
-                    {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
-                  </p>
-                  <CashCloseHistoryDetail
-                    shift={shift}
-                    actorId={user?.operator_id}
-                    role={user?.role}
-                  />
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </main>
-    )
+  const confirmDelete = async () => {
+    if (!deleteTarget || !ownOpenShift) return
+    setDeletePending(true)
+    try {
+      await reverseCashTender(
+        ownOpenShift.id,
+        deleteTarget.id,
+        deleteReason.trim() || 'Reversión del movimiento',
+        crypto.randomUUID(),
+      )
+      setDeleteTarget(null)
+      setDeleteReason('')
+      setMovementsToken((token) => token + 1)
+      setMessage('Movimiento revertido.')
+    } catch (deleteError) {
+      setMessage(
+        deleteError instanceof ApiError
+          ? deleteError.message
+          : 'No se pudo revertir el movimiento.',
+      )
+    } finally {
+      setDeletePending(false)
+    }
   }
+
+  const corteDiscrepancy =
+    corteExpectedCents !== null && corteCounted !== ''
+      ? (parseCashAmount(corteCounted) ?? 0) - corteExpectedCents
+      : null
 
   return (
     <main className="space-y-6" aria-labelledby="treasury-title">
@@ -405,160 +383,428 @@ export default function TreasuryPage() {
           Caja
         </h1>
         <p className="mt-1 text-sm text-ink-500">
-          Abrí, conciliá y cerrá los turnos asignados sin exponer evidencia privada de pagos.
+          Tu caja del día: cobrá en cobranza, registrá ingresos y egresos, y cortá la caja cuando
+          necesites. Lo que no cortás queda esperando el próximo corte.
         </p>
       </header>
       {query.isPending && <p role="status">Cargando turnos de caja…</p>}
-      {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
-      {commandError && <p role="alert">{commandError}</p>}
-      {message && <p role="status">{message}</p>}
-      {closeResult && (
-        <section aria-label="Resumen de conciliación" className="space-y-2 rounded border p-4">
-          <h2 className="font-display text-lg">Último cierre confirmado</h2>
-          <CashCloseSummary close={closeResult} />
-        </section>
+      {query.isError && (
+        <Alert tone="error">
+          <p>No se pudieron cargar los turnos de caja.</p>
+          <button
+            type="button"
+            className="mt-2 w-fit rounded border border-ink-300 bg-surface px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-50"
+            onClick={() => void query.refetch()}
+          >
+            Reintentar
+          </button>
+        </Alert>
       )}
+      {ensureError && !ownOpenShift && (
+        <Alert tone="error">
+          <p>No se pudo preparar tu caja. Verificá tu conexión e intentá de nuevo.</p>
+          <button
+            type="button"
+            className="mt-2 w-fit rounded border border-ink-300 bg-surface px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-50"
+            onClick={startEnsure}
+          >
+            Reintentar
+          </button>
+        </Alert>
+      )}
+      {commandError && <Alert tone="error">{commandError}</Alert>}
+      {message && <Alert tone="success">{message}</Alert>}
       {refreshWarning && (
         <div>
-          <p role="alert">{refreshWarning}</p>
+          <Alert tone="warning">{refreshWarning}</Alert>
           <button type="button" onClick={() => void retryRefresh()} disabled={recoveryPending}>
             Actualizar turnos
           </button>
         </div>
+      )}
+      {closeResult && (
+        <section
+          aria-label="Resumen de conciliación"
+          className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4"
+        >
+          <h2 className="font-display text-lg">Último corte confirmado</h2>
+          <CashCloseSummary close={closeResult} />
+        </section>
       )}
       {collectionsHref && (
         <button type="button" onClick={() => router.push(collectionsHref)}>
           Volver a cobranza
         </button>
       )}
-      <form
-        onSubmit={open}
-        aria-label="Abrir turno de caja"
-        className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
-      >
-        <label>
-          Puesto
-          <input
-            className="mt-1 block w-full rounded border p-2"
-            value={desk}
-            disabled={locked}
-            onChange={(event) => setDesk(event.target.value)}
-          />
-        </label>
-        <label>
-          Efectivo inicial (pesos)
-          <PesoAmountInput
-            className="mt-1 block w-full rounded border p-2"
-            maxLength={32}
-            value={cash}
-            parseCents={parseCashAmount}
-            disabled={locked}
-            onChange={(event) => setCash(event.target.value)}
-          />
-        </label>
-        <button
-          className="rounded bg-accent px-3 py-2 text-accent-foreground"
-          type="submit"
-          disabled={locked}
+      {!ownOpenShift && !ensureError && (
+        <p role="status">
+          {ensuring
+            ? 'Preparando tu caja…'
+            : 'Tu caja se abre sola con el primer movimiento del período.'}
+        </p>
+      )}
+      {ownOpenShift && operatorId && (
+        <section
+          aria-label="Tu turno de caja"
+          className="rounded-lg border border-ink-100 bg-surface p-4"
         >
-          Abrir turno
-        </button>
-      </form>
-      <p>
-        Ingresá pesos sin separadores de miles, por ejemplo 15600. Los centavos son opcionales, con
-        coma o punto decimal. El formato se aplica al salir del campo.
-      </p>
-      <p>El motivo es obligatorio si existe diferencia de efectivo.</p>
-      <section
-        aria-label="Cerrar turno de caja"
-        className="grid gap-3 rounded-lg border border-ink-100 bg-surface p-4 sm:grid-cols-3"
-      >
-        <label>
-          Efectivo contado (pesos)
-          <PesoAmountInput
-            className="mt-1 block w-full rounded border p-2"
-            maxLength={32}
-            value={counted}
-            parseCents={parseCashAmount}
-            disabled={locked}
-            onChange={(event) => setCounted(event.target.value)}
-          />
-        </label>
-        <label>
-          Motivo de diferencia
-          <input
-            className="mt-1 block w-full rounded border p-2"
-            value={reason}
-            disabled={locked}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </label>
-        <div className="space-y-2" aria-label="Turnos abiertos">
-          {shifts.length === 0 && <p role="status">No hay turnos.</p>}
-          {shifts
-            .filter((shift) => isCashShiftEligible(shift, user))
-            .map((shift) => (
-              <button
-                key={shift.id}
-                type="button"
-                className="rounded border px-3 py-2"
-                disabled={locked}
-                onClick={() => void close(shift)}
+          {expired(ownOpenShift) ? (
+            <p>Tu turno en {ownOpenShift.desk_id} está vencido. Pedí la recuperación a Finanzas.</p>
+          ) : (
+            <>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
+                <button
+                  type="button"
+                  className="whitespace-nowrap rounded bg-accent px-3 py-2 text-accent-foreground"
+                  disabled={locked}
+                  onClick={() => {
+                    setCorteCounted('')
+                    setCorteFloat('')
+                    setCorteFloatTouched(false)
+                    setCorteReason('')
+                    setCorteOpen(true)
+                  }}
+                >
+                  Cortar caja
+                </button>
+              </div>
+              <OperatorCashDashboard
+                shiftId={ownOpenShift.id}
+                refreshToken={movementsToken}
+                onLoadIncome={() => setMovementModal('INCOME')}
+                onLoadExpense={() => setMovementModal('EXPENSE')}
+                onEditMovement={(movement) => {
+                  setEditMovement(movement)
+                  setMovementModal(movement.direction)
+                }}
+                onDeleteMovement={(movement) => {
+                  setDeleteReason('')
+                  setDeleteTarget(movement)
+                }}
+              />
+              <Modal
+                open={movementModal !== null}
+                onDismiss={() => {
+                  if (!recoveryPending) {
+                    setMovementModal(null)
+                    setEditMovement(null)
+                  }
+                }}
+                title={
+                  editMovement
+                    ? 'Editar movimiento'
+                    : movementModal === 'EXPENSE'
+                      ? 'Cargar Egreso'
+                      : 'Cargar Ingreso'
+                }
+                footer={
+                  <>
+                    <button
+                      type="button"
+                      className="rounded border px-3 py-2"
+                      onClick={() => {
+                        setMovementModal(null)
+                        setEditMovement(null)
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      form="manual-movement-form"
+                      className="rounded bg-accent px-3 py-2 text-accent-foreground disabled:opacity-50"
+                    >
+                      {editMovement
+                        ? 'Guardar cambios'
+                        : movementModal === 'EXPENSE'
+                          ? 'Agregar Egreso'
+                          : 'Agregar Ingreso'}
+                    </button>
+                  </>
+                }
               >
-                Cerrar {shift.desk_id} — {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
-              </button>
-            ))}
+                <p className="mb-3 text-sm text-ink-500">
+                  {editMovement
+                    ? 'Al guardar, el movimiento original queda revertido y se registra el corregido.'
+                    : 'Completá los datos del movimiento a registrar.'}
+                </p>
+                {movementModal !== null && (
+                  <ManualMovementForm
+                    shiftId={ownOpenShift.id}
+                    operatorId={operatorId}
+                    initialDirection={movementModal}
+                    initialAmount={
+                      editMovement
+                        ? (editMovement.amount_cents / 100).toFixed(2).replace('.', ',')
+                        : undefined
+                    }
+                    initialDescription={editMovement?.description ?? undefined}
+                    initialAccount={
+                      editMovement?.account_code_snapshot
+                        ? {
+                            code: editMovement.account_code_snapshot,
+                            name: editMovement.account_name_snapshot ?? '',
+                            parent: null,
+                            root: { code: '', name: '' },
+                            path: [],
+                            active: true,
+                            imputable: true,
+                            eligible: true,
+                          }
+                        : undefined
+                    }
+                    onBeforeRecord={
+                      editMovement
+                        ? async () => {
+                            try {
+                              await reverseCashTender(
+                                ownOpenShift.id,
+                                editMovement.id,
+                                `Reversión por edición del movimiento ${editMovement.id.slice(0, 8)}`,
+                                crypto.randomUUID(),
+                              )
+                            } catch (reverseError) {
+                              // A previous failed attempt may already have recorded the
+                              // reversal; recording the corrected movement is then exactly
+                              // the right continuation.
+                              if (
+                                !(reverseError instanceof ApiError && reverseError.status === 409)
+                              )
+                                throw reverseError
+                            }
+                          }
+                        : undefined
+                    }
+                    onRecorded={setMessage}
+                    onDone={() => {
+                      setMovementsToken((token) => token + 1)
+                      setMovementModal(null)
+                      setEditMovement(null)
+                    }}
+                  />
+                )}
+              </Modal>
+              <Modal
+                open={deleteTarget !== null}
+                onDismiss={() => setDeleteTarget(null)}
+                title="Eliminar movimiento"
+                role="alertdialog"
+                descriptionId="delete-movement-description"
+                footer={
+                  <>
+                    <button
+                      type="button"
+                      className="rounded border px-3 py-2"
+                      onClick={() => setDeleteTarget(null)}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-danger px-3 py-2 text-white disabled:opacity-50"
+                      disabled={deletePending}
+                      onClick={() => void confirmDelete()}
+                    >
+                      {deletePending ? 'Revirtiendo…' : 'Eliminar'}
+                    </button>
+                  </>
+                }
+              >
+                <div id="delete-movement-description" className="space-y-3">
+                  <p className="text-sm text-ink-600">
+                    El ledger de caja es append-only: el movimiento original queda registrado y se
+                    agrega su reversión (asiento inverso) al turno.
+                  </p>
+                  <label>
+                    Motivo de la reversión
+                    <input
+                      className="mt-1 block w-full rounded border p-2"
+                      value={deleteReason}
+                      placeholder="Reversión del movimiento"
+                      disabled={deletePending}
+                      onChange={(event) => setDeleteReason(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </Modal>
+            </>
+          )}
+        </section>
+      )}
+      <Modal
+        open={corteOpen}
+        onDismiss={() => {
+          if (!recoveryPending) setCorteOpen(false)
+        }}
+        title="Cortar caja"
+        footer={
+          <>
+            <button
+              type="button"
+              className="rounded border px-3 py-2"
+              onClick={() => setCorteOpen(false)}
+              disabled={recoveryPending}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="rounded bg-accent px-3 py-2 text-accent-foreground disabled:opacity-50"
+              disabled={
+                recoveryPending ||
+                corteCounted === '' ||
+                (corteDiscrepancy !== null && corteDiscrepancy !== 0 && !corteReason.trim())
+              }
+              onClick={(event) => void confirmCorte(event)}
+            >
+              Confirmar corte
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-ink-500">
+            Contá el efectivo del cajón y declará cuánto dejás para vuelto. Lo excedente va a
+            Valores a Depositar y el próximo período abre con lo que dejaste.
+          </p>
+          <p className="text-sm font-medium text-ink-900">
+            Efectivo esperado:{' '}
+            {corteExpectedCents === null ? 'No disponible' : `$ ${formatPesos(corteExpectedCents)}`}
+          </p>
+          <label className="block text-sm font-medium text-ink-700">
+            Efectivo contado (pesos)
+            <PesoAmountInput
+              className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
+              maxLength={32}
+              value={corteCounted}
+              parseCents={parseCashAmount}
+              disabled={recoveryPending}
+              onChange={(event) => {
+                const next = event.target.value
+                setCorteCounted(next)
+                // Keep the drawer float honest: if the counted cash drops below the
+                // prefilled float, the float clamps down instead of blocking submit with
+                // an unexplained guard.
+                const countedCents = parseCashAmount(next)
+                const floatCents = parseCashAmount(corteFloat)
+                if (countedCents !== null && floatCents !== null && floatCents > countedCents) {
+                  setCorteFloat(next)
+                }
+              }}
+            />
+          </label>
+          <label className="block text-sm font-medium text-ink-700">
+            Dejás en cajón (para vuelto)
+            <PesoAmountInput
+              className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
+              maxLength={32}
+              value={corteFloat}
+              parseCents={parseCashAmount}
+              disabled={recoveryPending}
+              onChange={(event) => {
+                setCorteFloat(event.target.value)
+                setCorteFloatTouched(true)
+              }}
+            />
+          </label>
+          {corteCounted !== '' && corteFloat !== '' && (
+            <p className="text-sm text-ink-600">
+              A Valores a Depositar:{' '}
+              <span className="font-semibold text-ink-900">
+                ${' '}
+                {formatPesos(
+                  Math.max(
+                    0,
+                    (parseCashAmount(corteCounted) ?? 0) -
+                      Math.min(
+                        parseCashAmount(corteFloat) ?? 0,
+                        parseCashAmount(corteCounted) ?? 0,
+                      ),
+                  ),
+                )}
+              </span>
+            </p>
+          )}
+          {corteDiscrepancy !== null && corteDiscrepancy !== 0 && (
+            <Alert tone="warning">
+              Hay una diferencia de {formatPesos(Math.abs(corteDiscrepancy))}{' '}
+              {corteDiscrepancy > 0 ? 'a favor' : 'en contra'}: explicá el motivo para confirmar el
+              corte.
+            </Alert>
+          )}
+          <label className="block text-sm font-medium text-ink-700">
+            Motivo de diferencia (obligatorio si no cuadra)
+            <input
+              className="mt-1 block w-full rounded border border-ink-200 bg-surface p-2 font-normal text-ink-900"
+              value={corteReason}
+              disabled={recoveryPending}
+              onChange={(event) => setCorteReason(event.target.value)}
+            />
+          </label>
         </div>
-      </section>
-      <section aria-label="Turnos cerrados" className="space-y-2 rounded border p-4">
-        <h2 className="font-display text-lg">Turnos cerrados</h2>
-        <p>Consultá el detalle histórico de conciliación de los turnos cargados.</p>
-        <ul className="space-y-2">
-          {(query.data?.items ?? [])
-            .filter(({ status }) => status === 'CLOSED')
-            .map((shift) => (
-              <li key={shift.id}>
-                <strong>{shift.desk_id}</strong> —{' '}
-                {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
-                <p>
-                  {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
+      </Modal>
+      {ownClosedShifts.length > 0 && (
+        <section
+          aria-label="Cortes del día"
+          className="space-y-2 rounded-lg border border-ink-100 bg-surface p-4"
+        >
+          <h2 className="font-display text-lg">Cortes del día</h2>
+          <p className="text-sm text-ink-600">Consultá el detalle de conciliación de tus cortes.</p>
+          <ul className="space-y-2">
+            {ownClosedShifts.map((shift) => (
+              <li
+                key={shift.id}
+                className="space-y-2 rounded border border-ink-100 bg-surface-sunken p-3"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <p className="text-sm font-semibold text-ink-900">{shift.desk_id}</p>
+                  <p className="text-sm text-ink-500">{closedAtLabel(shift.closed_at)}</p>
+                </div>
+                <p className="text-xs text-ink-500">
+                  Turno del {shift.business_date} · folio {shift.id.slice(0, 8)}
                 </p>
                 <CashCloseHistoryDetail
-                  key={owner}
                   shift={shift}
                   actorId={user?.operator_id}
                   role={user?.role}
                 />
               </li>
             ))}
-        </ul>
-      </section>
-      <section
-        aria-label="Recuperación de turnos vencidos"
-        className="grid gap-3 rounded-lg border border-danger/30 bg-surface p-4"
-      >
-        <h2 className="font-display text-lg font-semibold text-ink-900">Recuperar turno vencido</h2>
-        <p className="text-sm text-ink-600">
-          La recuperación está disponible después de 24 horas y requiere un motivo. El cierre normal
-          se mantiene separado arriba.
-        </p>
-        {recoverableShifts.length === 0 && <p role="status">No hay turnos vencidos.</p>}
-        {recoverableShifts.map((shift) => (
-          <button
-            key={shift.id}
-            type="button"
-            className="w-fit rounded border border-danger px-3 py-2"
-            disabled={locked}
-            onClick={() => {
-              setRecoveryShift(shift)
-              setRecoveryError('')
-            }}
-          >
-            Recuperar turno vencido {shift.desk_id} —{' '}
-            {isOwnShift(shift) ? 'Tu turno' : 'Otro responsable'}
-          </button>
-        ))}
-      </section>
+          </ul>
+        </section>
+      )}
+      {isFinanceRole && (
+        <section
+          aria-label="Recuperación de turnos vencidos"
+          className="grid gap-3 rounded-lg border border-danger/30 bg-surface p-4"
+        >
+          <h2 className="font-display text-lg font-semibold text-ink-900">
+            Recuperar turno vencido
+          </h2>
+          <p className="text-sm text-ink-600">
+            La recuperación está disponible después de 24 horas y requiere un motivo. Aplica a los
+            turnos de cualquier puesto.
+          </p>
+          {recoverableShifts.length === 0 && <p role="status">No hay turnos vencidos.</p>}
+          {recoverableShifts.map((shift) => (
+            <button
+              key={shift.id}
+              type="button"
+              className="w-fit rounded border border-danger px-3 py-2"
+              disabled={locked}
+              onClick={() => {
+                setRecoveryCounted('')
+                setRecoveryShift(shift)
+                setRecoveryError('')
+              }}
+            >
+              Recuperar turno vencido {shift.desk_id} —{' '}
+              {shift.assigned_operator_id === operatorId ? 'Tu turno' : 'Otro responsable'}
+            </button>
+          ))}
+        </section>
+      )}
       {recoveryShift && (
         <div
           role="dialog"
@@ -579,6 +825,17 @@ export default function TreasuryPage() {
           {recoveryError && <p role="alert">{recoveryError}</p>}
           <form onSubmit={confirmRecovery} className="mt-3 grid gap-3 sm:grid-cols-2">
             <label>
+              Efectivo contado (pesos)
+              <PesoAmountInput
+                className="mt-1 block w-full rounded border p-2"
+                maxLength={32}
+                value={recoveryCounted}
+                parseCents={parseCashAmount}
+                disabled={recoveryPending}
+                onChange={(event) => setRecoveryCounted(event.target.value)}
+              />
+            </label>
+            <label>
               Motivo de recuperación
               <input
                 className="mt-1 block w-full rounded border p-2"
@@ -588,7 +845,7 @@ export default function TreasuryPage() {
                 disabled={recoveryPending}
               />
             </label>
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-2 sm:col-span-2">
               <button
                 type="button"
                 className="rounded border px-3 py-2"
@@ -600,7 +857,7 @@ export default function TreasuryPage() {
               <button
                 type="submit"
                 className="rounded bg-danger px-3 py-2 text-white disabled:opacity-50"
-                disabled={recoveryPending || !recoveryReason.trim()}
+                disabled={recoveryPending || !recoveryReason.trim() || recoveryCounted === ''}
                 aria-busy={recoveryPending}
               >
                 {recoveryPending ? 'Recuperando…' : 'Confirmar recuperación'}

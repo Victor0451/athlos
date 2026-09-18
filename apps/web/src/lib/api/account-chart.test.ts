@@ -2,18 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiFetchMock = vi.fn()
 vi.mock('@/lib/api', () => ({ apiFetch: apiFetchMock }))
-const { searchEligibleAccounts } = await import('./account-chart')
 
 const item = {
   code: '4.1.01',
   name: 'Cuotas sociales',
   parent: { code: '4.1', name: 'Ingresos Operativos' },
   root: { code: '4', name: 'Ingresos' },
-  path: [
-    { code: '4', name: 'Ingresos' },
-    { code: '4.1', name: 'Ingresos Operativos' },
-    { code: '4.1.01', name: 'Cuotas sociales' },
-  ],
+  path: [{ code: '4', name: 'Ingresos' }],
   active: true,
   imputable: true,
   eligible: true,
@@ -22,37 +17,39 @@ const item = {
 describe('account chart client', () => {
   beforeEach(() => apiFetchMock.mockReset())
 
-  it('searches active accounts by name and keeps only eligible leaves', async () => {
+  it('fetches the active chart and keeps only eligible leaves', async () => {
+    const { fetchAllEligibleAccounts } = await import('./account-chart')
     apiFetchMock.mockResolvedValue({
       items: [item, { ...item, code: '4', imputable: false, eligible: false }],
     })
-    await expect(searchEligibleAccounts('cuota')).resolves.toEqual([item])
-    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/account-chart?name=cuota&active=true')
+    await expect(fetchAllEligibleAccounts()).resolves.toEqual([item])
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/account-chart?active=true')
   })
 
-  it('does not call the API for an empty query', async () => {
-    await expect(searchEligibleAccounts('   ')).resolves.toEqual([])
-    expect(apiFetchMock).not.toHaveBeenCalled()
+  it('drops duplicated eligible codes keeping the first occurrence', async () => {
+    const { fetchAllEligibleAccounts } = await import('./account-chart')
+    apiFetchMock.mockResolvedValue({ items: [item, { ...item, name: 'Otra' }] })
+    await expect(fetchAllEligibleAccounts()).resolves.toEqual([item])
   })
 
   it('rejects malformed items instead of guessing', async () => {
+    const { fetchAllEligibleAccounts } = await import('./account-chart')
     apiFetchMock.mockResolvedValue({ items: [{ code: '4.1.01' }] })
-    await expect(searchEligibleAccounts('cuota')).rejects.toThrow(
+    await expect(fetchAllEligibleAccounts()).rejects.toThrow(
       'Account chart response was incomplete',
     )
   })
 
   it('rejects a response without an items array', async () => {
+    const { fetchAllEligibleAccounts } = await import('./account-chart')
     apiFetchMock.mockResolvedValue({})
-    await expect(searchEligibleAccounts('cuota')).rejects.toThrow(
+    await expect(fetchAllEligibleAccounts()).rejects.toThrow(
       'Account chart response was incomplete',
     )
   })
 
-  it('keeps only the first occurrence of a duplicated account code', async () => {
-    apiFetchMock.mockResolvedValue({
-      items: [item, { ...item, name: 'Cuotas sociales (duplicada)' }],
-    })
-    await expect(searchEligibleAccounts('cuota')).resolves.toEqual([item])
+  it('normalizes needles for client-side filtering', async () => {
+    const { normalizedAccount } = await import('./account-chart')
+    expect(normalizedAccount('Cajón Útil')).toBe('cajon util')
   })
 })

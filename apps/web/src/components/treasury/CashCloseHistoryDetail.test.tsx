@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -64,7 +65,7 @@ describe('Historical reconciliation', () => {
         expect(dialog).toHaveTextContent(/\$\s*26,00/)
         expect(dialog).toHaveTextContent(/\$\s*25,50/)
         expect(dialog).toHaveTextContent(/-\$\s*0,50/)
-        expect(Boolean(screen.queryByText('Recuperación de turno vencido.'))).toBe(forceClose)
+        expect(Boolean(screen.queryByText('Recuperación de turno vencido'))).toBe(forceClose)
       }
       expect(getDetail).toHaveBeenCalledTimes(1)
       expect(getDetail).toHaveBeenCalledWith(shift.id)

@@ -62,7 +62,7 @@ const dropScenarioDatabase = async (admin: Admin, name: string) => {
   await admin.query(['DROP DATABASE IF EXISTS "', name, '"'].join(''))
 }
 
-const withDatabaseName = (databaseUrl: string, databaseName: string) => {
+export const withDatabaseName = (databaseUrl: string, databaseName: string) => {
   let url: URL
   try {
     url = new URL(databaseUrl)
@@ -79,7 +79,7 @@ const drizzleDirectory = join(import.meta.dirname, '..', '..', '..', '..', 'pack
  * Last canonical migration index, read from the drizzle journal at call time — never a
  * hardcoded index, so the scenario always matches the checked-out migrations.
  */
-function lastCanonicalIndex(): number {
+export function lastCanonicalIndex(): number {
   const journalPath = join(drizzleDirectory, 'meta', '_journal.json')
   let journal: { entries: Array<{ idx: number }> }
   try {

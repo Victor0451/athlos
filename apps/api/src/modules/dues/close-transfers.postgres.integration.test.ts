@@ -53,6 +53,7 @@ beforeAll(async () => {
       '0068_personal_cash_shift_desk_release.sql',
       '0070_cash_manual_sources.sql',
       '0073_cash_close_transfers.sql',
+      '0074_manual_tender_reversals.sql',
     ]) {
       await conn.query(await readFile(join(directory, f), 'utf8'))
     }

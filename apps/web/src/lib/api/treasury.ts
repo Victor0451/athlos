@@ -2,7 +2,22 @@ import { apiFetch } from '@/lib/api'
 // prettier-ignore
 export interface CashShift{id:string;desk_id:string;status:'OPEN'|'CLOSED';business_date:string;assigned_operator_id:string;opened_at:string;closed_at:string|null}
 // prettier-ignore
-export interface CashClose{id:string;shift_id:string;expected_tenders:Record<string,number>;counted_tenders:Record<string,number>;discrepancy:Record<string,number>;reason:string|null;closed_at:string;force_close?:boolean}
+export interface CashClose {
+  id: string
+  shift_id: string
+  expected_tenders: Record<string, number>
+  counted_tenders: Record<string, number>
+  discrepancy: Record<string, number>
+  reason: string | null
+  closed_at: string
+  force_close?: boolean
+  /** Present on fresh closes: the sweep to the deposit-holding account. */
+  closeTransfer?: {
+    account_code_snapshot: string
+    account_name_snapshot: string
+    amount_cents: number
+  }
+}
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 const decodeShift = (value: unknown): CashShift | null => {
@@ -38,6 +53,10 @@ export interface CashMovement {
   account_code_snapshot?: string
   account_name_snapshot?: string
   description?: string
+  /** Present on rows that reverse an earlier manual movement (append-only ledger). */
+  reverses_tender_id?: string
+  /** Reason stored on the reversal row itself. */
+  reason?: string
 }
 
 const decodeMovement = (value: unknown): CashMovement | null => {
@@ -55,7 +74,9 @@ const decodeMovement = (value: unknown): CashMovement | null => {
       typeof value.account_code_snapshot !== 'string') ||
     (value.account_name_snapshot !== undefined &&
       typeof value.account_name_snapshot !== 'string') ||
-    (value.description !== undefined && typeof value.description !== 'string')
+    (value.description !== undefined && typeof value.description !== 'string') ||
+    (value.reverses_tender_id !== undefined && typeof value.reverses_tender_id !== 'string') ||
+    (value.reason !== undefined && typeof value.reason !== 'string')
   )
     return null
   return {
@@ -68,6 +89,10 @@ const decodeMovement = (value: unknown): CashMovement | null => {
     created_at: value.created_at,
     // prettier-ignore
     ...(value.account_code_snapshot === undefined ? {} : { account_code_snapshot: value.account_code_snapshot, account_name_snapshot: value.account_name_snapshot as string, description: value.description as string }),
+    ...(value.reverses_tender_id === undefined
+      ? {}
+      : { reverses_tender_id: value.reverses_tender_id }),
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
   }
 }
 
@@ -92,10 +117,12 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
   // U9-A additive fields: present for fresh details, absent for legacy shapes; never guessed.
   let extension: Pick<CashShiftDetail, 'movements' | 'expected_tenders' | 'opening_tenders'> = {}
   if (value.movements !== undefined) {
+    // expected_tenders ships only while the shift is OPEN (live close preview); a CLOSED
+    // shift carries its expectation inside close.expected_tenders instead.
     if (
       !Array.isArray(value.movements) ||
-      !isTotals(value.expected_tenders) ||
-      !isTotals(value.opening_tenders)
+      !isTotals(value.opening_tenders) ||
+      (value.close === null && !isTotals(value.expected_tenders))
     )
       throw invalid()
     const movements: CashMovement[] = []
@@ -106,7 +133,7 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
     }
     extension = {
       movements,
-      expected_tenders: value.expected_tenders,
+      ...(isTotals(value.expected_tenders) ? { expected_tenders: value.expected_tenders } : {}),
       opening_tenders: value.opening_tenders,
     }
   }
@@ -125,6 +152,23 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
     (close.force_close !== undefined && typeof close.force_close !== 'boolean')
   )
     throw invalid()
+  let closeTransfer: CashClose['closeTransfer'] | undefined
+  if (close.close_transfer !== undefined) {
+    const transfer = close.close_transfer
+    if (
+      !isRecord(transfer) ||
+      typeof transfer.account_code_snapshot !== 'string' ||
+      typeof transfer.account_name_snapshot !== 'string' ||
+      typeof transfer.amount_cents !== 'number' ||
+      !Number.isSafeInteger(transfer.amount_cents)
+    )
+      throw invalid()
+    closeTransfer = {
+      account_code_snapshot: transfer.account_code_snapshot,
+      account_name_snapshot: transfer.account_name_snapshot,
+      amount_cents: transfer.amount_cents,
+    }
+  }
   return {
     shift,
     close: {
@@ -136,6 +180,7 @@ export async function getCashShiftDetail(shiftId: string): Promise<CashShiftDeta
       reason: close.reason,
       closed_at: close.closed_at,
       ...(close.force_close === undefined ? {} : { force_close: close.force_close }),
+      ...(closeTransfer ? { closeTransfer } : {}),
     },
     ...extension,
   }
@@ -160,7 +205,15 @@ export async function getOpenCashShifts(): Promise<CashShift[]> {
 // prettier-ignore
 export function openCashShift(deskId:string,openingTenders:Record<string,number>,key:string){return apiFetch<CashShift>('/api/v1/treasury/shifts',{method:'POST',headers:headers(key),body:{desk_id:deskId,opening_tenders:openingTenders}})}
 // prettier-ignore
-export function closeCashShift(shiftId:string,countedTenders:Record<string,number>,reason:string,key:string){return apiFetch<CashClose>('/api/v1/treasury/shifts/'+shiftId+'/close',{method:'POST',headers:headers(key),body:{counted_tenders:countedTenders,...(reason?{reason}:{})}})}
+export function closeCashShift(shiftId:string,countedTenders:Record<string,number>,reason:string,key:string,drawerFloatCents?:number){return apiFetch<CashClose>('/api/v1/treasury/shifts/'+shiftId+'/close',{method:'POST',headers:headers(key),body:{counted_tenders:countedTenders,...(reason?{reason}:{}),...(drawerFloatCents===undefined?{}:{drawer_float_cents:drawerFloatCents})}})}
+/** P9: idempotent auto-open of the operator's own working period (last close remainder). */
+export function ensureOpenCashShift(key: string) {
+  return apiFetch<{ shift: CashShift }>('/api/v1/treasury/shifts/ensure-open', {
+    method: 'POST',
+    headers: headers(key),
+    body: {},
+  }).then((result) => result.shift)
+}
 export function forceCloseCashShift(
   shiftId: string,
   countedTenders: Record<string, number>,
@@ -173,6 +226,15 @@ export function forceCloseCashShift(
     body: { counted_tenders: countedTenders, force_close: true, reason },
   })
 }
+/** P6: reverses a MANUAL tender with an opposite-direction reversal (append-only). */
+export function reverseCashTender(shiftId: string, tenderId: string, reason: string, key: string) {
+  return apiFetch('/api/v1/treasury/shifts/' + shiftId + '/tenders/' + tenderId + '/reverse', {
+    method: 'POST',
+    headers: headers(key),
+    body: { reason },
+  })
+}
+
 export function recordCashTender(
   shiftId: string,
   input: {

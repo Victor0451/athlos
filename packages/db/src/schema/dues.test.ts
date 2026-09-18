@@ -25,6 +25,14 @@ import {
 const url = process.env.ATHLOS_TEST_DATABASE_URL
 const schema = `dues_${randomUUID().replaceAll('-', '')}`
 const q = `"${schema}"`
+
+const SQL_INSERT_SOCIO = `INSERT INTO ${q}.socios (id) VALUES ($1)`
+
+const SQL_INSERT_FAMILY_GROUP = `INSERT INTO ${q}.dues_family_groups (id, reason, created_by, authorization_evidence) VALUES ($1, 'Approved eligibility group', $2, '{}')`
+
+const SQL_SEED_OBLIGATION = `WITH receipt AS (INSERT INTO ${q}.dues_generation_receipts (operator_id, caller_key, request_fingerprint, period_start, period_end, authorization_evidence) VALUES ($1, gen_random_uuid(), repeat('a', 64), $3, $4, '{}') RETURNING id), obligation AS (INSERT INTO ${q}.dues_obligations (socio_id, kind, period_start, period_end, amount, generation_receipt_id, snapshot, actor_id, authorization_evidence) SELECT $2, 'MONTHLY_DUES', $3, $4, 100.00, id, '{}', $1, '{}' FROM receipt RETURNING id) INSERT INTO ${q}.dues_obligation_components (obligation_id, kind, component_key, amount, calculation_inputs, eligibility_snapshot, price_snapshot) SELECT id, 'BASE', 'base', 100.00, '{}', '{}', '{}' FROM obligation`
+
+const SQL_LAST_OBLIGATION = `SELECT id FROM ${q}.dues_obligations ORDER BY created_at DESC LIMIT 1`
 const root = join(import.meta.dirname, '..', '..')
 let pool: Pool
 let operatorId: string
@@ -37,16 +45,13 @@ const membershipInsert = `INSERT INTO ${q}.dues_family_memberships (family_group
 
 async function insertSocio() {
   const id = randomUUID()
-  await pool.query(`INSERT INTO ${q}.socios (id) VALUES ($1)`, [id])
+  await pool.query(SQL_INSERT_SOCIO, [id])
   return id
 }
 
 async function insertFamilyGroup() {
   const id = randomUUID()
-  await pool.query(
-    `INSERT INTO ${q}.dues_family_groups (id, reason, created_by, authorization_evidence) VALUES ($1, 'Approved eligibility group', $2, '{}')`,
-    [id, operatorId],
-  )
+  await pool.query(SQL_INSERT_FAMILY_GROUP, [id, operatorId])
   return id
 }
 
@@ -82,9 +87,8 @@ async function seedObligation(memberId = socioId) {
   const start = new Date(Date.UTC(2026, index, 1)).toISOString().slice(0, 10)
   const end = new Date(Date.UTC(2026, index + 1, 1)).toISOString().slice(0, 10)
   // prettier-ignore
-  await pool.query(`WITH receipt AS (INSERT INTO ${q}.dues_generation_receipts (operator_id, caller_key, request_fingerprint, period_start, period_end, authorization_evidence) VALUES ($1, gen_random_uuid(), repeat('a', 64), $3, $4, '{}') RETURNING id), obligation AS (INSERT INTO ${q}.dues_obligations (socio_id, kind, period_start, period_end, amount, generation_receipt_id, snapshot, actor_id, authorization_evidence) SELECT $2, 'MONTHLY_DUES', $3, $4, 100.00, id, '{}', $1, '{}' FROM receipt RETURNING id) INSERT INTO ${q}.dues_obligation_components (obligation_id, kind, component_key, amount, calculation_inputs, eligibility_snapshot, price_snapshot) SELECT id, 'BASE', 'base', 100.00, '{}', '{}', '{}' FROM obligation`, [operatorId, memberId, start, end])
-  return (await pool.query(`SELECT id FROM ${q}.dues_obligations ORDER BY created_at DESC LIMIT 1`))
-    .rows[0].id as string
+  await pool.query(SQL_SEED_OBLIGATION, [operatorId, memberId, start, end])
+  return (await pool.query(SQL_LAST_OBLIGATION)).rows[0].id as string
 }
 
 beforeAll(async () => {
@@ -93,8 +97,8 @@ beforeAll(async () => {
   operatorId = randomUUID()
   socioId = randomUUID()
   disciplineId = randomUUID()
-  // prettier-ignore
-  await pool.query(`CREATE SCHEMA ${q}; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE TABLE ${q}.operators (id uuid PRIMARY KEY); CREATE TABLE ${q}.socios (id uuid PRIMARY KEY); CREATE TABLE ${q}.disciplinas (id uuid PRIMARY KEY); CREATE TABLE ${q}.inscripciones (id uuid PRIMARY KEY); INSERT INTO ${q}.operators VALUES ('${operatorId}'); INSERT INTO ${q}.socios VALUES ('${socioId}'); INSERT INTO ${q}.disciplinas VALUES ('${disciplineId}')`)
+  const setupSql = `CREATE SCHEMA ${q}; CREATE EXTENSION IF NOT EXISTS pgcrypto; CREATE TABLE ${q}.operators (id uuid PRIMARY KEY); CREATE TABLE ${q}.socios (id uuid PRIMARY KEY); CREATE TABLE ${q}.disciplinas (id uuid PRIMARY KEY); CREATE TABLE ${q}.inscripciones (id uuid PRIMARY KEY); INSERT INTO ${q}.operators VALUES ('${operatorId}'); INSERT INTO ${q}.socios VALUES ('${socioId}'); INSERT INTO ${q}.disciplinas VALUES ('${disciplineId}')`
+  await pool.query(setupSql)
   await pool.query(await migrationSql())
 })
 afterAll(async () => {
@@ -149,7 +153,7 @@ describe('dues pricing and obligation schema', () => {
     ) as { entries: { idx: number; tag: string }[] }
     expect(journal.entries.at(-1)).toMatchObject({
       idx: files.length - 1,
-      tag: '0073_cash_close_transfers',
+      tag: '0074_manual_tender_reversals',
     })
     expect(journal.entries.map((entry) => entry.tag)).toEqual(
       files.map((file) => file.slice(0, -4)),

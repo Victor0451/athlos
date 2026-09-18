@@ -116,6 +116,39 @@ describe('Treasury attributed movement client', () => {
     expect(detail.expected_tenders).toEqual({ CASH: 2600000 })
     expect(detail.opening_tenders).toEqual({ CASH: 100000 })
   })
+  it('decodes a closed-shift detail whose expectation lives only in the close', async () => {
+    // Real contract: the API ships top-level expected_tenders only for OPEN shifts; a
+    // CLOSED shift reads its stored close as the authority.
+    apiFetchMock.mockResolvedValue({
+      shift: { ...openShift, id: 'closed-1', status: 'CLOSED', closed_at: '2026-09-16T18:00:00Z' },
+      close: {
+        id: 'close-1',
+        shift_id: 'closed-1',
+        expected_tenders: { CASH: 10000 },
+        counted_tenders: { CASH: 0 },
+        discrepancy: { CASH: -10000 },
+        reason: '0',
+        closed_at: '2026-09-16T18:00:00Z',
+      },
+      opening_tenders: { CASH: 10000 },
+      movements: [],
+    })
+    const detail = await getCashShiftDetail('closed-1')
+    expect(detail.expected_tenders).toBeUndefined()
+    expect(detail.opening_tenders).toEqual({ CASH: 10000 })
+    expect(detail.close?.discrepancy).toEqual({ CASH: -10000 })
+  })
+  it('still rejects an open-shift detail that omits the live expectation', async () => {
+    apiFetchMock.mockResolvedValue({
+      shift: openShift,
+      close: null,
+      movements: [],
+      opening_tenders: { CASH: 0 },
+    })
+    await expect(getCashShiftDetail('open-1')).rejects.toThrow(
+      'Treasury shift detail response was incomplete',
+    )
+  })
   it('keeps legacy details without movement fields readable', async () => {
     apiFetchMock.mockResolvedValue({ shift: openShift, close: null })
     const detail = await getCashShiftDetail('open-1')

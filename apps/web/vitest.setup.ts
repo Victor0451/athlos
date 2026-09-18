@@ -1,4 +1,5 @@
-import { beforeEach, expect } from 'vitest'
+import { afterEach, beforeEach, expect } from 'vitest'
+import { cleanup } from '@testing-library/react'
 import * as matchers from '@testing-library/jest-dom/matchers'
 
 /**
@@ -18,6 +19,11 @@ import * as matchers from '@testing-library/jest-dom/matchers'
  */
 
 expect.extend(matchers)
+
+// Explicit cleanup: RTL's auto-cleanup only registers when `globals: true` exposes a global
+// afterEach. Root-level runs (no app config) run with globals off, so renders would
+// otherwise accumulate across tests in the same file.
+afterEach(() => cleanup())
 
 class MemoryStorage {
   private store = new Map<string, string>()

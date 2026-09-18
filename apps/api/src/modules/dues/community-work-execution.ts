@@ -74,7 +74,10 @@ async function lockApproval(
   if (!row) return null
   return {
     ...row,
+    // SAFETY: the persistence layer stores these timestamps as ISO-8601 text columns, so the
+    // runtime value is always a parseable date string even though the row type widens it.
     expiresAt: new Date(row.expiresAt as unknown as string),
+    // SAFETY: same ISO-8601 text column contract as expiresAt; null only when never used.
     usedAt: row.usedAt ? new Date(row.usedAt as unknown as string) : null,
   }
 }

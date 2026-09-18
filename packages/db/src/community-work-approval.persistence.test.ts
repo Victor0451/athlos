@@ -63,7 +63,7 @@ describe('Migration journal', () => {
     expect(journal.entries.map((e) => e.tag)).toEqual(files)
     expect(journal.entries.map((e) => e.idx)).toEqual(files.map((_, i) => i))
     // Union journal: caja 0066-0073 intercalates 0071 in numeric order; 0073 closes the chain.
-    expect(journal.entries.at(-1)?.tag).toBe('0073_cash_close_transfers')
+    expect(journal.entries.at(-1)?.tag).toBe('0074_manual_tender_reversals')
     expect(journal.entries.at(-1)?.when).toBeGreaterThan(1789479500000)
   })
 
@@ -78,7 +78,7 @@ describe('Migration journal', () => {
     expect(cwEntry).toBeDefined()
     const sortedTags = journal.entries.map((e) => e.tag).sort()
     expect(sortedTags.indexOf('0071_community_work_approval')).toBe(cwEntry!.idx)
-    expect(journal.entries.at(-1)!.tag).toBe('0073_cash_close_transfers')
+    expect(journal.entries.at(-1)!.tag).toBe('0074_manual_tender_reversals')
   })
 
   it('migration file contains expected DDL patterns', async () => {
