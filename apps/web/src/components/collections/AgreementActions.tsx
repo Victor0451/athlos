@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useRef, useState } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { DuesOperationError, type DebtDetail, type DuesAgreement } from '@/lib/api/dues'
 import { Badge } from '@/components/ui/Badge'
 import { CommunityWorkForm, type CommunityWorkDraft } from './CommunityWorkForm'
@@ -18,7 +18,7 @@ export interface AgreementViewState { status: AgreementViewStatus; active: DuesA
 // prettier-ignore
 export type AgreementObligation = Pick<DebtDetail['obligations'][number], 'id'|'period_start'|'period_end'|'status'>
 // prettier-ignore
-type Props = { obligation: AgreementObligation; enabled?: boolean; treatment?: 'agreement'|'community'; currency?: string; outstandingCents?: number | undefined; state: AgreementViewState; onCreate: (draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRevise?: (agreementId:string,draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRecordCommunityWork?: (agreementId:string,draft:CommunityWorkDraft) => Promise<{ replayed?: boolean }|void>; communityWorkPending?: boolean; onReconcileCommunityWork?: () => Promise<void>|void; onRefresh: () => Promise<void>|void }
+type Props = { obligation: AgreementObligation; enabled?: boolean; treatment?: 'agreement'|'community'; currency?: string; outstandingCents?: number | undefined; state: AgreementViewState; onCreate: (draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRevise?: (agreementId:string,draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRecordCommunityWork?: (agreementId:string,draft:CommunityWorkDraft) => Promise<{ replayed?: boolean }|void>; communityWorkPending?: boolean; onReconcileCommunityWork?: () => Promise<void>|void; onRefresh: () => Promise<void>|void; communityApproval?: ReactNode }
 // prettier-ignore
 const errorStatuses = new Set<AgreementViewStatus>(['permission','conflict','partial_data','unavailable','error'])
 
@@ -41,7 +41,7 @@ const stateMessage = (state: AgreementViewState): string =>
 const mutationError = (error: unknown, community = false): {status: AgreementViewStatus; message:string} => { if (!(error instanceof DuesOperationError)) return {status:'error',message:community ? 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.' : 'No se pudo guardar el acuerdo. Intentá nuevamente.'}; const messages: Record<DuesOperationError['kind'],[AgreementViewStatus,string]> = {validation:['error',community ? 'El valor aprobado, la evidencia y el motivo son obligatorios y válidos.' : 'Los datos del acuerdo no son válidos. Revisá la narrativa y el motivo.'],permission:[community ? 'error' : 'permission',community ? 'No tenés permiso para registrar trabajo comunitario.' : 'No tenés permiso para registrar o modificar acuerdos.'],conflict:['conflict',community ? 'El saldo cambió. Revisá la deuda antes de reintentar.' : 'El acuerdo cambió. Revisá el acuerdo actualizado antes de volver a enviarlo.'],not_found:['error','No se encontró la obligación. Actualizá el detalle e intentá nuevamente.'],partial_data:['partial_data',community ? 'Los datos del trabajo comunitario están incompletos.' : 'El acuerdo tiene datos incompletos y no puede mostrarse como confirmado.'],unavailable:[community ? 'error' : 'unavailable',community ? 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.' : 'No se pudo guardar el acuerdo. Intentá nuevamente.']}; const [status,message] = messages[error.kind]; return {status,message} }
 
 // prettier-ignore
-export function AgreementActions({obligation, enabled = true, treatment, currency = 'ARS', outstandingCents, state, onCreate, onRevise, onRecordCommunityWork, communityWorkPending = false, onReconcileCommunityWork, onRefresh}: Props) {
+export function AgreementActions({obligation, enabled = true, treatment, currency = 'ARS', outstandingCents, state, onCreate, onRevise, onRecordCommunityWork, communityWorkPending = false, onReconcileCommunityWork, onRefresh, communityApproval}: Props) {
   const [formOpen, setFormOpen] = useState(false)
   const [formMode, setFormMode] = useState<'create' | 'revision' | 'community'>('create')
   const [busy, setBusy] = useState(false)
@@ -259,6 +259,7 @@ export function AgreementActions({obligation, enabled = true, treatment, currenc
           onSubmit={(draft) => submit(draft)}
         />
       )}
+      {communityApproval}
     </section>
   )
 }

@@ -21,6 +21,7 @@ import { findActiveCommunityWorkAgreement } from '../modules/dues/agreements.ts'
 import type * as AgreementsModule from '../modules/dues/agreements.ts'
 
 const executeApproved = vi.fn()
+const executeCommunityWorkApproved = vi.fn()
 
 vi.mock('../modules/dues/allocations.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof AllocationsModule>()),
@@ -33,6 +34,11 @@ vi.mock('../modules/dues/agreements.ts', async (importOriginal) => ({
 vi.mock('../modules/dues/condonations.ts', () => ({
   CondonationExecutionService: class {
     executeApproved = executeApproved
+  },
+}))
+vi.mock('../modules/dues/community-work-execution.ts', () => ({
+  CommunityWorkExecutionService: class {
+    executeApproved = executeCommunityWorkApproved
   },
 }))
 vi.mock('@athlos/approval', async (importOriginal) => ({
@@ -1400,4 +1406,174 @@ describe('GET /api/v1/community-work-requests', () => {
       }
     },
   )
+})
+
+describe('POST /api/v1/community-work-requests/:id/execution', () => {
+  const CW_ON = { COMMUNITY_WORK_APPROVALS_ENABLED: 'true' }
+  const executionRequestId = '00000000-0000-4000-8000-0000000000c2'
+  const serverExecutionId = '00000000-0000-4000-8000-0000000000c3'
+  const executionResult = (status: 'executed' | 'replayed' = 'executed') => ({
+    executionId: serverExecutionId,
+    approvalId: '00000000-0000-4000-8000-0000000000c4',
+    requestId: executionRequestId,
+    socioId: memberId,
+    obligationId,
+    amountCents: 1000,
+    currency: 'ARS',
+    workId: '00000000-0000-4000-8000-0000000000c5',
+    settlementId: '00000000-0000-4000-8000-0000000000c6',
+    allocationId: '00000000-0000-4000-8000-0000000000c7',
+    requesterKey: 'requester-1',
+    outstandingBeforeCents: 1000,
+    outstandingAfterCents: 0,
+    executionReceiptId: '00000000-0000-4000-8000-0000000000c8',
+    status,
+  })
+  const injectExecution = async (
+    app: FastifyInstance,
+    role: 'ADMIN' | 'TESORERO' | 'OPERADOR' | null = 'TESORERO',
+    extraHeaders: Record<string, string> = {},
+    params = executionRequestId,
+    payload: Record<string, unknown> = { execution_id: serverExecutionId },
+  ) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/community-work-requests/${params}/execution`,
+      headers:
+        role === null
+          ? extraHeaders
+          : { ...auth(role, role === 'OPERADOR' ? requesterId : approverId), ...extraHeaders },
+      payload,
+    })
+
+  beforeEach(() => {
+    executeCommunityWorkApproved.mockReset()
+  })
+
+  it('hides the write surface while the rollout flag is off', async () => {
+    const { app } = await bootstrap()
+    try {
+      const response = await injectExecution(app)
+      expect(response.statusCode).toBe(404)
+      expect(executeCommunityWorkApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('returns 401 when unauthenticated', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await injectExecution(app, null)
+      expect(response.statusCode).toBe(401)
+      expect(executeCommunityWorkApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects non-Treasury roles', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await injectExecution(app, 'OPERADOR', { 'idempotency-key': 'cw-exec-1' })
+      expect(response.statusCode).toBe(403)
+      expect(executeCommunityWorkApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('requires the Idempotency-Key header without ever feeding it to the executor identity', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const missing = await injectExecution(app, 'TESORERO')
+      expect(missing.statusCode).toBe(400)
+      const invalid = await injectExecution(app, 'TESORERO', { 'idempotency-key': '' })
+      expect(invalid.statusCode).toBe(400)
+      expect(executeCommunityWorkApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects a malformed body and a malformed request id', async () => {
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const noExecutionId = await injectExecution(
+        app,
+        'TESORERO',
+        { 'idempotency-key': 'cw-exec-2' },
+        executionRequestId,
+        {},
+      )
+      expect(noExecutionId.statusCode).toBe(400)
+      const badId = await injectExecution(
+        app,
+        'TESORERO',
+        { 'idempotency-key': 'cw-exec-2' },
+        'not-a-uuid',
+      )
+      expect(badId.statusCode).toBe(400)
+      expect(executeCommunityWorkApproved).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('executes with the server-generated execution identity and maps the header key to audit metadata only', async () => {
+    executeCommunityWorkApproved.mockResolvedValue(executionResult())
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await injectExecution(app, 'TESORERO', { 'idempotency-key': 'cw-exec-3' })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        execution_id: serverExecutionId,
+        request_id: executionRequestId,
+        work_id: '00000000-0000-4000-8000-0000000000c5',
+        settlement_id: '00000000-0000-4000-8000-0000000000c6',
+        allocation_id: '00000000-0000-4000-8000-0000000000c7',
+        socio_id: memberId,
+        obligation_id: obligationId,
+        amount_cents: 1000,
+        currency: 'ARS',
+        status: 'executed',
+      })
+      expect(executeCommunityWorkApproved).toHaveBeenCalledWith({
+        requestId: executionRequestId,
+        executionId: serverExecutionId,
+        actorId: approverId,
+        role: 'TESORERO',
+        permissions: expect.any(Array),
+        callerKey: 'cw-exec-3',
+        sourceIp: expect.any(String),
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('reports a replayed recovery as 200 with the same DTO', async () => {
+    executeCommunityWorkApproved.mockResolvedValue(executionResult('replayed'))
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await injectExecution(app, 'ADMIN', { 'idempotency-key': 'cw-exec-4' })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ status: 'replayed' })
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('propagates typed execution conflicts as 409', async () => {
+    executeCommunityWorkApproved.mockRejectedValue(
+      BusinessError(ErrorCode.CONFLICT, 'Community work execution is not executable'),
+    )
+    const { app } = await bootstrap(CW_ON)
+    try {
+      const response = await injectExecution(app, 'TESORERO', { 'idempotency-key': 'cw-exec-5' })
+      expect(response.statusCode).toBe(409)
+    } finally {
+      await app.close()
+    }
+  })
 })
