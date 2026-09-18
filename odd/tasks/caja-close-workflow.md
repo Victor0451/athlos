@@ -57,7 +57,7 @@ Walkthrough con browser real (10+ capturas en /tmp/caja-ux/) contra el stack viv
 - [x] "Cortes del día" con jerarquía: tarjeta por corte (desk bold + fecha a la derecha, línea "Turno del {business_date} · folio {id.slice(0,8)}"), sin UUID crudo ni "(hora local)".
 - [x] Form de movimiento: orden Descripción → Importe (vacío, no "0") → Método → Cuenta contable (con label visible + hint), texto guía coherente con el orden visual.
 - [x] Sidebar "Cash desk" → "Caja" (i18n); botón "Cortar caja" nowrap en móvil.
-- [ ] Pendiente de decisión: cuentas elegibles para movimientos de caja incluyen Plazo Fijo/FCI/Deudores (flag `eligible` del account chart, backend) — filtrar a equivalentes de efectivo es regla de negocio, requiere decisión del maintainer.
+- [x] ~Pendiente de decisión~ **RESUELTO como pendiente de largo plazo**: cuentas elegibles para movimientos de caja (hoy `eligible = active && imputable`, genérico; incluye Plazo Fijo/FCI que no son equivalentes de efectivo). **Decisión del maintainer: se resuelve cuando se construya el módulo de contabilidad / plan de cuentas** — ese CRUD gestionará todo el plan de cuentas, incluida la elegibilidad por propósito (flag tipo `cash_eligible` y familias permitidas para movimientos de efectivo). No hardcodear en el cliente.
 - [ ] Seed con `closed_at` raro ("05:59:55"): verificar display TZ con un corte real (el formatter usa `toLocaleString('es-AR')`; sospecha de timestamp horneado en el seed, no de display).
 
 Verificación P10: 124/124 web (12 files), tsc 0, smoke Playwright en vivo (clamp, Escape, cortes, form, sidebar).
