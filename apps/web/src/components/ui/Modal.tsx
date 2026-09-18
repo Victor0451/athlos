@@ -69,6 +69,9 @@ interface ModalProps {
   dataTestid?: string
   /** Extra classes to merge onto the inner panel (rarely needed). */
   panelClassName?: string
+  /** Optional dismissal handler. When provided, Escape and a pointer press on the
+   *  backdrop (outside the panel) invoke it, matching standard dialog dismissal. */
+  onDismiss?: () => void
 }
 
 function isUsable(element: HTMLElement) {
@@ -125,6 +128,7 @@ export function Modal({
   descriptionId,
   dataTestid,
   panelClassName = '',
+  onDismiss,
 }: ModalProps) {
   const titleId = useId()
   const modalRef = useRef<HTMLDivElement>(null)
@@ -156,6 +160,11 @@ export function Modal({
   }, [open])
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape' && onDismiss && topModal() === modalRef.current) {
+      event.stopPropagation()
+      onDismiss()
+      return
+    }
     const modal = modalRef.current
     if (event.defaultPrevented || event.key !== 'Tab' || !modal || topModal() !== modal) return
     const controls = tabbables(modal)
@@ -175,6 +184,12 @@ export function Modal({
       data-modal-focus-root
       tabIndex={-1}
       onKeyDown={handleKeyDown}
+      onPointerDown={(event) => {
+        // Backdrop dismissal: only a press on the backdrop itself, never a press that
+        // bubbles from inside the panel (portal targets fail the identity check by DOM
+        // node, so dropdown portals cannot dismiss the modal).
+        if (event.target === event.currentTarget) onDismiss?.()
+      }}
       role={role}
       aria-modal="true"
       aria-labelledby={titleId}

@@ -42,6 +42,7 @@ export function CashCloseHistoryDetail({
       <Modal
         open={open}
         size="md"
+        onDismiss={() => setOpen(false)}
         title={`Conciliación del turno ${shift.desk_id}`}
         footer={
           <button
