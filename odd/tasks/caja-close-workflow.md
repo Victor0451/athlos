@@ -45,5 +45,22 @@ Decisión de diseño aprobada por el maintainer (4 respuestas):
 ## Notas
 
 - El close de turno vencido (force) no lleva float (finanzas decide; barrido completo).
+
+## P10 — Endurecimiento UX del módulo (post-walkthrough Playwright)
+
+Walkthrough con browser real (10+ capturas en /tmp/caja-ux/) contra el stack vivo; hallazgos y fixes:
+
+- [x] CORS del stack: `caja-ui.sh` no exportaba `CORS_ORIGINS` (default solo `localhost:3000`); el browser entraba por `127.0.0.1:3000` → preflight sin ACAO, y los POST ejecutaban server-side sin que la página leyera respuesta (turno fantasma + "Preparando tu caja…" eterno). Fix: export ambas origins. ⚠️ Sin commitear aún.
+- [x] Modal base: `onDismiss` opcional — Escape y click en backdrop cierran (guard por identidad DOM: portals no dismissan). Conectado en los 4 modales de caja; respetando `recoveryPending` en corte/movimiento.
+- [x] Carga inicial fallida → Alert con "Reintentar" (antes texto muerto). Auto-open fallido → Alert "No se pudo preparar tu caja" con Reintentar; se oculta la línea optimista "Tu caja se abre sola…" cuando hay error.
+- [x] Float del corte se re-clampa a `min(float, contado)` al editar el contado (antes quedaba el prefill y "Confirmar" se bloqueaba sin explicación). Verificado en vivo.
+- [x] "Cortes del día" con jerarquía: tarjeta por corte (desk bold + fecha a la derecha, línea "Turno del {business_date} · folio {id.slice(0,8)}"), sin UUID crudo ni "(hora local)".
+- [x] Form de movimiento: orden Descripción → Importe (vacío, no "0") → Método → Cuenta contable (con label visible + hint), texto guía coherente con el orden visual.
+- [x] Sidebar "Cash desk" → "Caja" (i18n); botón "Cortar caja" nowrap en móvil.
+- [ ] Pendiente de decisión: cuentas elegibles para movimientos de caja incluyen Plazo Fijo/FCI/Deudores (flag `eligible` del account chart, backend) — filtrar a equivalentes de efectivo es regla de negocio, requiere decisión del maintainer.
+- [ ] Seed con `closed_at` raro ("05:59:55"): verificar display TZ con un corte real (el formatter usa `toLocaleString('es-AR')`; sospecha de timestamp horneado en el seed, no de display).
+
+Verificación P10: 124/124 web (12 files), tsc 0, smoke Playwright en vivo (clamp, Escape, cortes, form, sidebar).
+
 - La UI de "turno abierto/cerrado" desaparece del vocabulario del operador: "Tu caja del
   día" + cortes.
