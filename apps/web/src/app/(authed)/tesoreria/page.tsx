@@ -75,6 +75,9 @@ export default function TreasuryPage() {
   const [corteOpen, setCorteOpen] = useState(false)
   const [corteCounted, setCorteCounted] = useState('')
   const [corteFloat, setCorteFloat] = useState('')
+  // While false, the drawer float follows the server expectation; the operator's own edit
+  // freezes it so a late-arriving fresh fetch cannot override a deliberate value.
+  const [corteFloatTouched, setCorteFloatTouched] = useState(false)
   const [corteReason, setCorteReason] = useState('')
   const [recoveryCounted, setRecoveryCounted] = useState('')
   const [recoveryReason, setRecoveryReason] = useState('')
@@ -257,16 +260,19 @@ export default function TreasuryPage() {
     queryKey: ['cash-shift-detail', ownOpenShift?.id ?? 'none', movementsToken],
     queryFn: () => getCashShiftDetail(ownOpenShift!.id),
     enabled: corteOpen && Boolean(ownOpenShift),
+    // Cash amounts must never be served stale: the global 5-minute staleTime would let the
+    // corte modal show an outdated expectation after a payment recorded moments earlier.
+    staleTime: 0,
   })
   const corteExpectedCents = corteDetail.data?.expected_tenders?.CASH ?? null
   // Prefill "dejás en cajón" with everything counted: keeping cash in the drawer is the safe
   // default (the operator lowers the float to sweep the excess to Valores a Depositar).
   useEffect(() => {
     if (!corteOpen) return
-    if (corteFloat === '' && corteExpectedCents !== null) {
+    if (!corteFloatTouched && corteExpectedCents !== null) {
       setCorteFloat(formatPesos(corteExpectedCents))
     }
-  }, [corteOpen, corteExpectedCents, corteFloat])
+  }, [corteOpen, corteExpectedCents, corteFloatTouched])
 
   const confirmCorte = async (event: FormEvent) => {
     event.preventDefault()
@@ -300,6 +306,7 @@ export default function TreasuryPage() {
         setCorteOpen(false)
         setCorteCounted('')
         setCorteFloat('')
+        setCorteFloatTouched(false)
         setCorteReason('')
       },
     )
@@ -454,6 +461,7 @@ export default function TreasuryPage() {
                   onClick={() => {
                     setCorteCounted('')
                     setCorteFloat('')
+                    setCorteFloatTouched(false)
                     setCorteReason('')
                     setCorteOpen(true)
                   }}
@@ -694,7 +702,10 @@ export default function TreasuryPage() {
               value={corteFloat}
               parseCents={parseCashAmount}
               disabled={recoveryPending}
-              onChange={(event) => setCorteFloat(event.target.value)}
+              onChange={(event) => {
+                setCorteFloat(event.target.value)
+                setCorteFloatTouched(true)
+              }}
             />
           </label>
           {corteCounted !== '' && corteFloat !== '' && (

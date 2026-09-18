@@ -4,7 +4,6 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
   authenticatedPage: page,
 }) => {
   test.skip(process.env.DUES_CASH_ENABLED !== 'true', 'Requires the local cash feature flag.')
-  const openingRequests: unknown[] = []
   let opened = false
 
   await page.addInitScript(() => {
@@ -14,24 +13,10 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
     state.currentUser.role = 'OPERADOR'
     window.localStorage.setItem('athlos.auth', JSON.stringify(state))
   })
-  await page.route('**/api/v1/treasury/shifts', (route) => {
-    if (route.request().method() === 'POST') {
-      openingRequests.push(JSON.parse(route.request().postData() ?? '{}'))
-      opened = true
-      return route.fulfill({
-        status: 201,
-        json: {
-          id: 'own-open',
-          desk_id: 'front-desk',
-          status: 'OPEN',
-          business_date: '2026-01-01',
-          assigned_operator_id: '00000000-0000-4000-8000-000000000001',
-          opened_at: new Date().toISOString(),
-          closed_at: null,
-        },
-      })
-    }
-    return route.fulfill({
+  // Route order matters: playwright matches the last registered route first, so the
+  // ensure-open endpoint wins over the generic list handler.
+  await page.route('**/api/v1/treasury/shifts', (route) =>
+    route.fulfill({
       json: {
         items: opened
           ? [
@@ -47,6 +32,23 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
             ]
           : [],
       },
+    }),
+  )
+  await page.route('**/api/v1/treasury/shifts/ensure-open', (route) => {
+    opened = true
+    return route.fulfill({
+      status: 201,
+      json: {
+        shift: {
+          id: 'own-open',
+          desk_id: 'front-desk',
+          status: 'OPEN',
+          business_date: '2026-01-01',
+          assigned_operator_id: '00000000-0000-4000-8000-000000000001',
+          opened_at: new Date().toISOString(),
+          closed_at: null,
+        },
+      },
     })
   })
 
@@ -54,19 +56,10 @@ test('OPERADOR opens Caja on mobile without finance-only controls', async ({
   await page.goto('/tesoreria')
 
   await expect(page.getByRole('heading', { name: 'Caja' })).toBeVisible()
-  const desk = page.getByLabel('Puesto')
-  await desk.focus()
-  await page.keyboard.press('Tab')
-  await expect(page.getByLabel('Efectivo inicial (pesos)')).toBeFocused()
-  await page.keyboard.press('Tab')
-  await expect(page.getByRole('button', { name: 'Abrir turno' })).toBeFocused()
-  await page.keyboard.press('Enter')
-
-  await expect(page.getByRole('status').filter({ hasText: 'Turno abierto.' })).toBeVisible()
-  expect(openingRequests).toEqual([{ desk_id: 'front-desk', opening_tenders: { CASH: 0 } }])
-  await expect(page.getByLabel('Cerrar turno de caja')).toHaveCount(0)
+  // P9 auto-open: the working period opens itself; no manual open form exists anymore.
+  await expect(page.getByRole('button', { name: 'Cortar caja' })).toBeVisible()
   await expect(page.getByLabel('Recuperación de turnos vencidos')).toHaveCount(0)
-  await expect(page.getByLabel('Turnos cerrados')).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Cortes del día' })).toHaveCount(0)
 })
 
 test('OPERADOR enters Collections from Caja and records one full selected payment', async ({
@@ -119,6 +112,11 @@ test('OPERADOR enters Collections from Caja and records one full selected paymen
   await page.route('**/api/v1/dues/debt/*', (route) => route.fulfill({ json: debt }))
   await page.route('**/api/v1/dues/prices?*', (route) => route.fulfill({ json: { items: [] } }))
   await page.route('**/api/v1/padrones/disciplinas*', (route) =>
+    route.fulfill({ json: { items: [] } }),
+  )
+  // Console chrome the page loads alongside the journey; without these the unmocked
+  // pass-throughs hit the real API and break an otherwise hermetic run.
+  await page.route(/\/api\/v1\/(club-status|notifications|admin\/operations\/snapshot)/, (route) =>
     route.fulfill({ json: { items: [] } }),
   )
   await page.route('**/api/v1/members/*/condonation-requests*', (route) =>
@@ -177,7 +175,9 @@ test('OPERADOR enters Collections from Caja and records one full selected paymen
   await page.getByRole('button', { name: 'Registrar pago' }).click()
   await page.getByRole('button', { name: 'Confirmar pago' }).click()
 
-  await expect(page.getByText(/Pago confirmado\. Operación settlement-1\./)).toBeVisible()
+  const paymentOutcome = page.getByRole('region', { name: 'Resultado del pago' })
+  await expect(paymentOutcome.getByRole('heading', { name: 'Pago registrado' })).toBeVisible()
+  await expect(paymentOutcome).toContainText('settlement-1')
   expect(settlementRequests).toEqual([
     expect.objectContaining({
       obligation_ids: ['00000000-0000-4000-8000-000000000011'],
@@ -255,12 +255,12 @@ test('OPERADOR reads only own closed Caja history with GET detail', async ({
 
   await page.goto('/tesoreria')
 
-  const history = page.getByRole('region', { name: 'Turnos cerrados' })
+  const history = page.getByRole('region', { name: 'Cortes del día' })
   await expect(history.getByRole('button', { name: 'Ver conciliación de front' })).toBeVisible()
   await expect(history.getByText('back')).toHaveCount(0)
-  await expect(page.getByLabel('Cerrar turno de caja')).toHaveCount(0)
   await expect(page.getByLabel('Recuperación de turnos vencidos')).toHaveCount(0)
   await history.getByRole('button', { name: 'Ver conciliación de front' }).click()
   await expect(page.getByRole('dialog')).toContainText('Control manual')
+  await expect(page.getByRole('dialog').getByText('Faltante')).toBeVisible()
   expect(detailRequests).toEqual(['GET'])
 })

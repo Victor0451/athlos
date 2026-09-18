@@ -227,9 +227,9 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     reason: 'Faltante registrado en el turno de prueba.',
     closed_at: foreignShift.closed_at!,
   }
-  let shift: CashShift | null = null
+  let shifts: CashShift[] = []
+  let ensures = 0
   let paid = false
-  let opens = 0
   let payments = 0
   let closes = 0
   let historicalGets = 0
@@ -355,58 +355,76 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       })
       return
     }
-    if (method === 'GET' && path === `/api/v1/treasury/shifts/${shiftId}`) {
-      historicalGets += 1
-      expect(savedClose).not.toBeNull()
-      await route.fulfill({ json: { shift, close: savedClose } })
+    if (method === 'GET' && /^\/api\/v1\/treasury\/shifts\/[^/]+$/.test(path)) {
+      const detail = shifts.find((candidate) => candidate.id === path.split('/').pop())
+      if (!detail) {
+        unexpected.push(`${method} ${path}`)
+        await route.fulfill({ status: 404, json: { detail: 'Cash shift not found' } })
+        return
+      }
+      if (detail.status === 'CLOSED') {
+        historicalGets += 1
+        expect(savedClose).not.toBeNull()
+        await route.fulfill({ json: { shift: detail, close: savedClose } })
+        return
+      }
+      // Live close preview: expectation recomputed from persisted rows.
+      const movements = paid
+        ? [
+            {
+              id: '00000000-0000-4000-8000-000000000019',
+              direction: 'INCOME',
+              tender: 'CASH',
+              amount_cents: 10000,
+              source_type: 'SETTLEMENT',
+              source_id: paymentId,
+              created_at: confirmedAt ?? new Date().toISOString(),
+            },
+          ]
+        : []
+      await route.fulfill({
+        json: {
+          shift: detail,
+          close: null,
+          movements,
+          expected_tenders: { CASH: paid ? 10000 : 0 },
+          opening_tenders: { CASH: 0 },
+        },
+      })
       return
     }
     if (qaMode && method === 'GET' && path === `/api/v1/treasury/shifts/${foreignShift.id}`) {
       await route.fulfill({ json: { shift: foreignShift, close: foreignClose } })
       return
     }
-    if (path === '/api/v1/treasury/shifts') {
-      if (method === 'GET') {
-        await route.fulfill({
-          json: { items: [...(shift ? [shift] : []), ...(qaMode ? [foreignShift] : [])] },
-        })
+    if (method === 'GET' && path === '/api/v1/treasury/shifts') {
+      await route.fulfill({
+        json: { items: [...shifts, ...(qaMode ? [foreignShift] : [])] },
+      })
+      return
+    }
+    if (method === 'POST' && path === '/api/v1/treasury/shifts/ensure-open') {
+      ensures += 1
+      expect(request.headers()['idempotency-key']).toBeTruthy()
+      const open = shifts.find((candidate) => candidate.status === 'OPEN')
+      if (open) {
+        await route.fulfill({ json: { shift: open } })
         return
       }
-      if (method === 'POST') {
-        const body = request.postDataJSON()
-        if (
-          qaMode &&
-          (shift !== null ||
-            body.desk_id !== 'front-desk' ||
-            body.opening_tenders?.CASH !== 1000 ||
-            Object.keys(body.opening_tenders ?? {}).length !== 1 ||
-            Object.keys(body).length !== 2)
-        ) {
-          await rejectQaScenario(
-            route,
-            'Simulador de prueba: abrí un único turno front-desk con efectivo inicial $10,00. Los $100,00 corresponden al pago, no a la apertura.',
-          )
-          return
-        }
-        if (qaMode) await setQaFeedback('')
-        opens += 1
-        expect(body).toEqual({
-          desk_id: 'front-desk',
-          opening_tenders: { CASH: 1000 },
-        })
-        expect(request.headers()['idempotency-key']).toBeTruthy()
-        shift = {
-          id: shiftId,
-          desk_id: 'front-desk',
-          status: 'OPEN',
-          assigned_operator_id: '00000000-0000-4000-8000-000000000001',
-          business_date: new Date().toISOString().slice(0, 10),
-          opened_at: new Date().toISOString(),
-          closed_at: null,
-        }
-        await route.fulfill({ status: 201, json: shift })
-        return
+      // P9 auto-open: the next working period starts from the last close remainder (mocked
+      // as zero — the journey sweeps everything on corte).
+      const created: CashShift = {
+        id: shifts.length === 0 ? shiftId : '00000000-0000-4000-8000-000000000019',
+        desk_id: 'front-desk',
+        status: 'OPEN',
+        assigned_operator_id: '00000000-0000-4000-8000-000000000001',
+        business_date: new Date().toISOString().slice(0, 10),
+        opened_at: new Date().toISOString(),
+        closed_at: null,
       }
+      shifts.push(created)
+      await route.fulfill({ status: 201, json: { shift: created } })
+      return
     }
     if (method === 'GET' && path === `/api/v1/dues/settlements/${paymentId}`) {
       receiptGets += 1
@@ -454,7 +472,7 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       if (
         qaMode &&
         (paid ||
-          shift?.status !== 'OPEN' ||
+          !shifts.some((candidate) => candidate.status === 'OPEN') ||
           body.socio_id !== memberId ||
           body.tender !== 'CASH' ||
           body.shift_id !== shiftId ||
@@ -495,32 +513,37 @@ async function cashJourney(page: Page, failRefresh: boolean) {
       const body = request.postDataJSON()
       if (
         qaMode &&
-        (shift?.status !== 'OPEN' ||
+        (!shifts.some((candidate) => candidate.status === 'OPEN') ||
           !paid ||
-          body.counted_tenders?.CASH !== 11000 ||
+          body.counted_tenders?.CASH !== 10000 ||
+          body.drawer_float_cents !== 10000 ||
           Object.keys(body.counted_tenders ?? {}).length !== 1 ||
-          Object.keys(body).length !== 1)
+          Object.keys(body).length !== 2)
       ) {
         await rejectQaScenario(
           route,
-          'Simulador de prueba: después del pago de $100,00, cerrá el turno con efectivo contado $110,00 y sin motivo de diferencia.',
+          'Simulador de prueba: después del pago de $100,00, cortá la caja contando $100,00 y dejándolo todo en el cajón (sin motivo de diferencia).',
         )
         return
       }
       if (qaMode) await setQaFeedback('')
       closes += 1
       expect(paid).toBe(true)
-      expect(body).toEqual({ counted_tenders: { CASH: 11000 } })
+      expect(body).toEqual({ counted_tenders: { CASH: 10000 }, drawer_float_cents: 10000 })
       expect(request.headers()['idempotency-key']).toBeTruthy()
-      shift = { ...shift!, status: 'CLOSED', closed_at: new Date().toISOString() }
+      shifts = shifts.map((candidate) =>
+        candidate.id === shiftId
+          ? { ...candidate, status: 'CLOSED' as const, closed_at: new Date().toISOString() }
+          : candidate,
+      )
       savedClose = {
         id: '00000000-0000-4000-8000-000000000015',
         shift_id: shiftId,
-        expected_tenders: { CASH: 11000 },
-        counted_tenders: { CASH: 11000 },
+        expected_tenders: { CASH: 10000 },
+        counted_tenders: { CASH: 10000 },
         discrepancy: {},
         reason: null,
-        closed_at: shift.closed_at!,
+        closed_at: new Date().toISOString(),
       }
       await route.fulfill({ json: savedClose })
       return
@@ -644,30 +667,8 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     await expect(qaFeedback).toContainText(message)
     expect(page.isClosed()).toBe(false)
   }
-  await enterValue(page.getByLabel('Puesto', { exact: true }), 'front-desk')
-  if (qaMode === 'smoke') {
-    await enterValue(page.getByLabel('Efectivo inicial (pesos)'), '100,00')
-    const open = page.getByRole('button', { name: 'Abrir turno', exact: true })
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await expect(open).toBeEnabled()
-      await expectQa400(
-        '/api/v1/treasury/shifts',
-        () => activate(open),
-        /Simulador de prueba:.*\$10,00/,
-      )
-    }
-    expect(opens).toBe(0)
-  }
-  const openingAmount = page.getByLabel('Efectivo inicial (pesos)')
-  await enterValue(openingAmount, '15600')
-  await page.keyboard.press('Tab')
-  await expect(openingAmount).toHaveValue('15.600,00')
-  expect(opens).toBe(0)
-  await enterValue(openingAmount, '10')
-  await page.keyboard.press('Tab')
-  await expect(openingAmount).toHaveValue('10,00')
-  await activate(page.getByRole('button', { name: 'Abrir turno', exact: true }))
-  await expect(page.getByText('Turno abierto.', { exact: true })).toBeVisible()
+  // P9 auto-open: the working period opens itself; no manual open form anymore.
+  await expect(page.getByRole('button', { name: 'Cortar caja' })).toBeVisible()
   await activate(page.getByRole('button', { name: 'Volver a cobranza', exact: true }))
   await expect(page).toHaveURL(/\/collections\?/)
   await expect(dialog).toBeVisible()
@@ -791,33 +792,40 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   if (mobileKeyboard) {
     await activate(page.getByRole('button', { name: 'Abrir navegación' }))
     const drawer = page.getByRole('dialog', { name: 'Navegación principal' })
-    await activate(drawer.getByRole('link', { name: 'Cash desk', exact: true }))
+    await activate(drawer.getByRole('link', { name: 'Caja', exact: true }))
     await expect(drawer).not.toBeVisible()
-  } else await page.getByRole('link', { name: 'Cash desk', exact: true }).click()
+  } else await page.getByRole('link', { name: 'Caja', exact: true }).click()
+  // The corte lives in its own modal now: expected cash comes from the server, the drawer
+  // float prefills with it (nothing sweeps unless lowered), and the counted cash matches it.
+  await activate(page.getByRole('button', { name: 'Cortar caja', exact: true }))
+  const corteDialog = page.getByRole('dialog', { name: 'Cortar caja', exact: true })
+  const countedAmount = corteDialog.getByLabel('Efectivo contado (pesos)')
+  await expect(corteDialog.getByText(/Efectivo esperado:\s*\$\s*100,00/)).toBeVisible()
   if (qaMode === 'smoke') {
-    await enterValue(page.getByLabel('Efectivo contado (pesos)'), '100,00')
-    const close = page.getByRole('button', { name: /Cerrar front-desk/ })
-    await expect(close).toBeEnabled()
+    await enterValue(countedAmount, '100,00')
+    const confirm = page.getByRole('button', { name: 'Confirmar corte', exact: true })
+    await expect(confirm).toBeEnabled()
     await expectQa400(
       `/api/v1/treasury/shifts/${shiftId}/close`,
-      () => activate(close),
-      /Simulador de prueba:.*\$110,00/,
+      () => activate(confirm),
+      /Simulador de prueba:.*\$100,00/,
     )
     expect(closes).toBe(0)
   }
-  const countedAmount = page.getByLabel('Efectivo contado (pesos)')
-  await enterValue(countedAmount, '110')
+  await enterValue(countedAmount, '100')
   await page.keyboard.press('Tab')
-  await expect(countedAmount).toHaveValue('110,00')
-  await activate(page.getByRole('button', { name: /Cerrar front-desk/ }))
+  await expect(countedAmount).toHaveValue('100,00')
+  await activate(page.getByRole('button', { name: 'Confirmar corte', exact: true }))
   const summary = page.getByRole('region', { name: 'Resumen de conciliación' })
   await expect(summary).toBeVisible()
-  await expect(summary).toContainText(/\$\s*110,00/)
+  await expect(summary).toContainText(/\$\s*100,00/)
   await expect(summary).toContainText(/\$\s*0,00/)
-  await expect(page.getByRole('region', { name: 'Turnos cerrados' })).toContainText('front-desk')
   await checkViewport()
+  // The just-closed corte intentionally stays out of the list while the session summary
+  // shows it; a reload folds it into the day's history.
   await page.reload()
   await expect(summary).not.toBeVisible()
+  await expect(page.getByRole('region', { name: 'Cortes del día' })).toContainText('front-desk')
   const historyOpener = page.getByRole('button', {
     name: 'Ver conciliación de front-desk',
     exact: true,
@@ -829,7 +837,7 @@ async function cashJourney(page: Page, failRefresh: boolean) {
     name: 'Conciliación del turno front-desk',
     exact: true,
   })
-  await expect(historyDetail).toContainText(/\$\s*110,00/)
+  await expect(historyDetail).toContainText(/\$\s*100,00/)
   await expect(historyDetail).toContainText(/\$\s*0,00/)
   expect(historicalGets).toBe(1)
   await checkViewport()
@@ -873,6 +881,6 @@ async function cashJourney(page: Page, failRefresh: boolean) {
   expect(receiptGets).toBe(4)
   expect(payments).toBe(1)
   await activate(receiptDialog.getByRole('button', { name: 'Cerrar', exact: true }))
-  expect({ opens, payments, closes }).toEqual({ opens: 1, payments: 1, closes: 1 })
+  expect({ ensures, payments, closes }).toEqual({ ensures: 2, payments: 1, closes: 1 })
   expect(unexpected).toEqual([])
 }
