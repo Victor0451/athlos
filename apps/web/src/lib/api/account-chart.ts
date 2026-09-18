@@ -43,14 +43,13 @@ const decodeItem = (value: unknown): AccountChartItem | null => {
   }
 }
 
-// Eligible accounts are active imputable leaves; the API filters active server-side and the
-// eligibility flag decides selection, so group/inactive rows never reach the manual form.
-export async function searchEligibleAccounts(name: string): Promise<AccountChartItem[]> {
-  const query = name.trim()
-  if (!query) return []
-  const value = await apiFetch<unknown>(
-    '/api/v1/account-chart?name=' + encodeURIComponent(query) + '&active=true',
-  )
+/**
+ * Fetches every active account and keeps only eligible imputable leaves, deduplicated by
+ * code. The combobox renders the full list with client-side filtering (erpgw-style dropdown),
+ * so it needs the whole catalog once instead of per-keystroke server searches.
+ */
+export async function fetchAllEligibleAccounts(): Promise<AccountChartItem[]> {
+  const value = await apiFetch<unknown>('/api/v1/account-chart?active=true')
   if (!isRecord(value) || !Array.isArray(value.items))
     throw new Error('Account chart response was incomplete')
   const items: AccountChartItem[] = []
@@ -58,7 +57,7 @@ export async function searchEligibleAccounts(name: string): Promise<AccountChart
   for (const raw of value.items) {
     const item = decodeItem(raw)
     if (!item) throw new Error('Account chart response was incomplete')
-    // A duplicated code would break the picker's radio group (two checked inputs), so the
+    // A duplicated code would break selection identity (two rows for one account), so the
     // first occurrence wins and later rows with the same code are dropped.
     if (item.eligible && !seen.has(item.code)) {
       seen.add(item.code)
@@ -67,3 +66,10 @@ export async function searchEligibleAccounts(name: string): Promise<AccountChart
   }
   return items
 }
+
+/** Diacritics-insensitive lowercase needle, matching the server-side search semantics. */
+export const normalizedAccount = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ManualMovementForm } from './ManualMovementForm'
@@ -5,11 +6,16 @@ import { ApiError } from '@/lib/api'
 
 const mocks = vi.hoisted(() => ({
   recordCashTender: vi.fn(),
-  searchEligibleAccounts: vi.fn(),
+  fetchAllEligibleAccounts: vi.fn(),
 }))
 vi.mock('@/lib/api/treasury', () => ({ recordCashTender: mocks.recordCashTender }))
 vi.mock('@/lib/api/account-chart', () => ({
-  searchEligibleAccounts: mocks.searchEligibleAccounts,
+  fetchAllEligibleAccounts: mocks.fetchAllEligibleAccounts,
+  normalizedAccount: (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase(),
 }))
 
 const account = {
@@ -23,26 +29,35 @@ const account = {
   eligible: true,
 }
 
-const setup = (onRecorded = vi.fn()) => {
-  render(<ManualMovementForm shiftId="shift-1" operatorId="operator-1" onRecorded={onRecorded} />)
+const setup = (onRecorded = vi.fn(), initialDirection: 'INCOME' | 'EXPENSE' = 'INCOME') => {
+  render(
+    <ManualMovementForm
+      shiftId="shift-1"
+      operatorId="operator-1"
+      onRecorded={onRecorded}
+      initialDirection={initialDirection}
+    />,
+  )
   return onRecorded
 }
 
 const selectAccount = async () => {
-  fireEvent.change(screen.getByLabelText('Buscar cuenta'), { target: { value: 'cuota' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Buscar cuenta' }))
-  await screen.findByRole('radio', { name: /4\.1\.01 — Cuotas sociales/ })
-  fireEvent.click(screen.getByRole('radio', { name: /4\.1\.01 — Cuotas sociales/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Seleccione una cuenta' }))
+  const option = await screen.findByRole('option', { name: '4.1.01 — Cuotas sociales' })
+  fireEvent.click(option)
+  expect(
+    screen.getByRole('button', { name: '4.1.01 — Cuotas sociales' }).getAttribute('aria-expanded'),
+  ).toBe('false')
 }
 
 describe('ManualMovementForm', () => {
   beforeEach(() => {
     mocks.recordCashTender.mockReset()
-    mocks.searchEligibleAccounts.mockReset()
-    mocks.searchEligibleAccounts.mockResolvedValue([account])
+    mocks.fetchAllEligibleAccounts.mockReset()
+    mocks.fetchAllEligibleAccounts.mockResolvedValue([account])
   })
 
-  it('offers the income matrix and hides bank debit until an expense is chosen', () => {
+  it('offers the income matrix by default (the dialog opening button implies the direction)', () => {
     setup()
     const method = screen.getByLabelText('Método de pago')
     expect(withinOptions(method)).toEqual([
@@ -51,7 +66,11 @@ describe('ManualMovementForm', () => {
       'Tarjeta de crédito',
       'Transferencia',
     ])
-    fireEvent.click(screen.getByRole('radio', { name: 'Egreso' }))
+  })
+
+  it('offers the expense matrix with bank debit and its note on expense dialogs', () => {
+    setup(undefined, 'EXPENSE')
+    const method = screen.getByLabelText('Método de pago')
     expect(withinOptions(method)).toEqual([
       'Efectivo',
       'Tarjeta de débito',
@@ -64,8 +83,8 @@ describe('ManualMovementForm', () => {
 
   it('searches eligible accounts and requires one selection before recording', async () => {
     setup()
-    fireEvent.change(screen.getByLabelText('Importe (pesos)'), { target: { value: '3000,00' } })
-    fireEvent.change(screen.getByLabelText('Descripción'), {
+    fireEvent.change(screen.getByLabelText(/^Importe \(pesos\)/), { target: { value: '3000,00' } })
+    fireEvent.change(screen.getByLabelText('Descripción / motivo'), {
       target: { value: 'Cuota septiembre' },
     })
     fireEvent.submit(screen.getByRole('form', { name: 'Registrar movimiento manual' }))
@@ -78,8 +97,8 @@ describe('ManualMovementForm', () => {
 
   it('records a manual income with account attribution and exact cents', async () => {
     const onRecorded = setup()
-    fireEvent.change(screen.getByLabelText('Importe (pesos)'), { target: { value: '3000,00' } })
-    fireEvent.change(screen.getByLabelText('Descripción'), {
+    fireEvent.change(screen.getByLabelText(/^Importe \(pesos\)/), { target: { value: '3000,00' } })
+    fireEvent.change(screen.getByLabelText('Descripción / motivo'), {
       target: { value: 'Cuota septiembre' },
     })
     await selectAccount()
@@ -95,20 +114,20 @@ describe('ManualMovementForm', () => {
       source_type: 'MANUAL',
       account_code: '4.1.01',
       description: 'Cuota septiembre',
+      reason: 'Cuota septiembre',
     })
     expect(typeof key).toBe('string')
     expect(key.length).toBeGreaterThan(0)
     await waitFor(() => expect(onRecorded).toHaveBeenCalled())
     // Form resets after a confirmed record so the next movement starts clean.
-    expect(screen.getByLabelText('Importe (pesos)').getAttribute('value')).toBe('0')
+    expect(screen.getByLabelText(/^Importe \(pesos\)/).getAttribute('value')).toBe('0')
   })
 
   it('records an expense bank debit with its own tender identity', async () => {
-    setup()
-    fireEvent.click(screen.getByRole('radio', { name: 'Egreso' }))
+    setup(undefined, 'EXPENSE')
     fireEvent.change(screen.getByLabelText('Método de pago'), { target: { value: 'BANK_DEBIT' } })
-    fireEvent.change(screen.getByLabelText('Importe (pesos)'), { target: { value: '500' } })
-    fireEvent.change(screen.getByLabelText('Descripción'), {
+    fireEvent.change(screen.getByLabelText(/^Importe \(pesos\)/), { target: { value: '500' } })
+    fireEvent.change(screen.getByLabelText('Descripción / motivo'), {
       target: { value: 'Débito de servicio' },
     })
     await selectAccount()
@@ -124,8 +143,8 @@ describe('ManualMovementForm', () => {
 
   it('rejects an invalid amount without calling the API', async () => {
     setup()
-    fireEvent.change(screen.getByLabelText('Importe (pesos)'), { target: { value: '-5' } })
-    fireEvent.change(screen.getByLabelText('Descripción'), { target: { value: 'x' } })
+    fireEvent.change(screen.getByLabelText(/^Importe \(pesos\)/), { target: { value: '-5' } })
+    fireEvent.change(screen.getByLabelText('Descripción / motivo'), { target: { value: 'x' } })
     await selectAccount()
     fireEvent.submit(screen.getByRole('form', { name: 'Registrar movimiento manual' }))
     expect(await screen.findByRole('alert')).toBeTruthy()
@@ -134,8 +153,10 @@ describe('ManualMovementForm', () => {
 
   it('surfaces API failures and keeps the idempotency key for an immediate retry', async () => {
     setup()
-    fireEvent.change(screen.getByLabelText('Importe (pesos)'), { target: { value: '10' } })
-    fireEvent.change(screen.getByLabelText('Descripción'), { target: { value: 'Reintento' } })
+    fireEvent.change(screen.getByLabelText(/^Importe \(pesos\)/), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText('Descripción / motivo'), {
+      target: { value: 'Reintento' },
+    })
     await selectAccount()
     mocks.recordCashTender
       .mockRejectedValueOnce(new ApiError(409, 'CONFLICT', 'Turno no disponible'))
