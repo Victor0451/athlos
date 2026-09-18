@@ -64,3 +64,12 @@ Verificación P10: 124/124 web (12 files), tsc 0, smoke Playwright en vivo (clam
 
 - La UI de "turno abierto/cerrado" desaparece del vocabulario del operador: "Tu caja del
   día" + cortes.
+
+## P11 — Jerarquía visual de la conciliación (CashCloseSummary)
+
+- [x] Decoder: `close_transfer` opcional ahora se decodifica (cuenta + monto del barrido) — antes se descartaba y el resumen no contaba la parte más importante del corte.
+- [x] CashCloseSummary rejerarquizado (compartido por resumen post-corte y modal de conciliación): filas etiqueta↔monto alineadas con valores semibold tabulares; Diferencia con separador y Badge de tono (**Faltante** danger / **Sobrante** success, nada en 0); fila "A Valores a Depositar (1.1.3.02)" con el monto transferido; motivo con contexto ("Motivo: …"); footer mono con folio corto + fecha — sin UUID crudo ni "(hora local)".
+- [x] Fix de robustez: el footer usa optional chaining (el mock mínimo del test de refresh pasa un close sin id y crasheaba el render).
+- Verificación: 321/321 web, tsc 0, capturas en vivo 15–18 (/tmp/caja-ux/): resumen post-corte limpio, modal 0/0/0, modal faltante con badge Faltante + transferencia $100,00.
+
+- [x] Fondo de las secciones de caja: "Último corte confirmado" y "Cortes del día" unificadas al patrón de tarjeta blanca (`rounded-lg border-ink-100 bg-surface`); los cortes individuos pasan a lista agrupada sobre `bg-surface-sunken` para contraste. Captura 19.
