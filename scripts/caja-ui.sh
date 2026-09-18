@@ -50,6 +50,9 @@ export JWT_SECRET="caja-ui-walkthrough-access-secret-0123456789abcdef"
 export JWT_REFRESH_SECRET="caja-ui-walkthrough-refresh-secret-fedcba9876543210"
 export LEGACY_DB_PATH="${LEGACY_DB_PATH:-/tmp/athlos-caja-ui/legacy.sqlite3}"
 export IMPLEMENTATION_CONTACT_RECIPIENT="caja-ui-walkthrough@localhost.dev"
+# The web binds 127.0.0.1 but browsers may reach it as localhost OR 127.0.0.1 — both are
+# distinct origins for CORS, so the allowlist must cover both.
+export CORS_ORIGINS="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}"
 mkdir -p "$(dirname "$LEGACY_DB_PATH")"
 [[ -e "$LEGACY_DB_PATH" ]] || : >"$LEGACY_DB_PATH"
 
