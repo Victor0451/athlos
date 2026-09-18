@@ -20,6 +20,8 @@
     "test:disposable-postgres": "scripts/lib/disposable-postgres.sh run --caller db-tests -- pnpm --filter @athlos/db test:run --",
     "test:disposable-postgres:integration": "scripts/lib/disposable-postgres.sh run --caller api-integration -- pnpm --filter @athlos/api exec vitest run src/modules/dues --",
     "test:cash-scenario": "scripts/lib/disposable-postgres.sh run --caller cash-scenario -- pnpm --filter @athlos/api exec vitest run src/test-support/cash-scenario.test.ts",
+    "caja:sim": "scripts/lib/disposable-postgres.sh run --caller caja-sim -- pnpm --filter @athlos/api exec tsx src/scripts/caja-sim.ts",
+    "caja:ui": "scripts/lib/disposable-postgres.sh run --caller caja-ui -- scripts/caja-ui.sh",
     "db:generate": "pnpm --filter @athlos/db generate",
     "db:migrate": "pnpm --filter @athlos/db migrate",
     "db:migrate:status": "pnpm --filter @athlos/db migrate:status",
