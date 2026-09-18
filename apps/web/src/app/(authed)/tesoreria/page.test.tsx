@@ -104,9 +104,17 @@ describe('treasury page (unified cash module)', () => {
     render(<TreasuryPage />)
     await waitFor(() => expect(mocks.ensureOpenCashShift).toHaveBeenCalledTimes(1))
     expect(
-      await screen.findByText('Tu caja se abre sola con el primer movimiento del período.'),
+      await screen.findByText(
+        'No se pudo preparar tu caja. Verificá tu conexión e intentá de nuevo.',
+      ),
     ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Tu caja se abre sola con el primer movimiento del período.'),
+    ).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cortar caja' })).not.toBeInTheDocument()
+    // The failed auto-open is retryable from the surfaced alert.
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+    await waitFor(() => expect(mocks.ensureOpenCashShift).toHaveBeenCalledTimes(2))
   })
 
   it('returns only validated cash context when an eligible shift is available', () => {
@@ -128,6 +136,22 @@ describe('treasury page (unified cash module)', () => {
     render(<TreasuryPage />)
     expect(screen.getByText('Cargando turnos de caja…')).toBeInTheDocument()
     expect(screen.getByText('No se pudieron cargar los turnos de caja.')).toBeInTheDocument()
+    // The initial-load failure offers a retry instead of a dead end.
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+    expect(mocks.query.refetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('clamps the drawer float when the counted cash drops below the prefill', async () => {
+    openCorte()
+    const dialog = screen.getByRole('dialog')
+    const float = within(dialog).getByLabelText('Dejás en cajón (para vuelto)')
+    expect(float).toHaveValue('26,00')
+    await act(async () => {
+      fireEvent.change(within(dialog).getByLabelText('Efectivo contado (pesos)'), {
+        target: { value: '10,00' },
+      })
+    })
+    expect(float).toHaveValue('10,00')
   })
 
   const openCorte = () => {
@@ -313,6 +337,10 @@ describe('treasury page (unified cash module)', () => {
     expect(
       within(history).getByRole('button', { name: 'Ver conciliación de front' }),
     ).toBeInTheDocument()
+    // Structured card: business date and a short folio instead of the raw shift UUID.
+    expect(within(history).getByText(/Turno del 2026-01-01/)).toBeInTheDocument()
+    expect(within(history).getByText(/folio own-clos/)).toBeInTheDocument()
+    expect(within(history).queryByText(/· own-closed/)).not.toBeInTheDocument()
   })
 
   it('offers the recovery section to finance roles only', () => {

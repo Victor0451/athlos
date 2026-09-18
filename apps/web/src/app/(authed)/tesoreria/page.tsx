@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { CashCloseHistoryDetail } from '@/components/treasury/CashCloseHistoryDetail'
@@ -81,6 +81,7 @@ export default function TreasuryPage() {
   const [recoveryShift, setRecoveryShift] = useState<CashShift | null>(null)
   const [recoveryPending, setCommandPending] = useState(false)
   const [refreshWarning, setRefreshWarning] = useState('')
+  const [ensureError, setEnsureError] = useState(false)
   const [closedIds, setClosedIds] = useState<string[]>([])
   const [ensuring, setEnsuring] = useState(false)
   const activeCommand = useRef<symbol | null>(null)
@@ -223,20 +224,26 @@ export default function TreasuryPage() {
 
   // P9 auto-open: the working period opens itself. Whenever this operator has no OPEN shift
   // (first visit of the day, or right after a corte), ensure-open bootstraps it with the
-  // last close remainder; the refetch then shows the fresh period.
-  useEffect(() => {
-    if (!allowed || !cashEnabled || !operatorId || query.isPending) return
-    if (ownOpenShift || ensuringRef.current) return
+  // last close remainder; the refetch then shows the fresh period. Failures surface as a
+  // retryable alert instead of a silent spinner.
+  const startEnsure = useCallback(() => {
+    if (!allowed || !cashEnabled || !operatorId || ensuringRef.current) return
     ensuringRef.current = true
+    setEnsureError(false)
     setEnsuring(true)
     ensureOpenCashShift(crypto.randomUUID())
       .then(() => query.refetch())
-      .catch(() => undefined)
+      .catch(() => setEnsureError(true))
       .finally(() => {
         ensuringRef.current = false
         setEnsuring(false)
       })
-  }, [allowed, cashEnabled, operatorId, ownOpenShift, query])
+  }, [allowed, cashEnabled, operatorId, query])
+
+  useEffect(() => {
+    if (query.isPending || ownOpenShift) return
+    startEnsure()
+  }, [startEnsure, ownOpenShift, query.isPending])
 
   const canReturnToCollections =
     cashContext && ownOpenShift && isCashShiftEligible(ownOpenShift, user)
@@ -374,7 +381,30 @@ export default function TreasuryPage() {
         </p>
       </header>
       {query.isPending && <p role="status">Cargando turnos de caja…</p>}
-      {query.isError && <p role="alert">No se pudieron cargar los turnos de caja.</p>}
+      {query.isError && (
+        <Alert tone="error">
+          <p>No se pudieron cargar los turnos de caja.</p>
+          <button
+            type="button"
+            className="mt-2 w-fit rounded border border-ink-300 bg-surface px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-50"
+            onClick={() => void query.refetch()}
+          >
+            Reintentar
+          </button>
+        </Alert>
+      )}
+      {ensureError && !ownOpenShift && (
+        <Alert tone="error">
+          <p>No se pudo preparar tu caja. Verificá tu conexión e intentá de nuevo.</p>
+          <button
+            type="button"
+            className="mt-2 w-fit rounded border border-ink-300 bg-surface px-3 py-1.5 text-sm text-ink-700 hover:bg-ink-50"
+            onClick={startEnsure}
+          >
+            Reintentar
+          </button>
+        </Alert>
+      )}
       {commandError && <Alert tone="error">{commandError}</Alert>}
       {message && <Alert tone="success">{message}</Alert>}
       {refreshWarning && (
@@ -396,7 +426,7 @@ export default function TreasuryPage() {
           Volver a cobranza
         </button>
       )}
-      {!ownOpenShift && (
+      {!ownOpenShift && !ensureError && (
         <p role="status">
           {ensuring
             ? 'Preparando tu caja…'
@@ -416,7 +446,7 @@ export default function TreasuryPage() {
                 <p>Tenés un turno abierto en {ownOpenShift.desk_id}.</p>
                 <button
                   type="button"
-                  className="rounded bg-accent px-3 py-2 text-accent-foreground"
+                  className="whitespace-nowrap rounded bg-accent px-3 py-2 text-accent-foreground"
                   disabled={locked}
                   onClick={() => {
                     setCorteCounted('')
@@ -444,6 +474,12 @@ export default function TreasuryPage() {
               />
               <Modal
                 open={movementModal !== null}
+                onDismiss={() => {
+                  if (!recoveryPending) {
+                    setMovementModal(null)
+                    setEditMovement(null)
+                  }
+                }}
                 title={
                   editMovement
                     ? 'Editar movimiento'
@@ -540,6 +576,7 @@ export default function TreasuryPage() {
               </Modal>
               <Modal
                 open={deleteTarget !== null}
+                onDismiss={() => setDeleteTarget(null)}
                 title="Eliminar movimiento"
                 role="alertdialog"
                 descriptionId="delete-movement-description"
@@ -586,6 +623,9 @@ export default function TreasuryPage() {
       )}
       <Modal
         open={corteOpen}
+        onDismiss={() => {
+          if (!recoveryPending) setCorteOpen(false)
+        }}
         title="Cortar caja"
         footer={
           <>
@@ -629,7 +669,18 @@ export default function TreasuryPage() {
               value={corteCounted}
               parseCents={parseCashAmount}
               disabled={recoveryPending}
-              onChange={(event) => setCorteCounted(event.target.value)}
+              onChange={(event) => {
+                const next = event.target.value
+                setCorteCounted(next)
+                // Keep the drawer float honest: if the counted cash drops below the
+                // prefilled float, the float clamps down instead of blocking submit with
+                // an unexplained guard.
+                const countedCents = parseCashAmount(next)
+                const floatCents = parseCashAmount(corteFloat)
+                if (countedCents !== null && floatCents !== null && floatCents > countedCents) {
+                  setCorteFloat(next)
+                }
+              }}
             />
           </label>
           <label className="block text-sm font-medium text-ink-700">
@@ -682,13 +733,16 @@ export default function TreasuryPage() {
       {ownClosedShifts.length > 0 && (
         <section aria-label="Cortes del día" className="space-y-2 rounded border p-4">
           <h2 className="font-display text-lg">Cortes del día</h2>
-          <p>Consultá el detalle de conciliación de tus cortes.</p>
+          <p className="text-sm text-ink-600">Consultá el detalle de conciliación de tus cortes.</p>
           <ul className="space-y-2">
             {ownClosedShifts.map((shift) => (
-              <li key={shift.id}>
-                <strong>{shift.desk_id}</strong>
-                <p>
-                  {closedAtLabel(shift.closed_at)} (hora local) · {shift.id}
+              <li key={shift.id} className="space-y-2 rounded border border-ink-200 bg-surface p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <p className="text-sm font-semibold text-ink-900">{shift.desk_id}</p>
+                  <p className="text-sm text-ink-500">{closedAtLabel(shift.closed_at)}</p>
+                </div>
+                <p className="text-xs text-ink-500">
+                  Turno del {shift.business_date} · folio {shift.id.slice(0, 8)}
                 </p>
                 <CashCloseHistoryDetail
                   shift={shift}
