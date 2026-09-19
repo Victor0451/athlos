@@ -21,6 +21,7 @@ import {
   type CashClose,
   type CashMovement,
 } from '@/lib/api/treasury'
+import { generateOpaqueIdempotencyKey } from '@/lib/idempotency-key'
 import { ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/use-auth'
 import { useFeatureConfig } from '@/lib/features'
@@ -234,7 +235,7 @@ export default function TreasuryPage() {
     ensuringRef.current = true
     setEnsureError(false)
     setEnsuring(true)
-    ensureOpenCashShift(crypto.randomUUID())
+    ensureOpenCashShift(generateOpaqueIdempotencyKey())
       .then(() => query.refetch())
       .catch(() => setEnsureError(true))
       .finally(() => {
@@ -353,7 +354,7 @@ export default function TreasuryPage() {
         ownOpenShift.id,
         deleteTarget.id,
         deleteReason.trim() || 'Reversión del movimiento',
-        crypto.randomUUID(),
+        generateOpaqueIdempotencyKey(),
       )
       setDeleteTarget(null)
       setDeleteReason('')
@@ -562,7 +563,7 @@ export default function TreasuryPage() {
                                 ownOpenShift.id,
                                 editMovement.id,
                                 `Reversión por edición del movimiento ${editMovement.id.slice(0, 8)}`,
-                                crypto.randomUUID(),
+                                generateOpaqueIdempotencyKey(),
                               )
                             } catch (reverseError) {
                               // A previous failed attempt may already have recorded the
