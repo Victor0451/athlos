@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TreasuryPage from './page'
 import { FeatureConfigProvider } from '@/lib/features'
 import type { CashShift } from '@/lib/api/treasury'
@@ -531,5 +531,34 @@ describe('treasury page (unified cash module)', () => {
       ),
     )
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+})
+
+describe('treasury page on non-secure contexts (HTTP beta)', () => {
+  beforeEach(() => {
+    authState.user = { role: 'TESORERO', operator_id: 'operator-1' }
+    mocks.query = { data: { items: [] }, isPending: false, isError: false, refetch: vi.fn() }
+    mocks.detailQuery = { data: undefined, isPending: false, isError: false, refetch: vi.fn() }
+    mocks.ensureOpenCashShift.mockReset()
+    mocks.ensureOpenCashShift.mockResolvedValue(openShift())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // The beta environment is served over plain HTTP, where crypto.randomUUID does not
+  // exist; the auto-open must not crash the page and must fall back to an opaque key.
+  it('auto-opens with an opaque key when crypto.randomUUID is unavailable', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(0x22)
+        return bytes
+      },
+    })
+    render(<TreasuryPage />)
+    await waitFor(() => expect(mocks.ensureOpenCashShift).toHaveBeenCalledTimes(1))
+    expect(mocks.ensureOpenCashShift.mock.calls[0]?.[0]).toMatch(/^[0-9a-f-]{36}$/i)
+    expect(screen.getByRole('heading', { name: 'Caja' })).toBeInTheDocument()
   })
 })
