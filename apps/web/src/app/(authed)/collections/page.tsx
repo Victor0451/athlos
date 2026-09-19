@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ApiError } from '@/lib/api'
 import type { CurrentUser } from '@/lib/auth'
 import { CollectionStatus } from '@/components/collections/CollectionStatus'
 import { collectionButtonClass } from '@/components/collections/CollectionPrimitives'
 import { DebtPanel } from '@/components/collections/DebtPanel'
+import { SettlementReceiptDialog } from '@/components/collections/SettlementReceiptDialog'
 import { TreatmentWorkspace } from '@/components/collections/TreatmentWorkspace'
 import type { AgreementViewState } from '@/components/collections/AgreementActions'
 import type { CommunityWorkDraft } from '@/components/collections/CommunityWorkForm'
@@ -45,12 +47,19 @@ import {
   type CondonationRequestInput,
 } from '@/lib/api/condonation'
 import { getDisciplinas, type DisciplinaOption } from '@/lib/api/padrones'
-import { getSocios, type Socio } from '@/lib/api/socios'
+import { getSocio, getSocios, type Socio } from '@/lib/api/socios'
+import { buildCashContextHref, parseCashContext } from '@/lib/collections-cash-context'
+import {
+  buildCondonationContextCleanupHref,
+  parseCondonationContext,
+  type CollectionsCondonationContext,
+} from '@/lib/collections-condonation-context'
 import {
   createCollectionsIdempotencyStore,
   type CollectionsIdempotencyStore,
 } from '@/lib/collections-idempotency'
 import { useFeatureConfig } from '@/lib/features'
+import { cashShiftAvailabilityMessage } from '@/lib/cash-shift-eligibility'
 import { useAuth } from '@/lib/use-auth'
 import { Modal } from '@/components/ui/Modal'
 import {
@@ -91,6 +100,17 @@ const pricingErrorState = (reason: unknown): PricingPanelState =>
 export default function CollectionsPage() {
   const { user } = useAuth()
   const { collectionsEnabled, agreementsEnabled } = useFeatureConfig()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const cashContext = useMemo(() => parseCashContext(searchParams), [searchParams])
+  const condonationContext = useMemo(() => parseCondonationContext(searchParams), [searchParams])
+  const condonationQuery = searchParams.toString()
+  const hasCondonationContext =
+    searchParams.getAll('condonation_member').length > 0 ||
+    searchParams.getAll('condonation_request').length > 0
+  const cashContextKey = cashContext
+    ? `${cashContext.memberId}:${cashContext.obligationIds.join(',')}`
+    : null
   const [period] = useState(() => new Date().toISOString().slice(0, 7))
   const [activeTab, setActiveTab] = useState<'collections' | 'generation'>('collections')
   const [pricingOpen, setPricingOpen] = useState(false)
@@ -107,6 +127,25 @@ export default function CollectionsPage() {
     'idle' | 'loading' | 'ready' | 'empty' | 'blocked' | 'error'
   >('idle')
   const [assessmentError, setAssessmentError] = useState('')
+  const [communityWorkFeedback, setCommunityWorkFeedback] = useState<
+    | {
+        memberId: string
+        obligationId: string
+        amountCents: number
+        operationId: string
+        replayed: boolean
+        reconciliation: 'ready' | 'pending'
+      }
+    | { memberId: string; reconciliation: 'conflict' | 'pending' }
+    | null
+  >(null)
+  const communityWorkRequest = useRef<{
+    input: { operatorId: string; action: string; draftFingerprint: string }
+    memberId: string
+    obligationId: string
+    postConfirmed: boolean
+  } | null>(null)
+  const communityWorkReconciliationBusy = useRef(false)
 
   const [agreementStates, setAgreementStates] = useState<Record<string, AgreementViewState>>({})
   const [lifecycle, setLifecycle] = useState<CondonationLifecycle[]>([])
@@ -127,23 +166,122 @@ export default function CollectionsPage() {
   const pricingTrigger = useRef<HTMLButtonElement>(null)
   const restorePricingTrigger = useRef(false)
   const selectedMember = useRef<string | null>(null)
+  const searchLoad = useRef(0)
+  const assessmentLoad = useRef(0)
+  const assessmentRequest = useRef<{
+    generation: number
+    memberId: string
+    range: string
+  } | null>(null)
+  const selectionVersion = useRef(0)
+  const debtSummaryRef = useRef<HTMLDivElement>(null)
+  const [focusDebtMemberId, setFocusDebtMemberId] = useState<string | null>(null)
   const lifecycleLoad = useRef(0)
+  const restoredCashContext = useRef<string | null>(null)
+  const restoredCondonationContext = useRef<string | null>(null)
+  const condonationRestoreVersion = useRef(0)
+  const focusedCondonationContext = useRef<string | null>(null)
+  const [condonationHandoff, setCondonationHandoff] = useState<{
+    context: CollectionsCondonationContext | null
+    status:
+      | 'loading'
+      | 'selected'
+      | 'invalid'
+      | 'member_error'
+      | 'member_mismatch'
+      | 'selection_error'
+  } | null>(null)
+  const [initialPaymentSelection, setInitialPaymentSelection] = useState<string[] | undefined>()
+  const [resumePaymentKey, setResumePaymentKey] = useState<string>()
+  const [receiptRequest, setReceiptRequest] = useState<{
+    memberId: string
+    settlementId: string
+    actorId: string
+    role: string
+  } | null>(null)
+  const paymentResultRef = useRef<HTMLElement>(null)
+  const focusedPaymentResult = useRef<string | null>(null)
+  const paymentResultOrigin = useRef<{ settlementId: string; scope: string } | null>(null)
   const authorized = canAccessCollections(user, collectionsEnabled)
   const agreementWorkflowEnabled = collectionsEnabled && agreementsEnabled
-  const canSettle = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const financeCapability = user?.role === 'ADMIN' || user?.role === 'TESORERO'
+  const canSettle = financeCapability
   const {
+    cashShiftAvailability,
     debt,
     debtError,
     debtStatus,
     openShiftAvailability,
     openShifts,
     pay,
+    paymentOutcome,
+    reconcilePayment,
     refreshDebt,
     refreshPaymentContext,
     reverse,
     selectSocio: selectPaymentSocio,
     selectedSocio,
   } = useCollectionsPayments({ user, idempotency })
+  const canPayFullSelection =
+    financeCapability || (user?.role === 'OPERADOR' && cashShiftAvailability === 'ready')
+
+  const receiptScope =
+    user && selectedSocio ? `${user.operator_id}:${user.role}:${selectedSocio.id}` : null
+  useEffect(() => {
+    setReceiptRequest(null)
+  }, [receiptScope])
+  const resultSettlementId =
+    paymentOutcome?.memberId === selectedSocio?.id ? paymentOutcome?.settlementId : undefined
+  const resultKey =
+    authorized && canSettle && receiptScope && resultSettlementId
+      ? `${receiptScope}:${resultSettlementId}`
+      : null
+  useEffect(() => {
+    if (
+      !resultKey ||
+      !receiptScope ||
+      !resultSettlementId ||
+      focusedPaymentResult.current === resultKey
+    )
+      return
+    if (
+      paymentResultOrigin.current?.settlementId === resultSettlementId &&
+      paymentResultOrigin.current.scope !== receiptScope
+    )
+      return
+    paymentResultOrigin.current = { settlementId: resultSettlementId, scope: receiptScope }
+    let frame = 0
+    const hasModal = () => document.querySelector('[aria-modal="true"]') !== null
+    const scheduleFocus = () => {
+      if (frame || hasModal()) return
+      // A new modal before the frame cancels this focus, preserving its opener on close.
+      observer.disconnect()
+      // Modal restores its opener on cleanup; move focus only after that finishes.
+      frame = window.requestAnimationFrame(() => {
+        const result = paymentResultRef.current
+        if (!result || result.dataset.paymentResultKey !== resultKey || hasModal()) return
+        result.focus({ preventScroll: true })
+        result.scrollIntoView({ block: 'center', behavior: 'auto' })
+        focusedPaymentResult.current = resultKey
+      })
+    }
+    const observer = new MutationObserver(scheduleFocus)
+    observer.observe(document.body, { childList: true, subtree: true })
+    scheduleFocus()
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [resultKey, receiptScope, resultSettlementId])
+  const openReceipt = (settlementId: string) => {
+    if (!canSettle || !user?.operator_id || !selectedSocio) return
+    setReceiptRequest({
+      memberId: selectedSocio.id,
+      settlementId,
+      actorId: user.operator_id,
+      role: user.role,
+    })
+  }
   const generationUser =
     user?.role === 'ADMIN' || user?.role === 'TESORERO'
       ? (user as Pick<CurrentUser, 'operator_id'> & { role: 'ADMIN' | 'TESORERO' })
@@ -226,6 +364,116 @@ export default function CollectionsPage() {
   }
 
   useEffect(() => {
+    if (!focusDebtMemberId || selectedSocio?.id !== focusDebtMemberId || debt?.status !== 'ready')
+      return
+    debtSummaryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    debtSummaryRef.current?.focus()
+    setFocusDebtMemberId(null)
+  }, [debt?.status, focusDebtMemberId, selectedSocio?.id])
+
+  useEffect(() => {
+    if (
+      !authorized ||
+      !cashContext ||
+      !cashContextKey ||
+      restoredCashContext.current === cashContextKey
+    )
+      return
+    restoredCashContext.current = cashContextKey
+    const selection = selectionVersion.current
+    void getSocio(cashContext.memberId)
+      .then(async (socio) => {
+        if (selectionVersion.current !== selection) return
+        const detail = await selectSocio(socio, true)
+        if (
+          !detail ||
+          selectedMember.current !== cashContext.memberId ||
+          selectionVersion.current !== selection + 1
+        )
+          return
+        setInitialPaymentSelection(
+          cashContext.obligationIds.filter((id) =>
+            detail.obligations.some(
+              (obligation) =>
+                obligation.id === id &&
+                obligation.status === 'OPEN' &&
+                obligation.outstanding_cents > 0,
+            ),
+          ),
+        )
+        setResumePaymentKey(cashContextKey)
+      })
+      .catch(() => undefined)
+  }, [authorized, cashContext, cashContextKey])
+
+  useEffect(() => {
+    if (!hasCondonationContext || restoredCondonationContext.current === condonationQuery) return
+    restoredCondonationContext.current = condonationQuery
+    router.replace(buildCondonationContextCleanupHref(searchParams), { scroll: false })
+    if (!authorized || !condonationContext) {
+      if (authorized) setCondonationHandoff({ context: null, status: 'invalid' })
+      return
+    }
+    const restore = ++condonationRestoreVersion.current
+    const selection = selectionVersion.current
+    setCondonationHandoff({ context: condonationContext, status: 'loading' })
+    void getSocio(condonationContext.memberId)
+      .then(async (socio) => {
+        if (restore !== condonationRestoreVersion.current || selection !== selectionVersion.current)
+          return
+        if (socio.id.toLowerCase() !== condonationContext.memberId) {
+          setCondonationHandoff({ context: condonationContext, status: 'member_mismatch' })
+          return
+        }
+        const detail = await selectSocio(socio, true)
+        if (
+          restore !== condonationRestoreVersion.current ||
+          selectedMember.current?.toLowerCase() !== condonationContext.memberId
+        )
+          return
+        setCondonationHandoff({
+          context: condonationContext,
+          status: detail ? 'selected' : 'selection_error',
+        })
+      })
+      .catch(() => {
+        if (restore === condonationRestoreVersion.current && selection === selectionVersion.current)
+          setCondonationHandoff({ context: condonationContext, status: 'member_error' })
+      })
+  }, [
+    authorized,
+    condonationContext,
+    condonationQuery,
+    hasCondonationContext,
+    router,
+    searchParams,
+  ])
+
+  const contextualLifecycle =
+    condonationHandoff?.status === 'selected' &&
+    condonationHandoff.context &&
+    selectedSocio?.id.toLowerCase() === condonationHandoff.context.memberId
+      ? lifecycle.find(
+          (item) =>
+            item.id.toLowerCase() === condonationHandoff.context!.requestId &&
+            item.snapshot.member_id.toLowerCase() === condonationHandoff.context!.memberId,
+        )
+      : undefined
+
+  useEffect(() => {
+    if (!contextualLifecycle || focusedCondonationContext.current === contextualLifecycle.id) return
+    const frame = window.requestAnimationFrame(() => {
+      const heading = document.getElementById(`condonation-lifecycle-${contextualLifecycle.id}`)
+      const section = heading?.closest<HTMLElement>('section')
+      if (!section) return
+      section.focus({ preventScroll: true })
+      section.scrollIntoView({ block: 'start', behavior: 'auto' })
+      focusedCondonationContext.current = contextualLifecycle.id
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [contextualLifecycle])
+
+  useEffect(() => {
     if (!authorized) return
     let active = true
     setPricingState('loading')
@@ -288,25 +536,37 @@ export default function CollectionsPage() {
       'No se pudo dar de baja la cuota. Intentá nuevamente.',
     )
   const searchSocios = async (term: string) => {
-    if (!term) return setSocios([])
+    const request = ++searchLoad.current
+    setSocios([])
+    if (!term) return
     const result = await getSocios({ search: term, page: 1, limit: 20 })
-    setSocios(result.items)
+    if (request === searchLoad.current) setSocios(result.items)
   }
   const previewAssessment = async (input: {
     socio_id: string
     from_period: string
     through_period: string
   }) => {
+    const request = {
+      generation: ++assessmentLoad.current,
+      memberId: input.socio_id,
+      range: `${input.from_period}:${input.through_period}`,
+    }
+    assessmentRequest.current = request
+    const isCurrent = () =>
+      assessmentRequest.current === request && selectedMember.current === request.memberId
     setAssessmentStatus('loading')
     setAssessmentError('')
     setAssessmentPreview(null)
     try {
       const result = await previewDuesAssessments(input)
+      if (!isCurrent()) return
       setAssessmentPreview(result)
       setAssessmentStatus(
         result.executable ? (result.periods.length ? 'ready' : 'empty') : 'blocked',
       )
     } catch {
+      if (!isCurrent()) return
       setAssessmentStatus('error')
       setAssessmentError('No se pudo consultar la evaluación.')
     }
@@ -317,7 +577,19 @@ export default function CollectionsPage() {
     through_period: string
     preview_fingerprint: string
   }) => {
-    if (!user || !selectedSocio) return
+    if (!user || !selectedSocio || selectedMember.current !== input.socio_id) return
+    const selection = selectionVersion.current
+    const previewRequest = assessmentRequest.current
+    if (
+      !previewRequest ||
+      previewRequest.memberId !== input.socio_id ||
+      previewRequest.range !== `${input.from_period}:${input.through_period}`
+    )
+      return
+    const isCurrent = () =>
+      selection === selectionVersion.current &&
+      selectedMember.current === input.socio_id &&
+      assessmentRequest.current === previewRequest
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
     const request = {
       operatorId: user.operator_id,
@@ -332,12 +604,22 @@ export default function CollectionsPage() {
       if (!(await refreshDebt()))
         throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
       idempotency.current.complete(request)
+      if (!isCurrent()) return
       await previewAssessment({
         socio_id: input.socio_id,
         from_period: input.from_period,
         through_period: input.through_period,
       })
+      const refreshedRequest = assessmentRequest.current
+      if (
+        selection === selectionVersion.current &&
+        selectedMember.current === input.socio_id &&
+        refreshedRequest?.memberId === input.socio_id &&
+        refreshedRequest.range === `${input.from_period}:${input.through_period}`
+      )
+        setFocusDebtMemberId(input.socio_id)
     } catch (reason) {
+      if (!isCurrent()) return
       if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
         idempotency.current.abandon(request)
         setAssessmentError(
@@ -347,19 +629,30 @@ export default function CollectionsPage() {
       setAssessmentStatus('error')
     }
   }
-  const selectSocio = async (socio: DebtSocio) => {
+  async function selectSocio(socio: DebtSocio, returnDetail = false) {
+    if (!returnDetail && condonationHandoff) {
+      condonationRestoreVersion.current += 1
+      setCondonationHandoff(null)
+    }
+    selectionVersion.current += 1
+    assessmentLoad.current += 1
+    assessmentRequest.current = null
     selectedMember.current = socio.id
+    setFocusDebtMemberId(null)
     setAssessmentPreview(null)
     setAssessmentStatus('idle')
     setAssessmentError('')
     setLifecycle([])
     setLifecycleStatus('loading')
     setExecutionFeedback(null)
+    setCommunityWorkFeedback(null)
+    communityWorkRequest.current = null
     void refreshLifecycle(socio.id)
     const result = await selectPaymentSocio(socio)
     if (!result) return
     if (agreementWorkflowEnabled && result.status === 'ready') await loadAgreements(result)
     else setAgreementStates({})
+    return returnDetail ? result : undefined
   }
   const refreshLifecycle = async (memberId: string) => {
     if (selectedMember.current !== memberId) return []
@@ -455,70 +748,100 @@ export default function CollectionsPage() {
       throw reason
     }
   }
-  const runSettlementMutation = async <T extends object>(
-    action: string,
-    draftFingerprint: string,
-    request: (key: string) => Promise<T>,
-    retainOnConflict = false,
-    refresh = refreshDebt,
+  const createCommunityWork = async (
+    obligationId: string,
+    agreementId: string,
+    draft: CommunityWorkDraft,
   ) => {
     if (!user || !selectedSocio)
       throw new DuesOperationError('permission', 'Authentication required')
     if (!idempotency.current) idempotency.current = createCollectionsIdempotencyStore()
-    const input = { operatorId: user.operator_id, action, draftFingerprint }
-    const replayed = Boolean(idempotency.current.peek(input))
-    const key = idempotency.current.getOrCreate(input)
-    try {
-      const result = await request(key)
-      if (!(await refresh()))
-        throw new DuesOperationError('unavailable', 'Debt refresh unavailable')
-      idempotency.current.complete(input)
-      return {
-        ...result,
-        replayed: Boolean((result as { replayed?: boolean }).replayed) || replayed,
-      }
-    } catch (reason) {
-      if (!retainOnConflict && reason instanceof DuesOperationError && reason.kind === 'conflict')
-        idempotency.current.abandon(input)
-      if (
-        action === 'reverse-settlement' &&
-        !retainOnConflict &&
-        ((reason instanceof ApiError && reason.status === 409) ||
-          (reason instanceof DuesOperationError && reason.kind === 'conflict'))
-      ) {
-        idempotency.current.abandon(input)
-        await refreshDebt()
-      }
-      throw reason
-    }
-  }
-  const createCommunityWork = (
-    obligationId: string,
-    agreementId: string,
-    draft: CommunityWorkDraft,
-  ) =>
-    runSettlementMutation(
-      `community-work:${agreementId}`,
-      JSON.stringify({
+    const memberId = selectedSocio.id
+    const input = {
+      operatorId: user.operator_id,
+      action: `community-work:${agreementId}`,
+      draftFingerprint: JSON.stringify({
         obligationId,
         agreementId,
         ...draft,
         evidence: draft.evidence.trim(),
         reason: draft.reason.trim(),
       }),
-      (key) =>
-        createCommunityWorkEvidence(
-          {
-            socio_id: selectedSocio!.id,
-            obligation_id: obligationId,
-            agreement_id: agreementId,
-            amount_cents: draft.amountCents,
-            evidence: { description: draft.evidence.trim() },
-            reason: draft.reason.trim(),
-          },
-          key,
-        ),
+    }
+    const key = idempotency.current.getOrCreate(input)
+    try {
+      const result = await createCommunityWorkEvidence(
+        {
+          socio_id: memberId,
+          obligation_id: obligationId,
+          agreement_id: agreementId,
+          amount_cents: draft.amountCents,
+          evidence: { description: draft.evidence.trim() },
+          reason: draft.reason.trim(),
+        },
+        key,
+      )
+      const feedback = {
+        memberId,
+        obligationId,
+        amountCents: draft.amountCents,
+        operationId: result.community_work_id,
+        replayed: Boolean(result.replayed),
+      }
+      if (selectedMember.current !== memberId)
+        return { ...result, replayed: feedback.replayed, reconciliationPending: true }
+      setCommunityWorkFeedback({ ...feedback, reconciliation: 'pending' })
+      communityWorkRequest.current = { input, memberId, obligationId, postConfirmed: true }
+      if (!(await refreshDebt()))
+        return { ...result, replayed: feedback.replayed, reconciliationPending: true }
+      idempotency.current.complete(input)
+      communityWorkRequest.current = null
+      if (selectedMember.current === memberId)
+        setCommunityWorkFeedback({ ...feedback, reconciliation: 'ready' })
+      return { ...result, replayed: feedback.replayed }
+    } catch (reason) {
+      if (reason instanceof DuesOperationError && reason.kind === 'conflict') {
+        communityWorkRequest.current = { input, memberId, obligationId, postConfirmed: false }
+        const reconciled = await refreshDebt()
+        if (reconciled) {
+          idempotency.current.abandon(input)
+          communityWorkRequest.current = null
+        }
+        if (selectedMember.current === memberId)
+          setCommunityWorkFeedback({
+            memberId,
+            reconciliation: reconciled ? 'conflict' : 'pending',
+          })
+      }
+      throw reason
+    }
+  }
+  const reconcileCommunityWork = async () => {
+    const request = communityWorkRequest.current
+    if (
+      !request ||
+      selectedMember.current !== request.memberId ||
+      communityWorkReconciliationBusy.current
     )
+      return
+    communityWorkReconciliationBusy.current = true
+    try {
+      if (!(await refreshDebt())) return
+      if (request.postConfirmed) idempotency.current?.complete(request.input)
+      else idempotency.current?.abandon(request.input)
+      communityWorkRequest.current = null
+      setCommunityWorkFeedback((current) =>
+        current &&
+        current.memberId === request.memberId &&
+        current.reconciliation === 'pending' &&
+        !('operationId' in current)
+          ? { ...current, reconciliation: 'conflict' }
+          : current,
+      )
+    } finally {
+      communityWorkReconciliationBusy.current = false
+    }
+  }
   // prettier-ignore
   const condonation = <T extends object>(action: string, draft: object, request: (key: string) => Promise<T>) => {
     if (!user) throw new DuesOperationError('permission', 'Authentication required')
@@ -596,6 +919,34 @@ export default function CollectionsPage() {
       throw cause
     }
   }
+
+  const handoffFeedback = (() => {
+    if (!condonationHandoff) return null
+    if (condonationHandoff.status === 'invalid')
+      return { error: true, text: 'El enlace de condonación está incompleto o no es válido.' }
+    if (condonationHandoff.status === 'member_error')
+      return { error: true, text: 'No se pudo cargar el socio vinculado a la condonación.' }
+    if (condonationHandoff.status === 'member_mismatch')
+      return { error: true, text: 'El enlace no corresponde a un socio disponible.' }
+    if (condonationHandoff.status === 'selection_error')
+      return { error: true, text: 'No se pudo cargar el detalle del socio vinculado.' }
+    if (condonationHandoff.status === 'loading')
+      return { error: false, text: 'Abriendo la solicitud de condonación…' }
+    if (lifecycleStatus === 'error')
+      return { error: true, text: 'No se pudo cargar el estado de la condonación indicada.' }
+    if (lifecycleStatus === 'ready' && !contextualLifecycle)
+      return { error: true, text: 'No se encontró la solicitud de condonación indicada.' }
+    if (!contextualLifecycle) return { error: false, text: 'Abriendo la solicitud de condonación…' }
+    const copy: Record<CondonationLifecycle['state'], string> = {
+      pending: 'La solicitud todavía está pendiente de decisión.',
+      rejected: 'La solicitud fue rechazada y no modificó la deuda.',
+      expired: 'La solicitud venció y no modificó la deuda.',
+      approved_awaiting_execution:
+        'La solicitud está aprobada. La ejecución sigue siendo explícita en el botón de la solicitud.',
+      executed: 'La condonación ya fue ejecutada según el estado actualizado.',
+    }
+    return { error: false, text: copy[contextualLifecycle.state] }
+  })()
 
   return (
     <main
@@ -693,14 +1044,72 @@ export default function CollectionsPage() {
       {activeTab === 'collections' && (
         <>
           <DebtPanel
+            summaryRef={debtSummaryRef}
             socio={selectedSocio}
             socios={socios}
             status={debtStatus}
             debt={debt}
             error={debtError}
+            {...(canSettle ? { onViewSettlement: openReceipt } : {})}
             onSearch={searchSocios}
-            onSelectSocio={selectSocio}
+            onSelectSocio={(socio) => void selectSocio(socio)}
           />
+          {handoffFeedback && (
+            <p
+              role={handoffFeedback.error ? 'alert' : 'status'}
+              aria-label="Acceso contextual de condonación"
+              className={handoffFeedback.error ? 'text-danger' : 'text-ink-700'}
+            >
+              {handoffFeedback.text}
+            </p>
+          )}
+          {paymentOutcome && paymentOutcome.memberId === selectedSocio?.id && (
+            <section
+              ref={paymentResultRef}
+              data-payment-result-key={resultKey ?? undefined}
+              aria-label="Resultado del pago"
+              tabIndex={-1}
+              className="min-w-0 space-y-4 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-5 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-4"
+            >
+              <div role="status" aria-live="polite" className="space-y-2">
+                <h2 className="font-display text-2xl font-bold text-emerald-950">
+                  Pago registrado
+                </h2>
+                <p className="text-sm text-emerald-950">
+                  Importe confirmado:{' '}
+                  <strong className="block text-3xl font-bold">
+                    {(paymentOutcome.amountCents / 100).toLocaleString('es-AR', {
+                      style: 'currency',
+                      currency: paymentOutcome.currency,
+                    })}
+                  </strong>
+                </p>
+              </div>
+              <p className="break-words text-sm text-ink-700">
+                Referencia:{' '}
+                <span className="break-all font-mono">{paymentOutcome.settlementId}</span>
+                <br />
+                Medio de pago: {paymentOutcome.tender}
+              </p>
+              {paymentOutcome.reconciliation === 'pending' && (
+                <p role="alert">No se pudo actualizar el saldo.</p>
+              )}
+              {canSettle && (
+                <button
+                  type="button"
+                  className={collectionButtonClass.primary}
+                  onClick={() => openReceipt(paymentOutcome.settlementId)}
+                >
+                  Ver e imprimir constancia
+                </button>
+              )}
+              {paymentOutcome.reconciliation === 'pending' && (
+                <button type="button" onClick={() => void reconcilePayment()}>
+                  Actualizar saldo
+                </button>
+              )}
+            </section>
+          )}
           <AssessmentPreviewPanel
             socio={selectedSocio}
             preview={assessmentPreview}
@@ -733,32 +1142,109 @@ export default function CollectionsPage() {
                   </button>
                 </div>
               )}
+              {communityWorkFeedback?.memberId === selectedSocio.id && (
+                <section aria-label="Resultado del trabajo comunitario" className="space-y-2">
+                  <p
+                    role={communityWorkFeedback.reconciliation === 'pending' ? 'alert' : 'status'}
+                    aria-live={
+                      communityWorkFeedback.reconciliation === 'pending' ? 'assertive' : 'polite'
+                    }
+                  >
+                    {'operationId' in communityWorkFeedback
+                      ? `${communityWorkFeedback.replayed ? 'Trabajo comunitario ya registrado' : 'Trabajo comunitario registrado'} para la obligación ${communityWorkFeedback.obligationId} por $ ${(communityWorkFeedback.amountCents / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Operación ${communityWorkFeedback.operationId}.${communityWorkFeedback.reconciliation === 'pending' ? ' No se pudo actualizar el saldo.' : ''}`
+                      : communityWorkFeedback.reconciliation === 'pending'
+                        ? 'El saldo cambió y no se pudo actualizar la deuda. Actualizá el saldo antes de volver a enviar.'
+                        : 'El saldo cambió. Se actualizó la deuda antes de permitir un nuevo envío.'}
+                  </p>
+                  {communityWorkFeedback.reconciliation === 'pending' && (
+                    <button type="button" onClick={() => void reconcileCommunityWork()}>
+                      Actualizar saldo
+                    </button>
+                  )}
+                </section>
+              )}
+              {cashShiftAvailability && cashShiftAvailability !== 'ready' && (
+                <p
+                  role={cashShiftAvailability === 'unavailable' ? 'alert' : 'status'}
+                  aria-label="Disponibilidad de turnos de caja"
+                >
+                  {cashShiftAvailabilityMessage(cashShiftAvailability)}
+                </p>
+              )}
               <TreatmentWorkspace
                 memberId={selectedSocio.id}
                 debt={debt}
                 role={user!.role as 'ADMIN' | 'TESORERO' | 'OPERADOR'}
                 canSettle={canSettle}
+                canPayFullSelection={canPayFullSelection}
                 canRequestCondonation
                 agreementsEnabled={agreementWorkflowEnabled}
                 agreementStates={agreementStates}
                 shifts={openShifts}
                 shiftAvailability={openShiftAvailability}
                 lifecycle={lifecycle}
-                {...(canSettle ? { onPayment: pay, onReverse: reverse } : {})}
+                {...(canPayFullSelection && paymentOutcome?.reconciliation !== 'pending'
+                  ? { onPayment: pay }
+                  : {})}
+                {...(financeCapability ? { onReverse: reverse } : {})}
                 onRefreshDebt={refreshPaymentContext}
                 onCreateAgreement={createAgreement}
                 onReviseAgreement={reviseAgreement}
                 onRecordCommunityWork={createCommunityWork}
+                communityWorkPendingObligationId={
+                  communityWorkFeedback?.memberId === selectedSocio.id &&
+                  communityWorkFeedback.reconciliation === 'pending'
+                    ? communityWorkRequest.current?.obligationId
+                    : undefined
+                }
+                onReconcileCommunityWork={reconcileCommunityWork}
                 onRefreshAgreement={refreshAgreement}
                 onRequestCondonation={requestCondonation}
                 onDecideCondonation={decideCondonation}
                 onExecuteCondonation={presentExecution}
+                initialPaymentSelection={
+                  paymentOutcome?.memberId === selectedSocio?.id
+                    ? undefined
+                    : initialPaymentSelection
+                }
+                resumePaymentKey={
+                  paymentOutcome?.memberId === selectedSocio?.id ? undefined : resumePaymentKey
+                }
+                onGoToCash={(memberId, obligationIds) => {
+                  const href = buildCashContextHref('/tesoreria', memberId, obligationIds)
+                  if (href) router.push(href)
+                }}
+                paymentReconciliationPending={paymentOutcome?.reconciliation === 'pending'}
+                paymentUnavailableHref={
+                  buildCashContextHref(
+                    '/tesoreria',
+                    selectedSocio.id,
+                    debt.obligations
+                      .filter(
+                        ({ outstanding_cents, status }) =>
+                          outstanding_cents > 0 && status === 'OPEN',
+                      )
+                      .map(({ id }) => id),
+                  ) ?? '/tesoreria'
+                }
                 executionFeedback={executionFeedback}
               />
             </>
           )}
         </>
       )}
+      {receiptRequest &&
+        canSettle &&
+        selectedSocio?.id === receiptRequest.memberId &&
+        user?.operator_id === receiptRequest.actorId &&
+        user?.role === receiptRequest.role && (
+          <SettlementReceiptDialog
+            key={`${receiptRequest.actorId}:${receiptRequest.role}:${receiptRequest.memberId}:${receiptRequest.settlementId}`}
+            open
+            onClose={() => setReceiptRequest(null)}
+            {...receiptRequest}
+          />
+        )}
     </main>
   )
 }

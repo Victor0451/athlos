@@ -126,7 +126,8 @@ export type {
 } from './socios'
 
 // contabilidad ─────────────────────────────────────────────────
-export { contabilidadSchema } from './contabilidad'
+export { contabilidadSchema, planCuentas } from './contabilidad'
+export type { NewPlanCuenta, PlanCuenta } from './contabilidad'
 
 // tesoreria ────────────────────────────────────────────────────
 export {
@@ -154,6 +155,13 @@ export type {
   NewGastosCtacteMapping,
   GastosCtacteLinkMotivo,
 } from './tesoreria'
+
+// community-work approval execution (U1a persistence — Unit 1)
+export { duesCommunityWorkExecutions } from './dues-community-work-executions'
+export type {
+  DuesCommunityWorkExecution,
+  NewDuesCommunityWorkExecution,
+} from './dues-community-work-executions'
 
 // native dues pricing and immutable obligations ─────────────────
 export * from './dues'

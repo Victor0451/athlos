@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 
 /**
  * Modal — Gorriti Premium visual primitive (2026-07-06).
@@ -35,11 +35,9 @@ import { useId, type ReactNode } from 'react'
  * the body, the footer button uses `form="<form-id>"` to associate
  * with the body form.
  *
- * The component is dumb: it owns the layout, the parent owns the
- * state (open/close, submit handler, error). No portals, no
- * focus-trap (kept simple — the modal is rarely the only thing on
- * screen and the authed layout doesn't have other focusable content
- * competing for attention).
+ * The parent owns open/close, submission and errors. The inline modal
+ * contains keyboard focus and restores a usable opener without changing
+ * the parent's cancellation policy.
  */
 
 const SIZE_CLASS: Record<NonNullable<ModalProps['size']>, string> = {
@@ -71,6 +69,53 @@ interface ModalProps {
   dataTestid?: string
   /** Extra classes to merge onto the inner panel (rarely needed). */
   panelClassName?: string
+  /** Optional dismissal handler. When provided, Escape and a pointer press on the
+   *  backdrop (outside the panel) invoke it, matching standard dialog dismissal. */
+  onDismiss?: () => void
+}
+
+function isUsable(element: HTMLElement) {
+  if (!element.isConnected || element.matches(':disabled, input[type="hidden"]')) return false
+  for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.hidden || ancestor.hasAttribute('inert')) return false
+    const style = window.getComputedStyle(ancestor)
+    if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)) return false
+    if (
+      ancestor instanceof HTMLDetailsElement &&
+      !ancestor.open &&
+      !ancestor.querySelector('summary')?.contains(element)
+    )
+      return false
+  }
+  return true
+}
+
+function topModal(excluded?: HTMLElement) {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-modal-focus-root]'))
+    .filter((element) => element !== excluded && isUsable(element))
+    .at(-1)
+}
+
+function tabbables(modal: HTMLElement) {
+  const candidates = Array.from(
+    modal.querySelectorAll<HTMLElement>(
+      'a[href],area[href],button,input,select,textarea,iframe,object,embed,summary,[contenteditable],[tabindex]',
+    ),
+  ).filter((element) => element.tabIndex >= 0 && isUsable(element))
+  return candidates
+    .filter((element) => {
+      if (!(element instanceof HTMLInputElement) || element.type !== 'radio' || !element.name)
+        return true
+      const group = candidates.filter(
+        (other): other is HTMLInputElement =>
+          other instanceof HTMLInputElement &&
+          other.type === 'radio' &&
+          other.name === element.name &&
+          other.form === element.form,
+      )
+      return element === (group.find((radio) => radio.checked) ?? group[0])
+    })
+    .sort((left, right) => (left.tabIndex || Infinity) - (right.tabIndex || Infinity))
 }
 
 export function Modal({
@@ -83,13 +128,68 @@ export function Modal({
   descriptionId,
   dataTestid,
   panelClassName = '',
+  onDismiss,
 }: ModalProps) {
   const titleId = useId()
+  const modalRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const wasOpen = useRef(false)
+  // Capture before child layout effects can focus an internal alert.
+  if (open && !wasOpen.current && typeof document !== 'undefined') {
+    openerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }
+  wasOpen.current = open
+
+  useLayoutEffect(() => {
+    const modal = modalRef.current
+    if (!open || !modal) return
+    const opener = openerRef.current
+    const focusFirst = () => (tabbables(modal)[0] ?? modal).focus()
+    if (topModal() === modal && !modal.contains(document.activeElement)) focusFirst()
+    const containFocus = (event: FocusEvent) => {
+      if (topModal() === modal && event.target instanceof Node && !modal.contains(event.target))
+        focusFirst()
+    }
+    document.addEventListener('focusin', containFocus)
+    return () => {
+      document.removeEventListener('focusin', containFocus)
+      const remaining = topModal(modal)
+      if (opener && isUsable(opener) && (!remaining || remaining.contains(opener))) opener.focus()
+    }
+  }, [open])
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape' && onDismiss && topModal() === modalRef.current) {
+      event.stopPropagation()
+      onDismiss()
+      return
+    }
+    const modal = modalRef.current
+    if (event.defaultPrevented || event.key !== 'Tab' || !modal || topModal() !== modal) return
+    const controls = tabbables(modal)
+    const index = controls.indexOf(document.activeElement as HTMLElement)
+    if (index === -1 || (event.shiftKey ? index === 0 : index === controls.length - 1)) {
+      event.preventDefault()
+      const destination = event.shiftKey ? controls.at(-1) : controls[0]
+      ;(destination ?? modal).focus()
+    }
+  }
 
   if (!open) return null
 
   return (
     <div
+      ref={modalRef}
+      data-modal-focus-root
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      onPointerDown={(event) => {
+        // Backdrop dismissal: only a press on the backdrop itself, never a press that
+        // bubbles from inside the panel (portal targets fail the identity check by DOM
+        // node, so dropdown portals cannot dismiss the modal).
+        if (event.target === event.currentTarget) onDismiss?.()
+      }}
       role={role}
       aria-modal="true"
       aria-labelledby={titleId}

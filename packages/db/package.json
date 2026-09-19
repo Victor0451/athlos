@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
     "./repositories/permissions": "./src/repositories/permissions.ts",
-    "./repositories/operators": "./src/repositories/operators.ts"
+    "./repositories/operators": "./src/repositories/operators.ts",
+    "./testing": "./src/community-work-approval.harness.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

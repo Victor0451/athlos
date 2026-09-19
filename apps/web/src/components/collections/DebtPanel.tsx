@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type Ref } from 'react'
 import type { DebtDetail } from '@/lib/api/dues'
 import type { Socio } from '@/lib/api/socios'
 import { collectionInlineStatusClass, collectionSectionClass } from './CollectionPrimitives'
@@ -25,8 +25,10 @@ type Props = {
   status: DebtPanelStatus
   debt: DebtDetail | null
   error: string
+  onViewSettlement?: (settlementId: string) => void
   onSearch: (term: string) => Promise<void> | void
   onSelectSocio: (socio: SocioOption) => Promise<void> | void
+  summaryRef?: Ref<HTMLDivElement>
 }
 
 export function DebtPanel({
@@ -35,8 +37,10 @@ export function DebtPanel({
   status,
   debt,
   error,
+  onViewSettlement,
   onSearch,
   onSelectSocio,
+  summaryRef,
 }: Props) {
   const statusRef = useRef<HTMLParagraphElement>(null)
   const presentation = debt?.status === 'ready' ? mapDebtPresentation(debt) : null
@@ -71,6 +75,8 @@ export function DebtPanel({
       )}
       {socio && presentation && (
         <div
+          ref={summaryRef}
+          tabIndex={-1}
           aria-label={`Resumen de deuda de ${socio.apellido}, ${socio.nombre}`}
           className="space-y-3"
         >
@@ -82,7 +88,11 @@ export function DebtPanel({
               {presentation.total.label}: {presentation.total.value}
             </p>
           </div>
-          <DebtObligationList obligations={presentation.obligations} />
+          <DebtObligationList
+            obligations={presentation.obligations}
+            debt={debt}
+            {...(onViewSettlement ? { onViewSettlement } : {})}
+          />
         </div>
       )}
     </section>
@@ -90,7 +100,8 @@ export function DebtPanel({
 }
 
 function statusMessage(status: DebtPanelStatus) {
-  if (status === 'empty') return 'No hay deuda registrada todavía para este socio.'
+  if (status === 'empty')
+    return 'Todavía no se generaron obligaciones para este socio. Consultá la vista previa del período para generarlas.'
   if (status === 'not_found') return 'No se encontró el detalle de deuda de este socio.'
   if (status === 'loading') return 'Cargando el detalle de deuda…'
   if (status === 'unavailable' || status === 'error')

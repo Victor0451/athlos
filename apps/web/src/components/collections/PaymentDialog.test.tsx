@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { DuesOperationError, type DebtDetail } from '@/lib/api/dues'
@@ -72,7 +73,7 @@ const confirm = async (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('button', { name: /confirmar pago/i }))
 
 describe('PaymentDialog', () => {
-  it('defaults to all obligations, submits the selection fingerprint, and reports replayed success', async () => {
+  it('defaults to all obligations, submits the selection fingerprint, and reports confirmed success', async () => {
     const user = userEvent.setup()
     const onPayment = vi.fn().mockResolvedValue({ replayed: true })
     const { onClose } = renderDialog(onPayment)
@@ -91,7 +92,7 @@ describe('PaymentDialog', () => {
       }),
     )
     expect(onClose).toHaveBeenCalledOnce()
-    expect(await screen.findByText('Pago repetido.')).toBeInTheDocument()
+    expect(await screen.findByText('Pago registrado.')).toBeInTheDocument()
   })
 
   it.each([new DuesOperationError('conflict', 'stale'), new ApiError(409, 'CONFLICT', 'stale')])(
@@ -116,6 +117,239 @@ describe('PaymentDialog', () => {
       expect(onPayment).toHaveBeenCalledTimes(1)
     },
   )
+
+  it.each([
+    new DuesOperationError('permission', 'denied'),
+    new ApiError(403, 'FORBIDDEN', 'denied'),
+  ])(
+    'keeps a denied payment blocked through a failed refresh and requires an explicit retry',
+    async (cause) => {
+      const user = userEvent.setup()
+      const onPayment = vi.fn().mockRejectedValueOnce(cause).mockResolvedValueOnce(undefined)
+      const onRefreshDebt = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce(undefined)
+      renderDialog(onPayment, onRefreshDebt)
+
+      await confirm(user)
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'No tenés permiso para registrar este pago. Actualizá la deuda y los turnos antes de volver a confirmar.',
+      )
+      await user.click(screen.getByRole('button', { name: /actualizar deuda/i }))
+      expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+      expect(screen.getByRole('alert')).toHaveTextContent('No se pudo actualizar la deuda.')
+      await user.click(screen.getByRole('button', { name: /actualizar deuda/i }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeEnabled(),
+      )
+      expect(onPayment).toHaveBeenCalledOnce()
+      await confirm(user)
+      expect(onPayment).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('excludes paid obligations and prevents stale or duplicate pre-POST submission', async () => {
+    const user = userEvent.setup()
+    const onPayment = vi.fn().mockResolvedValue(undefined)
+    const paidDebt = {
+      ...debt,
+      obligations: [{ ...debt.obligations[0]!, status: 'PAID' as const }],
+    }
+    const { unmount } = render(
+      <PaymentDialog
+        open
+        debt={paidDebt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+    await confirm(user)
+    expect(onPayment).not.toHaveBeenCalled()
+    unmount()
+
+    let resolveDigest!: (bytes: ArrayBuffer) => void
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          resolveDigest = resolve
+        }),
+    )
+    const { rerender: rerenderOpen } = render(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const confirmation = screen.getByRole('button', { name: /confirmar pago/i })
+    fireEvent.click(confirmation)
+    fireEvent.click(confirmation)
+    resolveDigest(new Uint8Array(32).buffer)
+    await waitFor(() => expect(onPayment).toHaveBeenCalledTimes(1))
+
+    rerenderOpen(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    rerenderOpen(
+      <PaymentDialog
+        open={false}
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    resolveDigest(new Uint8Array(32).buffer)
+    await Promise.resolve()
+    expect(onPayment).toHaveBeenCalledTimes(1)
+    digest.mockRestore()
+  })
+
+  it('does not submit a cancelled digest after reopening for the same member', async () => {
+    const digestResolvers: Array<(bytes: ArrayBuffer) => void> = []
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementation(
+      () =>
+        new Promise<ArrayBuffer>((resolve) => {
+          digestResolvers.push(resolve)
+        }),
+    )
+    const onPayment = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      debt,
+      shifts,
+      shiftAvailability: 'ready' as const,
+      onPayment,
+      onRefreshDebt: vi.fn(),
+      onClose: vi.fn(),
+    }
+    const { rerender } = render(<PaymentDialog open {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    rerender(<PaymentDialog open={false} {...props} />)
+    rerender(<PaymentDialog open {...props} />)
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /confirmar pago/i }))
+      expect(digestResolvers).toHaveLength(2)
+      await act(async () => {
+        digestResolvers[0]!(new Uint8Array(32).buffer)
+        await Promise.resolve()
+      })
+      expect(onPayment).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: /confirmar pago/i })).toBeDisabled()
+
+      await act(async () => {
+        digestResolvers[1]!(new Uint8Array(32).buffer)
+        await Promise.resolve()
+      })
+      await waitFor(() => expect(onPayment).toHaveBeenCalledTimes(1))
+    } finally {
+      digest.mockRestore()
+    }
+  })
+
+  it('preserves an explicit empty cash selection and does not post', async () => {
+    const user = userEvent.setup()
+    const onGoToCash = vi.fn()
+    render(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={[]}
+        shiftAvailability="ready"
+        initialSelection={[]}
+        onGoToCash={onGoToCash}
+        onPayment={vi.fn()}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText(/período enero de 2026/i)).not.toBeChecked()
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Ir a caja' }),
+    ).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: /confirmar pago/i }))
+    expect(onGoToCash).not.toHaveBeenCalled()
+  })
+
+  it('keeps the cash exit inside the dialog and blocks it during payment', async () => {
+    const user = userEvent.setup()
+    const onGoToCash = vi.fn()
+    let resolve!: () => void
+    const onPayment = vi.fn().mockReturnValueOnce(
+      new Promise<void>((done) => {
+        resolve = done
+      }),
+    )
+    render(
+      <PaymentDialog
+        open
+        debt={debt}
+        shifts={shifts}
+        shiftAvailability="ready"
+        onGoToCash={onGoToCash}
+        onPayment={onPayment}
+        onRefreshDebt={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    const dialog = within(screen.getByRole('dialog'))
+    await user.click(dialog.getByLabelText(/período febrero de 2026/i))
+    await user.click(dialog.getByRole('button', { name: 'Ir a caja' }))
+    expect(onGoToCash).toHaveBeenCalledWith('socio-1', ['obligation-1'])
+    expect(onPayment).not.toHaveBeenCalled()
+    onGoToCash.mockClear()
+    await confirm(user)
+    await waitFor(() => expect(onPayment).toHaveBeenCalledOnce())
+    expect(dialog.getByRole('button', { name: 'Ir a caja' })).toBeDisabled()
+    fireEvent.click(dialog.getByRole('button', { name: 'Ir a caja' }))
+    expect(onGoToCash).not.toHaveBeenCalled()
+    await act(async () => {
+      resolve()
+    })
+  })
+
+  it('can confirm after Strict Mode reactivates its effects', async () => {
+    const user = userEvent.setup()
+    const onPayment = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    render(
+      <StrictMode>
+        <PaymentDialog
+          open
+          debt={debt}
+          shifts={shifts}
+          shiftAvailability="ready"
+          onPayment={onPayment}
+          onRefreshDebt={vi.fn()}
+          onClose={onClose}
+        />
+      </StrictMode>,
+    )
+    await confirm(user)
+    await waitFor(() => expect(onPayment).toHaveBeenCalledOnce())
+    expect(onClose).toHaveBeenCalledOnce()
+  })
 
   it('keeps payment unavailable until the open shifts can be refreshed', () => {
     render(

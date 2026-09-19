@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDb } from '@athlos/db'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   CashDeskService,
   businessDateForOpening,
@@ -43,6 +43,10 @@ async function applyMigrations() {
     '0055_cash_policy_atomicity.sql',
     '0056_cash_recovery_policy.sql',
     '0057_cash_lifecycle_boundaries.sql',
+    '0066_plan_cuentas.sql',
+    '0070_cash_manual_sources.sql',
+    '0073_cash_close_transfers.sql',
+    '0074_manual_tender_reversals.sql',
   ]) {
     await db.pool.query(await readFile(join(directory, name), 'utf8'))
   }
@@ -104,6 +108,12 @@ beforeAll(async () => {
   await applyMigrations()
 })
 
+afterEach(async () => {
+  await db?.pool.query(
+    `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+  )
+})
+
 afterAll(async () => {
   await db?.pool.end()
   if (!admin || !isolatedDatabaseName) return
@@ -115,20 +125,320 @@ afterAll(async () => {
 })
 
 async function openSettlement(service: CashDeskService, tender: string, amount = '12.50') {
+  const ownerId = randomUUID()
+  await db.pool.query(
+    "INSERT INTO public.operators (id,username,password_hash,role) VALUES ($1,$2,'fixture','A')",
+    [ownerId, `cash-${ownerId}`],
+  )
   const shift = await service.open({
     ...context(`seam-open-${tender}-${randomUUID()}`),
+    actorId: ownerId,
     deskId: `desk-${randomUUID()}`,
     openingTenders: {},
   })
   const settlement = randomUUID()
   await db.pool.query(
     `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',$3,'ARS',$4,$5,$6)`,
-    [settlement, socioId, amount, operatorId, randomUUID(), 'a'.repeat(64)],
+    [settlement, socioId, amount, ownerId, randomUUID(), 'a'.repeat(64)],
   )
-  return { settlement, shift }
+  return { settlement, shift, ownerId }
 }
 
+const cashMigration = (name: string) =>
+  readFile(join(import.meta.dirname, '../../../../../packages/db/drizzle', name), 'utf8')
+
 describe('cash desk PostgreSQL policy', () => {
+  it.each([false, true])(
+    "reads another operator's saved close without recomputing, forced=%s",
+    async (forceClose) => {
+      let now = new Date('2026-08-19T10:00:00.000Z')
+      const service = new CashDeskService(db.db, () => now)
+      const shift = await service.open({
+        ...context(),
+        deskId: randomUUID(),
+        openingTenders: { CASH: 1000 },
+      })
+      const reader = {
+        ...context(),
+        actorId: secondOperatorId,
+        role: 'TESORERO' as const,
+        shiftId: shift.id,
+      }
+      expect(await service.detail(reader)).toEqual({
+        shift,
+        close: null,
+        openingTenders: { CASH: 1000 },
+        expectedTenders: { CASH: 1000 },
+        movements: [],
+      })
+      now = new Date(forceClose ? '2026-08-20T12:00:00.000Z' : '2026-08-19T12:00:00.000Z')
+      const close = await service.close({
+        ...context(),
+        shiftId: shift.id,
+        countedTenders: { CASH: 990 },
+        reason: 'Counted short',
+        forceClose,
+      })
+      const historical = await service.detail(reader)
+      expect(historical).toEqual({
+        shift: { ...shift, status: 'CLOSED', closedAt: now.toISOString() },
+        close,
+        openingTenders: { CASH: 1000 },
+        movements: [],
+      })
+      expect(historical.close).toMatchObject({
+        expectedTenders: { CASH: 1000 },
+        countedTenders: { CASH: 990 },
+        discrepancy: { CASH: -10 },
+      })
+      expect(historical.close?.forceClose).toBe(forceClose ? true : undefined)
+      expect(JSON.stringify(historical)).not.toMatch(
+        /authorizationEvidence|callerKey|requestFingerprint|operatorId/,
+      )
+      await expect(service.detail({ ...reader, shiftId: randomUUID() })).rejects.toThrow(
+        'Cash shift not found',
+      )
+      await expect(service.detail({ ...reader, role: 'OPERADOR' })).rejects.toThrow(
+        'Cash shift responsibility does not match the operator',
+      )
+    },
+  )
+
+  it('sweeps only computed cash above the declared drawer float and rejects invalid floats', async () => {
+    const service = new CashDeskService(db.db)
+    const shift = await service.open({
+      ...context(`float-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 1000 },
+    })
+    // No movements: computed cash equals the opening. Float 400 → transfer 600, and the
+    // drawer keeps 400 (counted − transferred) for the next auto-opened period.
+    const close = await service.close({
+      ...context(`float-close-${randomUUID()}`),
+      shiftId: shift.id,
+      countedTenders: { CASH: 1000 },
+      drawerFloatCents: 400,
+    })
+    expect(close.closeTransfer).toMatchObject({ amountCents: 600 })
+
+    // A float equal to the computed cash sweeps nothing.
+    const keepAllShift = await service.open({
+      ...context(`float-keep-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 700 },
+    })
+    const keepAll = await service.close({
+      ...context(`float-keep-close-${randomUUID()}`),
+      shiftId: keepAllShift.id,
+      countedTenders: { CASH: 700 },
+      drawerFloatCents: 700,
+    })
+    expect(keepAll.closeTransfer).toBeUndefined()
+
+    // Validation: float above the counted cash, negative float, float on a forced close.
+    const guarded = await service.open({
+      ...context(`float-guard-open-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: { CASH: 500 },
+    })
+    await expect(
+      service.close({
+        ...context(`float-guard-over-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        drawerFloatCents: 501,
+      }),
+    ).rejects.toThrow('The drawer float cannot exceed the counted cash')
+    await expect(
+      service.close({
+        ...context(`float-guard-negative-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        drawerFloatCents: -1,
+      }),
+    ).rejects.toThrow('The drawer float must be a non-negative integer amount in cents')
+    await expect(
+      service.close({
+        ...context(`float-guard-forced-${randomUUID()}`),
+        shiftId: guarded.id,
+        countedTenders: { CASH: 500 },
+        reason: 'Recovery sweep',
+        forceClose: true,
+        drawerFloatCents: 100,
+      }),
+    ).rejects.toThrow('A forced close sweeps all computed cash and does not take a drawer float')
+  })
+
+  it('auto-opens periods from the last close remainder and replays idempotently', async () => {
+    const service = new CashDeskService(db.db)
+
+    // First-ever drawer: opening 0 on the canonical desk.
+    const first = await service.ensureOpenShift(context(`ensure-first-${randomUUID()}`))
+    expect(first.deskId).toBe('front-desk')
+    const firstDetail = await service.detail({
+      ...context(`ensure-first-detail-${randomUUID()}`),
+      shiftId: first.id,
+    })
+    expect(firstDetail.openingTenders).toEqual({ CASH: 0 })
+
+    // Idempotent: a different caller key resolves to the same open shift.
+    await expect(
+      service.ensureOpenShift(context(`ensure-replay-${randomUUID()}`)),
+    ).resolves.toMatchObject({ id: first.id })
+
+    // Cash production lands on the auto-opened shift, then the operator declares a float:
+    // computed 1000, counted 1000, float 400 → transfer 600, and the next period
+    // auto-opens with exactly the float, on the same desk.
+    const settlement = randomUUID()
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_settlements (id,socio_id,kind,amount,currency,operator_id,caller_key,request_fingerprint) VALUES ($1,$2,'MONETARY',10.00,'ARS',$3,$4,$5)`,
+      [settlement, socioId, operatorId, randomUUID(), 'a'.repeat(64)],
+    )
+    await service.recordTender({
+      ...context(`ensure-income-${randomUUID()}`),
+      shiftId: first.id,
+      direction: 'INCOME',
+      tender: 'CASH',
+      amountCents: 1000,
+      sourceType: 'SETTLEMENT',
+      sourceId: settlement,
+    })
+    await service.close({
+      ...context(`ensure-close-${randomUUID()}`),
+      shiftId: first.id,
+      countedTenders: { CASH: 1000 },
+      drawerFloatCents: 400,
+    })
+    const second = await service.ensureOpenShift(context(`ensure-second-${randomUUID()}`))
+    expect(second.id).not.toBe(first.id)
+    expect(second.deskId).toBe(first.deskId)
+    const secondDetail = await service.detail({
+      ...context(`ensure-second-detail-${randomUUID()}`),
+      shiftId: second.id,
+    })
+    expect(secondDetail.openingTenders).toEqual({ CASH: 400 })
+
+    // Overage (counted 500 over computed 400): the 100 discrepancy stays in the drawer and
+    // opens the next period.
+    await service.close({
+      ...context(`ensure-close2-${randomUUID()}`),
+      shiftId: second.id,
+      countedTenders: { CASH: 500 },
+      reason: 'Counted over',
+    })
+    const third = await service.ensureOpenShift(context(`ensure-third-${randomUUID()}`))
+    const thirdDetail = await service.detail({
+      ...context(`ensure-third-detail-${randomUUID()}`),
+      shiftId: third.id,
+    })
+    expect(thirdDetail.openingTenders).toEqual({ CASH: 100 })
+
+    // Shortage (counted 50 under computed 100): the recorded shortage is a debt, the
+    // drawer opens at 0.
+    await service.close({
+      ...context(`ensure-close3-${randomUUID()}`),
+      shiftId: third.id,
+      countedTenders: { CASH: 50 },
+      reason: 'Counted short',
+    })
+    const fourth = await service.ensureOpenShift(context(`ensure-fourth-${randomUUID()}`))
+    const fourthDetail = await service.detail({
+      ...context(`ensure-fourth-detail-${randomUUID()}`),
+      shiftId: fourth.id,
+    })
+    expect(fourthDetail.openingTenders).toEqual({ CASH: 0 })
+  })
+
+  it('limits an OPERADOR to own Caja shifts while finance keeps cross-owner reads', async () => {
+    const service = new CashDeskService(db.db)
+    const own = await service.open({
+      ...context(`operator-own-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    const foreign = await service.open({
+      ...context(`operator-foreign-${randomUUID()}`),
+      actorId: secondOperatorId,
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    const operator = { ...context(`operator-read-${randomUUID()}`), role: 'OPERADOR' as const }
+
+    await expect(service.list(operator)).resolves.toEqual([own])
+    await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
+      shift: own,
+      close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
+    })
+    await expect(service.detail({ ...operator, shiftId: foreign.id })).rejects.toThrow(
+      'Cash shift responsibility does not match the operator',
+    )
+    await expect(
+      service.detail({ ...operator, role: 'TESORERO', shiftId: foreign.id }),
+    ).resolves.toEqual({
+      shift: foreign,
+      close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
+    })
+  })
+
+  it('returns no foreign shifts to an OPERADOR without one and replays that operator’s own opening', async () => {
+    const service = new CashDeskService(db.db)
+    const operator = {
+      ...context(`operator-empty-list-${randomUUID()}`),
+      role: 'OPERADOR' as const,
+    }
+    const opening = {
+      ...operator,
+      callerKey: `operator-own-replay-${randomUUID()}`,
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    }
+
+    await expect(service.list(operator)).resolves.toEqual([])
+    const opened = await service.open(opening)
+    await expect(
+      service.open({ ...opening, deskId: `other-desk-${randomUUID()}` }),
+    ).resolves.toEqual(opened)
+    expect(opened.assignedOperatorId).toBe(operator.actorId)
+  })
+
+  it('lets an OPERADOR read an expired own shift but blocks a new opening without auto-close', async () => {
+    let now = new Date('2026-08-19T10:00:00.000Z')
+    const service = new CashDeskService(db.db, () => now)
+    const own = await service.open({
+      ...context(`operator-expired-own-${randomUUID()}`),
+      deskId: `desk-${randomUUID()}`,
+      openingTenders: {},
+    })
+    now = new Date('2026-08-20T11:00:00.000Z')
+    const operator = {
+      ...context(`operator-expired-read-${randomUUID()}`),
+      role: 'OPERADOR' as const,
+    }
+
+    await expect(service.detail({ ...operator, shiftId: own.id })).resolves.toEqual({
+      shift: own,
+      close: null,
+      openingTenders: {},
+      expectedTenders: {},
+      movements: [],
+    })
+    await expect(
+      service.open({
+        ...operator,
+        callerKey: `operator-expired-reopen-${randomUUID()}`,
+        deskId: `desk-${randomUUID()}`,
+        openingTenders: {},
+      }),
+    ).rejects.toThrow(own.id)
+    expect((await service.detail({ ...context(), shiftId: own.id })).shift.status).toBe('OPEN')
+  })
+
   it('closes with an inclusive interval, retains businessDate, replays, and excludes NON_CASH', async () => {
     const service = new CashDeskService(db.db)
     const opening = context(`open-${randomUUID()}`)
@@ -228,10 +538,11 @@ describe('cash desk PostgreSQL policy', () => {
   it('records every settlement tender in a caller transaction and rolls it back with the outer transaction', async () => {
     const service = new CashDeskService(db.db)
     for (const tender of ['CASH', 'DEBIT', 'CREDIT', 'TRANSFER'] as const) {
-      const { settlement, shift } = await openSettlement(service, tender)
+      const { settlement, shift, ownerId } = await openSettlement(service, tender)
       await db.db.transaction((tx) =>
         recordSettlementTenderInTransaction(tx, {
           ...context(`seam-${tender}-${randomUUID()}`),
+          actorId: ownerId,
           shiftId: shift.id,
           settlementId: settlement,
           tender,
@@ -249,11 +560,12 @@ describe('cash desk PostgreSQL policy', () => {
         source_id: settlement,
       })
     }
-    const { settlement, shift } = await openSettlement(service, 'CASH', '1.00')
+    const { settlement, shift, ownerId } = await openSettlement(service, 'CASH', '1.00')
     await expect(
       db.db.transaction(async (tx) => {
         await recordSettlementTenderInTransaction(tx, {
           ...context(`seam-rollback-${randomUUID()}`),
+          actorId: ownerId,
           shiftId: shift.id,
           settlementId: settlement,
           tender: 'CASH',
@@ -276,7 +588,7 @@ describe('cash desk PostgreSQL policy', () => {
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const gasto = randomUUID()
     const today = businessDateForOpening(new Date(opened.openedAt))
@@ -344,7 +656,7 @@ describe('cash desk PostgreSQL policy', () => {
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const gasto = randomUUID()
     const today = businessDateForOpening(new Date(opened.openedAt))
@@ -381,6 +693,7 @@ describe('cash desk PostgreSQL policy', () => {
 
     const exactOpened = await service.open({
       ...context(`exact-open-${randomUUID()}`),
+      actorId: secondOperatorId,
       deskId: `desk-${randomUUID()}`,
       openingTenders: {},
     })
@@ -434,7 +747,7 @@ describe('cash desk PostgreSQL policy', () => {
         forceClose: true,
         reason: 'Recovery',
       }),
-    ).rejects.toThrow('not authorized')
+    ).rejects.toThrow('Forced cash close is restricted to finance operators')
     const forceInput = {
       ...context(`expired-force-success-${randomUUID()}`),
       shiftId: opened.id,
@@ -490,6 +803,7 @@ describe('cash desk PostgreSQL policy', () => {
 
     const recoveryShift = await new CashDeskService(db.db).open({
       ...context(`recovery-open-${randomUUID()}`),
+      actorId: secondOperatorId,
       deskId: `desk-${randomUUID()}`,
       openingTenders: {},
     })
@@ -509,12 +823,123 @@ describe('cash desk PostgreSQL policy', () => {
     ).rejects.toMatchObject({ code: '55000' })
   })
 
+  it('preflights duplicate OPEN owners before releasing the desk guard for personal shifts', async () => {
+    const migration = await cashMigration('0067_personal_cash_shift_owner.sql')
+    const deskRelease = await cashMigration('0068_personal_cash_shift_desk_release.sql')
+    const duplicateIds = [randomUUID(), randomUUID()]
+    for (const [index, id] of duplicateIds.entries()) {
+      await db.pool.query(
+        `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,$3,'{}',$3,'{}',$4,$5)`,
+        [id, `legacy-owner-desk-${index}`, operatorId, randomUUID(), 'd'.repeat(64)],
+      )
+    }
+    const indexNames = async () =>
+      (
+        await db.pool.query(
+          `SELECT indexname FROM pg_indexes WHERE schemaname='tesoreria' AND tablename='dues_cash_shifts' ORDER BY indexname`,
+        )
+      ).rows.map(({ indexname }) => indexname as string)
+
+    expect(await indexNames()).toContain('dues_cash_shift_open_desk_unique')
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_operator_unique')
+    const error = await db.pool.query(migration).then(
+      () => undefined,
+      (reason: unknown) => reason as { message: string },
+    )
+    expect(error?.message).toContain('Cannot add dues_cash_shift_open_operator_unique')
+    expect(error?.message).toContain(duplicateIds[0])
+    expect(error?.message).toContain(duplicateIds[1])
+    expect(await indexNames()).toContain('dues_cash_shift_open_desk_unique')
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_operator_unique')
+    expect(
+      (
+        await db.pool.query(
+          `SELECT id FROM tesoreria.dues_cash_shifts WHERE id = ANY($1::uuid[]) ORDER BY id`,
+          [duplicateIds],
+        )
+      ).rows
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual([...duplicateIds].sort())
+
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
+    await db.pool.query(migration)
+    await db.pool.query(migration)
+    await db.pool.query(deskRelease)
+    await db.pool.query(deskRelease)
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_desk_unique')
+    expect(await indexNames()).toContain('dues_cash_shift_open_operator_unique')
+    const race = await Promise.allSettled(
+      ['owner-race-a', 'owner-race-b'].map((deskId) =>
+        db.pool.query(
+          `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,$3,'{}',$3,'{}',$4,$5)`,
+          [randomUUID(), deskId, secondOperatorId, randomUUID(), 'e'.repeat(64)],
+        ),
+      ),
+    )
+    expect(race.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(race.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(race.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { code: '23505' },
+    })
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
+    const sameDesk = `shared-desk-${randomUUID()}`
+    const differentOwnerRace = await Promise.allSettled(
+      [operatorId, secondOperatorId].map((owner) =>
+        db.pool.query(
+          `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,$2,$3,'{}',$3,'{}',$4,$5)`,
+          [randomUUID(), sameDesk, owner, randomUUID(), 'e'.repeat(64)],
+        ),
+      ),
+    )
+    expect(differentOwnerRace.every((result) => result.status === 'fulfilled')).toBe(true)
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
+    const firstOpenId = randomUUID()
+    await db.pool.query(
+      `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,'owner-first',$2,'{}',$2,'{}',$3,$4)`,
+      [firstOpenId, operatorId, randomUUID(), 'f'.repeat(64)],
+    )
+    await expect(
+      db.pool.query(
+        `INSERT INTO tesoreria.dues_cash_shifts (id,desk_id,assigned_operator_id,opening_tenders,operator_id,authorization_evidence,caller_key,request_fingerprint) VALUES ($1,'owner-second',$2,'{}',$2,'{}',$3,$4)`,
+        [randomUUID(), operatorId, randomUUID(), 'f'.repeat(64)],
+      ),
+    ).rejects.toMatchObject({ code: '23505' })
+    await expect(
+      new CashDeskService(db.db).open({
+        ...context(`owner-conflict-${randomUUID()}`),
+        deskId: 'owner-service-conflict',
+        openingTenders: {},
+      }),
+    ).rejects.toThrow(firstOpenId)
+    const sameDeskShift = await new CashDeskService(db.db).open({
+      ...context(`different-owner-${randomUUID()}`),
+      actorId: secondOperatorId,
+      deskId: 'owner-first',
+      openingTenders: { CASH: 0 },
+    })
+    expect(sameDeskShift.assignedOperatorId).toBe(secondOperatorId)
+    expect(await indexNames()).toEqual(
+      expect.arrayContaining(['dues_cash_shift_open_operator_unique']),
+    )
+    expect(await indexNames()).not.toContain('dues_cash_shift_open_desk_unique')
+    await db.pool.query(
+      `TRUNCATE tesoreria.dues_cash_closes, tesoreria.dues_cash_tenders, tesoreria.dues_cash_shift_expenses, tesoreria.dues_cash_shifts CASCADE`,
+    )
+  })
+
   it('requires accounting-date equality and makes compensation replay/conflict atomic', async () => {
     const service = new CashDeskService(db.db)
     const opened = await service.open({
       ...context(`open-${randomUUID()}`),
       deskId: `desk-${randomUUID()}`,
-      openingTenders: {},
+      openingTenders: { CASH: 100 }, // covers the 1.00 gasto: negative computed close is now blocked
     })
     const wrongDate = randomUUID()
     await db.pool.query(

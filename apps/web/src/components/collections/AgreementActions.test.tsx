@@ -59,6 +59,31 @@ describe('AgreementActions', () => {
     expect(screen.queryByRole('button', { name: /registrar acuerdo/i })).not.toBeInTheDocument()
   })
 
+  it('requires an eligible active agreement for community work and shows its current balance', () => {
+    const noAgreement = renderActions({
+      treatment: 'community',
+      onRecordCommunityWork: vi.fn(),
+    })
+    expect(screen.getByRole('status')).toHaveTextContent(/acuerdo activo negociado/i)
+    expect(
+      screen.queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+
+    noAgreement.unmount()
+    renderActions({
+      treatment: 'community',
+      state: state({ active: agreement }),
+      onRecordCommunityWork: vi.fn(),
+      outstandingCents: 10_000,
+      currency: 'ARS',
+    })
+    expect(screen.getByText(/saldo actual de la obligación:.*100,00/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /registrar acuerdo/i })).not.toBeInTheDocument()
+  })
+
   it('renders ascending immutable history and only the active agreement can be revised', () => {
     const previous = { ...agreement, id: 'agreement-previous', status: 'SUPERSEDED' as const }
     const current = { ...agreement, id: 'agreement-current', revision_number: 2 }
@@ -215,5 +240,38 @@ describe('AgreementActions', () => {
     await user.type(screen.getByLabelText(/motivo del acuerdo/i), 'Motivo')
     await user.click(screen.getByRole('button', { name: /guardar acuerdo/i }))
     expect(screen.getByRole('status')).toHaveTextContent(/ya había sido registrado/i)
+  })
+
+  it('never renders source formatting comments as visible summary text', () => {
+    const community = renderActions({
+      treatment: 'community',
+      state: state({ active: agreement }),
+      onRecordCommunityWork: vi.fn(),
+      outstandingCents: 10_000,
+      currency: 'ARS',
+    })
+    expect(community.container.textContent).not.toContain('prettier-ignore')
+
+    community.unmount()
+    const agreementOnly = renderActions({ state: state({ active: agreement }) })
+    expect(agreementOnly.container.textContent).not.toContain('prettier-ignore')
+  })
+})
+
+describe('AgreementActions additive community approval slot', () => {
+  it('renders the additive community-work approval surface only when provided', () => {
+    renderActions({
+      treatment: 'community',
+      communityApproval: (
+        <div data-testid="community-approval-slot">Trabajo comunitario con aprobación</div>
+      ),
+    })
+    expect(screen.getByTestId('community-approval-slot')).toBeInTheDocument()
+    expect(screen.getByText('Trabajo comunitario con aprobación')).toBeInTheDocument()
+  })
+
+  it('keeps the direct registration surface unchanged without the approval slot', () => {
+    renderActions({ treatment: 'community' })
+    expect(screen.queryByTestId('community-approval-slot')).not.toBeInTheDocument()
   })
 })

@@ -1,0 +1,46 @@
+{
+  "revision": "pending",
+  "environment": {
+    "id": "pending",
+    "candidate": "pending"
+  },
+  "support": {
+    "automated": "pending"
+  },
+  "baseline": {
+    "precheck": "pending",
+    "postcheck": "pending"
+  },
+  "assessment": {
+    "expectedRange": "pending",
+    "actualRange": "pending",
+    "replay": "pending"
+  },
+  "payment": {
+    "full": "pending",
+    "tender": "pending",
+    "physicalCash": "pending"
+  },
+  "reversal": {
+    "exact": "pending"
+  },
+  "treatments": {
+    "payment": "pending",
+    "communityWork": "pending",
+    "agreement": "pending",
+    "condonation": "pending"
+  },
+  "approvals": {
+    "request": "pending",
+    "rejection": "pending",
+    "condonation": "pending"
+  },
+  "rollback": {
+    "evidence": "pending"
+  },
+  "acceptance": {
+    "acceptingUser": "pending",
+    "acceptorType": "pending",
+    "signOff": "pending"
+  }
+}

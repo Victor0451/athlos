@@ -2,12 +2,18 @@ import { expect, it, vi } from 'vitest'
 import { AuditAction } from '@athlos/audit'
 import { SettlementService } from './settlements.ts'
 
-const seam = vi.hoisted(() => ({ shift: vi.fn(), tender: vi.fn(), reversalTender: vi.fn() }))
+const seam = vi.hoisted(() => ({
+  shift: vi.fn(),
+  tender: vi.fn(),
+  source: vi.fn(),
+  reversalTender: vi.fn(),
+}))
 vi.mock('./cash-desk.ts', () => ({
   validateSettlementShiftInTransaction: seam.shift,
   recordSettlementTenderInTransaction: seam.tender,
   recordReversalSettlementTenderInTransaction: seam.reversalTender,
 }))
+vi.mock('./production-source.ts', () => ({ recordAutomaticDuesProductionSource: seam.source }))
 
 const command = {
   actorId: '00000000-0000-4000-8000-000000000001',
@@ -24,7 +30,7 @@ const command = {
   selectionFingerprint: 'b'.repeat(64),
 }
 
-it.each(['selection', 'claim', 'allocation', 'tender', 'audit'] as const)(
+it.each(['selection', 'claim', 'allocation', 'tender', 'source', 'audit'] as const)(
   'does not call a later payment write after %s fails',
   async (failure) => {
     const calls: string[] = [],
@@ -68,6 +74,10 @@ it.each(['selection', 'claim', 'allocation', 'tender', 'audit'] as const)(
     seam.tender.mockImplementation(async () => {
       calls.push('tender')
       if (failure === 'tender') await fail()
+    })
+    seam.source.mockImplementation(async () => {
+      calls.push('source')
+      if (failure === 'source') await fail()
     })
     seam.reversalTender.mockImplementation(async () => {
       calls.push('reversal-tender')

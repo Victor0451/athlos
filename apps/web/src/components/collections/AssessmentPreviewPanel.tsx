@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import type { AssessmentPreview, AssessmentPreviewInput } from '@/lib/api/dues'
 import {
   collectionButtonClass,
@@ -80,10 +80,13 @@ const priceGapContexts = (preview: AssessmentPreview): PricingRepairContext[] =>
 export function AssessmentPreviewPanel({ socio, preview, status, error, onPreview, onExecute, onConfigurePrices }: Props) {
   const [from, setFrom] = useState(''), [through, setThrough] = useState('')
   const [confirming, setConfirming] = useState(false)
+  const [rangeExpanded, setRangeExpanded] = useState(false)
+  const rangeControlsId = useId()
   useEffect(() => {
     setFrom(socio?.fecha_alta?.slice(0, 7) ?? '')
     setThrough(new Date().toISOString().slice(0, 7))
     setConfirming(false)
+    setRangeExpanded(false)
   }, [socio?.id, socio?.fecha_alta])
   const blocked = status === 'blocked' || preview?.executable === false
   const repairContexts = preview ? priceGapContexts(preview) : []
@@ -96,11 +99,15 @@ export function AssessmentPreviewPanel({ socio, preview, status, error, onPrevie
   return <section aria-labelledby="assessment-preview-title" className={collectionSectionClass}>
     <h2 id="assessment-preview-title" className="font-display text-lg font-semibold text-ink-900">Vista previa de evaluación</h2>
     {socio ? <p className="border border-ink-200 bg-surface-sunken px-4 py-3 font-body text-sm text-ink-700">Socio seleccionado: {socio.apellido}, {socio.nombre} · N.° {socio.numero_socio}</p> : <p role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>Buscá y seleccioná un socio en el detalle de deuda para consultar su evaluación.</p>}
+    <button type="button" aria-expanded={rangeExpanded} aria-controls={rangeControlsId} disabled={!socio || status === 'loading'} onClick={() => setRangeExpanded((expanded) => !expanded)} className={collectionButtonClass.secondary}>{rangeExpanded ? 'Ocultar selección de rango' : 'Elegir rango para evaluar'}</button>
+    <p className="font-body text-sm text-ink-700">Este rango sirve para consultar la evaluación y generar obligaciones del socio; no selecciona la deuda que vas a pagar.</p>
+    <div id={rangeControlsId} hidden={!rangeExpanded}>
     <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
       <label className="space-y-1 font-body text-sm font-medium text-ink-700">Desde<input type="month" required value={from} onChange={(event) => setFrom(event.target.value)} className={collectionFieldClass} /></label>
       <label className="space-y-1 font-body text-sm font-medium text-ink-700">Hasta<input type="month" required value={through} onChange={(event) => setThrough(event.target.value)} className={collectionFieldClass} /></label>
       <button type="submit" disabled={!socio || status === 'loading'} className={collectionButtonClass.primary}>Consultar vista previa</button>
     </form>
+    </div>
     {status === 'loading' && <p role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>Cargando la vista previa de evaluación…</p>}
     {error && <p role="alert" aria-live="assertive" className={collectionInlineStatusClass('error')}>{error}</p>}
     {status === 'empty' && <p role="status" aria-live="polite" className={collectionInlineStatusClass('neutral')}>No hay períodos para mostrar en la vista previa.</p>}

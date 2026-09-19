@@ -27,7 +27,7 @@ afterEach(async () => Promise.all(apps.splice(0).map((fastify) => fastify.close(
 // prettier-ignore
 it('rejects legacy settlement creation, including non-cash payloads',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('TESORERO'),payload:{socio_id:actorId,kind:'NON_CASH',amount_cents:5_000,evidence:{approval:'private'},allocations:[{obligation_id:'00000000-0000-4000-8000-000000000002',amount_cents:5_000}]}});expect(response.statusCode).toBe(400);expect(settlementService.create).not.toHaveBeenCalled()})
 // prettier-ignore
-it('rejects legacy settlement creation before validation for unauthorized actors',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('OPERADOR'),payload:{}});expect(response.statusCode).toBe(403);expect(settlementService.create).not.toHaveBeenCalled()})
+it('rejects legacy settlement creation for an operator without invoking the full-payment service',async()=>{const settlementService={create:vi.fn()},fastify=await app(settlementService),response=await fastify.inject({method:'POST',url:'/api/v1/dues/settlements',headers:auth('OPERADOR'),payload:{}});expect(response.statusCode).toBe(400);expect(settlementService.create).not.toHaveBeenCalled()})
 
 it('rejects oversized legacy settlement creation', async () => {
   const settlementService = { create: vi.fn() }
@@ -150,15 +150,24 @@ it('returns the debt route contract for an authorized finance role', async () =>
 })
 
 it('denies unauthorized debt reads and returns not-found without member evidence', async () => {
-  const settlementService = { create: vi.fn(), debt: vi.fn() }
+  const settlementService = {
+    create: vi.fn(),
+    debt: vi.fn().mockResolvedValueOnce({
+      status: 'ready',
+      socioId: actorId,
+      currency: 'ARS',
+      totalCents: 0,
+      obligations: [],
+    }),
+  }
   const fastify = await app(settlementService)
-  const denied = await fastify.inject({
+  const operatorRead = await fastify.inject({
     method: 'GET',
     url: `/api/v1/dues/debt/${actorId}`,
     headers: auth('OPERADOR'),
   })
-  expect(denied.statusCode).toBe(403)
-  expect(settlementService.debt).not.toHaveBeenCalled()
+  expect(operatorRead.statusCode).toBe(200)
+  expect(settlementService.debt).toHaveBeenCalledWith({ role: 'OPERADOR', socioId: actorId })
 
   vi.mocked(settlementService.debt).mockResolvedValueOnce({
     status: 'not_found',

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { DuesOperationError } from '@/lib/api/dues'
@@ -81,6 +81,81 @@ describe('TreatmentWorkspace', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('keeps agreement creation and community work in their respective treatment cards', () => {
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="ADMIN"
+        agreementsEnabled
+        agreementStates={{}}
+        onCreateAgreement={vi.fn()}
+        onRecordCommunityWork={vi.fn()}
+        onRefreshAgreement={vi.fn()}
+        onRefreshDebt={vi.fn()}
+      />,
+    )
+
+    const agreementCard = screen.getByRole('heading', { name: 'Acuerdo' }).closest('section')!
+    const communityCard = screen
+      .getByRole('heading', { name: 'Trabajo comunitario' })
+      .closest('section')!
+    expect(
+      within(agreementCard).getByRole('button', { name: 'Registrar acuerdo' }),
+    ).toBeInTheDocument()
+    expect(
+      within(agreementCard).queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+    expect(within(communityCard).getByRole('status')).toHaveTextContent(/acuerdo activo negociado/i)
+  })
+
+  it('gives each agreement action its own labelled region in the matching treatment card', () => {
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="ADMIN"
+        agreementsEnabled
+        agreementStates={{}}
+        onCreateAgreement={vi.fn()}
+        onRecordCommunityWork={vi.fn()}
+        onRefreshAgreement={vi.fn()}
+        onRefreshDebt={vi.fn()}
+      />,
+    )
+
+    const communityHeading = screen.getByRole('heading', {
+      name: 'Trabajo comunitario de la obligación',
+    })
+    const agreementHeading = screen.getByRole('heading', { name: 'Acuerdo de la obligación' })
+    const communityRegion = communityHeading.closest('section')!
+    const agreementRegion = agreementHeading.closest('section')!
+
+    expect(communityRegion).toHaveAccessibleName('Trabajo comunitario de la obligación')
+    expect(agreementRegion).toHaveAccessibleName('Acuerdo de la obligación')
+    expect(communityRegion).toHaveAttribute('aria-labelledby', communityHeading.id)
+    expect(agreementRegion).toHaveAttribute('aria-labelledby', agreementHeading.id)
+    expect(communityHeading.id).not.toBe(agreementHeading.id)
+  })
+
+  it('lets an operator with an own active shift pay without granting reversals', () => {
+    render(
+      <TreatmentWorkspace
+        memberId="socio-1"
+        debt={debt}
+        role="OPERADOR"
+        canPayFullSelection
+        agreementStates={{}}
+        shifts={shifts}
+        onPayment={vi.fn()}
+        onRefreshDebt={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /revertir pago/i })).not.toBeInTheDocument()
+  })
+
   it('forwards unavailable open-shift state to payment actions', () => {
     render(
       <TreatmentWorkspace
@@ -97,7 +172,7 @@ describe('TreatmentWorkspace', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /registrar pago/i })).toBeEnabled()
     expect(screen.getByRole('alert')).toHaveTextContent(
       'No se pudo cargar los turnos de caja abiertos.',
     )

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { collectionButtonClass } from './CollectionPrimitives'
 import { formatObligationPeriod } from './payment-presentation'
 
@@ -21,7 +22,15 @@ export function PaymentObligationSelector({
   selectedIds,
   onSelectedIdsChange,
 }: Props) {
-  const allSelected = selectedIds.length > 0
+  const masterRef = useRef<HTMLInputElement>(null)
+  const eligibleIds = obligations.map(({ id }) => id)
+  const selectedEligibleIds = eligibleIds.filter((id) => selectedIds.includes(id))
+  const allSelected = eligibleIds.length > 0 && selectedEligibleIds.length === eligibleIds.length
+  const partiallySelected = selectedEligibleIds.length > 0 && !allSelected
+
+  useEffect(() => {
+    if (masterRef.current) masterRef.current.indeterminate = partiallySelected
+  }, [partiallySelected])
 
   return (
     <fieldset className="space-y-2">
@@ -29,13 +38,16 @@ export function PaymentObligationSelector({
         <legend className="font-display text-sm font-semibold text-ink-900">
           Obligaciones a pagar
         </legend>
-        <button
-          type="button"
-          onClick={() => onSelectedIdsChange(allSelected ? [] : obligations.map(({ id }) => id))}
-          className={collectionButtonClass.secondary}
-        >
-          {allSelected ? 'Quitar selección' : 'Seleccionar todas'}
-        </button>
+        <label className={`${collectionButtonClass.secondary} flex items-center gap-2`}>
+          <input
+            ref={masterRef}
+            type="checkbox"
+            checked={allSelected}
+            disabled={!eligibleIds.length}
+            onChange={() => onSelectedIdsChange(allSelected ? [] : eligibleIds)}
+          />
+          Seleccionar todas
+        </label>
       </div>
       {obligations.map((obligation) => (
         <label
@@ -45,12 +57,12 @@ export function PaymentObligationSelector({
           <input
             className="mt-0.5 min-h-4 min-w-4"
             type="checkbox"
-            checked={selectedIds.includes(obligation.id)}
+            checked={selectedEligibleIds.includes(obligation.id)}
             onChange={() =>
               onSelectedIdsChange(
-                selectedIds.includes(obligation.id)
-                  ? selectedIds.filter((id) => id !== obligation.id)
-                  : [...selectedIds, obligation.id],
+                selectedEligibleIds.includes(obligation.id)
+                  ? selectedEligibleIds.filter((id) => id !== obligation.id)
+                  : [...selectedEligibleIds, obligation.id],
               )
             }
           />

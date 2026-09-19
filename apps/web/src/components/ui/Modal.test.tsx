@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { StrictMode, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -17,7 +19,184 @@ import { Modal } from './Modal'
  *   - Footer is omitted when `footer` prop is undefined.
  */
 
+function FocusHarness() {
+  const [open, setOpen] = useState(false)
+  const [nested, setNested] = useState(false)
+  return (
+    <>
+      <button onClick={() => setOpen(true)}>Open modal</button>
+      <Modal
+        open={open}
+        title="Parent"
+        footer={<button onClick={() => setOpen(false)}>Close parent</button>}
+      >
+        <button onClick={() => setNested(true)}>Open child</button>
+        <Modal open={nested} title="Child">
+          <button onClick={() => setNested(false)}>Close child</button>
+        </Modal>
+      </Modal>
+    </>
+  )
+}
+
 describe('Modal', () => {
+  it('focuses the first control and wraps both Tab boundaries', async () => {
+    const user = userEvent.setup()
+    render(
+      <Modal open title="Focus">
+        <button>First</button>
+        <button>Last</button>
+      </Modal>,
+    )
+    const first = screen.getByRole('button', { name: 'First' })
+    const last = screen.getByRole('button', { name: 'Last' })
+    expect(first).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(last).toHaveFocus()
+    await user.tab()
+    expect(first).toHaveFocus()
+  })
+
+  it('redirects external programmatic focus into the active modal', () => {
+    render(
+      <>
+        <button>Outside</button>
+        <Modal open title="Focus">
+          <button>Inside</button>
+        </Modal>
+      </>,
+    )
+    screen.getByRole('button', { name: 'Outside' }).focus()
+    expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus()
+  })
+
+  it('uses positive tabindex order for the first and last boundary', async () => {
+    const user = userEvent.setup()
+    render(
+      <Modal open title="Order">
+        <button tabIndex={2}>Second</button>
+        <button tabIndex={1}>First</button>
+        <button>Last</button>
+      </Modal>,
+    )
+    const first = screen.getByRole('button', { name: 'First' })
+    expect(first).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus()
+    await user.tab()
+    expect(first).toHaveFocus()
+  })
+
+  it('focuses an empty dialog and keeps forward and backward Tab inside', async () => {
+    const user = userEvent.setup()
+    render(
+      <Modal open title="Information">
+        <p>Read this</p>
+      </Modal>,
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveFocus()
+    await user.tab()
+    expect(dialog).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(dialog).toHaveFocus()
+  })
+
+  it('skips hidden ancestors, hidden inputs, inert and disabled controls', () => {
+    render(
+      <Modal open title="Filtering">
+        <input type="hidden" tabIndex={0} />
+        <fieldset disabled>
+          <button>Disabled</button>
+        </fieldset>
+        <div hidden>
+          <button>Hidden</button>
+        </div>
+        <div style={{ display: 'none' }}>
+          <button>Display hidden</button>
+        </div>
+        <div style={{ visibility: 'hidden' }}>
+          <button>Visibility hidden</button>
+        </div>
+        <div inert>
+          <button>Inert</button>
+        </div>
+        <button tabIndex={-1}>Programmatic</button>
+        <button>Available</button>
+      </Modal>,
+    )
+    expect(screen.getByRole('button', { name: 'Available' })).toHaveFocus()
+  })
+
+  it('preserves internal alert focus and keeps subsequent Tab inside', async () => {
+    const user = userEvent.setup()
+    render(
+      <Modal open title="Warning">
+        <button>Continue</button>
+        <p
+          role="alert"
+          tabIndex={-1}
+          ref={(node) => {
+            node?.focus()
+          }}
+        >
+          Error
+        </p>
+      </Modal>,
+    )
+    expect(screen.getByRole('alert')).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Continue' })).toHaveFocus()
+  })
+
+  it('restores child and parent openers across repeated openings', async () => {
+    const user = userEvent.setup()
+    render(
+      <StrictMode>
+        <FocusHarness />
+      </StrictMode>,
+    )
+    const opener = screen.getByRole('button', { name: 'Open modal' })
+    await user.click(opener)
+    const childOpener = screen.getByRole('button', { name: 'Open child' })
+    expect(childOpener).toHaveFocus()
+    await user.click(childOpener)
+    const closeChild = screen.getByRole('button', { name: 'Close child' })
+    expect(closeChild).toHaveFocus()
+    await user.tab()
+    expect(closeChild).toHaveFocus()
+    await user.click(closeChild)
+    expect(childOpener).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Close parent' }))
+    expect(opener).toHaveFocus()
+    await user.click(opener)
+    expect(screen.getByRole('button', { name: 'Open child' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Close parent' }))
+    expect(opener).toHaveFocus()
+  })
+
+  it.each(['usable', 'removed', 'disabled'] as const)(
+    'handles a %s opener on StrictMode unmount',
+    (state) => {
+      const opener = document.createElement('button')
+      document.body.append(opener)
+      opener.focus()
+      const { unmount } = render(
+        <StrictMode>
+          <Modal open title="Unmount">
+            <button>Inside</button>
+          </Modal>
+        </StrictMode>,
+      )
+      expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus()
+      if (state === 'removed') opener.remove()
+      if (state === 'disabled') opener.disabled = true
+      unmount()
+      expect(document.activeElement).toBe(state === 'usable' ? opener : document.body)
+      opener.remove()
+    },
+  )
+
   it('renders nothing when closed', () => {
     const { container } = render(
       <Modal open={false} title="Hello">

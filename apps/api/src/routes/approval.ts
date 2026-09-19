@@ -6,19 +6,29 @@ import { emitAudit, AuditAction } from '@athlos/audit'
 import {
   consumeApprovalToken,
   createApprovalToken,
+  createCommunityWorkApprovalRequest,
   createCondonationApprovalRequest,
+  decideCommunityWorkApproval,
   decideCondonationApproval,
+  findCommunityWorkRequest,
   findCondonationRequest,
   getApprovalToken,
+  listCommunityWorkLifecycle,
+  listCommunityWorkQueue,
   listCondonationLifecycle,
+  listCondonationQueue,
+  type CommunityWorkQueueEntry,
+  type CondonationQueueEntry,
   type CondonationSnapshot,
   type ApprovalTokenRecord,
 } from '@athlos/approval'
 import type { AppContainer } from '../container.ts'
 import { selectFullOutstanding } from '../modules/dues/allocations.ts'
+import { findActiveCommunityWorkAgreement } from '../modules/dues/agreements.ts'
 import { CondonationExecutionService } from '../modules/dues/condonations.ts'
+import { CommunityWorkExecutionService } from '../modules/dues/community-work-execution.ts'
 import { validateIdempotencyKey } from '../lib/idempotency.ts'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 /**
  * Approval routes — public-by-token + admin create-link.
@@ -69,9 +79,58 @@ const condonationMemberSchema = z.object({ memberId: z.string().uuid() }).strict
 const condonationHistoryQuerySchema = z
   .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
   .strict()
+const communityWorkMemberSchema = z.object({ memberId: z.string().uuid() }).strict()
+const communityWorkHistoryQuerySchema = z
+  .object({ limit: z.coerce.number().int().min(1).max(100).default(25) })
+  .strict()
+const communityWorkQueueQuerySchema = z
+  .object({
+    view: z.literal('all').optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    cursor: z.string().min(1).max(256).optional(),
+  })
+  .strict()
+const condonationQueueQuerySchema = z
+  .object({
+    view: z.literal('all').optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    cursor: z.string().min(1).max(256).optional(),
+  })
+  .strict()
 const condonationExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
+const communityWorkExecutionSchema = z.object({ execution_id: z.string().uuid() }).strict()
+const communityWorkRequestSchema = z
+  .object({
+    member_id: z.string().uuid(),
+    obligation_id: z.string().uuid(),
+    context: z.string().trim().min(1).max(1000),
+    reason: z.string().trim().min(1).max(500),
+    evidence: z.string().trim().min(1).max(1000),
+    agreement_id: z.string().uuid().optional(),
+  })
+  .strict()
 const CONDONATION_REQUEST_GATE = { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') }
 const CONDONATION_DECISION_GATE = { preHandler: requireRole('ADMIN', 'TESORERO') }
+
+/**
+ * Community-work approval writes stay hidden until rollout is explicitly
+ * authorized (default-off flag), mirroring the other BETA gates.
+ */
+function communityWorkEnabled(container: AppContainer): void {
+  if (!container.env.COMMUNITY_WORK_APPROVALS_ENABLED)
+    throw BusinessError(ErrorCode.NOT_FOUND, 'Resource not found')
+}
+
+/**
+ * Server-captured decider fingerprint: SHA-256 of the presented credential.
+ * Exact decision replays from the same session match; a different credential
+ * is a divergent replay and conflicts in the helper.
+ */
+function actorFingerprint(request: { headers: Record<string, unknown> }): string | null {
+  const header = request.headers['authorization']
+  if (typeof header !== 'string' || header.trim() === '') return null
+  return createHash('sha256').update(header).digest('hex')
+}
 
 function callerKey(request: { headers: Record<string, unknown> }): string {
   const key = request.headers['idempotency-key']
@@ -137,6 +196,73 @@ function condonationLifecycleDto(
   }
 }
 
+function condonationQueueDto(row: CondonationQueueEntry) {
+  return {
+    ...condonationLifecycleDto(row),
+    created_at: row.createdAt.toISOString(),
+    current_member: {
+      id: row.currentMember.id,
+      numero_socio: row.currentMember.numeroSocio,
+      nombre: row.currentMember.nombre,
+      apellido: row.currentMember.apellido,
+    },
+    requester: row.requester,
+    context: row.contextSummary,
+    reason: row.requestReason,
+    evidence: row.requestEvidence,
+  }
+}
+
+function communityWorkLifecycleDto(
+  row: Awaited<ReturnType<typeof listCommunityWorkLifecycle>>[number],
+) {
+  const snapshot = row.communitySnapshot as CondonationSnapshot
+  const executed = row.executionReceiptId !== null
+  const expired = row.expiresAt <= new Date()
+  const state = executed
+    ? 'executed'
+    : expired
+      ? 'expired'
+      : row.status === 'rejected'
+        ? 'rejected'
+        : row.status === 'pending'
+          ? 'pending'
+          : 'approved_awaiting_execution'
+  return {
+    id: row.actionId,
+    state,
+    expires_at: row.expiresAt.toISOString(),
+    decided_at: row.decidedAt?.toISOString() ?? null,
+    execution_id: row.executionId,
+    execution_status: executed ? 'executed' : row.executionId ? 'recoverable' : 'unavailable',
+    snapshot: {
+      member_id: snapshot.memberId,
+      obligations: snapshot.obligations.map((item) => ({
+        obligation_id: item.obligationId,
+        currency: item.currency,
+        outstanding_amount_cents: item.outstandingAmountCents,
+      })),
+    },
+  }
+}
+
+function communityWorkQueueDto(row: CommunityWorkQueueEntry) {
+  return {
+    ...communityWorkLifecycleDto(row),
+    created_at: row.createdAt.toISOString(),
+    current_member: {
+      id: row.currentMember.id,
+      numero_socio: row.currentMember.numeroSocio,
+      nombre: row.currentMember.nombre,
+      apellido: row.currentMember.apellido,
+    },
+    requester: row.requester,
+    context: row.contextSummary,
+    reason: row.requestReason,
+    evidence: row.requestEvidence,
+  }
+}
+
 const createLinkSchema = z.object({
   action_type: z.string().min(1).max(64),
   action_id: z.string().min(1).max(64),
@@ -177,6 +303,32 @@ function toContextResponse(row: ApprovalTokenRecord): ApprovalContextResponse {
 export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
   const container = fastify.container
 
+  // Both views read the same persisted requests; this endpoint never decides or executes them.
+  fastify.get<{ Querystring: unknown }>(
+    '/api/v1/condonation-requests',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      const query = throwIfInvalid(condonationQueueQuerySchema, request.query, 'query')
+      const limit = query.limit ?? 25
+      const rows = await listCondonationQueue(container.db, {
+        view: query.view ?? 'actionable',
+        limit: limit + 1,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      })
+      const page = rows.slice(0, limit)
+      const last = page.at(-1)
+      const nextCursor =
+        rows.length > limit && last
+          ? Buffer.from(JSON.stringify({ t: last.createdAtCursor, id: last.id })).toString(
+              'base64url',
+            )
+          : null
+      return reply
+        .header('Cache-Control', 'no-store')
+        .send({ items: page.map(condonationQueueDto), next_cursor: nextCursor })
+    },
+  )
+
   fastify.get<{ Params: { memberId: string }; Querystring: unknown }>(
     '/api/v1/members/:memberId/condonation-requests',
     { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') },
@@ -191,6 +343,53 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
         ...(treasury ? {} : { requesterId: request.operator.sub }),
       })
       return reply.code(200).send({ items: rows.map(condonationLifecycleDto) })
+    },
+  )
+
+  // Community-work member-history — gated by rollout flag, mirrors condonation lifecycle.
+  fastify.get<{ Params: { memberId: string }; Querystring: unknown }>(
+    '/api/v1/members/:memberId/community-work-requests',
+    { preHandler: requireRole('OPERADOR', 'ADMIN', 'TESORERO') },
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const { memberId } = throwIfInvalid(communityWorkMemberSchema, request.params, 'params')
+      const { limit } = throwIfInvalid(communityWorkHistoryQuerySchema, request.query, 'query')
+      const treasury = request.operator.role === 'ADMIN' || request.operator.role === 'TESORERO'
+      const rows = await listCommunityWorkLifecycle(container.db, {
+        memberId,
+        limit: limit ?? 25,
+        ...(treasury ? {} : { requesterId: request.operator.sub }),
+      })
+      return reply.code(200).send({ items: rows.map(communityWorkLifecycleDto) })
+    },
+  )
+
+  // Community-work treasury queue — gated by rollout flag, mirrors the condonation queue.
+  fastify.get<{ Querystring: unknown }>(
+    '/api/v1/community-work-requests',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const query = throwIfInvalid(communityWorkQueueQuerySchema, request.query, 'query')
+      const limit = query.limit ?? 25
+      const rows = await listCommunityWorkQueue(container.db, {
+        view: query.view ?? 'actionable',
+        limit: limit + 1,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      })
+      const page = rows.slice(0, limit)
+      const last = page.at(-1)
+      const nextCursor =
+        rows.length > limit && last
+          ? Buffer.from(JSON.stringify({ t: last.createdAtCursor, id: last.id })).toString(
+              'base64url',
+            )
+          : null
+      return reply
+        .header('Cache-Control', 'no-store')
+        .send({ items: page.map(communityWorkQueueDto), next_cursor: nextCursor })
     },
   )
 
@@ -223,10 +422,13 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     // point and the action is the caller's responsibility to retry
     // via a fresh token.
     const candidate = await getApprovalToken(container.db, request.params.token)
-    if (candidate.actionType === 'dues.condonation') {
+    if (
+      candidate.actionType === 'dues.condonation' ||
+      candidate.actionType === 'dues.community-work-request'
+    ) {
       throw BusinessError(
         ErrorCode.INSUFFICIENT_PERMISSIONS,
-        'Condonation decisions require an authenticated Treasury approver',
+        'Condonation and community-work decisions require an authenticated Treasury approver',
       )
     }
     const row = await consumeApprovalToken(container.db, request.params.token)
@@ -361,6 +563,205 @@ export const approvalRoutes: FastifyPluginCallback = (fastify, _opts, done) => {
     },
   )
 
+  // POST /api/v1/community-work-requests
+  // Captures a financially inert community-work request. The snapshot is
+  // server-captured (client amounts are never trusted); any supplied
+  // agreement context is validated for member/obligation ownership.
+  fastify.post<{ Body: unknown }>(
+    '/api/v1/community-work-requests',
+    CONDONATION_REQUEST_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const body = throwIfInvalid(communityWorkRequestSchema, request.body, 'body')
+      const key = callerKey(request)
+      const result = await container.db.transaction(async (tx) => {
+        const existing = await findCommunityWorkRequest(tx, request.operator!.sub, key)
+        const snapshot = existing
+          ? sameSnapshot(existing.communitySnapshot, body.member_id, [body.obligation_id])
+            ? (existing.communitySnapshot as CondonationSnapshot)
+            : (() => {
+                throw BusinessError(
+                  ErrorCode.CONFLICT,
+                  'Idempotency key was already used for a different request',
+                )
+              })()
+          : await selectFullOutstanding(tx, {
+              socioId: body.member_id,
+              obligationIds: [body.obligation_id],
+            }).then((selection) => ({
+              memberId: selection.socioId,
+              obligations: selection.allocations.map((item) => ({
+                obligationId: item.obligationId,
+                currency: selection.currency,
+                outstandingAmountCents: item.amountCents,
+              })),
+            }))
+        let agreementUuid: string | null = null
+        let termsVersion: number | null = null
+        if (body.agreement_id !== undefined) {
+          if (existing) {
+            // a replay must carry the same agreement context
+            if (existing.agreementUuid !== body.agreement_id)
+              throw BusinessError(
+                ErrorCode.CONFLICT,
+                'Idempotency key was already used for a different request',
+              )
+            agreementUuid = existing.agreementUuid
+            termsVersion = existing.termsVersion
+          } else {
+            const agreement = await findActiveCommunityWorkAgreement(tx, {
+              agreementId: body.agreement_id,
+              socioId: body.member_id,
+              obligationId: body.obligation_id,
+            })
+            if (!agreement)
+              throw BusinessError(
+                ErrorCode.CONFLICT,
+                'Agreement context does not match this member and obligation',
+              )
+            agreementUuid = body.agreement_id
+            termsVersion = agreement.termsVersion
+          }
+        }
+        const created = await createCommunityWorkApprovalRequest(tx, {
+          requestId: randomUUID(),
+          contextSummary: body.context,
+          requesterId: request.operator!.sub,
+          requesterKey: existing?.requesterKey ?? randomUUID(),
+          approverChannel: 'email',
+          approverAddress: 'authenticated-treasury',
+          snapshot,
+          reason: body.reason,
+          evidence: body.evidence,
+          callerKey: key,
+          agreementUuid,
+          termsVersion,
+        })
+        await emitAudit(tx, {
+          operatorId: request.operator!.sub,
+          action: AuditAction.COMMUNITY_WORK_REQUEST_CREATED,
+          entityType: 'community_work_request',
+          entityId: created.record.id,
+          oldValue: null,
+          newValue: { status: 'pending', financial_execution: false },
+          sourceIp: request.ip ?? null,
+          callerKey: key,
+          metadata: {
+            request_id: created.record.actionId,
+            requester_id: request.operator!.sub,
+            snapshot,
+            agreement_uuid: agreementUuid,
+            terms_version: termsVersion,
+            reason: body.reason,
+            evidence: body.evidence,
+            idempotency_key: key,
+            outcome: 'pending_no_financial_execution',
+          },
+        })
+        return created.record
+      })
+      return reply.code(201).send(condonationDto(result))
+    },
+  )
+
+  // POST /api/v1/community-work-requests/:id/decision
+  // Records one Treasury decision. The decision only authorizes later
+  // execution (U4); it never consumes the token or touches money.
+  // Idempotency comes from the exact-decision identity in the helper
+  // (same decision/actor/reason/evidence/credential fingerprint), and
+  // the audit emitter dedups replays; no Idempotency-Key is required,
+  // mirroring the preserved condonation decision contract.
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/community-work-requests/:id/decision',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const { id } = throwIfInvalid(condonationIdSchema, request.params, 'params')
+      const body = throwIfInvalid(condonationDecisionSchema, request.body, 'body')
+      const result = await container.db.transaction(async (tx) => {
+        const decided = await decideCommunityWorkApproval(tx, {
+          requestId: id,
+          actorId: request.operator!.sub,
+          decision: body.decision,
+          reason: body.reason,
+          evidence: body.evidence,
+          actorFingerprint: actorFingerprint(request),
+        })
+        await emitAudit(tx, {
+          operatorId: request.operator!.sub,
+          action: AuditAction.COMMUNITY_WORK_DECISION_RECORDED,
+          entityType: 'community_work_request',
+          entityId: decided.id,
+          oldValue: { status: 'pending' },
+          newValue: { status: decided.status, financial_execution: false },
+          sourceIp: request.ip ?? null,
+          callerKey: decided.actionId,
+          metadata: {
+            request_id: decided.actionId,
+            requester_id: decided.createdByOperatorId,
+            approver_id: request.operator!.sub,
+            decision: decided.status,
+            reason: body.reason,
+            evidence: body.evidence,
+            snapshot: decided.communitySnapshot,
+            agreement_uuid: decided.agreementUuid,
+            terms_version: decided.termsVersion,
+            outcome: `${decided.status}_no_financial_execution`,
+          },
+        })
+        return decided
+      })
+      return reply.code(200).send(condonationDto(result))
+    },
+  )
+
+  // POST /api/v1/community-work-requests/:id/execution
+  // Executes an APPROVED community-work request through the atomic U4
+  // executor. The execution identity is the server-generated token UUID
+  // minted at decision time (never the HTTP Idempotency-Key: the header
+  // flows into audit metadata only). Same-decider-executes is enforced
+  // inside the executor; this gate only keeps Treasury roles on the door.
+  fastify.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/v1/community-work-requests/:id/execution',
+    CONDONATION_DECISION_GATE,
+    async (request, reply) => {
+      if (!request.operator) return
+      communityWorkEnabled(container)
+      const { id } = throwIfInvalid(condonationIdSchema, request.params, 'params')
+      const { execution_id: executionId } = throwIfInvalid(
+        communityWorkExecutionSchema,
+        request.body,
+        'body',
+      )
+      const permissions = Object.entries(request.operator.permissions)
+        .filter(([, granted]) => granted)
+        .map(([permission]) => permission)
+      const result = await new CommunityWorkExecutionService(container.db).executeApproved({
+        requestId: id,
+        executionId,
+        actorId: request.operator.sub,
+        role: request.operator.role,
+        permissions,
+        callerKey: callerKey(request),
+        sourceIp: request.ip ?? null,
+      })
+      return reply.code(200).send({
+        execution_id: result.executionId,
+        approval_id: result.approvalId,
+        request_id: result.requestId,
+        work_id: result.workId,
+        settlement_id: result.settlementId,
+        allocation_id: result.allocationId,
+        socio_id: result.socioId,
+        obligation_id: result.obligationId,
+        amount_cents: result.amountCents,
+        currency: result.currency,
+        status: result.status,
+      })
+    },
+  )
   fastify.post<{ Params: { id: string }; Body: unknown }>(
     '/api/v1/condonation-requests/:id/execution',
     CONDONATION_DECISION_GATE,
@@ -429,7 +830,7 @@ export const internalApprovalLinksRoutes: FastifyPluginCallback = (fastify, _opt
         operatorId: request.operator.sub,
         approverChannel: channel.channel,
         approverAddress: channel.address,
-        ...(body.expires_in_hours !== undefined ? { expiresInHours: body.expires_in_hours } : {}),
+        ...(body.expires_in_hours === undefined ? {} : { expiresInHours: body.expires_in_hours }),
       })
 
       const baseUrl = process.env['APP_BASE_URL'] ?? 'http://localhost:3000'

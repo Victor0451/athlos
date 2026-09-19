@@ -129,7 +129,33 @@ test('enabled ADMIN keeps selected debt cards usable at narrow width', async ({
   await page.getByRole('button', { name: 'Buscar socio' }).click()
   await page.getByRole('button', { name: /Gorriti, Ana/ }).click()
   await expect(page.getByRole('list', { name: 'Obligaciones de deuda' })).toBeVisible()
-  await expect(page.getByText(/settlement-1 · MONETARY: 25.00 ARS/)).toBeVisible()
+  const history = page.getByText('Historial de movimientos', { exact: true })
+  await history.click()
+  await expect(page.getByText(/Importe de la liquidación:\s*\$\s*25,00/)).toBeVisible()
+  await history.click()
+
+  const rangeToggle = page.getByRole('button', {
+    name: /Elegir rango para evaluar|Ocultar selección de rango/,
+  })
+  const from = page.getByLabel('Desde', { exact: true })
+  await expect(from).toBeHidden()
+  await expect(rangeToggle).toHaveAttribute('aria-expanded', 'false')
+  for (let index = 0; index < 60; index += 1) {
+    if (await rangeToggle.evaluate((element) => document.activeElement === element)) break
+    await page.keyboard.press('Tab')
+  }
+  await expect(rangeToggle).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(rangeToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(from).toBeVisible()
+  await assertNoPageOverflow(page)
+  await page.keyboard.press('Tab')
+  await expect(from).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Space')
+  await expect(from).toBeHidden()
+  await expect(rangeToggle).toBeFocused()
+  await expect(page.getByRole('list', { name: 'Obligaciones de deuda' })).toBeVisible()
 
   await assertNoPageOverflow(page)
   await assertInteractiveNames(page)

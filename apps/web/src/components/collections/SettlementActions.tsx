@@ -26,8 +26,11 @@ type Props = {
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<{ replayed?: boolean } | void>
   onRefreshDebt: () => Promise<void>
-  onReverse: (input: ReversalRequest) => Promise<{ replayed?: boolean } | void>
+  onReverse?: ((input: ReversalRequest) => Promise<{ replayed?: boolean } | void>) | undefined
   headingLevel?: 3 | 4
+  initialPaymentSelection?: string[] | undefined
+  resumePaymentKey?: string | undefined
+  onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
 }
 type ReversalSettlement = ReversalConfirmationSettlement & {
   currency: string
@@ -45,8 +48,13 @@ export function SettlementActions({
   onRefreshDebt,
   onReverse,
   headingLevel = 3,
+  initialPaymentSelection,
+  resumePaymentKey,
+  onGoToCash,
 }: Props) {
-  const eligible = debt.obligations.filter(({ outstanding_cents }) => outstanding_cents > 0)
+  const eligible = debt.obligations.filter(
+    ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
+  )
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [reversal, setReversal] = useState<ReversalSettlement | null>(null)
   const [reason, setReason] = useState('')
@@ -77,9 +85,15 @@ export function SettlementActions({
       .values(),
   ).filter(({ eligible: isEligible }) => isEligible)
 
+  const resumedPayment = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (reversalError || reversalStatus) statusRef.current?.focus()
   }, [reversalError, reversalStatus])
+  useEffect(() => {
+    if (!resumePaymentKey || resumedPayment.current === resumePaymentKey) return
+    resumedPayment.current = resumePaymentKey
+    setPaymentOpen(true)
+  }, [resumePaymentKey])
 
   const openReversal = (settlement: ReversalSettlement, trigger: HTMLButtonElement) => {
     reversalTriggerRef.current = trigger
@@ -89,7 +103,7 @@ export function SettlementActions({
     setReversalStatus('')
   }
   const submitReversal = async () => {
-    if (!reversal || !reason.trim()) return
+    if (!onReverse || !reversal || !reason.trim()) return
     setReversalBusy(true)
     setReversalError('')
     try {
@@ -127,7 +141,7 @@ export function SettlementActions({
         >
           Acciones de pago
         </Heading>
-        <Badge>Pagos y reversión</Badge>
+        <Badge>{onReverse ? 'Pagos y reversión' : 'Pagos'}</Badge>
       </div>
       {reversalStatus && (
         <p
@@ -144,23 +158,24 @@ export function SettlementActions({
         <button
           type="button"
           onClick={() => setPaymentOpen(true)}
-          disabled={!eligible.length || shiftAvailability !== 'ready' || !shifts.length}
+          disabled={!eligible.length || shiftAvailability === 'loading'}
           className={`${collectionButtonClass.primary} ${disabledClass}`}
         >
           Registrar pago
         </button>
-        {reversible.map((settlement, index) => (
-          <button
-            key={settlement.id}
-            type="button"
-            onClick={(event) => openReversal(settlement, event.currentTarget)}
-            className={collectionButtonClass.danger}
-          >
-            Revertir pago {index + 1} ·{' '}
-            {formatObligationPeriod(settlement.allocations[0]!.period_start)} ·{' '}
-            {money(settlement.amount_cents, settlement.currency)}
-          </button>
-        ))}
+        {onReverse &&
+          reversible.map((settlement, index) => (
+            <button
+              key={settlement.id}
+              type="button"
+              onClick={(event) => openReversal(settlement, event.currentTarget)}
+              className={collectionButtonClass.danger}
+            >
+              Revertir pago {index + 1} ·{' '}
+              {formatObligationPeriod(settlement.allocations[0]!.period_start)} ·{' '}
+              {money(settlement.amount_cents, settlement.currency)}
+            </button>
+          ))}
       </div>
       <PaymentDialog
         open={paymentOpen}
@@ -170,6 +185,8 @@ export function SettlementActions({
         onPayment={onPayment}
         onRefreshDebt={onRefreshDebt}
         onClose={() => setPaymentOpen(false)}
+        initialSelection={initialPaymentSelection}
+        onGoToCash={onGoToCash}
       />
       <ReversalConfirmation
         settlement={reversal}

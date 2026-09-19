@@ -1,0 +1,30 @@
+schema: spec-driven
+
+context: |
+  Athlos is a private pnpm 9 monorepo for the Club Atlético Gorriti operator console.
+  Runtime and stack: Node.js 22+, TypeScript 5.7 strict, Next.js 16/React 19, Fastify 5, PostgreSQL 16 with Drizzle ORM, Zod, ESLint, and Prettier.
+  Workspaces live under apps/* and packages/*; the web app is @athlos/web, the API is @athlos/api, and database code is @athlos/db.
+  SDD mode: strict_tdd is enabled for all later source work. Follow RED -> GREEN -> REFACTOR; do not write production code before observing the relevant failing unit or integration test. Playwright flow tests may be authored alongside UI rendering, as allowed by the testing-setup specification.
+  Test runners: Vitest for unit and integration tests; Playwright for web E2E. Verified repository commands are pnpm test:run, pnpm test:coverage, pnpm test:disposable-postgres, pnpm test:disposable-postgres:integration, and pnpm --filter @athlos/web test:e2e. Quality commands are pnpm lint, pnpm typecheck, pnpm format:check, and pnpm build.
+  Database-backed financial persistence evidence must use the repository-owned disposable real PostgreSQL lifecycle, never an in-memory database or simulation. UI verification must run Playwright headless and report exact passed, failed, and skipped counts.
+  Live operational holds such as QA001 cannot be resolved by simulation. Never use production/BETA infrastructure, secrets, or live external services for verification.
+
+rules:
+  proposal:
+    - Lead with intent, scope, affected capabilities, risks, rollback, and measurable success criteria.
+    - Keep implementation out of planning artifacts and identify explicit non-goals.
+    - Forecast review size; the standard review budget is 400 changed lines, and work above it requires an explicit delivery decision rather than an inferred exception.
+  specs:
+    - Express normative behavior with MUST or SHALL and acceptance scenarios in GIVEN/WHEN/THEN form.
+    - Preserve existing capability contracts unless the change explicitly modifies them.
+    - Distinguish simulated evidence from live operational acceptance; simulations cannot close a live hold.
+  design:
+    - Record architecture decisions, data and transaction boundaries, failure behavior, security implications, observability, verification, rollout, and rollback.
+    - For financial persistence, require disposable real PostgreSQL evidence and identify the authoritative accounting/domain record.
+    - For UI behavior, define headless Playwright evidence with exact result counts.
+  tasks:
+    - Order source tasks as strict_tdd RED, GREEN, then REFACTOR, with the failing and passing commands recorded.
+    - Use focused Vitest commands first, then pnpm test:run, pnpm lint, pnpm typecheck, pnpm format:check, and pnpm build as applicable.
+    - Use pnpm test:disposable-postgres or pnpm test:disposable-postgres:integration for database-backed persistence verification.
+    - Use pnpm --filter @athlos/web test:e2e for headless web E2E and record passed, failed, and skipped counts.
+    - Do not require production/BETA access, secrets, or live external services to complete implementation verification.

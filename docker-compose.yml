@@ -6,12 +6,12 @@ services:
       API_INTERNAL_URL: http://api:3001
       NATIVE_COLLECTIONS_WEB_ENABLED: ${NATIVE_COLLECTIONS_WEB_ENABLED:-false}
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/login"]
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:3000/login']
       interval: 15s
       timeout: 5s
       retries: 8
@@ -23,7 +23,7 @@ services:
     env_file:
       - .env.production
     ports:
-      - "4000:3001"
+      - '4000:3001'
     volumes:
       - ./backups:/var/backups/athlos
       - /tmp/legacy-placeholder:/legacy:ro
@@ -33,7 +33,7 @@ services:
       # pick up the mount.
       - storage:/app/storage
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3001/health"]
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3001/health']
       interval: 30s
       timeout: 5s
       retries: 5
@@ -41,8 +41,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
 volumes:
   backups:

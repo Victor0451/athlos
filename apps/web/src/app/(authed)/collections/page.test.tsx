@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CurrentUser } from '@/lib/auth'
@@ -7,6 +7,11 @@ import { FeatureConfigProvider } from '@/lib/features'
 import { visibleNavigation } from '@/lib/navigation'
 
 const authState = vi.hoisted(() => ({ user: null as { role: string; operator_id: string } | null }))
+const navigationMocks = vi.hoisted(() => ({
+  params: new URLSearchParams(),
+  push: vi.fn(),
+  replace: vi.fn(),
+}))
 const duesMocks = vi.hoisted(() => ({
   getDuesPrices: vi.fn(() => new Promise(() => undefined)),
   createDuesPrice: vi.fn(),
@@ -35,6 +40,7 @@ const padronesMocks = vi.hoisted(() => ({
   getDisciplinas: vi.fn(() => new Promise(() => undefined)),
 }))
 const sociosMocks = vi.hoisted(() => ({
+  getSocio: vi.fn(),
   getSocios: vi.fn(),
 }))
 const treasuryMocks = vi.hoisted(() => ({
@@ -57,6 +63,10 @@ const condonationMocks = vi.hoisted(() => ({
   },
 }))
 vi.mock('@/lib/use-auth', () => ({ useAuth: () => ({ user: authState.user }) }))
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: navigationMocks.push, replace: navigationMocks.replace }),
+  useSearchParams: () => navigationMocks.params,
+}))
 vi.mock('@/lib/api/dues', () => duesMocks)
 vi.mock('@/lib/api/padrones', () => padronesMocks)
 vi.mock('@/lib/api/socios', () => sociosMocks)
@@ -78,14 +88,237 @@ const renderPage = (enabled: boolean | undefined, role: string, agreementsEnable
 
 describe('Collections navigation and direct access', () => {
   beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
     sessionStorage.clear()
+    navigationMocks.params = new URLSearchParams()
+    navigationMocks.push.mockReset()
+    navigationMocks.replace.mockReset()
     condonationMocks.listCondonationLifecycle.mockReset()
     condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [] })
     duesMocks.getDebt.mockReset()
     duesMocks.getObligationAgreements.mockReset()
     sociosMocks.getSocios.mockReset()
+    sociosMocks.getSocio.mockReset()
     treasuryMocks.getOpenCashShifts.mockReset()
     treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+  })
+
+  it('ignores malformed cash context without loading a member or posting', async () => {
+    navigationMocks.params = new URLSearchParams('cash_member=invalid&cash_obligations=invalid')
+    renderPage(true, 'ADMIN')
+
+    await waitFor(() => expect(sociosMocks.getSocio).not.toHaveBeenCalled())
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  const handoff = {
+    memberId: '00000000-0000-4000-8000-000000000001',
+    requestId: '00000000-0000-4000-8000-000000000002',
+    obligationId: '00000000-0000-4000-8000-000000000004',
+  }
+  const handoffQuery = () =>
+    `condonation_member=${handoff.memberId}&condonation_request=${handoff.requestId}`
+  const handoffSocio = (id = handoff.memberId) => ({
+    id,
+    nombre: 'Ana',
+    apellido: 'Gorriti',
+    numero_socio: '42',
+  })
+  const handoffDebt = (id = handoff.memberId) => ({
+    status: 'ready',
+    socio_id: id,
+    currency: 'ARS',
+    total_debt_cents: 100,
+    obligations: [
+      {
+        id: handoff.obligationId,
+        period_start: '2026-01-01',
+        period_end: '2026-02-01',
+        original_amount_cents: 100,
+        outstanding_cents: 100,
+        currency: 'ARS',
+        status: 'OPEN',
+        components: [],
+        benefits: [],
+        allocations: [],
+      },
+    ],
+  })
+  const handoffLifecycle = (
+    state:
+      | 'pending'
+      | 'rejected'
+      | 'expired'
+      | 'approved_awaiting_execution'
+      | 'executed' = 'approved_awaiting_execution',
+  ) =>
+    ({
+      id: handoff.requestId,
+      state,
+      expires_at: '2030-02-01T00:00:00.000Z',
+      decided_at: state === 'pending' ? null : '2026-01-31T00:00:00.000Z',
+      execution_id:
+        state === 'approved_awaiting_execution' || state === 'executed'
+          ? '00000000-0000-4000-8000-000000000003'
+          : null,
+      execution_status:
+        state === 'executed'
+          ? 'executed'
+          : state === 'approved_awaiting_execution'
+            ? 'recoverable'
+            : 'unavailable',
+      snapshot: {
+        member_id: handoff.memberId,
+        obligations: [
+          {
+            obligation_id: handoff.obligationId,
+            currency: 'ARS',
+            outstanding_amount_cents: 100,
+          },
+        ],
+      },
+    }) as CondonationLifecyclePage['items'][number]
+
+  it('opens the exact approved lifecycle without selecting payment or executing it', async () => {
+    navigationMocks.params = new URLSearchParams(`keep=one&${handoffQuery()}&tag=first&tag=second`)
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({ items: [handoffLifecycle()] })
+    renderPage(true, 'ADMIN')
+
+    const lifecycle = await screen.findByRole('region', { name: 'Estado de la condonación' })
+    await waitFor(() => expect(lifecycle).toHaveFocus())
+    expect(navigationMocks.replace).toHaveBeenCalledWith(
+      '/collections?keep=one&tag=first&tag=second',
+      { scroll: false },
+    )
+    expect(
+      screen.getByRole('status', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/aprobada.*ejecución sigue siendo explícita/i)
+    expect(screen.getByRole('button', { name: /Recuperar y ejecutar condonación/ })).toBeEnabled()
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['pending', /todavía está pendiente/],
+    ['rejected', /fue rechazada/],
+    ['expired', /venció/],
+    ['executed', /ya fue ejecutada/],
+  ] as const)('shows the fresh %s state without triggering an action', async (state, copy) => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({
+      items: [handoffLifecycle(state)],
+    })
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('status', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(copy)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['condonation_member=invalid', 'ADMIN', true],
+    [handoffQuery(), 'CONSULTA', true],
+    [handoffQuery(), 'ADMIN', false],
+  ])(
+    'cleans a disallowed or malformed handoff without fetching: %s',
+    async (query, role, enabled) => {
+      navigationMocks.params = new URLSearchParams(`before=one&${query}&after=two`)
+      renderPage(enabled, role)
+      await waitFor(() =>
+        expect(navigationMocks.replace).toHaveBeenCalledWith('/collections?before=one&after=two', {
+          scroll: false,
+        }),
+      )
+      expect(sociosMocks.getSocio).not.toHaveBeenCalled()
+      expect(condonationMocks.listCondonationLifecycle).not.toHaveBeenCalled()
+      expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reports member and lifecycle mismatches without exposing an action', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio('00000000-0000-4000-8000-000000000099'))
+    const view = renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/enlace no corresponde/i)
+    expect(condonationMocks.listCondonationLifecycle).not.toHaveBeenCalled()
+    view.unmount()
+
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockResolvedValue({
+      items: [
+        { ...handoffLifecycle(), id: '00000000-0000-4000-8000-000000000099' },
+        {
+          ...handoffLifecycle(),
+          snapshot: {
+            ...handoffLifecycle().snapshot,
+            member_id: '00000000-0000-4000-8000-000000000099',
+          },
+        },
+      ],
+    })
+    renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró la solicitud/i)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+  })
+
+  it('reports lookup and lifecycle failures truthfully', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockRejectedValue(new Error('offline'))
+    const view = renderPage(true, 'ADMIN')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo cargar el socio/i)
+    view.unmount()
+
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockResolvedValue(handoffDebt())
+    condonationMocks.listCondonationLifecycle.mockRejectedValue(new Error('offline'))
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('alert', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/No se pudo cargar.*condonación indicada/i)
+  })
+
+  it('reports when the linked member detail cannot be loaded', async () => {
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    sociosMocks.getSocio.mockResolvedValue(handoffSocio())
+    duesMocks.getDebt.mockRejectedValue(new Error('offline'))
+    renderPage(true, 'ADMIN')
+    expect(
+      await screen.findByRole('alert', { name: 'Acceso contextual de condonación' }),
+    ).toHaveTextContent(/No se pudo cargar el detalle del socio/i)
+    expect(condonationMocks.executeCondonationRequest).not.toHaveBeenCalled()
+  })
+
+  it('lets a newer manual selection win over a late handoff lookup', async () => {
+    let resolve!: (value: ReturnType<typeof handoffSocio>) => void
+    sociosMocks.getSocio.mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [beto] })
+    duesMocks.getDebt.mockResolvedValue(handoffDebt(beto.id))
+    navigationMocks.params = new URLSearchParams(handoffQuery())
+    const user = userEvent.setup()
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Beto')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /López, Beto/ }))
+    await act(async () => resolve(handoffSocio()))
+    expect(duesMocks.getDebt).toHaveBeenCalledWith(beto.id)
+    expect(duesMocks.getDebt).not.toHaveBeenCalledWith(handoff.memberId)
+    expect(screen.queryByRole('button', { name: /ejecutar condonación/i })).not.toBeInTheDocument()
   })
 
   it('opens on Cobranza and keeps pricing configuration in a dialog', async () => {
@@ -120,6 +353,48 @@ describe('Collections navigation and direct access', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(pricingTrigger).toHaveFocus()
     expect(screen.getByRole('tab', { name: 'Cobranza' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps only the latest member search response when requests finish out of order', async () => {
+    let resolveOlder!: (value: {
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }) => void
+    let resolveNewer!: (value: {
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }) => void
+    const older = new Promise<{
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = new Promise<{
+      items: { id: string; nombre: string; apellido: string; numero_socio: string }[]
+    }>((resolve) => {
+      resolveNewer = resolve
+    })
+    sociosMocks.getSocios.mockReturnValueOnce(older).mockReturnValueOnce(newer)
+    renderPage(true, 'ADMIN')
+
+    const search = screen.getByRole('search')
+    const input = screen.getByLabelText('Buscar socio')
+    await userEvent.setup().type(input, 'Ana')
+    fireEvent.submit(search)
+    await userEvent.setup().clear(input)
+    await userEvent.setup().type(input, 'Beto')
+    fireEvent.submit(search)
+
+    resolveNewer({
+      items: [{ id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }],
+    })
+    expect(await screen.findByRole('button', { name: /lópez, beto/i })).toBeInTheDocument()
+    await act(async () => {
+      resolveOlder({
+        items: [{ id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }],
+      })
+    })
+
+    expect(screen.queryByRole('button', { name: /gorriti, ana/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /lópez, beto/i })).toBeInTheDocument()
   })
 
   it('shows lifecycle loading for the selected member', async () => {
@@ -313,6 +588,111 @@ describe('Collections navigation and direct access', () => {
     expect(screen.getByText('La cobranza está deshabilitada actualmente.')).toBeInTheDocument()
     renderPage(true, 'OPERADOR')
     expect(screen.getByRole('main', { name: /cobranza/i })).toBeInTheDocument()
+  })
+
+  it('guides an operator without an own active shift to Caja without exposing payment', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    })
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([])
+
+    renderPage(true, 'OPERADOR')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+
+    expect(
+      await screen.findByText('No podés registrar pagos sin un turno propio abierto y vigente.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ir a Caja / Tesorería' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/tesoreria'),
+    )
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+    expect(duesMocks.createFullSelectionPayment).not.toHaveBeenCalled()
+  })
+
+  it('lets an operator submit the selected obligations in an own active shift only', async () => {
+    const user = userEvent.setup()
+    const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio] })
+    duesMocks.getDebt.mockResolvedValue({
+      status: 'ready',
+      socio_id: socio.id,
+      currency: 'ARS',
+      total_debt_cents: 10_000,
+      obligations: [
+        {
+          id: 'obligation-1',
+          period_start: '2026-01-01',
+          period_end: '2026-02-01',
+          original_amount_cents: 10_000,
+          outstanding_cents: 10_000,
+          currency: 'ARS',
+          status: 'OPEN',
+          components: [],
+          benefits: [],
+          allocations: [],
+        },
+      ],
+    })
+    treasuryMocks.getOpenCashShifts.mockResolvedValue([
+      {
+        id: 'own-open-shift',
+        desk_id: 'desk-1',
+        status: 'OPEN',
+        business_date: '2026-01-01',
+        assigned_operator_id: 'operator-1',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+      },
+    ])
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+
+    renderPage(true, 'OPERADOR')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(await screen.findByRole('button', { name: 'Registrar pago' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    await waitFor(() =>
+      expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          socio_id: socio.id,
+          obligation_ids: ['obligation-1'],
+          shift_id: 'own-open-shift',
+          tender: 'CASH',
+        }),
+        expect.any(String),
+      ),
+    )
+    expect(screen.queryByRole('button', { name: /revertir pago/i })).not.toBeInTheDocument()
   })
 
   it('requires both Collections Web and agreements flags for agreement actions', async () => {
@@ -623,7 +1003,15 @@ describe('assessment price-gap recovery', () => {
       .mockResolvedValueOnce(generatedDebt)
       .mockResolvedValueOnce(paidDebt)
     treasuryMocks.getOpenCashShifts.mockResolvedValue([
-      { id: 'shift-gap-1', desk_id: 'desk-1', business_date: '2026-07-25' },
+      {
+        id: 'shift-gap-1',
+        desk_id: 'desk-1',
+        status: 'OPEN',
+        business_date: '2026-07-25',
+        assigned_operator_id: 'operator-1',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+      },
     ])
     duesMocks.previewDuesAssessments
       .mockResolvedValueOnce(blockedPreview)
@@ -633,12 +1021,18 @@ describe('assessment price-gap recovery', () => {
     duesMocks.executeDuesAssessmentRange.mockResolvedValue({
       created_obligation_ids: ['gap-obligation-1'],
     })
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'gap-settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'gap-settlement-1',
+      amount_cents: 100,
+      currency: 'ARS',
+      allocations: [],
+    })
 
     renderPage(true, 'ADMIN')
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
     await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
     await user.clear(screen.getByLabelText('Desde'))
     await user.type(screen.getByLabelText('Desde'), '2026-07')
     await user.clear(screen.getByLabelText('Hasta'))
@@ -683,6 +1077,10 @@ describe('assessment price-gap recovery', () => {
       }),
     )
 
+    await user.keyboard('{Escape}')
+    expect(
+      screen.queryByRole('dialog', { name: 'Configuración de cuotas' }),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Generar obligaciones del rango' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))
     await waitFor(() =>
@@ -696,7 +1094,15 @@ describe('assessment price-gap recovery', () => {
         expect.any(String),
       ),
     )
-    expect(await screen.findByText('Deuda total pendiente: $ 1,00')).toBeInTheDocument()
+    const summary = await screen.findByLabelText(/resumen de deuda de gorriti, ana/i)
+    expect(summary).toHaveFocus()
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled()
+    expect(duesMocks.previewDuesAssessments).toHaveBeenLastCalledWith({
+      socio_id: socio.id,
+      from_period: '2026-07',
+      through_period: '2026-09',
+    })
+    expect(screen.getByText('Deuda total pendiente: $ 1,00')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Registrar pago' }))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
@@ -715,6 +1121,131 @@ describe('assessment price-gap recovery', () => {
     expect(screen.getByText('Deuda total pendiente: $ 0,00')).toBeInTheDocument()
   })
 
+  it('keeps the newest range preview and does not focus debt after an older generation refresh completes', async () => {
+    const user = userEvent.setup()
+    let resolveGenerated!: (value: typeof blockedPreview | typeof successfulPreview) => void
+    let resolveNewest!: (value: typeof successfulPreview) => void
+    const generated = new Promise<typeof blockedPreview | typeof successfulPreview>((resolve) => {
+      resolveGenerated = resolve
+    })
+    const newest = new Promise<typeof successfulPreview>((resolve) => {
+      resolveNewest = resolve
+    })
+    duesMocks.previewDuesAssessments
+      .mockResolvedValueOnce(successfulPreview)
+      .mockReturnValueOnce(generated)
+      .mockReturnValueOnce(newest)
+    duesMocks.executeDuesAssessmentRange.mockResolvedValue({ created_obligation_ids: [] })
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-07')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-09')
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.click(await screen.findByRole('button', { name: 'Generar obligaciones del rango' }))
+    await user.click(screen.getByRole('button', { name: 'Confirmar generación con esta huella' }))
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(2))
+
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-08')
+    await user.clear(screen.getByLabelText('Hasta'))
+    await user.type(screen.getByLabelText('Hasta'), '2026-09')
+    fireEvent.submit(screen.getByLabelText('Desde').closest('form')!)
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(3))
+    await act(async () => {
+      resolveNewest({
+        ...successfulPreview,
+        from_period: '2026-08',
+        through_period: '2026-09',
+        fingerprint: 'newest-preview',
+      })
+    })
+    await screen.findByText('newest-preview')
+
+    await act(async () => {
+      resolveGenerated(blockedPreview)
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByText('newest-preview')).toBeInTheDocument()
+    expect(screen.getByLabelText(/resumen de deuda de gorriti, ana/i)).not.toHaveFocus()
+  })
+
+  it('ignores an older preview rejection after a newer range succeeds', async () => {
+    const user = userEvent.setup()
+    let rejectOlder!: (reason?: unknown) => void
+    let resolveNewer!: (value: typeof successfulPreview) => void
+    const older = new Promise<typeof successfulPreview>((_resolve, reject) => {
+      rejectOlder = reject
+    })
+    const newer = new Promise<typeof successfulPreview>((resolve) => {
+      resolveNewer = resolve
+    })
+    duesMocks.previewDuesAssessments.mockReturnValueOnce(older).mockReturnValueOnce(newer)
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.clear(screen.getByLabelText('Desde'))
+    await user.type(screen.getByLabelText('Desde'), '2026-08')
+    fireEvent.submit(screen.getByLabelText('Desde').closest('form')!)
+    await waitFor(() => expect(duesMocks.previewDuesAssessments).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      resolveNewer({ ...successfulPreview, from_period: '2026-08', fingerprint: 'newest-preview' })
+    })
+    await screen.findByRole('button', { name: 'Generar obligaciones del rango' })
+
+    await act(async () => {
+      rejectOlder(new Error('stale offline'))
+    })
+
+    expect(screen.queryByText('No se pudo consultar la evaluación.')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Generar obligaciones del rango' }),
+    ).toBeInTheDocument()
+  })
+
+  it('ignores a stale preview completion after switching members', async () => {
+    const user = userEvent.setup()
+    const beto = {
+      ...socio,
+      id: 'socio-beto',
+      nombre: 'Beto',
+      apellido: 'López',
+      numero_socio: '43',
+    }
+    let resolveOlder!: (value: typeof blockedPreview) => void
+    const older = new Promise<typeof blockedPreview>((resolve) => {
+      resolveOlder = resolve
+    })
+    sociosMocks.getSocios.mockResolvedValue({ items: [socio, beto] })
+    duesMocks.previewDuesAssessments.mockReturnValueOnce(older)
+
+    renderPage(true, 'ADMIN')
+    await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
+    await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
+    await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
+    await user.click(screen.getByRole('button', { name: 'Elegir rango para evaluar' }))
+    await user.click(screen.getByRole('button', { name: 'Consultar vista previa' }))
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    await act(async () => {
+      resolveOlder(blockedPreview)
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Generar obligaciones del rango' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('labels an empty debt response as not yet recorded instead of as zero debt', async () => {
     const user = userEvent.setup()
     duesMocks.getDebt.mockResolvedValue({
@@ -731,15 +1262,29 @@ describe('assessment price-gap recovery', () => {
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
 
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'No hay deuda registrada todavía para este socio.',
+      'Todavía no se generaron obligaciones para este socio. Consultá la vista previa del período para generarlas.',
     )
     expect(screen.queryByText(/Deuda total pendiente:/)).not.toBeInTheDocument()
   })
 })
 
 describe('payment orchestration and recovery', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
+  })
   const socio = { id: 'socio-1', nombre: 'Ana', apellido: 'Gorriti', numero_socio: '42' }
-  const shift = { id: 'shift-1', desk_id: 'desk-1', business_date: '2026-01-15' }
+  const shift = {
+    id: 'shift-1',
+    desk_id: 'desk-1',
+    status: 'OPEN' as const,
+    business_date: '2026-01-15',
+    assigned_operator_id: 'operator-1',
+    opened_at: new Date().toISOString(),
+    closed_at: null,
+  }
   // prettier-ignore
   const debt = { status: 'ready' as const, socio_id: socio.id, currency: 'ARS', total_debt_cents: 10_000, obligations: [{ id: 'obligation-1', period_start: '2026-01-01', period_end: '2026-02-01', original_amount_cents: 10_000, outstanding_cents: 10_000, currency: 'ARS', status: 'OPEN' as const, components: [], benefits: [], allocations: [] }] }
   const prepare = () => {
@@ -748,9 +1293,9 @@ describe('payment orchestration and recovery', () => {
     duesMocks.getDebt.mockResolvedValue(debt)
     treasuryMocks.getOpenCashShifts.mockResolvedValue([shift])
   }
-  const openPayment = async () => {
+  const openPayment = async (role = 'ADMIN') => {
     const user = userEvent.setup()
-    renderPage(true, 'ADMIN')
+    renderPage(true, role)
     await user.type(screen.getByLabelText('Buscar socio'), 'Ana')
     await user.click(screen.getByRole('button', { name: 'Buscar socio' }))
     await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ }))
@@ -762,7 +1307,12 @@ describe('payment orchestration and recovery', () => {
 
   it('submits the default full selection with Transferencia, then refreshes debt and completes its key', async () => {
     prepare()
-    duesMocks.createFullSelectionPayment.mockResolvedValue({ settlement_id: 'settlement-1' })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
     const user = await openPayment()
     await user.click(screen.getByLabelText('Transferencia'))
     await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
@@ -782,6 +1332,138 @@ describe('payment orchestration and recovery', () => {
     expect(screen.getByText('Pago registrado.')).toBeInTheDocument()
     expect(sessionStorage.getItem('athlos:collections:idempotency')).toBeNull()
   })
+
+  it('keeps the server-confirmed outcome after the paid debt removes payment actions', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt)
+      .mockResolvedValueOnce({
+        ...debt,
+        status: 'empty',
+        total_debt_cents: 0,
+        obligations: [],
+      })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment()
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+    expect(within(result).getByRole('heading', { name: 'Pago registrado' })).toBeInTheDocument()
+    expect(within(result).getByText(/\$\s*100,00/)).toBeInTheDocument()
+    expect(result).toHaveTextContent('settlement-1')
+    expect(result).toHaveTextContent('TRANSFER')
+    expect(within(result).getByRole('button', { name: 'Ver e imprimir constancia' })).toBeEnabled()
+    expect(
+      screen.queryByRole('dialog', { name: 'Constancia de pago no fiscal' }),
+    ).not.toBeInTheDocument()
+    await waitFor(() => expect(result).toHaveFocus())
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an operator payment confirmed while only its failed context refresh is retried', async () => {
+    prepare()
+    treasuryMocks.getOpenCashShifts
+      .mockResolvedValueOnce([shift])
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([shift])
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment('OPERADOR')
+    await user.click(screen.getByLabelText('Transferencia'))
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+
+    const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+    expect(within(result).getByRole('heading', { name: 'Pago registrado' })).toBeInTheDocument()
+    expect(within(result).getByText(/\$\s*100,00/)).toBeInTheDocument()
+    expect(result).toHaveTextContent('settlement-1')
+    expect(result).toHaveTextContent('TRANSFER')
+    expect(result).toHaveTextContent('No se pudo actualizar el saldo.')
+    expect(screen.getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(
+      screen.queryByText('No podés registrar pagos sin un turno propio abierto.'),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Ir a Caja / Tesorería' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Registrar pago' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(treasuryMocks.getOpenCashShifts).toHaveBeenCalledTimes(3))
+    expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for an alertdialog to close before focusing the confirmed result', async () => {
+    prepare()
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const user = await openPayment()
+    const frames: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const alert = document.createElement('div')
+    alert.setAttribute('role', 'alertdialog')
+    alert.setAttribute('aria-modal', 'true')
+    document.body.appendChild(alert)
+    try {
+      await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+      const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(0))
+      })
+      expect(result).not.toHaveFocus()
+      await act(async () => {
+        alert.remove()
+      })
+      act(() => {
+        frames.splice(0).forEach((callback) => callback(0))
+      })
+      expect(result).toHaveFocus()
+    } finally {
+      alert.remove()
+      raf.mockRestore()
+    }
+  })
+  it('does not refocus the confirmed result or submit again after balance recovery', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ ...debt, total_debt_cents: 0, obligations: [] })
+    duesMocks.createFullSelectionPayment.mockResolvedValue({
+      settlement_id: 'settlement-1',
+      amount_cents: 10_000,
+      currency: 'ARS',
+      allocations: [],
+    })
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    const user = await openPayment()
+    await user.click(screen.getByRole('button', { name: 'Confirmar pago' }))
+    const result = await screen.findByRole('region', { name: 'Resultado del pago' })
+    await waitFor(() => expect(result).toHaveFocus())
+    const resultFocuses = () => focus.mock.contexts.filter((element) => element === result)
+    expect(resultFocuses()).toHaveLength(1)
+    await user.click(within(result).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(within(result).queryByRole('alert')).not.toBeInTheDocument())
+    expect(resultFocuses()).toHaveLength(1)
+    expect(duesMocks.createFullSelectionPayment).toHaveBeenCalledTimes(1)
+    focus.mockRestore()
+  })
 })
 
 describe('community-work evidence settlement', () => {
@@ -797,7 +1479,7 @@ describe('community-work evidence settlement', () => {
   // prettier-ignore
   const openForm = async () => { const user = userEvent.setup(); renderPage(true, 'ADMIN', true); await user.type(screen.getByLabelText('Buscar socio'), 'Ana'); await user.click(screen.getByRole('button', { name: 'Buscar socio' })); await user.click(await screen.findByRole('button', { name: /Gorriti, Ana/ })); await user.click(await screen.findByRole('button', { name: /registrar trabajo comunitario/i })); return user }
   // prettier-ignore
-  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '2500'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
+  const completeDraft = async (user: ReturnType<typeof userEvent.setup>) => { await user.type(screen.getByLabelText(/valor aprobado/i), '25'); await user.type(screen.getByLabelText('Evidencia del trabajo aceptado'), 'Acta 12 aprobada'); await user.type(screen.getByLabelText('Motivo de la aceptación'), 'Trabajo aceptado'); await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i })) }
 
   it('links the active agreement, reuses the draft key, and refreshes debt only after confirmation', async () => {
     prepare()
@@ -821,8 +1503,141 @@ describe('community-work evidence settlement', () => {
     expect(screen.getByText('Deuda total pendiente: $ 75,00')).toBeInTheDocument()
   })
 
+  it('keeps a member-scoped community-work confirmation after its full settlement closes the obligation', async () => {
+    prepare()
+    duesMocks.getDebt.mockReset().mockResolvedValueOnce(debt(2_500)).mockResolvedValueOnce(debt(0))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent(
+      'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1.',
+    )
+    expect(
+      screen.queryByRole('button', { name: /registrar trabajo comunitario/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not show an older member’s confirmed work after switching members during the POST', async () => {
+    const ana = socio
+    const beto = { id: 'socio-2', nombre: 'Beto', apellido: 'López', numero_socio: '43' }
+    let resolvePost!: (result: ReturnType<typeof communityResult>) => void
+    duesMocks.getDebt.mockReset().mockResolvedValue(debt())
+    duesMocks.getObligationAgreements.mockResolvedValue({ active, revisions: [active] })
+    sociosMocks.getSocios.mockResolvedValue({ items: [ana, beto] })
+    duesMocks.createCommunityWorkEvidence.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePost = resolve
+      }),
+    )
+    const user = await openForm()
+    await completeDraft(user)
+    await user.click(screen.getByRole('button', { name: /López, Beto/ }))
+    resolvePost(communityResult())
+
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalled())
+    expect(
+      screen.queryByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('records POST success before a failed debt refresh and retries only the refresh', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(debt(7_500))
+    duesMocks.createCommunityWorkEvidence.mockResolvedValue(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    expect(
+      await screen.findByText(
+        'Trabajo comunitario registrado para la obligación obligation-1 por $ 25,00. Operación work-1. No se pudo actualizar el saldo.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('dialog', { name: 'Registrar trabajo comunitario' }),
+    ).not.toBeInTheDocument()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByRole('region', { name: 'Resultado del trabajo comunitario' }),
+    ).toHaveTextContent('Trabajo comunitario registrado')
+  })
+
+  it('keeps a 409 draft in its open dialog while retrying only GET balance recovery', async () => {
+    prepare()
+    duesMocks.getDebt
+      .mockReset()
+      .mockResolvedValueOnce(debt())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValue(debt())
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new duesMocks.DuesOperationError('conflict', 'conflict'))
+      .mockResolvedValueOnce(communityResult())
+    const user = await openForm()
+    await completeDraft(user)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Registrar trabajo comunitario' })
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(within(dialog).getByLabelText('Valor aprobado (ARS)')).toHaveValue('25,00')
+    expect(within(dialog).getByLabelText('Evidencia del trabajo aceptado')).toHaveValue(
+      'Acta 12 aprobada',
+    )
+    expect(within(dialog).getByLabelText('Motivo de la aceptación')).toHaveValue('Trabajo aceptado')
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+    const conflictKey = duesMocks.createCommunityWorkEvidence.mock.calls[0]![1]
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(3))
+    expect(within(dialog).getByRole('button', { name: 'Actualizar saldo' })).toBeEnabled()
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeDisabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Actualizar saldo' }))
+    await waitFor(() => expect(duesMocks.getDebt).toHaveBeenCalledTimes(4))
+    expect(
+      within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }),
+    ).toBeEnabled()
+    expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(1)
+
+    await user.click(within(dialog).getByRole('button', { name: /confirmar trabajo comunitario/i }))
+    await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
+    expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(conflictKey)
+  })
+
+  it('uses the server replay result after an unknown POST failure preserves the key', async () => {
+    prepare()
+    duesMocks.createCommunityWorkEvidence
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(communityResult(false))
+    const user = await openForm()
+    await completeDraft(user)
+
+    await waitFor(() =>
+      expect(screen.getByText(/no se pudo registrar el trabajo/i)).toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: /confirmar trabajo comunitario/i }))
+
+    expect(
+      await screen.findByText(/trabajo comunitario registrado para la obligación/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/ya había sido registrado/i)).not.toBeInTheDocument()
+  })
+
   it.each([
-    ['conflict', 'El saldo cambió', false],
     ['permission', 'No tenés permiso para registrar trabajo comunitario.', false],
     ['partial_data', 'Los datos del trabajo comunitario están incompletos.', false],
     ['unavailable', 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.', false],
@@ -863,6 +1678,6 @@ describe('community-work evidence settlement', () => {
     await waitFor(() => expect(duesMocks.createCommunityWorkEvidence).toHaveBeenCalledTimes(2))
 
     expect(duesMocks.createCommunityWorkEvidence.mock.calls[1]![1]).not.toBe(firstKey)
-    expect(duesMocks.getDebt).toHaveBeenCalledTimes(2)
+    expect(duesMocks.getDebt).toHaveBeenCalledTimes(3)
   })
 })

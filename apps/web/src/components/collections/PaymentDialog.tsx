@@ -21,13 +21,17 @@ type Props = {
   onPayment: (
     input: Omit<FullSelectionPaymentInput, 'socio_id'>,
   ) => Promise<{ replayed?: boolean } | void>
-  onRefreshDebt: () => Promise<void>
+  onRefreshDebt: () => Promise<boolean | void>
   onClose: () => void
+  initialSelection?: string[] | undefined
+  onGoToCash?: ((memberId: string, obligationIds: string[]) => void) | undefined
 }
 
 const disabledClass = 'disabled:cursor-not-allowed disabled:opacity-60'
 const staleBalanceMessage =
   'El saldo cambió. Revisá la deuda actualizada antes de volver a confirmar.'
+const permissionMessage =
+  'No tenés permiso para registrar este pago. Actualizá la deuda y los turnos antes de volver a confirmar.'
 
 export function PaymentDialog({
   open,
@@ -37,8 +41,12 @@ export function PaymentDialog({
   onPayment,
   onRefreshDebt,
   onClose,
+  initialSelection,
+  onGoToCash,
 }: Props) {
-  const eligible = debt.obligations.filter(({ outstanding_cents }) => outstanding_cents > 0)
+  const eligible = debt.obligations.filter(
+    ({ outstanding_cents, status }) => outstanding_cents > 0 && status === 'OPEN',
+  )
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [shiftId, setShiftId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH')
@@ -48,9 +56,20 @@ export function PaymentDialog({
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const statusRef = useRef<HTMLParagraphElement>(null)
+  const mountedRef = useRef(true)
+  const openRef = useRef(open)
+  const debtRef = useRef(debt)
+  const submissionInFlight = useRef(false)
+  const lifecycleIdRef = useRef(0)
+  const requestIdRef = useRef(0)
+  const activeRequestIdRef = useRef<number | null>(null)
+  openRef.current = open
+  debtRef.current = debt
   const selected = eligible.filter(({ id }) => selectedIds.includes(id))
   const total = selected.reduce((sum, obligation) => sum + obligation.outstanding_cents, 0)
   const tender = paymentMethod === 'CARD' ? cardSubtype : paymentMethod
+  const selectionUnavailable =
+    initialSelection !== undefined && initialSelection.length > 0 && !selected.length
   const confirmationReason =
     shiftAvailability === 'loading'
       ? 'Esperá a que se carguen los turnos de caja abiertos.'
@@ -59,7 +78,9 @@ export function PaymentDialog({
         : !shifts.length
           ? 'No hay turnos de caja abiertos para registrar el pago.'
           : !selected.length
-            ? 'Seleccioná al menos una obligación completa.'
+            ? selectionUnavailable
+              ? 'Las obligaciones elegidas ya no tienen saldo pendiente.'
+              : 'Seleccioná al menos una obligación completa.'
             : !shiftId
               ? 'Seleccioná un turno de caja abierto.'
               : paymentMethod === 'CARD' && !cardSubtype
@@ -67,8 +88,33 @@ export function PaymentDialog({
                 : ''
 
   useEffect(() => {
-    if (!open) return
-    setSelectedIds(eligible.map(({ id }) => id))
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      lifecycleIdRef.current += 1
+      activeRequestIdRef.current = null
+      submissionInFlight.current = false
+    }
+  }, [])
+  useEffect(() => {
+    lifecycleIdRef.current += 1
+    activeRequestIdRef.current = null
+    submissionInFlight.current = false
+    setBusy(false)
+  }, [debt.socio_id])
+  useEffect(() => {
+    lifecycleIdRef.current += 1
+    activeRequestIdRef.current = null
+    submissionInFlight.current = false
+    if (!open) {
+      setBusy(false)
+      return
+    }
+    setSelectedIds(
+      initialSelection === undefined
+        ? eligible.map(({ id }) => id)
+        : initialSelection.filter((id) => eligible.some((obligation) => obligation.id === id)),
+    )
     setShiftId(shifts[0]?.id ?? '')
     setPaymentMethod('CASH')
     setCardSubtype(null)
@@ -84,7 +130,7 @@ export function PaymentDialog({
     setBusy(true)
     setError('')
     try {
-      await onRefreshDebt()
+      if ((await onRefreshDebt()) === false) throw new Error('Payment context unavailable')
       setPaymentConflict(false)
     } catch {
       setError('No se pudo actualizar la deuda. Intentá nuevamente.')
@@ -93,9 +139,20 @@ export function PaymentDialog({
     }
   }
   const submitPayment = async () => {
-    if (confirmationReason || paymentConflict || !tender) return
+    if (submissionInFlight.current || confirmationReason || paymentConflict || !tender) return
+    submissionInFlight.current = true
+    const lifecycleId = lifecycleIdRef.current
+    const requestId = ++requestIdRef.current
+    activeRequestIdRef.current = requestId
     setBusy(true)
     setError('')
+    const paymentSocioId = debt.socio_id
+    const isActiveRequest = () =>
+      mountedRef.current &&
+      openRef.current &&
+      debtRef.current.socio_id === paymentSocioId &&
+      lifecycleIdRef.current === lifecycleId &&
+      activeRequestIdRef.current === requestId
     try {
       const allocations = [...selected]
         .sort((left, right) => left.id.localeCompare(right.id))
@@ -109,25 +166,37 @@ export function PaymentDialog({
       const selection_fingerprint = [...new Uint8Array(bytes)]
         .map((byte) => byte.toString(16).padStart(2, '0'))
         .join('')
-      const result = await onPayment({
+      if (!isActiveRequest()) return
+      await onPayment({
         obligation_ids: allocations.map(({ obligationId }) => obligationId),
         shift_id: shiftId,
         tender,
         selection_fingerprint,
       })
+      if (!isActiveRequest()) return
       setSelectedIds([])
-      setStatus(result?.replayed ? 'Pago repetido.' : 'Pago registrado.')
+      setStatus('Pago registrado.')
       onClose()
     } catch (cause) {
+      if (!isActiveRequest()) return
       if (
         (cause instanceof ApiError && cause.status === 409) ||
         (cause instanceof DuesOperationError && cause.kind === 'conflict')
       ) {
         setPaymentConflict(true)
         setError(staleBalanceMessage)
+      } else if (
+        (cause instanceof ApiError && cause.status === 403) ||
+        (cause instanceof DuesOperationError && cause.kind === 'permission')
+      ) {
+        setPaymentConflict(true)
+        setError(permissionMessage)
       } else setError('No se pudo registrar el pago.')
     } finally {
-      setBusy(false)
+      if (activeRequestIdRef.current !== requestId) return
+      activeRequestIdRef.current = null
+      submissionInFlight.current = false
+      if (mountedRef.current) setBusy(false)
     }
   }
   const inlineStatus = (message: string, isError = false) => (
@@ -145,6 +214,8 @@ export function PaymentDialog({
   return (
     <>
       {status && inlineStatus(status)}
+      {selectionUnavailable &&
+        inlineStatus('Las obligaciones elegidas ya no tienen saldo pendiente.')}
       {shiftAvailability === 'loading' &&
         eligible.length > 0 &&
         inlineStatus('Cargando turnos de caja abiertos.')}
@@ -182,6 +253,22 @@ export function PaymentDialog({
         onConfirm={() => void submitPayment()}
         onRefreshDebt={() => void refreshDebt()}
       >
+        {onGoToCash && (
+          <button
+            type="button"
+            onClick={() => {
+              if (submissionInFlight.current || !selected.length) return
+              onGoToCash(
+                debt.socio_id,
+                selected.map(({ id }) => id),
+              )
+            }}
+            disabled={busy || !selected.length}
+            className={`${collectionButtonClass.secondary} ${disabledClass}`}
+          >
+            Ir a caja
+          </button>
+        )}
         <PaymentObligationSelector
           obligations={eligible}
           selectedIds={selectedIds}

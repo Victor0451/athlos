@@ -392,7 +392,7 @@ The promotion pipeline moves data from VFP source files → `raw_events` → `*_
 **CLI** (full `domain: 'all'`, ~60–90s on live DB):
 
 ```bash
-DATABASE_URL=postgresql://athlos:athlos@100.78.95.34:5432/athlos pnpm db:promote
+DATABASE_URL=postgresql://athlos:athlos@${DEPLOY_HOST}:5432/athlos pnpm db:promote
 ```
 
 **API** (single-domain or full, ADMIN role required):
@@ -550,8 +550,8 @@ The reusable GitHub Actions `deploy.yml` runs for each release lane:
 
 The beta stack shares the host but not runtime state. It remains dormant until the release-promotion workflow is enabled:
 
-- Web: `http://100.78.95.34:3100`
-- API: `http://100.78.95.34:4100`
+- Web: `http://${DEPLOY_HOST}:3100`
+- API: `http://${DEPLOY_HOST}:4100`
 - Database: `athlos_beta`
 - Compose project: `athlos-beta`
 - Environment: `beta`
@@ -562,7 +562,7 @@ The beta stack shares the host but not runtime state. It remains dormant until t
 - The server gate verifies API readiness, the web login route, and both running image identities.
 - During the first web container deployment, the gate stops the legacy PM2 process. It restores PM2 if the container deployment fails and removes the PM2 process after success.
 - The only deploy-target metadata enforced by CI contracts is:
-  - `DEPLOY_HOST=100.78.95.34`
+  - `DEPLOY_HOST=<server-tailnet-ip>`
   - `DEPLOY_PORT=2244`
   - `DEPLOY_USER=vlongo`
   - `DEPLOY_PATH=/srv/apps/athlos`
@@ -604,6 +604,32 @@ must include the checked-out artifact hash, gate preflight output, the exact
 operation/hash contract, unchanged destination after preflight, and—after a
 failed deploy—a read-only comparison proving restoration.
 
+### Local simulated Community Work acceptance
+
+Use the isolated simulator before any BETA check. It serves the local web UI on
+loopback and intercepts every API request; it never contacts BETA or a database.
+
+```sh
+NATIVE_COLLECTIONS_WEB_ENABLED=true \
+DUES_AGREEMENTS_ENABLED=true \
+ATHLOS_COMMUNITY_WORK_QA_MODE=manual \
+ATHLOS_COMMUNITY_WORK_QA_ROLE=ADMIN \
+pnpm --filter @athlos/web test:e2e -- \
+  e2e/collections-community-work-workflow.spec.ts \
+  --headed --workers=1 --retries=0
+```
+
+**Quick path**
+
+1. Search and select the synthetic Ana Gorriti (N.º 42) record.
+2. In **Acuerdo**, save `Trabajo acordado` / `Acuerdo vigente`; the debt must stay at `$ 100,00`.
+3. In **Trabajo comunitario**, record `$ 25,00`, `Acta 12 aprobada`, and `Trabajo aceptado`.
+4. Confirm the result and refreshed debt of `$ 75,00`. The simulator must report no cash or Treasury mutation.
+
+The manual test pauses before any operation and ends skipped: the human records acceptance separately.
+Use only its synthetic texts. Traces can contain entered evidence. This is local mock evidence, not proof of
+real API, database, BETA, accounting, or deployment behavior.
+
 ### Negotiated dues BETA smoke-check and rollback
 
 After the four BETA flags are enabled together and the dependent slices are deployed,
@@ -636,14 +662,14 @@ evidence, or audit history.
 
 ### GitHub Secrets
 
-| Secret                             | Purpose                                                                                           | Rotation              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------- |
-| `DEPLOY_HOST`                      | Server IP (current: `100.78.95.34`; switch when prod host is provisioned)                         | When server changes   |
-| `DEPLOY_SSH_KEY`                   | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs   | Quarterly             |
-| `DEPLOY_KNOWN_HOSTS`               | Pinned `[100.78.95.34]:2244` host-key line; written only to the runner temporary known-hosts file | When host key rotates |
-| `DEPLOY_TAILSCALE_OAUTH_CLIENT_ID` | OAuth client ID for ephemeral `tag:ci` GitHub runner nodes                                        | When client rotates   |
-| `DEPLOY_TAILSCALE_OAUTH_SECRET`    | OAuth client secret for ephemeral `tag:ci` GitHub runner nodes                                    | When client rotates   |
-| `GITHUB_TOKEN`                     | Automatic (used for GHCR push)                                                                    | Automatic             |
+| Secret                             | Purpose                                                                                             | Rotation              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------- |
+| `DEPLOY_HOST`                      | Server IP (value held in the `DEPLOY_HOST` secret; switch when prod host is provisioned)            | When server changes   |
+| `DEPLOY_SSH_KEY`                   | Long-lived ed25519 deploy key, restricted via `authorized_keys` `command=` + `from=` GitHub IPs     | Quarterly             |
+| `DEPLOY_KNOWN_HOSTS`               | Pinned `[${DEPLOY_HOST}]:2244` host-key line; written only to the runner temporary known-hosts file | When host key rotates |
+| `DEPLOY_TAILSCALE_OAUTH_CLIENT_ID` | OAuth client ID for ephemeral `tag:ci` GitHub runner nodes                                          | When client rotates   |
+| `DEPLOY_TAILSCALE_OAUTH_SECRET`    | OAuth client secret for ephemeral `tag:ci` GitHub runner nodes                                      | When client rotates   |
+| `GITHUB_TOKEN`                     | Automatic (used for GHCR push)                                                                      | Automatic             |
 
 ### db-destructive label
 
@@ -659,7 +685,7 @@ PR2 does not define automatic image rollback or application readiness verificati
 - `authorized_keys` entry for the dedicated deploy key uses `command="/usr/local/sbin/athlos-deploy-gate"` + `from="100.64.0.0/10"` (Tailnet addresses only) + `restrict,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`.
 - The gate accepts the backward-compatible production `preflight|deploy <api-image> <web-image>` commands with empty stdin, plus beta `preflight-beta|deploy-beta <api-image> <web-image> <lowercase-sha256>` with the exact Compose artifact on stdin.
 - The root-installed gate authority remains out-of-band; repository changes do not install, replace, or mutate it automatically.
-- Tailnet ACLs must separately allow only `tag:ci` to reach `100.78.95.34:2244`; the SSH source restriction is defense in depth, not an ACL replacement.
+- Tailnet ACLs must separately allow only `tag:ci` to reach `${DEPLOY_HOST}:2244`; the SSH source restriction is defense in depth, not an ACL replacement.
 - Quarterly key rotation: `ssh-keygen -t ed25519` on server, update GitHub Secret, remove old public key from `authorized_keys`
 
 ### Quarterly key rotation

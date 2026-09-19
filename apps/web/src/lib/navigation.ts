@@ -46,14 +46,14 @@ export const navigation: NavigationItem[] = [
     label: 'Aprobaciones',
     icon: Stamp,
     section: 'Operations',
-    roles: ['ADMIN'],
+    roles: ['ADMIN', 'TESORERO'],
   },
   {
     href: '/tesoreria',
-    label: 'Cash desk',
+    label: 'Caja',
     icon: Wallet,
     section: 'Operations',
-    roles: ['ADMIN', 'TESORERO'],
+    roles: ['ADMIN', 'TESORERO', 'OPERADOR'],
   },
   {
     href: '/admin/gastos',

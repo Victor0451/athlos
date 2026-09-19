@@ -39,8 +39,9 @@ describe('DebtPanel', () => {
   it('reports empty and not-found debt states', () => {
     const { rerender } = render(panel({ status: 'empty', debt: { ...debt, status: 'empty' } }))
     expect(screen.getByRole('status')).toHaveTextContent(
-      'No hay deuda registrada todavía para este socio.',
+      'Todavía no se generaron obligaciones para este socio. Consultá la vista previa del período para generarlas.',
     )
+    expect(screen.getByRole('status')).not.toHaveTextContent(/total|pagada/i)
 
     rerender(panel({ status: 'not_found', debt: null }))
     expect(screen.getByRole('status')).toHaveTextContent(/no se encontró el detalle/i)

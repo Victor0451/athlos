@@ -7,6 +7,7 @@ import {
   recordSettlementTenderInTransaction,
   validateSettlementShiftInTransaction,
 } from './cash-desk.ts'
+import { recordAutomaticDuesProductionSource } from './production-source.ts'
 import type { AuditContext } from './service.ts'
 
 export { MAX_MONEY_CENTS } from './allocations.ts'
@@ -70,6 +71,11 @@ export type SettlementResult = {
 
 const authorize = (role: AuditContext['role']) => {
   if (role !== 'ADMIN' && role !== 'TESORERO')
+    throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Settlement action is not authorized')
+}
+
+const authorizeOperatorPayment = (role: AuditContext['role']) => {
+  if (role !== 'ADMIN' && role !== 'TESORERO' && role !== 'OPERADOR')
     throw BusinessError(ErrorCode.INSUFFICIENT_PERMISSIONS, 'Settlement action is not authorized')
 }
 
@@ -278,7 +284,7 @@ export class SettlementService {
       new Set(input.obligationIds).size !== input.obligationIds.length
     )
       throw BusinessError(ErrorCode.VALIDATION_ERROR, 'Full selection payment command is invalid')
-    authorize(input.role)
+    authorizeOperatorPayment(input.role)
     const command = { ...input, obligationIds: [...input.obligationIds].sort() }
     return this.db.transaction(async (tx) => {
       const replay = await (
@@ -322,6 +328,11 @@ export class SettlementService {
       await recordSettlementTenderInTransaction(tx, {
         ...command,
         settlementId: claim.settlement.id,
+      })
+      await recordAutomaticDuesProductionSource(tx, {
+        shiftId: command.shiftId,
+        settlementId: claim.settlement.id,
+        origin: 'AUTOMATIC_DUES_PRODUCTION',
       })
       const now = this.now().toISOString()
       await record(
@@ -510,7 +521,7 @@ export class SettlementService {
   }
 
   async debt(input: DebtCommand) {
-    authorize(input.role)
+    authorizeOperatorPayment(input.role)
     try {
       return await (this.repository.getDebt ?? allocations.getDebt)(this.db, input.socioId)
     } catch (error) {

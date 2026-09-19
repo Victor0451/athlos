@@ -91,6 +91,13 @@ describe('recordSettlementTenderInTransaction', () => {
     const { input, success } = fixture(tender)
     await expect(call(success, { ...input, tender })).resolves.toMatchObject({ tender })
   })
+  it('allows an operator to record a settlement tender in an owned open shift', async () => {
+    const { input, success } = fixture()
+    await expect(call(success, { ...input, role: 'OPERADOR' })).resolves.toMatchObject({
+      shiftId: input.shiftId,
+      sourceId: input.settlementId,
+    })
+  })
   it('replays or conflicts deterministically', async () => {
     const { input, row } = fixture()
     const replay = { ...row, request_fingerprint: 'a'.repeat(64) }

@@ -3,6 +3,18 @@ import { visibleNavigation } from './navigation'
 
 const user = { role: 'TESORERO', permissions: { data_steward: false } } as never
 
+describe('approvals navigation', () => {
+  it.each(['ADMIN', 'TESORERO', 'OPERADOR', 'CONSULTA'] as const)(
+    'gates the queue for %s',
+    (role) => {
+      const actor = { role, permissions: { data_steward: false } } as never
+      expect(visibleNavigation(actor).some((item) => item.href === '/admin/approvals')).toBe(
+        role === 'ADMIN' || role === 'TESORERO',
+      )
+    },
+  )
+})
+
 describe('cash navigation feature gate', () => {
   it('hides treasury when the server-provided cash feature is disabled', () => {
     expect(
@@ -11,6 +23,17 @@ describe('cash navigation feature gate', () => {
     expect(
       visibleNavigation(user, { cashEnabled: true }).some((item) => item.href === '/tesoreria'),
     ).toBe(true)
+  })
+
+  it('shows the enabled Caja entry to an operator without requiring an active shift', () => {
+    const operator = { role: 'OPERADOR', permissions: { data_steward: false } } as never
+
+    expect(visibleNavigation(operator, { cashEnabled: true })).toContainEqual(
+      expect.objectContaining({ href: '/tesoreria', label: 'Caja' }),
+    )
+    expect(visibleNavigation(operator, { cashEnabled: false })).not.toContainEqual(
+      expect.objectContaining({ href: '/tesoreria' }),
+    )
   })
 })
 

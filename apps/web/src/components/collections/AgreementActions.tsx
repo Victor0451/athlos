@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { DuesOperationError, type DebtDetail, type DuesAgreement } from '@/lib/api/dues'
 import { Badge } from '@/components/ui/Badge'
 import { CommunityWorkForm, type CommunityWorkDraft } from './CommunityWorkForm'
@@ -18,7 +18,7 @@ export interface AgreementViewState { status: AgreementViewStatus; active: DuesA
 // prettier-ignore
 export type AgreementObligation = Pick<DebtDetail['obligations'][number], 'id'|'period_start'|'period_end'|'status'>
 // prettier-ignore
-type Props = { obligation: AgreementObligation; enabled?: boolean; treatment?: 'agreement'|'community'; state: AgreementViewState; onCreate: (draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRevise?: (agreementId:string,draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRecordCommunityWork?: (agreementId:string,draft:CommunityWorkDraft) => Promise<{ replayed?: boolean }|void>; onRefresh: () => Promise<void>|void }
+type Props = { obligation: AgreementObligation; enabled?: boolean; treatment?: 'agreement'|'community'; currency?: string; outstandingCents?: number | undefined; state: AgreementViewState; onCreate: (draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRevise?: (agreementId:string,draft:AgreementDraft) => Promise<{ replayed?: boolean }|void>; onRecordCommunityWork?: (agreementId:string,draft:CommunityWorkDraft) => Promise<{ replayed?: boolean }|void>; communityWorkPending?: boolean; onReconcileCommunityWork?: () => Promise<void>|void; onRefresh: () => Promise<void>|void; communityApproval?: ReactNode }
 // prettier-ignore
 const errorStatuses = new Set<AgreementViewStatus>(['permission','conflict','partial_data','unavailable','error'])
 
@@ -41,12 +41,15 @@ const stateMessage = (state: AgreementViewState): string =>
 const mutationError = (error: unknown, community = false): {status: AgreementViewStatus; message:string} => { if (!(error instanceof DuesOperationError)) return {status:'error',message:community ? 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.' : 'No se pudo guardar el acuerdo. Intentá nuevamente.'}; const messages: Record<DuesOperationError['kind'],[AgreementViewStatus,string]> = {validation:['error',community ? 'El valor aprobado, la evidencia y el motivo son obligatorios y válidos.' : 'Los datos del acuerdo no son válidos. Revisá la narrativa y el motivo.'],permission:[community ? 'error' : 'permission',community ? 'No tenés permiso para registrar trabajo comunitario.' : 'No tenés permiso para registrar o modificar acuerdos.'],conflict:['conflict',community ? 'El saldo cambió. Revisá la deuda antes de reintentar.' : 'El acuerdo cambió. Revisá el acuerdo actualizado antes de volver a enviarlo.'],not_found:['error','No se encontró la obligación. Actualizá el detalle e intentá nuevamente.'],partial_data:['partial_data',community ? 'Los datos del trabajo comunitario están incompletos.' : 'El acuerdo tiene datos incompletos y no puede mostrarse como confirmado.'],unavailable:[community ? 'error' : 'unavailable',community ? 'No se pudo registrar el trabajo comunitario. Intentá nuevamente.' : 'No se pudo guardar el acuerdo. Intentá nuevamente.']}; const [status,message] = messages[error.kind]; return {status,message} }
 
 // prettier-ignore
-export function AgreementActions({obligation, enabled = true, treatment, state, onCreate, onRevise, onRecordCommunityWork, onRefresh}: Props) {
+export function AgreementActions({obligation, enabled = true, treatment, currency = 'ARS', outstandingCents, state, onCreate, onRevise, onRecordCommunityWork, communityWorkPending = false, onReconcileCommunityWork, onRefresh, communityApproval}: Props) {
   const [formOpen, setFormOpen] = useState(false)
   const [formMode, setFormMode] = useState<'create' | 'revision' | 'community'>('create')
   const [busy, setBusy] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
+  const reconciliationBusy = useRef(false)
   const [localStatus, setLocalStatus] = useState<AgreementViewStatus | null>(null)
   const [localError, setLocalError] = useState('')
+  const titleId = `${useId()}-agreement-title-${obligation.id}`
 
   if (!enabled || obligation.status !== 'OPEN') return null
 
@@ -64,9 +67,10 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
   const revisions = [...(state.revisions ?? [])].sort(
     (left, right) => left.revision_number - right.revision_number,
   )
-  const canRevise = treatment !== 'community' && Boolean(
-    active && active.kind === 'NEGOTIATED' && active.terms_version === 1 && onRevise,
+  const communityWorkEligible = Boolean(
+    active && active.kind === 'NEGOTIATED' && active.terms_version === 1,
   )
+  const canRevise = treatment !== 'community' && Boolean(communityWorkEligible && onRevise)
   const openForm = () => {
     setFormMode('create')
     setLocalStatus(null)
@@ -83,6 +87,7 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
   const openCommunityWork = () => { setFormMode('community'); setLocalStatus(null); setLocalError(''); setFormOpen(true) }
 
   const submit = async (draft: AgreementDraft | CommunityWorkDraft) => {
+    if (formMode === 'community' && communityWorkPending) return
     setBusy(true)
     setLocalStatus(null)
     setLocalError('')
@@ -125,14 +130,25 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
       setBusy(false)
     }
   }
+  const reconcileCommunityWork = async () => {
+    if (!onReconcileCommunityWork || reconciliationBusy.current) return
+    reconciliationBusy.current = true
+    setReconciling(true)
+    try {
+      await onReconcileCommunityWork()
+    } finally {
+      reconciliationBusy.current = false
+      setReconciling(false)
+    }
+  }
 
   return (
     <section
-      aria-labelledby={`agreement-title-${obligation.id}`}
+      aria-labelledby={titleId}
       className={collectionSectionClass}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 pb-3">
-        <h4 id={`agreement-title-${obligation.id}`} className="font-display text-base font-semibold text-ink-900">{treatment === 'community' ? 'Trabajo comunitario de la obligación' : 'Acuerdo de la obligación'}</h4>
+        <h4 id={titleId} className="font-display text-base font-semibold text-ink-900">{treatment === 'community' ? 'Trabajo comunitario de la obligación' : 'Acuerdo de la obligación'}</h4>
         <Badge variant="info">Obligación abierta</Badge>
       </div>
       {showStatus && (
@@ -145,8 +161,13 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
           Revisar acuerdo actualizado
         </button>
       )}
-      {active && (
-        <div aria-label="Resumen del acuerdo activo" className="space-y-4 border border-ink-200 bg-surface-sunken p-4">
+          {treatment === 'community' && !communityWorkEligible && (
+            <p role="status">
+              Para registrar trabajo comunitario necesitás un acuerdo activo negociado con términos vigentes.
+            </p>
+          )}
+          {active && (
+            <div aria-label="Resumen del acuerdo activo" className="space-y-4 border border-ink-200 bg-surface-sunken p-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 pb-3">
             <p className="font-display text-sm font-semibold text-ink-900">Acuerdo activo · revisión <span className="font-mono tabular-nums">{active.revision_number}</span></p>
             <Badge variant="success">Activo</Badge>
@@ -155,14 +176,22 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
             active.terms_version === 1 &&
             'narrative' in active.terms && <p>Narrativa: {active.terms.narrative}</p>}
           <p className="border-t border-ink-200 pt-3 font-body text-sm text-ink-700">Motivo: {active.reason}</p>
-          <p className="font-body text-sm font-medium text-ink-900">La deuda continúa abierta hasta que se registre una cancelación válida.</p>
-          {canRevise && (
+              <p className="font-body text-sm font-medium text-ink-900">La deuda continúa abierta hasta que se registre una cancelación válida.</p>
+              {treatment === 'community' && outstandingCents !== undefined && (
+                <p className="font-body text-sm text-ink-700">
+                  Saldo actual de la obligación:{' '}
+                  {new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(
+                    outstandingCents / 100,
+                  )}
+                </p>
+              )}
+              {canRevise && (
             <button className={collectionButtonClass.secondary} type="button" onClick={openRevision} disabled={busy}>
               Revisar acuerdo activo
             </button>
           )}
-          // prettier-ignore
-          {treatment !== 'agreement' && active && active.kind === 'NEGOTIATED' && active.terms_version === 1 && onRecordCommunityWork && <button className={collectionButtonClass.primary} type="button" onClick={openCommunityWork} disabled={busy}>Registrar trabajo comunitario</button>}
+          {/* prettier-ignore */}
+          {treatment === 'community' && communityWorkEligible && onRecordCommunityWork && <button className={collectionButtonClass.primary} type="button" onClick={openCommunityWork} disabled={busy}>Registrar trabajo comunitario</button>}
         </div>
       )}
       {treatment !== 'community' && active && (
@@ -217,12 +246,20 @@ export function AgreementActions({obligation, enabled = true, treatment, state, 
         <CommunityWorkForm
           open
           busy={busy}
-          error={inlineError}
-          formId={`community-work-form-${obligation.id}`}
-          onCancel={() => setFormOpen(false)}
+              locked={communityWorkPending}
+              reconciling={reconciling}
+              error={inlineError}
+              formId={`community-work-form-${obligation.id}`}
+              onCancel={() => setFormOpen(false)}
+              {...(communityWorkPending && onReconcileCommunityWork
+                ? { onReconcile: reconcileCommunityWork }
+                : {})}
+          currency={currency}
+          outstandingCents={outstandingCents}
           onSubmit={(draft) => submit(draft)}
         />
       )}
+      {communityApproval}
     </section>
   )
 }

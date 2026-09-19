@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "migrate:users": "tsx src/scripts/migrate-users.ts"
+    "migrate:users": "tsx src/scripts/migrate-users.ts",
+    "qa001:verify": "tsx src/scripts/qa-001-verify.ts"
   },
   "dependencies": {
     "@athlos/approval": "workspace:*",

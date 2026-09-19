@@ -30,6 +30,8 @@ function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
     let lastErr: unknown
     for (const h of handlers) {
       try {
+        // SAFETY: Fastify v5 preHandlers are async or callback-style; we always invoke
+        // them with the first 2 args, so the 3-arg hook type is safely widened here.
         await (h as unknown as (r: unknown, s: unknown) => Promise<unknown>)(request, reply)
         return // this handler passed
       } catch (err) {
@@ -40,10 +42,14 @@ function anyOf(...handlers: preHandlerHookHandler[]): preHandlerHookHandler {
     if (lastErr !== undefined) throw lastErr
   }
   // Propagate the gate marker so route-audit plugin recognises this as a gated route
+  // SAFETY: the gate marker is a runtime symbol property the Fastify hook type cannot express.
   const marker = (first as unknown as Record<symbol, unknown>)[Symbol.for('@athlos/auth/gate')]
   if (marker) {
-    ;(wrapper as unknown as Record<symbol, unknown>)[Symbol.for('@athlos/auth/gate')] = marker
+    // SAFETY: same runtime symbol marker copied onto the wrapper; not representable in its type.
+    const gated = wrapper as unknown as Record<symbol, unknown>
+    gated[Symbol.for('@athlos/auth/gate')] = marker
   }
+  // SAFETY: wrapper satisfies the 2-arg async preHandler contract Fastify accepts at runtime.
   return wrapper as unknown as preHandlerHookHandler
 }
 
@@ -77,6 +83,7 @@ const DUES_AUDIT_ACTIONS = new Set([
   'DUES_COMMUNITY_WORK_CREATED',
   'DUES_CASH_SHIFT_OPENED',
   'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SUPPORTING_RECORDED',
   'DUES_CASH_SHIFT_CLOSED',
   'DUES_CASH_EXPENSE_INCLUDED',
   'DUES_CASH_EXPENSE_COMPENSATED',
@@ -93,6 +100,7 @@ type JsonObject = Record<string, unknown>
 const CASH_AUDIT_ACTIONS = new Set([
   'DUES_CASH_SHIFT_OPENED',
   'DUES_CASH_TENDER_RECORDED',
+  'DUES_CASH_SUPPORTING_RECORDED',
   'DUES_CASH_SHIFT_CLOSED',
   'DUES_CASH_EXPENSE_INCLUDED',
   'DUES_CASH_EXPENSE_COMPENSATED',
